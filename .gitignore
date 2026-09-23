@@ -1,0 +1,13 @@
+node_modules/
+dist/
+out/
+release/
+coverage/
+data/
+.env
+*.db
+*.db-shm
+*.db-wal
+.DS_Store
+apps/desktop/resources/native/*
+!apps/desktop/resources/native/.gitkeep

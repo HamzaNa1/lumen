@@ -1,0 +1,14 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["bun"],
+    "paths": {
+      "@lumen/contracts": ["../../packages/contracts/src/index.ts"],
+      "@lumen/contracts/*": ["../../packages/contracts/src/*"],
+      "@lumen/database": ["../../packages/database/src/index.ts"],
+      "@lumen/database/*": ["../../packages/database/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "../../packages/contracts/src/**/*.ts", "../../packages/database/src/**/*.ts"]
+}

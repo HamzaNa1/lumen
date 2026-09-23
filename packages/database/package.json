@@ -1,0 +1,28 @@
+{
+  "name": "@lumen/database",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./Database": "./src/Database.ts",
+    "./tables/*": "./src/tables/*.ts",
+    "./repositories/*": "./src/repositories/*.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "generate": "drizzle-kit generate"
+  },
+  "dependencies": {
+    "@effect/sql-sqlite-bun": "4.0.0-beta.83",
+    "@lumen/contracts": "workspace:*",
+    "drizzle-orm": "1.0.0-rc.4",
+    "effect": "4.0.0-beta.83"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "drizzle-kit": "1.0.0-rc.4",
+    "typescript": "7.0.2"
+  }
+}

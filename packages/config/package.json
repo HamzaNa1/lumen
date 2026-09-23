@@ -1,0 +1,12 @@
+{
+  "name": "@lumen/config",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./base": "./base.json",
+    "./server": "./server.json",
+    "./main": "./main.json",
+    "./renderer": "./renderer.json"
+  }
+}

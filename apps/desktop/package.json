@@ -1,0 +1,35 @@
+{
+  "name": "lumen-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "preview": "electron-vite preview",
+    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "test": "bun test ../../tests/e2e ../../tests/integration"
+  },
+  "dependencies": {
+    "@lumen/contracts": "workspace:*",
+    "@lumen/ui": "workspace:*",
+    "@tanstack/react-query": "5.103.2",
+    "@tanstack/react-router": "1.170.39",
+    "effect": "4.0.0-beta.83",
+    "react": "19.3.0",
+    "react-dom": "19.3.0"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.2",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.1.1",
+    "electron": "44.4.5",
+    "electron-builder": "26.15.3",
+    "electron-vite": "5.0.0",
+    "typescript": "7.0.2",
+    "vite": "7.3.6"
+  }
+}

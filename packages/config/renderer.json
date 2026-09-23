@@ -1,0 +1,9 @@
+{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["vite/client"]
+  },
+  "include": ["../../apps/desktop/src/renderer", "../../apps/desktop/src/preload", "../../packages/contracts/src", "../../packages/ui/src"]
+}

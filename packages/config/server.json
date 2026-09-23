@@ -1,0 +1,8 @@
+{
+  "extends": "./base.json",
+  "compilerOptions": {
+    "lib": ["ES2023"],
+    "types": ["bun"]
+  },
+  "include": ["../../apps/server/src", "../../packages/contracts/src", "../../packages/database/src"]
+}

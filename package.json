@@ -1,0 +1,25 @@
+{
+  "name": "lumen",
+  "private": true,
+  "type": "module",
+  "packageManager": "bun@1.4.2",
+  "workspaces": ["apps/*", "packages/*"],
+  "scripts": {
+    "dev:server": "bun run --cwd apps/server dev",
+    "dev:desktop": "bun run --cwd apps/desktop dev",
+    "build": "bun run --filter '*' build",
+    "typecheck": "bun run --filter '*' typecheck",
+    "lint": "biome lint .",
+    "test": "bun test",
+    "check": "bun run lint && bun run typecheck && bun test && bun run build",
+    "db:generate": "bun run --cwd packages/database generate",
+    "db:migrate": "bun run --cwd apps/server db:migrate",
+    "create-admin": "bun scripts/create-admin.ts",
+    "backup": "bun scripts/backup.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.14",
+    "@types/bun": "1.4.2",
+    "typescript": "7.0.2"
+  }
+}
