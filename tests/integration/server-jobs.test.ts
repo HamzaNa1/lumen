@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { JobService, JobServiceLive } from "../../apps/server/src/jobs/JobService";
-import { Scanner, ScannerLive } from "../../apps/server/src/services/Scanner";
+import { Scanner, ScannerLive, scanRoot } from "../../apps/server/src/services/Scanner";
 
 const paths: string[] = [];
 
@@ -16,6 +16,16 @@ afterEach(async () => {
 });
 
 describe("durable jobs and scanner reconciliation", () => {
+  test("discovers Matroska files case-insensitively", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-scanner-test-"));
+    paths.push(root);
+    await Bun.write(join(root, "movie.MKV"), "matroska");
+
+    const files = await Array.fromAsync(scanRoot(root));
+
+    expect(files.map((file) => file.relativePath)).toEqual(["movie.MKV"]);
+  });
+
   test("recovers expired leases and does not cross a root generation", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-job-test-"));
     paths.push(root);

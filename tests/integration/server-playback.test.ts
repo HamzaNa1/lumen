@@ -17,7 +17,7 @@ afterEach(async () => {
 });
 
 const seed = async (root: string, databasePath: string): Promise<{ readonly userId: string; readonly libraryId: string; readonly trackId: string; readonly itemId: string }> => {
-  const mediaPath = join(root, "clip.mp4");
+  const mediaPath = join(root, "clip.mkv");
   await Bun.write(mediaPath, "0123456789");
   const databaseLayer = makeDatabaseLayers({ databasePath } as never);
   const layer = Layer.mergeAll(databaseLayer, RepositoriesLive(databaseLayer));
@@ -42,11 +42,11 @@ const seed = async (root: string, databasePath: string): Promise<{ readonly user
     `);
     yield* database.run(sql`
       INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, inode, scanned_at_ms)
-      VALUES (${sourceId}, ${libraryId}, ${rootId}, 'clip.mp4', ${mediaPath}, 'local', 10, unixepoch() * 1000, '1', unixepoch() * 1000)
+      VALUES (${sourceId}, ${libraryId}, ${rootId}, 'clip.mkv', ${mediaPath}, 'local', 10, unixepoch() * 1000, '1', unixepoch() * 1000)
     `);
     const source = yield* database.get<{ id: string }>(sql`SELECT id FROM media_sources WHERE absolute_path = ${mediaPath}`);
     if (source !== null) {
-      yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, is_default) VALUES (${streamId}, ${source.id}, 'video', 'mp4', 'h264', 1)`);
+      yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, is_default) VALUES (${streamId}, ${source.id}, 'video', 'matroska', 'h264', 1)`);
       yield* database.run(sql`
         INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
         VALUES (${trackId}, ${libraryId}, ${source.id}, ${streamId}, 'Clip', 'clip', 10000, 0, unixepoch() * 1000, unixepoch() * 1000)
@@ -89,6 +89,7 @@ describe("direct-play HTTP delivery", () => {
     const streamUrl = new URL(playback.streamUrl, base);
     const full = await fetch(streamUrl, { headers: { authorization: `Bearer ${playback.grantToken}` } });
     expect(full.status).toBe(200);
+    expect(full.headers.get("content-type")).toBe("video/x-matroska");
     expect(full.headers.get("content-length")).toBe("10");
     expect(await full.text()).toBe("0123456789");
     const partial = await fetch(streamUrl, { headers: { authorization: `Bearer ${playback.grantToken}`, range: "bytes=2-5" } });

@@ -8,7 +8,7 @@ import { safePath } from "../core/Paths";
 import { mapRepositoryError } from "../core/Cause";
 
 const mediaExtensions = new Set([
-  ".aac", ".aif", ".aiff", ".alac", ".ape", ".flac", ".m4a", ".m4v", ".mp3", ".mp4", ".mpeg", ".mpg", ".oga", ".ogg", ".opus", ".wav", ".webm", ".wma", ".wmv",
+  ".aac", ".aif", ".aiff", ".alac", ".ape", ".flac", ".m4a", ".m4v", ".mkv", ".mp3", ".mp4", ".mpeg", ".mpg", ".oga", ".ogg", ".opus", ".wav", ".webm", ".wma", ".wmv",
 ]);
 
 const isMedia = (path: string): boolean => mediaExtensions.has(path.slice(path.lastIndexOf(".")).toLowerCase());

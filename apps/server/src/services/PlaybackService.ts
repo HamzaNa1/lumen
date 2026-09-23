@@ -171,6 +171,7 @@ export const makePlaybackService = Effect.gen(function* () {
     const row = yield* database.get<{ absolutePath: string; rootPath: string; size: number; modifiedAtMs: number; mimeType: string }>(sql`
       SELECT s.absolute_path AS absolutePath, r.path AS rootPath, s.file_size_bytes AS size, s.modified_at_ms AS modifiedAtMs,
         CASE
+          WHEN lower(s.absolute_path) LIKE '%.mkv' THEN 'video/x-matroska'
           WHEN lower(s.absolute_path) LIKE '%.mp4' OR lower(s.absolute_path) LIKE '%.m4v' OR lower(s.absolute_path) LIKE '%.webm' THEN 'video/mp4'
           WHEN lower(s.absolute_path) LIKE '%.flac' THEN 'audio/flac'
           WHEN lower(s.absolute_path) LIKE '%.ogg' OR lower(s.absolute_path) LIKE '%.oga' THEN 'audio/ogg'
