@@ -169,7 +169,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     const authless = method === "GET" && url.pathname === "/health/live";
     if (authless) return unknownJson({ status: "ok" });
     if (method === "GET" && url.pathname === "/api/v1/server") {
-      return unknownJson({ serverId: services.identity.installationId, displayName: "Lumen", apiVersion: "1.0.0", capabilities: { directPlayOnly: true } });
+      return unknownJson({ serverId: services.identity.installationId, displayName: "Lumen", apiVersion: "1.0.0", setupRequired: await call(services.auth.setupRequired()), capabilities: { directPlayOnly: true } });
     }
     if (method === "GET" && (url.pathname === "/health/ready" || url.pathname === "/ready")) {
       const ready = await services.databaseReady();
@@ -181,6 +181,13 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
       return unknownJson({ installationId: services.identity.installationId, startedAtMs: services.startedAtMs, uptimeMs: Date.now() - services.startedAtMs, version: "0.1.0" });
     }
     if (method === "GET" && url.pathname === "/metrics") return new Response(`lumen_uptime_ms ${Date.now() - services.startedAtMs}\n`, { headers: { "content-type": "text/plain; version=0.0.4" } });
+    if (method === "GET" && url.pathname === "/api/v1/auth/setup") {
+      return unknownJson({ setupRequired: await call(services.auth.setupRequired()) });
+    }
+    if (method === "POST" && url.pathname === "/api/v1/auth/register") {
+      const input = decode(S.RegisterBody, await body(request, config.maxRequestBodyBytes));
+      return json(Schema.Unknown, await call(services.auth.register(input, Date.now())), 201);
+    }
     if (method === "POST" && url.pathname === "/api/v1/auth/login") {
       const input = decode(S.LoginBody, await body(request, config.maxRequestBodyBytes));
       return json(Schema.Unknown, await call(services.auth.login(input, Date.now())));
@@ -209,8 +216,11 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     if (method === "DELETE" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "devices" && parts[3] !== undefined) { await call(services.admin.revokeDevice(principal, parts[3], Date.now())); return ack(); }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "users" && parts[3] !== undefined && parts[4] === "sessions") return unknownJson(await call(services.admin.listSessions(principal, parts[3], Date.now())));
     if (method === "DELETE" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "auth" && parts[3] === "sessions" && parts[4] !== undefined) { await call(services.admin.revokeSession(principal, parts[4], Date.now())); return ack(); }
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "admin" && parts[3] === "libraries" && parts.length === 4) return unknownJson(await call(services.admin.listAllLibraries(principal)));
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 3) return unknownJson(await call(services.admin.listLibraries(principal, Date.now())));
-    if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 3) return unknownJson(await call(services.libraries.create(decode(S.CreateLibraryBody, await body(request, config.maxRequestBodyBytes)), Date.now())), 201);
+    if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 3) { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.create(decode(S.CreateLibraryBody, await body(request, config.maxRequestBodyBytes)), Date.now())), 201); }
+    if (method === "PATCH" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 4) { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.update(parts[3], decode(S.UpdateLibraryBody, await body(request, config.maxRequestBodyBytes)), Date.now()))); }
+    if (method === "DELETE" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 4) { await call(services.access.requireAdmin(principal)); await call(services.libraries.remove(parts[3])); return ack(); }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts[3] !== undefined && parts[4] === "roots") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.listRoots(parts[3]))); }
     if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts[3] !== undefined && parts[4] === "roots") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.addRoot(decode(S.CreateRootBody, await body(request, config.maxRequestBodyBytes)), Date.now())), 201); }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts[3] !== undefined && parts[4] === "grants") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.listGrants(parts[3]))); }
@@ -355,7 +365,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
   return async (request: Request): Promise<Response> => {
     const requestId = request.headers.get("x-request-id")?.slice(0, 128) ?? newUuid();
     const key = clientKey(request);
-    const login = new URL(request.url).pathname.endsWith("/auth/login");
+    const login = new URL(request.url).pathname.endsWith("/auth/login") || new URL(request.url).pathname.endsWith("/auth/register");
     try {
       const execute = Effect.tryPromise({ try: () => dispatch(request, requestId), catch: (cause) => cause });
       const checked = limiter.check(key, Date.now(), login ? "login" : "request");

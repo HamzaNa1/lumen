@@ -43,7 +43,7 @@ export const makeLayers = (config: ServerConfig) => {
   const dependencies = Layer.mergeAll(database, repositories);
   const access = AccessControlLive.pipe(Layer.provide(dependencies));
   const auth = AuthServiceLive.pipe(Layer.provide(dependencies));
-  const libraries = LibraryServiceLive(config).pipe(Layer.provide(dependencies));
+  const libraries = LibraryServiceLive.pipe(Layer.provide(dependencies));
   const scans = ScanServiceLive.pipe(Layer.provide(dependencies));
   const assets = AssetServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const admin = AdminServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));

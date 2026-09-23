@@ -9,8 +9,7 @@
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
     "test": "bun test ../../tests",
-    "db:migrate": "bun src/database/migrate.ts",
-    "create-admin": "bun src/cli/create-admin.ts"
+    "db:migrate": "bun src/database/migrate.ts"
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.0-beta.83",

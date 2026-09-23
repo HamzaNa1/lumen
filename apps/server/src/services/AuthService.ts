@@ -1,12 +1,13 @@
 import type { LoginResponse, User } from "@lumen/contracts";
 import { Database, Repositories, sql } from "@lumen/database";
 import { Context, Effect, Layer } from "effect";
-import { mapRepositoryError, missing } from "../core/Cause";
-import { forbidden, unauthorized } from "../core/Errors";
+import { mapRepositoryError } from "../core/Cause";
+import { conflict, forbidden, unauthorized } from "../core/Errors";
 import { hashPassword, hashToken, newOpaqueToken, newUuid, verifyPassword } from "../core/Security";
-import { Schema } from "effect";
-import type { LoginBody, RefreshBody } from "../http/Schemas";
+import type { Schema } from "effect";
+import type { LoginBody, RefreshBody, RegisterBody } from "../http/Schemas";
 type LoginInput = Schema.Schema.Type<typeof LoginBody>;
+type RegisterInput = Schema.Schema.Type<typeof RegisterBody>;
 type RefreshInput = Schema.Schema.Type<typeof RefreshBody>;
 
 export interface AuthPrincipal {
@@ -18,6 +19,8 @@ export interface AuthPrincipal {
 const normalizeUsername = (username: string): string => username.trim().toLowerCase();
 
 export interface AuthServiceShape {
+  readonly setupRequired: () => Effect.Effect<boolean, unknown>;
+  readonly register: (input: RegisterInput, nowMs: number) => Effect.Effect<LoginResponse, unknown>;
   readonly login: (input: LoginInput, nowMs: number) => Effect.Effect<LoginResponse, unknown>;
   readonly refresh: (input: RefreshInput, nowMs: number) => Effect.Effect<LoginResponse, unknown>;
   readonly authenticate: (token: string, nowMs: number) => Effect.Effect<AuthPrincipal, unknown>;
@@ -27,6 +30,35 @@ export interface AuthServiceShape {
 export const makeAuthService = Effect.gen(function* () {
   const repositories = yield* Repositories;
   const database = yield* Database;
+
+  const setupRequired: AuthServiceShape["setupRequired"] = Effect.fn("AuthService.setupRequired")(function* () {
+    const row = yield* database.get<{ count: number }>(sql`SELECT count(*) AS count FROM users`);
+    return (row?.count ?? 0) === 0;
+  });
+
+  const register: AuthServiceShape["register"] = Effect.fn("AuthService.register")(function* (input, nowMs) {
+    const username = input.username.trim();
+    const normalized = normalizeUsername(username);
+    if (!/^[a-z0-9._-]+$/u.test(normalized)) return yield* conflict("Username contains unsupported characters");
+    if (!(yield* setupRequired())) return yield* conflict("An administrator already exists");
+    const passwordHash = yield* Effect.promise(() => hashPassword(input.password));
+    yield* database.transaction((transaction) => Effect.gen(function* () {
+      const existing = yield* transaction.get<{ count: number }>(sql`SELECT count(*) AS count FROM users`);
+      if ((existing?.count ?? 0) > 0) return yield* conflict("An administrator already exists");
+      yield* transaction.run(sql`
+        INSERT INTO users(id, username, username_normalized, display_name, password_hash, role, is_active, created_at_ms, updated_at_ms)
+        VALUES (${newUuid()}, ${username}, ${normalized}, ${input.displayName.trim()}, ${passwordHash}, 'admin', 1, ${nowMs}, ${nowMs})
+      `);
+    }));
+    return yield* login({
+      username: input.username,
+      password: input.password,
+      deviceId: input.deviceId,
+      deviceName: input.deviceName,
+      platform: input.platform,
+      platformDeviceId: input.platformDeviceId,
+    }, nowMs);
+  });
 
   const login: AuthServiceShape["login"] = Effect.fn("AuthService.login")(function* (input, nowMs) {
     const credentialsRow = yield* database.get<{
@@ -79,6 +111,7 @@ export const makeAuthService = Effect.gen(function* () {
       .pipe(Effect.mapError(mapRepositoryError));
     return {
       userId: credentials.user.id,
+      role: credentials.user.role,
       sessionId: session.id,
       accessToken,
       refreshToken,
@@ -98,13 +131,17 @@ export const makeAuthService = Effect.gen(function* () {
       id: string;
       userId: string;
       deviceId: string;
+      role: User["role"];
+      isActive: number;
       expiresAtMs: number;
       revokedAtMs: number | null;
     }>(sql`
-      SELECT id, user_id AS userId, device_id AS deviceId, expires_at_ms AS expiresAtMs, revoked_at_ms AS revokedAtMs
-      FROM auth_sessions WHERE id = ${current.sessionId}
+      SELECT s.id, s.user_id AS userId, s.device_id AS deviceId, u.role, u.is_active AS isActive,
+        s.expires_at_ms AS expiresAtMs, s.revoked_at_ms AS revokedAtMs
+      FROM auth_sessions s JOIN users u ON u.id = s.user_id
+      WHERE s.id = ${current.sessionId}
     `);
-    if (session == null || session.revokedAtMs !== null || session.expiresAtMs <= nowMs) {
+    if (session == null || session.isActive !== 1 || session.revokedAtMs !== null || session.expiresAtMs <= nowMs) {
       return yield* unauthorized("Session is invalid");
     }
     const accessToken = newOpaqueToken();
@@ -124,6 +161,7 @@ export const makeAuthService = Effect.gen(function* () {
     `);
     return {
       userId: session.userId,
+      role: session.role,
       sessionId: session.id,
       accessToken,
       refreshToken: replacement,
@@ -171,7 +209,7 @@ export const makeAuthService = Effect.gen(function* () {
     yield* repositories.auth.revokeSession({ sessionId, nowMs }).pipe(Effect.mapError(mapRepositoryError));
   });
 
-  return { login, refresh, authenticate, logout };
+  return { setupRequired, register, login, refresh, authenticate, logout };
 });
 
 export class AuthService extends Context.Service<AuthService, AuthServiceShape>()(

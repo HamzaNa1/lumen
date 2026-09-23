@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { UtcMillis, Uuid } from "./schemas/common";
+import { UserRole, UtcMillis, Uuid } from "./schemas/common";
 
 export const IpcLogin = Schema.Struct({
   _tag: Schema.Literal("auth.login"),
@@ -58,6 +58,7 @@ export const IpcAccount = Schema.Struct({
   origin: Schema.String.check(Schema.isMinLength(1)),
   username: Schema.String.check(Schema.isMinLength(1)),
   userId: Schema.String.check(Schema.isMinLength(1)),
+  role: UserRole,
   secureStorageAvailable: Schema.Boolean,
   lastConnectedAtMs: Schema.NullOr(UtcMillis),
 });
@@ -72,6 +73,7 @@ export type IpcAccounts = Schema.Schema.Type<typeof IpcAccounts>;
 export const IpcConnectionInput = Schema.Struct({
   origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  displayName: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
   serverLabel: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });

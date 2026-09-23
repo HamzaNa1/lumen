@@ -14,7 +14,6 @@
     "check": "bun run lint && bun run typecheck && bun test && bun run build",
     "db:generate": "bun run --cwd packages/database generate",
     "db:migrate": "bun run --cwd apps/server db:migrate",
-    "create-admin": "bun scripts/create-admin.ts",
     "backup": "bun scripts/backup.ts"
   },
   "devDependencies": {

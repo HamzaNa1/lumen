@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { UtcMillis, Uuid } from "./schemas/common";
+import { UserRole, UtcMillis, Uuid } from "./schemas/common";
 
 export const ApiErrorCode = Schema.Literals([
   "bad_request",
@@ -32,6 +32,7 @@ export type LoginRequest = Schema.Schema.Type<typeof LoginRequest>;
 
 export const LoginResponse = Schema.Struct({
   userId: Uuid,
+  role: UserRole,
   sessionId: Uuid,
   accessToken: Schema.String,
   refreshToken: Schema.String,
@@ -39,6 +40,18 @@ export const LoginResponse = Schema.Struct({
   refreshExpiresAtMs: UtcMillis,
 });
 export type LoginResponse = Schema.Schema.Type<typeof LoginResponse>;
+
+export const RegisterRequest = Schema.Struct({
+  username: Schema.String.check(Schema.isMinLength(1)),
+  displayName: Schema.String.check(Schema.isMinLength(1)),
+  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  deviceId: Uuid,
+  deviceName: Schema.String.check(Schema.isMinLength(1)),
+  platform: Schema.Literals(["web", "desktop", "ios", "android", "other"]),
+  platformDeviceId: Schema.NullOr(Schema.String),
+  nowMs: UtcMillis,
+});
+export type RegisterRequest = Schema.Schema.Type<typeof RegisterRequest>;
 
 export const RefreshRequest = Schema.Struct({
   refreshToken: Schema.String.check(Schema.isMinLength(1)),

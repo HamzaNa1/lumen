@@ -21,6 +21,16 @@ export const LoginBody = Schema.Struct({
   platformDeviceId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
 });
 
+export const RegisterBody = Schema.Struct({
+  username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  deviceId: Identifier,
+  deviceName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  platform: DevicePlatform,
+  platformDeviceId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
+});
+
 export const RefreshBody = Schema.Struct({
   refreshToken: Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(1024)),
 });
@@ -69,6 +79,13 @@ export const CreateLibraryBody = Schema.Struct({
   name: Text,
   slug: Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u), Schema.isMaxLength(100)),
   kind: Schema.optional(Schema.Literals(["movies", "shows", "music"])),
+});
+
+export const UpdateLibraryBody = Schema.Struct({
+  name: Schema.optional(Text),
+  slug: Schema.optional(Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u), Schema.isMaxLength(100))),
+  kind: Schema.optional(Schema.Literals(["movies", "shows", "music"])),
+  isEnabled: Schema.optional(Schema.Boolean),
 });
 
 export const CreateRootBody = Schema.Struct({

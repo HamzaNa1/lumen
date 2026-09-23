@@ -29,8 +29,6 @@ const Environment = Schema.Struct({
   LUMEN_FFPROBE_MAX_OUTPUT_BYTES: Schema.optional(Numeric),
   LUMEN_SHUTDOWN_GRACE_MS: Schema.optional(Numeric),
   LUMEN_HEARTBEAT_INTERVAL_MS: Schema.optional(Numeric),
-  LUMEN_ADMIN_BOOTSTRAP_TOKEN: Schema.optional(Schema.String.check(Schema.isMinLength(32))),
-  LUMEN_ALLOWED_MEDIA_BASES: Schema.optional(Schema.String),
 });
 
 export interface ServerConfig {
@@ -41,7 +39,6 @@ export interface ServerConfig {
   readonly logLevel: "debug" | "info" | "warn" | "error";
   readonly accessTokenTtlMs: number;
   readonly refreshTokenTtlMs: number;
-  readonly adminBootstrapToken: string | null;
   readonly maxRequestBodyBytes: number;
   readonly maxConcurrentRequests: number;
   readonly maxRequestsPerMinute: number;
@@ -52,7 +49,6 @@ export interface ServerConfig {
   readonly ffprobeMaxOutputBytes: number;
   readonly shutdownGraceMs: number;
   readonly heartbeatIntervalMs: number;
-  readonly allowedMediaBases: ReadonlyArray<string>;
 }
 
 const toInteger = (name: string, raw: string | undefined, fallback: number): number => {
@@ -82,7 +78,6 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     logLevel: parsed.LUMEN_LOG_LEVEL ?? "info",
     accessTokenTtlMs: toBoundedInteger("LUMEN_ACCESS_TOKEN_TTL_MS", parsed.LUMEN_ACCESS_TOKEN_TTL_MS, 900_000, 60_000, 86_400_000),
     refreshTokenTtlMs: toBoundedInteger("LUMEN_REFRESH_TOKEN_TTL_MS", parsed.LUMEN_REFRESH_TOKEN_TTL_MS, 2_592_000_000, 300_000, 31_536_000_000),
-    adminBootstrapToken: parsed.LUMEN_ADMIN_BOOTSTRAP_TOKEN ?? null,
     maxRequestBodyBytes: toBoundedInteger("LUMEN_MAX_REQUEST_BODY_BYTES", parsed.LUMEN_MAX_REQUEST_BODY_BYTES, 1_048_576, 1_024, 100_000_000),
     maxConcurrentRequests: toBoundedInteger("LUMEN_MAX_CONCURRENT_REQUESTS", parsed.LUMEN_MAX_CONCURRENT_REQUESTS, 128, 1, 10_000),
     maxRequestsPerMinute: toBoundedInteger("LUMEN_MAX_REQUESTS_PER_MINUTE", parsed.LUMEN_MAX_REQUESTS_PER_MINUTE, 600, 1, 1_000_000),
@@ -93,6 +88,5 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     ffprobeMaxOutputBytes: toBoundedInteger("LUMEN_FFPROBE_MAX_OUTPUT_BYTES", parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES, 1_048_576, 1_024, 100_000_000),
     shutdownGraceMs: toBoundedInteger("LUMEN_SHUTDOWN_GRACE_MS", parsed.LUMEN_SHUTDOWN_GRACE_MS, 10_000, 100, 600_000),
     heartbeatIntervalMs: toBoundedInteger("LUMEN_HEARTBEAT_INTERVAL_MS", parsed.LUMEN_HEARTBEAT_INTERVAL_MS, 20_000, 1_000, 600_000),
-    allowedMediaBases: (parsed.LUMEN_ALLOWED_MEDIA_BASES ?? "").split(",").map((value) => value.trim()).filter((value) => value !== ""),
   };
 };

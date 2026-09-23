@@ -1,10 +1,10 @@
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { Schema } from "effect";
 import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
-import { AccountRegistry } from "../accounts/AccountRegistry";
+import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { ServerClient } from "../api/ServerClient";
-import { PlayerController } from "../player/PlayerController";
-import { PlaybackBridge } from "../player/PlaybackBridge";
+import type { PlayerController } from "../player/PlayerController";
+import type { PlaybackBridge } from "../player/PlaybackBridge";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] => Schema.decodeUnknownSync(schema)(value);
 const requestId = (): string => crypto.randomUUID();
@@ -53,16 +53,26 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       const session = await dependencies.registry.session(active.connectionId);
       if (session !== null) {
         client.setSession(session);
+        const user = await client.me();
+        if (user.role !== active.role) {
+          await dependencies.registry.updateRole(active.connectionId, user.role);
+          client.setSession({ ...session, role: user.role });
+        }
         dependencies.clients.set(active.connectionId, client);
       }
     }
-    return result;
+    return await dependencies.registry.list();
+  });
+  handle("accounts:setup", async (_event, raw) => {
+    const input = decode(Schema.Struct({ origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)) }), raw);
+    return new ServerClient({ origin: input.origin }).setupRequired();
   });
   handle("accounts:connect", async (_event, raw) => {
     const input = decode(IpcConnectionInput, raw);
     const client = new ServerClient({ origin: input.origin });
     const identity = await client.identity();
-    const session = await client.login(input, requestId());
+    const session = await (await client.setupRequired() ? client.register(input, requestId()) : client.login(input, requestId()));
+    const user = await client.me();
     const connectionId = requestId();
     await dependencies.registry.save({
       connectionId,
@@ -71,6 +81,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       origin: client.serverOrigin,
       username: input.username,
       userId: session.userId,
+      role: user.role,
       sessionId: session.sessionId,
       accessToken: session.accessToken,
       refreshToken: session.refreshToken,
@@ -91,6 +102,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const session = await dependencies.registry.session(connectionId);
     if (session === null) throw new Error("Connection credentials are unavailable; sign in again");
     client.setSession(session);
+    const user = await client.me();
+    if (user.role !== account.role) {
+      await dependencies.registry.updateRole(connectionId, user.role);
+      client.setSession({ ...session, role: user.role });
+    }
     dependencies.clients.set(connectionId, client);
     return dependencies.registry.list();
   });
@@ -110,6 +126,27 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ query: Schema.String, libraryId: Schema.NullOr(Schema.String) }), raw);
     return activeClient(dependencies).search(input.query, input.libraryId);
   });
+  handle("admin:listUsers", async () => activeClient(dependencies).users());
+  handle("admin:createUser", async (_event, raw) => activeClient(dependencies).createUser(decode(Schema.Struct({
+    username: Schema.String,
+    displayName: Schema.String,
+    password: Schema.String,
+    role: Schema.optional(Schema.Literals(["admin", "user", "guest"])),
+  }), raw)));
+  handle("admin:updateUser", async (_event, raw) => {
+    const input = decode(Schema.Struct({ userId: Schema.String, displayName: Schema.optional(Schema.String), password: Schema.optional(Schema.String), role: Schema.optional(Schema.Literals(["admin", "user", "guest"])), isActive: Schema.optional(Schema.Boolean) }), raw);
+    return activeClient(dependencies).updateUser(input.userId, input);
+  });
+  handle("admin:listLibraries", async () => activeClient(dependencies).adminLibraries());
+  handle("admin:createLibrary", async (_event, raw) => activeClient(dependencies).createLibrary(decode(Schema.Struct({ id: Schema.String, name: Schema.String, slug: Schema.String, kind: Schema.Literals(["movies", "shows", "music"]) }), raw)));
+  handle("admin:updateLibrary", async (_event, raw) => {
+    const input = decode(Schema.Struct({ libraryId: Schema.String, name: Schema.optional(Schema.String), slug: Schema.optional(Schema.String), kind: Schema.optional(Schema.Literals(["movies", "shows", "music"])), isEnabled: Schema.optional(Schema.Boolean) }), raw);
+    return activeClient(dependencies).updateLibrary(input.libraryId, input);
+  });
+  handle("admin:deleteLibrary", async (_event, raw) => activeClient(dependencies).deleteLibrary(decode(Schema.String, raw)));
+  handle("admin:listRoots", async (_event, raw) => activeClient(dependencies).libraryRoots(decode(Schema.String, raw)));
+  handle("admin:addRoot", async (_event, raw) => activeClient(dependencies).addLibraryRoot(decode(Schema.Struct({ id: Schema.String, libraryId: Schema.String, path: Schema.String, priority: Schema.Number }), raw)));
+  handle("admin:deleteRoot", async (_event, raw) => activeClient(dependencies).deleteLibraryRoot(decode(Schema.String, raw)));
   handle("player:start", async (_event, raw) => {
     const input = decode(Schema.Struct({ itemId: Schema.String, deviceId: Schema.String }), raw);
     const result = await dependencies.player.start({
@@ -137,5 +174,5 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
 };
 
 export const unregisterIpcHandlers = (): void => {
-  for (const name of ["accounts:list", "accounts:connect", "accounts:activate", "accounts:remove", "library:list", "library:items", "library:search", "player:start", "player:pause", "player:seek", "player:state", "player:stop"]) ipcMain.removeHandler(name);
+  for (const name of ["accounts:list", "accounts:setup", "accounts:connect", "accounts:activate", "accounts:remove", "library:list", "library:items", "library:search", "admin:listUsers", "admin:createUser", "admin:updateUser", "admin:listLibraries", "admin:createLibrary", "admin:updateLibrary", "admin:deleteLibrary", "admin:listRoots", "admin:addRoot", "admin:deleteRoot", "player:start", "player:pause", "player:seek", "player:state", "player:stop"]) ipcMain.removeHandler(name);
 };

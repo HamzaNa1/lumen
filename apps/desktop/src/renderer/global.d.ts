@@ -1,9 +1,10 @@
-import type { IpcAccounts, IpcItemPage, IpcLibrary, IpcPlayerState, IpcPlayerSession } from "@lumen/contracts";
+import type { IpcAccounts, IpcItemPage, IpcLibrary, IpcPlayerState, IpcPlayerSession, User } from "@lumen/contracts";
 
 export interface LumenBridge {
   readonly accounts: {
     readonly list: () => Promise<IpcAccounts>;
-    readonly connect: (input: { readonly origin: string; readonly username: string; readonly password: string; readonly serverLabel: string }) => Promise<IpcAccounts>;
+    readonly connect: (input: { readonly origin: string; readonly username: string; readonly displayName?: string; readonly password: string; readonly serverLabel: string }) => Promise<IpcAccounts>;
+    readonly setup: (origin: string) => Promise<boolean>;
     readonly activate: (connectionId: string) => Promise<IpcAccounts>;
     readonly remove: (connectionId: string) => Promise<IpcAccounts>;
   };
@@ -11,6 +12,18 @@ export interface LumenBridge {
     readonly list: () => Promise<ReadonlyArray<IpcLibrary>>;
     readonly items: (libraryId: string, cursor?: string | null) => Promise<IpcItemPage>;
     readonly search: (query: string, libraryId?: string | null) => Promise<unknown>;
+  };
+  readonly admin: {
+    readonly listUsers: () => Promise<ReadonlyArray<User>>;
+    readonly createUser: (input: { readonly username: string; readonly displayName: string; readonly password: string; readonly role?: "admin" | "user" | "guest" }) => Promise<User>;
+    readonly updateUser: (input: { readonly userId: string; readonly displayName?: string; readonly password?: string; readonly role?: "admin" | "user" | "guest"; readonly isActive?: boolean }) => Promise<User>;
+    readonly listLibraries: () => Promise<ReadonlyArray<IpcLibrary>>;
+    readonly createLibrary: (input: { readonly id: string; readonly name: string; readonly slug: string; readonly kind: "movies" | "shows" | "music" }) => Promise<IpcLibrary>;
+    readonly updateLibrary: (input: { readonly libraryId: string; readonly name?: string; readonly slug?: string; readonly kind?: "movies" | "shows" | "music"; readonly isEnabled?: boolean }) => Promise<IpcLibrary>;
+    readonly deleteLibrary: (libraryId: string) => Promise<unknown>;
+    readonly listRoots: (libraryId: string) => Promise<ReadonlyArray<unknown>>;
+    readonly addRoot: (input: { readonly id: string; readonly libraryId: string; readonly path: string; readonly priority: number }) => Promise<unknown>;
+    readonly deleteRoot: (rootId: string) => Promise<unknown>;
   };
   readonly player: {
     readonly start: (itemId: string, deviceId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;

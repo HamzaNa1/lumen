@@ -1,4 +1,4 @@
-import { CreateLibrary, type Library, type LibraryGrant, type LibraryRoot } from "@lumen/contracts";
+import type { Library, LibraryGrant, LibraryRoot } from "@lumen/contracts";
 import { Database, Repositories, sql } from "@lumen/database";
 import { lstat } from "node:fs/promises";
 import { Context, Effect, Layer } from "effect";
@@ -6,13 +6,12 @@ import { mapRepositoryError } from "../core/Cause";
 import { conflict, notFound } from "../core/Errors";
 import { assertNoRootOverlap, canonicalPath } from "../core/Paths";
 import { newUuid } from "../core/Security";
-import type { CreateLibraryBody, CreateRootBody } from "../http/Schemas";
-import { Schema } from "effect";
-import type { ServerConfig } from "../config/Config";
-import { isAbsolute, relative, sep } from "node:path";
+import type { CreateLibraryBody, CreateRootBody, UpdateLibraryBody } from "../http/Schemas";
+import type { Schema } from "effect";
 import type { CreateGrantBody, StartScanBody } from "../http/Schemas";
 
 type LibraryInput = Schema.Schema.Type<typeof CreateLibraryBody>;
+type UpdateLibraryInput = Schema.Schema.Type<typeof UpdateLibraryBody>;
 type RootInput = Schema.Schema.Type<typeof CreateRootBody>;
 type GrantInput = Schema.Schema.Type<typeof CreateGrantBody>;
 type ScanInput = Schema.Schema.Type<typeof StartScanBody>;
@@ -20,6 +19,8 @@ type RootRow = Omit<LibraryRoot, "isEnabled"> & { isEnabled: number };
 
 export interface LibraryServiceShape {
   readonly create: (input: LibraryInput, nowMs: number) => Effect.Effect<Library, unknown>;
+  readonly update: (libraryId: string, input: UpdateLibraryInput, nowMs: number) => Effect.Effect<unknown, unknown>;
+  readonly remove: (libraryId: string) => Effect.Effect<void, unknown>;
   readonly addRoot: (input: RootInput, nowMs: number) => Effect.Effect<LibraryRoot, unknown>;
   readonly listRoots: (libraryId: string) => Effect.Effect<ReadonlyArray<LibraryRoot>, unknown>;
   readonly listGrants: (libraryId: string) => Effect.Effect<ReadonlyArray<LibraryGrant>, unknown>;
@@ -28,7 +29,7 @@ export interface LibraryServiceShape {
   readonly startScan: (input: ScanInput, nowMs: number) => Effect.Effect<{ runId: string }, unknown>;
 }
 
-export const makeLibraryService = (config: ServerConfig) => Effect.gen(function* () {
+export const makeLibraryService = Effect.gen(function* () {
   const repositories = yield* Repositories;
   const database = yield* Database;
 
@@ -45,7 +46,38 @@ export const makeLibraryService = (config: ServerConfig) => Effect.gen(function*
       `);
       return created;
     }));
-    return { ...row, isEnabled: row?.isEnabled === 1 } as Library;
+    return { ...row, kind: input.kind ?? "movies", isEnabled: row?.isEnabled === 1 } as unknown as Library;
+  });
+
+  const update: LibraryServiceShape["update"] = Effect.fn("LibraryService.update")(function* (libraryId, input, nowMs) {
+    return yield* database.transaction((transaction) => Effect.gen(function* () {
+      const row = yield* transaction.get<Record<string, unknown>>(sql`
+        UPDATE libraries SET
+          name = COALESCE(${input.name?.trim() ?? null}, name),
+          slug = COALESCE(${input.slug ?? null}, slug),
+          is_enabled = COALESCE(${input.isEnabled === undefined ? null : input.isEnabled ? 1 : 0}, is_enabled),
+          updated_at_ms = ${nowMs}
+        WHERE id = ${libraryId}
+        RETURNING id, name, slug, is_enabled AS isEnabled, created_at_ms AS createdAtMs, updated_at_ms AS updatedAtMs
+      `);
+      if (row == null) return yield* notFound("Library not found");
+      const profile = yield* transaction.get<{ kind: "movies" | "shows" | "music" }>(sql`SELECT kind FROM library_profiles WHERE library_id = ${libraryId}`);
+      const currentKind = profile?.kind ?? "movies";
+      if (input.kind !== undefined && input.kind !== currentKind) {
+        const catalog = yield* transaction.get<{ count: number }>(sql`SELECT count(*) AS count FROM catalog_items WHERE library_id = ${libraryId}`);
+        if ((catalog?.count ?? 0) > 0) return yield* conflict("Library type cannot change after media has been indexed");
+        yield* transaction.run(sql`
+          INSERT INTO library_profiles(library_id, kind, scan_mode)
+          VALUES (${libraryId}, ${input.kind}, ${input.kind === "music" ? "incremental" : "full"})
+          ON CONFLICT(library_id) DO UPDATE SET kind = excluded.kind
+        `);
+      }
+      return { ...row, kind: input.kind ?? currentKind, isEnabled: row.isEnabled === 1 };
+    }));
+  });
+
+  const remove: LibraryServiceShape["remove"] = Effect.fn("LibraryService.remove")(function* (libraryId) {
+    yield* database.run(sql`DELETE FROM libraries WHERE id = ${libraryId}`);
   });
 
   const addRoot: LibraryServiceShape["addRoot"] = Effect.fn("LibraryService.addRoot")(function* (input, nowMs) {
@@ -58,11 +90,6 @@ export const makeLibraryService = (config: ServerConfig) => Effect.gen(function*
       try: () => canonicalPath(input.path),
       catch: (cause) => conflict(cause instanceof Error ? cause.message : "Root does not exist"),
     });
-    const allowed = config.allowedMediaBases.length === 0 || config.allowedMediaBases.some((base) => {
-      const resolvedBase = relative(base, rootPath);
-      return resolvedBase === "" || (resolvedBase !== ".." && !resolvedBase.startsWith(`..${sep}`) && !isAbsolute(resolvedBase));
-    });
-    if (!allowed) return yield* conflict("Root is outside the configured media base directories");
     const stat = yield* Effect.tryPromise({
       try: () => lstat(rootPath),
       catch: () => conflict("Root is not accessible"),
@@ -150,11 +177,11 @@ export const makeLibraryService = (config: ServerConfig) => Effect.gen(function*
     return { runId: run.id };
   });
 
-  return { create, addRoot, listRoots, listGrants, deleteRoot, upsertGrant, startScan };
+  return { create, update, remove, addRoot, listRoots, listGrants, deleteRoot, upsertGrant, startScan };
 });
 
 export class LibraryService extends Context.Service<LibraryService, LibraryServiceShape>()(
   "@lumen/server/Library",
 ) {}
 
-export const LibraryServiceLive = (config: ServerConfig) => Layer.effect(LibraryService, makeLibraryService(config));
+export const LibraryServiceLive = Layer.effect(LibraryService, makeLibraryService);

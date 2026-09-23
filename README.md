@@ -13,10 +13,6 @@ bun run dev:server
 bun run dev:desktop
 ```
 
-Create the first administrator with:
-
-```sh
-bun run create-admin -- --username admin --display-name "Administrator" --password "a long local password"
-```
+On first launch, open the desktop app, enter the server address, and create the first account. That account becomes the server administrator; subsequent users are managed from Administration.
 
 The server requires no transcoder. Configure a read-only media root and a local SQLite data directory before scanning.

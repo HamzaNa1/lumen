@@ -1,14 +1,17 @@
 import type { IpcConnectionInput, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState } from "@lumen/contracts";
+import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
 
 export interface ServerIdentity {
   readonly serverId: string;
   readonly displayName: string;
   readonly apiVersion: string;
+  readonly setupRequired?: boolean;
 }
 
 export interface AccountSession {
   readonly userId: string;
+  readonly role: "admin" | "user" | "guest";
   readonly sessionId: string;
   readonly accessToken: string;
   readonly refreshToken: string;
@@ -25,10 +28,12 @@ const identitySchema = Schema.Struct({
   serverId: Schema.String,
   displayName: Schema.String,
   apiVersion: Schema.String,
+  setupRequired: Schema.optional(Schema.Boolean),
 });
 
 const sessionSchema = Schema.Struct({
   userId: Schema.String,
+  role: Schema.optional(Schema.Literals(["admin", "user", "guest"])),
   sessionId: Schema.String,
   accessToken: Schema.String,
   refreshToken: Schema.String,
@@ -91,6 +96,10 @@ const normalizeOrigin = (value: string): string => {
 };
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] => Schema.decodeUnknownSync(schema)(value);
+const decodeSession = (value: unknown): AccountSession => {
+  const session = decode(sessionSchema, value);
+  return { ...session, role: session.role ?? "user" };
+};
 
 export class ServerClient {
   private readonly origin: string;
@@ -120,6 +129,36 @@ export class ServerClient {
     return decode(identitySchema, await readJson(response));
   }
 
+  async setupRequired(): Promise<boolean> {
+    const response = await this.fetchImpl(new URL("/api/v1/auth/setup", this.origin), { redirect: "manual" });
+    if (response.status === 404) return false;
+    return decode(Schema.Struct({ setupRequired: Schema.Boolean }), await readJson(response)).setupRequired;
+  }
+
+  async me(): Promise<User> {
+    return this.request("/api/v1/auth/me", {}, User);
+  }
+
+  async register(input: IpcConnectionInput, deviceId: string): Promise<AccountSession> {
+    const response = await this.fetchImpl(new URL("/api/v1/auth/register", this.origin), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: input.username,
+        displayName: input.displayName ?? input.username,
+        password: input.password,
+        deviceId,
+        deviceName: "Lumen Desktop",
+        platform: "desktop",
+        platformDeviceId: deviceId,
+      }),
+      redirect: "manual",
+    });
+    const session = decodeSession(await readJson(response));
+    this.session = session;
+    return session;
+  }
+
   async login(input: IpcConnectionInput, deviceId: string): Promise<AccountSession> {
     const response = await this.fetchImpl(new URL("/api/v1/auth/login", this.origin), {
       method: "POST",
@@ -134,7 +173,7 @@ export class ServerClient {
       }),
       redirect: "manual",
     });
-    const session = decode(sessionSchema, await readJson(response));
+    const session = decodeSession(await readJson(response));
     this.session = session;
     return session;
   }
@@ -150,7 +189,7 @@ export class ServerClient {
         body: JSON.stringify({ refreshToken: current.refreshToken }),
         redirect: "manual",
       });
-      const session = decode(sessionSchema, await readJson(response));
+      const session = decodeSession(await readJson(response));
       this.session = session;
       return session;
     })().finally(() => { this.refreshPromise = null; });
@@ -174,6 +213,66 @@ export class ServerClient {
 
   async libraries(): Promise<ReadonlyArray<IpcLibrary>> {
     return this.request("/api/v1/libraries", {}, librarySchema);
+  }
+
+  async adminLibraries(): Promise<ReadonlyArray<IpcLibrary>> {
+    return this.request("/api/v1/admin/libraries", {}, librarySchema);
+  }
+
+  async users(): Promise<ReadonlyArray<User>> {
+    return this.request("/api/v1/users", {}, Schema.Array(User));
+  }
+
+  async createUser(input: { readonly username: string; readonly displayName: string; readonly password: string; readonly role?: "admin" | "user" | "guest" }): Promise<User> {
+    return this.request("/api/v1/users", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }, User);
+  }
+
+  async updateUser(userId: string, input: { readonly displayName?: string; readonly password?: string; readonly role?: "admin" | "user" | "guest"; readonly isActive?: boolean }): Promise<User> {
+    return this.request(`/api/v1/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }, User);
+  }
+
+  async createLibrary(input: { readonly id: string; readonly name: string; readonly slug: string; readonly kind: "movies" | "shows" | "music" }): Promise<IpcLibrary> {
+    return this.request("/api/v1/libraries", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }, librarySchema);
+  }
+
+  async updateLibrary(libraryId: string, input: { readonly name?: string; readonly slug?: string; readonly kind?: "movies" | "shows" | "music"; readonly isEnabled?: boolean }): Promise<IpcLibrary> {
+    return this.request(`/api/v1/libraries/${encodeURIComponent(libraryId)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    }, librarySchema);
+  }
+
+  async deleteLibrary(libraryId: string): Promise<void> {
+    await this.request(`/api/v1/libraries/${encodeURIComponent(libraryId)}`, { method: "DELETE" });
+  }
+
+  async libraryRoots(libraryId: string): Promise<ReadonlyArray<unknown>> {
+    return this.request(`/api/v1/libraries/${encodeURIComponent(libraryId)}/roots`);
+  }
+
+  async addLibraryRoot(input: { readonly id: string; readonly libraryId: string; readonly path: string; readonly priority: number }): Promise<unknown> {
+    return this.request(`/api/v1/libraries/${encodeURIComponent(input.libraryId)}/roots`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    });
+  }
+
+  async deleteLibraryRoot(rootId: string): Promise<void> {
+    await this.request(`/api/v1/roots/${encodeURIComponent(rootId)}`, { method: "DELETE" });
   }
 
   async items(libraryId: string, cursor: string | null = null): Promise<IpcItemPage> {

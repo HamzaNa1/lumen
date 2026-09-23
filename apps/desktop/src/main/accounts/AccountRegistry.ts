@@ -12,6 +12,7 @@ interface StoredAccount {
   readonly origin: string;
   readonly username: string;
   readonly userId: string;
+  readonly role: "admin" | "user" | "guest";
   readonly lastConnectedAtMs: number | null;
 }
 
@@ -38,7 +39,7 @@ export class AccountRegistry {
       const data = JSON.parse(await readFile(path, "utf8")) as RegistryData;
       return new AccountRegistry(path, {
         activeConnectionId: data.activeConnectionId ?? null,
-        accounts: Array.isArray(data.accounts) ? data.accounts : [],
+        accounts: Array.isArray(data.accounts) ? data.accounts.map((account) => ({ ...account, role: account.role ?? "user" })) : [],
       });
     } catch {
       return new AccountRegistry(path, emptyRegistry);
@@ -76,6 +77,7 @@ export class AccountRegistry {
     readonly origin: string;
     readonly username: string;
     readonly userId: string;
+    readonly role: "admin" | "user" | "guest";
     readonly sessionId: string;
     readonly accessToken: string;
     readonly refreshToken: string;
@@ -89,6 +91,7 @@ export class AccountRegistry {
       origin: input.origin,
       username: input.username,
       userId: input.userId,
+      role: input.role,
       lastConnectedAtMs: Date.now(),
     };
     this.data = {
@@ -110,6 +113,15 @@ export class AccountRegistry {
   async activate(connectionId: string): Promise<void> {
     if (this.find(connectionId) === null) throw new Error("Connection not found");
     this.data = { ...this.data, activeConnectionId: connectionId };
+    await writePrivateJson(this.path, this.data);
+  }
+
+  async updateRole(connectionId: string, role: "admin" | "user" | "guest"): Promise<void> {
+    if (this.find(connectionId) === null) throw new Error("Connection not found");
+    this.data = {
+      ...this.data,
+      accounts: this.data.accounts.map((account) => account.connectionId === connectionId ? { ...account, role } : account),
+    };
     await writePrivateJson(this.path, this.data);
   }
 
