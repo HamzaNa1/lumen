@@ -84,21 +84,8 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
           userId: user.id,
           deviceId: device.id,
           sessionTokenHash: digests.session,
-          refreshTokenId: ids.refreshToken,
-          refreshTokenHash: digests.refresh,
-          refreshFamilyId: ids.refreshFamily,
-          refreshGeneration: 0,
           issuedAtMs: times.epochMs,
           expiresAtMs: times.epochMs + times.hourMs,
-          refreshExpiresAtMs: times.epochMs + times.dayMs,
-        });
-        const rotatedRefreshToken = yield* repositories.auth.rotateRefreshToken({
-          currentTokenId: ids.refreshToken,
-          sessionId: session.id,
-          replacementTokenId: ids.replacementRefreshToken,
-          replacementTokenHash: digests.replacementRefresh,
-          issuedAtMs: times.epochMs + times.minuteMs,
-          expiresAtMs: times.epochMs + times.dayMs + times.minuteMs,
         });
         const library = yield* repositories.libraries.create(fixtures.createLibrary);
         yield* repositories.libraries.addRoot({
@@ -258,7 +245,6 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         });
         return {
           session,
-          rotatedRefreshToken,
           grant,
           chapter,
           sidecar,
@@ -278,7 +264,6 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.session.id).toBe(ids.authSession);
-    expect(result.rotatedRefreshToken.generation).toBe(1);
     expect(result.grant.capabilities).toContain("playback:control");
     expect(result.chapter.endMs).toBe(30_000);
     expect(result.sidecar.kind).toBe("lyrics");

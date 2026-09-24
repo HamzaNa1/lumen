@@ -23,6 +23,7 @@ export interface LumenBridge {
       readonly displayName?: string;
       readonly password: string;
       readonly serverLabel: string;
+      readonly signUp?: boolean;
     }) => Promise<IpcAccounts>;
     readonly setup: (origin: string) => Promise<boolean>;
     readonly activate: (connectionId: string) => Promise<IpcAccounts>;

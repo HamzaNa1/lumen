@@ -998,19 +998,34 @@ button:disabled {
   padding: 12px 0;
   border-top: 1px solid var(--border-subtle);
 }
-.saved-server > div {
+.saved-server-open {
   display: grid;
   gap: 3px;
+  grid-template-columns: 1fr auto;
   flex: 1 1 100%;
   min-width: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--text-primary);
+  text-align: left;
+  cursor: pointer;
 }
-.saved-server strong {
-  font-size: 0.9rem;
+.saved-server-open:hover, .saved-server-open:focus-visible {
+  border-color: var(--accent);
+  background: rgba(255, 255, 255, 0.06);
 }
-.saved-server span {
+.saved-server-open:disabled { cursor: wait; opacity: 0.65; }
+.saved-server-open > svg { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+.saved-server-open > strong, .saved-server-open > span { grid-column: 1; }
+.saved-server-open > span {
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   font-size: 0.75rem;
+}
+.saved-server-open strong {
+  font-size: 0.9rem;
 }
 
 .error-message {

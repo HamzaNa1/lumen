@@ -31,43 +31,44 @@ describe("desktop installation identity", () => {
 });
 
 describe("ServerClient discovery", () => {
-  test("restores an expired session and persists rotated credentials before requesting data", async () => {
+  test("exchanges a legacy credential for a saved session token", async () => {
+    const requests: string[] = [];
+    const client = new ServerClient({
+      origin: "https://media.example",
+      fetchImpl: async (input, init) => {
+        requests.push(new URL(String(input)).pathname);
+        expect(JSON.parse(String(init?.body))).toEqual({ refreshToken: "legacy-refresh" });
+        return new Response(JSON.stringify({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: `${ids.authSession}.new-secret`, accessExpiresAtMs: Date.now() + 1_000 }), { status: 200 });
+      },
+    });
+    const session = await client.migrateLegacySession("legacy-refresh");
+    expect(session.accessToken).toBe(client.currentSession?.accessToken);
+    expect(requests).toEqual(["/api/v1/auth/migrate-session"]);
+  });
+
+  test("reuses the saved session token without a refresh request", async () => {
     const calls: string[] = [];
     const client = new ServerClient({
       origin: "https://media.example",
-      onSessionChanged: async (session) => { calls.push(`saved ${session.refreshToken}`); },
       fetchImpl: async (input, init) => {
         const path = new URL(String(input)).pathname;
-        if (path === "/api/v1/auth/refresh") {
-          calls.push("refresh");
-          return new Response(JSON.stringify({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "new-access", refreshToken: "new-refresh", accessExpiresAtMs: Date.now() + 900_000, refreshExpiresAtMs: Date.now() + 2_592_000_000 }), { status: 200 });
-        }
+        expect(path).toBe("/api/v1/test");
         calls.push(`request ${new Headers(init?.headers).get("authorization")}`);
         return new Response(JSON.stringify({ ok: true }), { status: 200 });
       },
     });
-    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "old-access", refreshToken: "old-refresh", accessExpiresAtMs: 1, refreshExpiresAtMs: Date.now() + 100_000 });
+    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "saved-session", accessExpiresAtMs: 1 });
     expect(await client.request("/api/v1/test")).toEqual({ ok: true });
-    expect(calls).toEqual(["refresh", "saved new-refresh", "request Bearer new-access"]);
+    expect(calls).toEqual(["request Bearer saved-session"]);
   });
 
-  test("shares one refresh across simultaneous requests", async () => {
-    let refreshes = 0;
+  test("reports an expired session so the user can sign in", async () => {
     const client = new ServerClient({
       origin: "https://media.example",
-      fetchImpl: async (input, init) => {
-        if (new URL(String(input)).pathname === "/api/v1/auth/refresh") {
-          refreshes += 1;
-          await Promise.resolve();
-          return new Response(JSON.stringify({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "new-access", refreshToken: "new-refresh", accessExpiresAtMs: Date.now() + 900_000, refreshExpiresAtMs: Date.now() + 2_592_000_000 }), { status: 200 });
-        }
-        expect(new Headers(init?.headers).get("authorization")).toBe("Bearer new-access");
-        return new Response(JSON.stringify({ ok: true }), { status: 200 });
-      },
+      fetchImpl: async () => new Response(JSON.stringify({ message: "Session is invalid" }), { status: 401 }),
     });
-    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "old-access", refreshToken: "old-refresh", accessExpiresAtMs: 1, refreshExpiresAtMs: Date.now() + 100_000 });
-    await Promise.all([client.request("/api/v1/one"), client.request("/api/v1/two")]);
-    expect(refreshes).toBe(1);
+    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "saved-session", accessExpiresAtMs: 1 });
+    expect(client.request("/api/v1/test")).rejects.toThrow("Session is invalid");
   });
 
   test("discovers a server and its setup status before authentication", async () => {
@@ -142,7 +143,7 @@ describe("ServerClient discovery", () => {
         }), { status: 200 });
       },
     });
-    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "access", refreshToken: "refresh", accessExpiresAtMs: Date.now() + 900_000, refreshExpiresAtMs: Date.now() + 2_592_000_000 });
+    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "access", accessExpiresAtMs: Date.now() + 900_000 });
 
     const started = await client.startScan(ids.library, "full");
     const status = await client.scanStatus(started.runId);
@@ -174,7 +175,7 @@ describe("ServerClient discovery", () => {
         }), { status: 201 });
       },
     });
-    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "access", refreshToken: "refresh", accessExpiresAtMs: Date.now() + 900_000, refreshExpiresAtMs: Date.now() + 2_592_000_000 });
+    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "access", accessExpiresAtMs: Date.now() + 900_000 });
 
     await Reflect.apply(client.startPlayback, client, [ids.track, ids.device]);
 

@@ -80,9 +80,7 @@ export class AccountRegistry {
     readonly role: "admin" | "user" | "guest";
     readonly sessionId: string;
     readonly accessToken: string;
-    readonly refreshToken: string;
     readonly accessExpiresAtMs: number;
-    readonly refreshExpiresAtMs: number;
   }): Promise<void> {
     const record: StoredAccount = {
       connectionId: input.connectionId,
@@ -104,9 +102,7 @@ export class AccountRegistry {
       role: input.role,
       sessionId: input.sessionId,
       accessToken: input.accessToken,
-      refreshToken: input.refreshToken,
       accessExpiresAtMs: input.accessExpiresAtMs,
-      refreshExpiresAtMs: input.refreshExpiresAtMs,
     }));
     await writePrivateJson(this.path, next);
     this.data = next;

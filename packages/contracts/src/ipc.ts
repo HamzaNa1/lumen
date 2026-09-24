@@ -10,13 +10,6 @@ export const IpcLogin = Schema.Struct({
 });
 export type IpcLogin = Schema.Schema.Type<typeof IpcLogin>;
 
-export const IpcRefresh = Schema.Struct({
-  _tag: Schema.Literal("auth.refresh"),
-  refreshToken: Schema.String.check(Schema.isMinLength(1)),
-  nowMs: UtcMillis,
-});
-export type IpcRefresh = Schema.Schema.Type<typeof IpcRefresh>;
-
 export const IpcLogout = Schema.Struct({
   _tag: Schema.Literal("auth.logout"),
   sessionId: Uuid,
@@ -87,6 +80,7 @@ export const IpcConnectionInput = Schema.Struct({
   displayName: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
   serverLabel: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  signUp: Schema.optional(Schema.Boolean),
 });
 export type IpcConnectionInput = Schema.Schema.Type<typeof IpcConnectionInput>;
 
@@ -207,7 +201,6 @@ export type IpcPlayerSurfaceBounds = Schema.Schema.Type<typeof IpcPlayerSurfaceB
 
 export const IpcRequest = Schema.Union([
   IpcLogin,
-  IpcRefresh,
   IpcLogout,
   IpcSearchCatalog,
   IpcStartPlayback,

@@ -24,8 +24,8 @@ export const createTokenVault = async (fileName: string): Promise<VaultValue> =>
             return safeStorage.decryptString(bytes);
           } catch {
             const plain = bytes.toString("utf8");
-            const parsed = JSON.parse(plain) as { accessToken?: unknown; refreshToken?: unknown };
-            if (typeof parsed.accessToken !== "string" || typeof parsed.refreshToken !== "string") return null;
+            const parsed = JSON.parse(plain) as { accessToken?: unknown };
+            if (typeof parsed.accessToken !== "string") return null;
             const temporary = `${filePath}.${randomBytes(6).toString("hex")}.tmp`;
             await writeFile(temporary, safeStorage.encryptString(plain), { mode: 0o600 });
             await rename(temporary, filePath);

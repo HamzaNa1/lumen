@@ -194,9 +194,9 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
       const input = decode(S.LoginBody, await body(request, config.maxRequestBodyBytes));
       return json(Schema.Unknown, await call(services.auth.login(input, Date.now())));
     }
-    if (method === "POST" && url.pathname === "/api/v1/auth/refresh") {
-      const input = decode(S.RefreshBody, await body(request, config.maxRequestBodyBytes));
-      return json(Schema.Unknown, await call(services.auth.refresh(input, Date.now())));
+    if (method === "POST" && url.pathname === "/api/v1/auth/migrate-session") {
+      const input = decode(S.LegacySessionBody, await body(request, config.maxRequestBodyBytes));
+      return json(Schema.Unknown, await call(services.auth.migrateLegacySession(input.refreshToken, Date.now())));
     }
     if ((method === "GET" || method === "HEAD") && parts[0] === "api" && parts[1] === "v1" && parts[2] === "media" && parts[3] !== undefined) {
       const grant = bearer(request) ?? url.searchParams.get("grant");
@@ -507,7 +507,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
   return async (request: Request): Promise<Response> => {
     const requestId = request.headers.get("x-request-id")?.slice(0, 128) ?? newUuid();
     const key = clientKey(request);
-    const login = new URL(request.url).pathname.endsWith("/auth/login") || new URL(request.url).pathname.endsWith("/auth/register");
+    const login = ["/auth/login", "/auth/register", "/auth/migrate-session"].some((path) => new URL(request.url).pathname.endsWith(path));
     try {
       const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
       const checked = limiter.check(key, Date.now(), login ? "login" : "request");

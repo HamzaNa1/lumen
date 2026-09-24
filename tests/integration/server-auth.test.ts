@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
-import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
+import { hashPassword, hashToken, newOpaqueToken, newUuid } from "../../apps/server/src/core/Security";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
 
 const runningServers: RunningServer[] = [];
@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 
 describe("server authentication and ACL", () => {
-  test("refreshes an expired access session and accepts the rotated access token", async () => {
+  test("validates the session secret and extends an active session", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-server-refresh-test-"));
     const databasePath = join(root, "server.sqlite");
     paths.push(root);
@@ -51,28 +51,29 @@ describe("server authentication and ACL", () => {
       body: JSON.stringify({ username: "admin", password: "correct horse battery staple", deviceId: newUuid(), deviceName: "Test", platform: "desktop", platformDeviceId: null }),
     });
     expect(login.status).toBe(200);
-    const first = await login.json() as { sessionId: string; accessToken: string; refreshToken: string };
+    const first = await login.json() as { sessionId: string; accessToken: string };
+    expect(first.accessToken.startsWith(`${first.sessionId}.`)).toBe(true);
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${first.sessionId}.invalid` } })).status).toBe(401);
     const databaseLayer = makeDatabaseLayers({ databasePath } as never);
+    const previousVerification = Date.now() - 2 * 60 * 60 * 1000;
     await Effect.runPromise(Effect.gen(function* () {
       const database = yield* Database;
-      yield* database.run(sql`UPDATE auth_sessions SET issued_at_ms = 1, last_used_at_ms = 1, expires_at_ms = 2 WHERE id = ${first.sessionId}`);
+      const row = yield* database.get<{ secretHash: string }>(sql`SELECT session_token_hash AS secretHash FROM auth_sessions WHERE id = ${first.sessionId}`);
+      expect(row?.secretHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(first.accessToken.includes(row?.secretHash ?? "")).toBe(false);
+      yield* database.run(sql`UPDATE auth_sessions SET issued_at_ms = ${previousVerification - 1}, last_used_at_ms = ${previousVerification} WHERE id = ${first.sessionId}`);
+    }).pipe(Effect.provide(databaseLayer)));
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${first.accessToken}` } })).status).toBe(200);
+    await Effect.runPromise(Effect.gen(function* () {
+      const database = yield* Database;
+      const row = yield* database.get<{ lastVerifiedAtMs: number; expiresAtMs: number }>(sql`
+        SELECT last_used_at_ms AS lastVerifiedAtMs, expires_at_ms AS expiresAtMs FROM auth_sessions WHERE id = ${first.sessionId}
+      `);
+      expect(row?.lastVerifiedAtMs).toBeGreaterThan(previousVerification);
+      expect(row?.expiresAtMs).toBeGreaterThan(Date.now() + 9 * 24 * 60 * 60 * 1000);
+      yield* database.run(sql`UPDATE auth_sessions SET issued_at_ms = 1, last_used_at_ms = 1 WHERE id = ${first.sessionId}`);
     }).pipe(Effect.provide(databaseLayer)));
     expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${first.accessToken}` } })).status).toBe(401);
-    const refreshed = await request(base, "/api/v1/auth/refresh", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refreshToken: first.refreshToken }),
-    });
-    expect(refreshed.status).toBe(200);
-    const second = await refreshed.json() as { accessToken: string; refreshToken: string };
-    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${second.accessToken}` } })).status).toBe(200);
-    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${first.accessToken}` } })).status).toBe(401);
-    const next = await request(base, "/api/v1/auth/refresh", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ refreshToken: second.refreshToken }),
-    });
-    expect(next.status).toBe(200);
   });
 
   test("lets the first account register as the administrator", async () => {
@@ -97,7 +98,48 @@ describe("server authentication and ACL", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ username: "second", displayName: "Second", password: "correct horse battery staple", deviceId: newUuid(), deviceName: "Setup", platform: "web", platformDeviceId: null }),
     });
-    expect(second.status).toBe(409);
+    expect(second.status).toBe(201);
+    expect((await second.json() as { role: string }).role).toBe("user");
+    const duplicate = await request(base, "/api/v1/auth/register", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "second", displayName: "Another", password: "correct horse battery staple", deviceId: newUuid(), deviceName: "Setup", platform: "web", platformDeviceId: null }),
+    });
+    expect(duplicate.status).toBe(409);
+  });
+
+  test("exchanges a saved legacy refresh token once", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-server-migrate-test-"));
+    const databasePath = join(root, "server.sqlite");
+    paths.push(root);
+    await seedAdmin(databasePath);
+    const base = await start(databasePath);
+    const login = await request(base, "/api/v1/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "correct horse battery staple", deviceId: newUuid(), deviceName: "Legacy", platform: "desktop", platformDeviceId: null }),
+    });
+    const oldSession = await login.json() as { sessionId: string; accessToken: string };
+    const refreshToken = newOpaqueToken();
+    const databaseLayer = makeDatabaseLayers({ databasePath } as never);
+    await Effect.runPromise(Effect.gen(function* () {
+      const database = yield* Database;
+      const nowMs = Date.now();
+      yield* database.run(sql`
+        INSERT INTO refresh_tokens(id, session_id, token_hash, family_id, generation, issued_at_ms, expires_at_ms)
+        VALUES (${newUuid()}, ${oldSession.sessionId}, ${hashToken(refreshToken)}, ${newUuid()}, 0, ${nowMs}, ${nowMs + 86_400_000})
+      `);
+    }).pipe(Effect.provide(databaseLayer)));
+    const migrate = () => request(base, "/api/v1/auth/migrate-session", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ refreshToken }),
+    });
+    const exchanged = await migrate();
+    expect(exchanged.status).toBe(200);
+    const next = await exchanged.json() as { accessToken: string; sessionId: string };
+    expect(next.sessionId).not.toBe(oldSession.sessionId);
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${next.accessToken}` } })).status).toBe(200);
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${oldSession.accessToken}` } })).status).toBe(401);
+    expect((await migrate()).status).toBe(401);
   });
 
   test("hashes credentials, enforces bearer auth, and scopes library browsing", async () => {

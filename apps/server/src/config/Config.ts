@@ -17,8 +17,6 @@ const Environment = Schema.Struct({
   LUMEN_DATABASE_PATH: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_DATA_DIR: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_LOG_LEVEL: Schema.optional(LogLevel),
-  LUMEN_ACCESS_TOKEN_TTL_MS: Schema.optional(Numeric),
-  LUMEN_REFRESH_TOKEN_TTL_MS: Schema.optional(Numeric),
   LUMEN_MAX_REQUEST_BODY_BYTES: Schema.optional(Numeric),
   LUMEN_MAX_CONCURRENT_REQUESTS: Schema.optional(Numeric),
   LUMEN_MAX_REQUESTS_PER_MINUTE: Schema.optional(Numeric),
@@ -37,8 +35,6 @@ export interface ServerConfig {
   readonly databasePath: string;
   readonly dataDir: string;
   readonly logLevel: "debug" | "info" | "warn" | "error";
-  readonly accessTokenTtlMs: number;
-  readonly refreshTokenTtlMs: number;
   readonly maxRequestBodyBytes: number;
   readonly maxConcurrentRequests: number;
   readonly maxRequestsPerMinute: number;
@@ -76,8 +72,6 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     databasePath,
     dataDir,
     logLevel: parsed.LUMEN_LOG_LEVEL ?? "info",
-    accessTokenTtlMs: toBoundedInteger("LUMEN_ACCESS_TOKEN_TTL_MS", parsed.LUMEN_ACCESS_TOKEN_TTL_MS, 900_000, 60_000, 86_400_000),
-    refreshTokenTtlMs: toBoundedInteger("LUMEN_REFRESH_TOKEN_TTL_MS", parsed.LUMEN_REFRESH_TOKEN_TTL_MS, 2_592_000_000, 300_000, 31_536_000_000),
     maxRequestBodyBytes: toBoundedInteger("LUMEN_MAX_REQUEST_BODY_BYTES", parsed.LUMEN_MAX_REQUEST_BODY_BYTES, 1_048_576, 1_024, 100_000_000),
     maxConcurrentRequests: toBoundedInteger("LUMEN_MAX_CONCURRENT_REQUESTS", parsed.LUMEN_MAX_CONCURRENT_REQUESTS, 128, 1, 10_000),
     maxRequestsPerMinute: toBoundedInteger("LUMEN_MAX_REQUESTS_PER_MINUTE", parsed.LUMEN_MAX_REQUESTS_PER_MINUTE, 600, 1, 1_000_000),

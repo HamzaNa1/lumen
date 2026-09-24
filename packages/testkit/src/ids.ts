@@ -2,9 +2,6 @@ export const ids = {
   user: "00000000-0000-4000-8000-000000000001",
   device: "00000000-0000-4000-8000-000000000002",
   authSession: "00000000-0000-4000-8000-000000000003",
-  refreshToken: "00000000-0000-4000-8000-000000000004",
-  replacementRefreshToken: "00000000-0000-4000-8000-000000000005",
-  refreshFamily: "00000000-0000-4000-8000-000000000006",
   library: "00000000-0000-4000-8000-000000000007",
   libraryRoot: "00000000-0000-4000-8000-000000000008",
   libraryGrant: "00000000-0000-4000-8000-000000000009",
@@ -34,8 +31,6 @@ export const times = {
 export const digests = {
   password: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   session: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  refresh: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
-  replacementRefresh: "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   playbackGrant: "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   sidecar: "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   artwork: "1111111111111111111111111111111111111111111111111111111111111111",

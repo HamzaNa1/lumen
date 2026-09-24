@@ -8,7 +8,7 @@ import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
-import { ServerClient } from "../api/ServerClient";
+import { ServerClient, ServerHttpError, type AccountSession } from "../api/ServerClient";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import type { PlayerController } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
@@ -16,6 +16,17 @@ import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
   Schema.decodeUnknownSync(schema)(value);
 const requestId = (): string => crypto.randomUUID();
+const hasSessionToken = (session: AccountSession | null): boolean =>
+  typeof session?.accessToken === "string" &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/u.test(session.accessToken);
+
+const validateClient = async (client: ServerClient) => {
+  try { return await client.me(); }
+  catch (cause) {
+    if (cause instanceof ServerHttpError && cause.status === 401) throw new Error("Sign-in required");
+    throw cause;
+  }
+};
 
 const trustedSender = (event: IpcMainInvokeEvent): boolean => {
   const url = event.senderFrame?.url ?? event.sender.getURL();
@@ -56,17 +67,23 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   let playerDisplay: IpcPlayerDisplay | null = null;
   const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
-    if (cached !== undefined) return Promise.resolve(cached);
+    if (cached !== undefined) return validateClient(cached).then(() => cached);
     const pending = restoring.get(account.connectionId);
     if (pending !== undefined) return pending;
     const next = (async () => {
-      const client = new ServerClient({ origin: account.origin, onSessionChanged: (session) => dependencies.registry.updateSession(account.connectionId, session) });
+      const client = new ServerClient({ origin: account.origin });
       const identity = await client.identity();
       if (identity.serverId !== account.serverId) throw new Error("Server identity changed; remove this connection and enroll it again");
       const session = await dependencies.registry.session(account.connectionId);
-      if (session === null) throw new Error("Connection credentials are unavailable; sign in again");
-      client.setSession(session);
-      const user = await client.me();
+      if (session !== null && hasSessionToken(session)) client.setSession(session);
+      else if (session !== null && typeof session.refreshToken === "string") {
+        const migrated = await client.migrateLegacySession(session.refreshToken).catch((cause) => {
+          if (cause instanceof ServerHttpError && cause.status === 401) throw new Error("Sign-in required");
+          throw cause;
+        });
+        await dependencies.registry.updateSession(account.connectionId, migrated);
+      } else throw new Error("Sign-in required");
+      const user = await validateClient(client);
       if (user.role !== account.role) {
         await dependencies.registry.updateRole(account.connectionId, user.role);
         const current = client.currentSession;
@@ -88,20 +105,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     });
   };
 
-  handle("accounts:list", async () => {
-    const result = await dependencies.registry.list();
-    const active = result.accounts.find(
-      (account) => account.connectionId === result.activeConnectionId,
-    );
-    if (active !== undefined && !dependencies.clients.has(active.connectionId)) {
-      try {
-        await restoreClient(active);
-      } catch {
-        return { ...result, activeConnectionId: null };
-      }
-    }
-    return await dependencies.registry.list();
-  });
+  handle("accounts:list", async () => dependencies.registry.list());
   handle("accounts:setup", async (_event, raw) => {
     const input = decode(
       Schema.Struct({
@@ -120,7 +124,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("accounts:connect", async (_event, raw) => {
     const input = decode(IpcConnectionInput, raw);
     let connectionId = requestId();
-    const client = new ServerClient({ origin: input.origin, onSessionChanged: (session) => dependencies.registry.updateSession(connectionId, session) });
+    const client = new ServerClient({ origin: input.origin });
     const discovery = discoveredServers.get(client.serverOrigin);
     if (discovery === undefined) throw new Error("Connect to the server first");
     const identity = await client.identity();
@@ -128,7 +132,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       throw new Error("Server identity changed; connect to the server again");
     const deviceId = deviceIdForAccount(dependencies.installationId, identity.serverId, input.username);
     const setupRequired = await client.setupRequired(discovery.setupRequired);
-    const session = await (setupRequired
+    const session = await (setupRequired || input.signUp === true
       ? client.register(input, deviceId)
       : client.login(input, deviceId));
     const user = await client.me();
@@ -145,12 +149,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         role: user.role,
         sessionId: current.sessionId,
         accessToken: current.accessToken,
-        refreshToken: current.refreshToken,
         accessExpiresAtMs: current.accessExpiresAtMs,
-        refreshExpiresAtMs: current.refreshExpiresAtMs,
       });
     } catch (cause) {
-      throw new Error(`${setupRequired ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
+      throw new Error(`${setupRequired || input.signUp === true ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
     }
     dependencies.clients.set(connectionId, client);
     discoveredServers.delete(client.serverOrigin);

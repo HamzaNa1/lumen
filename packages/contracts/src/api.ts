@@ -35,9 +35,7 @@ export const LoginResponse = Schema.Struct({
   role: UserRole,
   sessionId: Uuid,
   accessToken: Schema.String,
-  refreshToken: Schema.String,
   accessExpiresAtMs: UtcMillis,
-  refreshExpiresAtMs: UtcMillis,
 });
 export type LoginResponse = Schema.Schema.Type<typeof LoginResponse>;
 
@@ -52,12 +50,6 @@ export const RegisterRequest = Schema.Struct({
   nowMs: UtcMillis,
 });
 export type RegisterRequest = Schema.Schema.Type<typeof RegisterRequest>;
-
-export const RefreshRequest = Schema.Struct({
-  refreshToken: Schema.String.check(Schema.isMinLength(1)),
-  nowMs: UtcMillis,
-});
-export type RefreshRequest = Schema.Schema.Type<typeof RefreshRequest>;
 
 export const RevokeSessionRequest = Schema.Struct({
   sessionId: Uuid,

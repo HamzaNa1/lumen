@@ -38,20 +38,6 @@ export const AuthSession = Schema.Struct({
 });
 export type AuthSession = Schema.Schema.Type<typeof AuthSession>;
 
-export const RefreshToken = Schema.Struct({
-  id: Uuid,
-  sessionId: Uuid,
-  tokenHash: Sha256Digest,
-  familyId: Uuid,
-  generation: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  issuedAtMs: UtcMillis,
-  expiresAtMs: UtcMillis,
-  usedAtMs: Schema.NullOr(UtcMillis),
-  revokedAtMs: Schema.NullOr(UtcMillis),
-  replacedByTokenId: Schema.NullOr(Uuid),
-});
-export type RefreshToken = Schema.Schema.Type<typeof RefreshToken>;
-
 export const CreateUser = Schema.Struct({
   id: Uuid,
   username: NonEmptyText,
@@ -78,13 +64,8 @@ export const CreateAuthSession = Schema.Struct({
   userId: Uuid,
   deviceId: Uuid,
   sessionTokenHash: Sha256Digest,
-  refreshTokenId: Uuid,
-  refreshTokenHash: Sha256Digest,
-  refreshFamilyId: Uuid,
-  refreshGeneration: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   issuedAtMs: UtcMillis,
   expiresAtMs: UtcMillis,
-  refreshExpiresAtMs: UtcMillis,
 });
 export type CreateAuthSession = Schema.Schema.Type<typeof CreateAuthSession>;
 
@@ -93,18 +74,6 @@ export const UserCredentials = Schema.Struct({
   passwordHash: Schema.String.check(Schema.isMinLength(1)),
 });
 export type UserCredentials = Schema.Schema.Type<typeof UserCredentials>;
-
-export const RotateRefreshToken = Schema.Struct({
-  currentTokenId: Uuid,
-  sessionId: Uuid,
-  replacementTokenId: Uuid,
-  replacementTokenHash: Sha256Digest,
-  accessTokenHash: Schema.optional(Sha256Digest),
-  accessExpiresAtMs: Schema.optional(UtcMillis),
-  issuedAtMs: UtcMillis,
-  expiresAtMs: UtcMillis,
-});
-export type RotateRefreshToken = Schema.Schema.Type<typeof RotateRefreshToken>;
 
 export const RevokeSession = Schema.Struct({
   sessionId: Uuid,

@@ -94,6 +94,7 @@ export const App = (): React.ReactElement => {
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [connectionsView, setConnectionsView] = useState<"saved" | "add" | null>("saved");
+  const [signInAccount, setSignInAccount] = useState<IpcAccount | null>(null);
   const startingItemId = useRef<string | null>(null);
   const activePlayer = useRef<IpcPlayerState | null>(null);
   const wasOnPlayerRoute = useRef(onPlayerRoute);
@@ -232,8 +233,10 @@ export const App = (): React.ReactElement => {
       <ConnectPage
         accounts={accounts}
         initialShowAddServer={connectionsView === "add"}
-        onClose={() => setConnectionsView(null)}
+        initialSignInAccount={signInAccount}
+        onClose={() => { setSignInAccount(null); setConnectionsView(null); }}
         onChanged={() => {
+          setSignInAccount(null);
           setConnectionsView(null);
           void queryClient.invalidateQueries({ queryKey: ["accounts"] });
         }}
@@ -268,7 +271,12 @@ export const App = (): React.ReactElement => {
                 void bridge.accounts
                   .activate(id)
                   .then(() => queryClient.invalidateQueries())
-                  .catch(() => undefined);
+                  .catch((cause) => {
+                    if (errorMessage(cause, "").includes("Sign-in required")) {
+                      setSignInAccount(accounts.find((entry) => entry.connectionId === id) ?? null);
+                      setConnectionsView("saved");
+                    } else setPlaybackError(errorMessage(cause, "Could not open server"));
+                  });
               }}
               onRemove={(id) => {
                 void bridge.accounts
@@ -276,7 +284,7 @@ export const App = (): React.ReactElement => {
                   .then(() => queryClient.invalidateQueries())
                   .catch(() => undefined);
               }}
-              onAddServer={() => setConnectionsView("add")}
+              onAddServer={() => { setSignInAccount(null); setConnectionsView("add"); }}
             />
           }
         >
@@ -365,12 +373,14 @@ const ConnectPage = ({
   accounts = [],
   initialError,
   initialShowAddServer = false,
+  initialSignInAccount,
   onClose,
   onChanged,
 }: {
   readonly accounts?: ReadonlyArray<IpcAccount>;
   readonly initialError?: string;
   readonly initialShowAddServer?: boolean;
+  readonly initialSignInAccount?: IpcAccount | null;
   readonly onClose?: () => void;
   readonly onChanged?: () => void;
 }): React.ReactElement => {
@@ -379,10 +389,13 @@ const ConnectPage = ({
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
+  const [signUp, setSignUp] = useState(false);
   const [server, setServer] = useState<IpcServerDiscovery | null>(null);
-  const [showAddServer, setShowAddServer] = useState(accounts.length === 0 || initialShowAddServer);
+  const [showAddServer, setShowAddServer] = useState(accounts.length === 0 || initialShowAddServer || initialSignInAccount != null);
   const [removing, setRemoving] = useState<IpcAccount | null>(null);
+  const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
+  const creatingAccount = server?.setupRequired === true || signUp;
   const discoverServer = useMutation({
     mutationFn: () => bridge.accounts.discoverServer(origin),
     onSuccess: (result) => {
@@ -398,28 +411,38 @@ const ConnectPage = ({
         origin: server.origin,
         serverLabel,
         username,
-        displayName: server.setupRequired ? displayName || username : undefined,
+        displayName: creatingAccount ? displayName || username : undefined,
         password,
+        signUp,
       });
     },
     onSuccess: () => {
       setPassword("");
       onChanged?.();
     },
-    onError: (cause) => setError(errorMessage(cause, "Could not sign in")),
+    onError: (cause) => setError(errorMessage(cause, creatingAccount ? "Could not create account" : "Could not sign in")),
   });
   const changeServer = (): void => {
     setServer(null);
     setUsername("");
     setDisplayName("");
     setPassword("");
+    setSignUp(false);
     setError(null);
   };
-  const activateAccount = (connectionId: string): void => {
-    void bridge.accounts
-      .activate(connectionId)
+  const activateAccount = (account: IpcAccount): void => {
+    setOpeningId(account.connectionId);
+    setError(null);
+    void bridge.accounts.activate(account.connectionId)
       .then(() => onChanged?.())
-      .catch((cause) => setError(errorMessage(cause, "Could not activate account")));
+      .catch(async (cause) => {
+        if (!errorMessage(cause, "").includes("Sign-in required")) {
+          setError(errorMessage(cause, "Could not open server"));
+          return;
+        }
+        await signInAgain(account);
+      })
+      .finally(() => setOpeningId(null));
   };
   const removeAccount = (connectionId: string): void => {
     void bridge.accounts
@@ -427,14 +450,22 @@ const ConnectPage = ({
       .then(() => onChanged?.())
       .catch((cause) => setError(errorMessage(cause, "Could not remove account")));
   };
-  const signInAgain = (account: IpcAccount): void => {
+  const signInAgain = useCallback(async (account: IpcAccount): Promise<void> => {
     setOrigin(account.origin);
     setServerLabel(account.serverLabel);
     setUsername(account.username);
-    setServer(null);
-    setShowAddServer(true);
+    setSignUp(false);
     setError(null);
-  };
+    try {
+      setServer(await bridge.accounts.discoverServer(account.origin));
+      setShowAddServer(true);
+    } catch (cause) {
+      setError(errorMessage(cause, "Could not connect to server"));
+    }
+  }, []);
+  useEffect(() => {
+    if (initialSignInAccount != null) void signInAgain(initialSignInAccount);
+  }, [initialSignInAccount, signInAgain]);
 
   return (
     <main className="connect-page">
@@ -494,7 +525,7 @@ const ConnectPage = ({
                 ? "Connect your server"
                 : server.setupRequired
                   ? "Create administrator"
-                  : "Welcome back"}
+                  : signUp ? "Create account" : "Welcome back"}
           </h2>
           <p>
             {accounts.length > 0 && !showAddServer
@@ -509,9 +540,10 @@ const ConnectPage = ({
             <span className="section-kicker">Saved connections</span>
             {accounts.map((account) => (
               <div className="saved-server" key={account.connectionId}>
-                <div><strong>{account.serverLabel}</strong><span>{account.origin} · {account.username}</span></div>
-                <Button variant="ghost" onClick={() => activateAccount(account.connectionId)}>Open</Button>
-                <Button variant="ghost" onClick={() => signInAgain(account)}>Sign in</Button>
+                <button className="saved-server-open" type="button" onClick={() => activateAccount(account)} disabled={openingId !== null}>
+                  <strong>{account.serverLabel}</strong><span>{account.origin} · {account.username}</span>
+                  <ArrowRight aria-hidden="true" size={17} />
+                </button>
                 <Button variant="ghost" onClick={() => setRemoving(account)}>Remove</Button>
               </div>
             ))}
@@ -584,7 +616,7 @@ const ConnectPage = ({
               value={username}
               onValueChange={setUsername}
             />
-            {server.setupRequired ? (
+            {creatingAccount ? (
               <TextField
                 label="Display name"
                 value={displayName}
@@ -595,9 +627,10 @@ const ConnectPage = ({
             <TextField
               label="Password"
               type="password"
-              autoComplete={server.setupRequired ? "new-password" : "current-password"}
+              autoComplete={creatingAccount ? "new-password" : "current-password"}
               value={password}
               onValueChange={setPassword}
+              description={creatingAccount ? "Use at least 12 characters." : undefined}
             />
             <div className="form-actions">
               <Button variant="ghost" onClick={changeServer}>
@@ -606,15 +639,20 @@ const ConnectPage = ({
               <Button
                 variant="primary"
                 type="submit"
-                disabled={connect.isPending || username.trim() === "" || password === ""}
+                disabled={connect.isPending || username.trim() === "" || password === "" || (creatingAccount && password.length < 12)}
               >
                 {connect.isPending
                   ? "Signing in…"
-                  : server.setupRequired
+                  : creatingAccount
                     ? "Create account"
                     : "Sign in"}
               </Button>
             </div>
+            {server.setupRequired ? null : (
+              <Button variant="ghost" onClick={() => { setSignUp((value) => !value); setError(null); setPassword(""); }}>
+                {signUp ? "Already have an account? Sign in" : "New here? Create an account"}
+              </Button>
+            )}
           </Form>
         )}
         {error === null ? null : (

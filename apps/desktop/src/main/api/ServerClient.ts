@@ -15,15 +15,17 @@ export interface AccountSession {
   readonly role: "admin" | "user" | "guest";
   readonly sessionId: string;
   readonly accessToken: string;
-  readonly refreshToken: string;
   readonly accessExpiresAtMs: number;
-  readonly refreshExpiresAtMs: number;
+  readonly refreshToken?: string; // Read only while exchanging credentials saved by older versions.
 }
 
 export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: typeof fetch;
-  readonly onSessionChanged?: (session: AccountSession) => Promise<void>;
+}
+
+export class ServerHttpError extends Error {
+  constructor(message: string, readonly status: number) { super(message); }
 }
 
 const identitySchema = Schema.Struct({
@@ -38,9 +40,7 @@ const sessionSchema = Schema.Struct({
   role: Schema.optional(Schema.Literals(["admin", "user", "guest"])),
   sessionId: Schema.String,
   accessToken: Schema.String,
-  refreshToken: Schema.String,
   accessExpiresAtMs: Schema.Number,
-  refreshExpiresAtMs: Schema.Number,
 });
 
 const librarySchema = Schema.Array(Schema.Struct({
@@ -124,14 +124,11 @@ const decodeSession = (value: unknown): AccountSession => {
 export class ServerClient {
   private readonly origin: string;
   private readonly fetchImpl: typeof fetch;
-  private readonly onSessionChanged?: (session: AccountSession) => Promise<void>;
   private session: AccountSession | null = null;
-  private refreshPromise: Promise<AccountSession> | null = null;
 
   constructor(options: ServerClientOptions) {
     this.origin = normalizeOrigin(options.origin);
     this.fetchImpl = options.fetchImpl ?? fetch;
-    this.onSessionChanged = options.onSessionChanged;
   }
 
   get serverOrigin(): string {
@@ -209,38 +206,24 @@ export class ServerClient {
     return session;
   }
 
-  async refresh(): Promise<AccountSession> {
-    if (this.refreshPromise !== null) return this.refreshPromise;
-    if (this.session === null) throw new Error("No session");
-    const current = this.session;
-    this.refreshPromise = (async () => {
-      const response = await this.fetchImpl(new URL("/api/v1/auth/refresh", this.origin), {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ refreshToken: current.refreshToken }),
-        redirect: "manual",
-      });
-      const session = decodeSession(await readJson(response));
-      this.session = session;
-      await this.onSessionChanged?.(session);
-      return session;
-    })().finally(() => { this.refreshPromise = null; });
-    return this.refreshPromise;
+  async migrateLegacySession(refreshToken: string): Promise<AccountSession> {
+    const response = await this.fetchImpl(new URL("/api/v1/auth/migrate-session", this.origin), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken }),
+      redirect: "manual",
+    });
+    const session = decodeSession(await readJson(response));
+    this.session = session;
+    return session;
   }
 
   async request<T>(path: string, init: RequestInit = {}, schema?: Schema.Decoder<unknown, never>): Promise<T> {
     if (this.session === null) throw new Error("Authentication required");
-    if (this.session.accessExpiresAtMs <= Date.now() + 30_000 && this.session.refreshToken !== "") await this.refresh();
     const accessToken = this.session.accessToken;
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${accessToken}`);
-    let response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers, redirect: "manual" });
-    if (response.status === 401 && this.session.refreshToken !== "") {
-      if (this.session.accessToken === accessToken) await this.refresh();
-      const retryHeaders = new Headers(init.headers);
-      retryHeaders.set("authorization", `Bearer ${this.session.accessToken}`);
-      response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers: retryHeaders, redirect: "manual" });
-    }
+    const response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers, redirect: "manual" });
     const value = await readJson(response);
     return schema === undefined ? (value as T) : decode(schema, value) as T;
   }
@@ -356,14 +339,9 @@ export class ServerClient {
 
   async artworkDataUrl(artworkId: string): Promise<string | null> {
     if (this.session === null) throw new Error("Authentication required");
-    if (this.session.accessExpiresAtMs <= Date.now() + 30_000 && this.session.refreshToken !== "") await this.refresh();
     const accessToken = this.session.accessToken;
     const url = new URL(`/api/v1/artwork/${encodeURIComponent(artworkId)}`, this.origin);
-    let response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` }, redirect: "manual" });
-    if (response.status === 401 && this.session.refreshToken !== "") {
-      if (this.session.accessToken === accessToken) await this.refresh();
-      response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${this.session.accessToken}` }, redirect: "manual" });
-    }
+    const response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` }, redirect: "manual" });
     if (!response.ok) return null;
     const mime = response.headers.get("content-type")?.split(";")[0];
     if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") return null;
@@ -414,7 +392,7 @@ const readJson = async (response: Response): Promise<unknown> => {
       const body = await response.json() as { message?: unknown };
       if (typeof body.message === "string") message = body.message;
     } catch {}
-    throw new Error(message);
+    throw new ServerHttpError(message, response.status);
   }
   return response.json() as Promise<unknown>;
 };

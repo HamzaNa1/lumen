@@ -31,7 +31,7 @@ export const RegisterBody = Schema.Struct({
   platformDeviceId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
 });
 
-export const RefreshBody = Schema.Struct({
+export const LegacySessionBody = Schema.Struct({
   refreshToken: Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(1024)),
 });
 

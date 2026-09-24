@@ -4,9 +4,7 @@ import {
   CreateDevice,
   CreateUser,
   Device,
-  RefreshToken,
   RevokeSession,
-  RotateRefreshToken,
   User,
   UserCredentials,
   Uuid,
@@ -14,7 +12,7 @@ import {
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import type { DatabaseClient } from "../Database";
-import { authSessions, devices, refreshTokens, users } from "../tables/schema";
+import { authSessions, devices, users } from "../tables/schema";
 import { boundary, guard } from "./Boundary";
 
 const userSelection = {
@@ -49,22 +47,8 @@ const sessionSelection = {
   revokedAtMs: authSessions.revokedAtMs,
 };
 
-const refreshSelection = {
-  id: refreshTokens.id,
-  sessionId: refreshTokens.sessionId,
-  tokenHash: refreshTokens.tokenHash,
-  familyId: refreshTokens.familyId,
-  generation: refreshTokens.generation,
-  issuedAtMs: refreshTokens.issuedAtMs,
-  expiresAtMs: refreshTokens.expiresAtMs,
-  usedAtMs: refreshTokens.usedAtMs,
-  revokedAtMs: refreshTokens.revokedAtMs,
-  replacedByTokenId: refreshTokens.replacedByTokenId,
-};
-
 const FindActiveSessions = Schema.Struct({ id: Uuid, nowMs: Schema.Int });
 const FindUserByUsername = Schema.Struct({ usernameNormalized: Schema.String });
-const FindByDigest = Schema.Struct({ digest: Schema.String });
 
 export const makeAuthRepository = (database: DatabaseClient) => {
   const createUser = Effect.fn("AuthRepository.createUser")(function* (input: unknown) {
@@ -136,155 +120,26 @@ export const makeAuthRepository = (database: DatabaseClient) => {
 
   const createSession = Effect.fn("AuthRepository.createSession")(function* (input: unknown) {
     const value = yield* boundary(CreateAuthSession, input, "auth.createSession");
-    const row = yield* guard(
-      database.transaction((transaction) =>
-        Effect.gen(function* () {
-          const [session] = yield* transaction
-            .insert(authSessions)
-            .values({
-              id: value.id,
-              userId: value.userId,
-              deviceId: value.deviceId,
-              sessionTokenHash: value.sessionTokenHash,
-              issuedAtMs: value.issuedAtMs,
-              lastUsedAtMs: value.issuedAtMs,
-              expiresAtMs: value.expiresAtMs,
-            })
-            .returning(sessionSelection);
-          yield* transaction.insert(refreshTokens).values({
-            id: value.refreshTokenId,
-            sessionId: value.id,
-            tokenHash: value.refreshTokenHash,
-            familyId: value.refreshFamilyId,
-            generation: value.refreshGeneration ?? 0,
-            issuedAtMs: value.issuedAtMs,
-            expiresAtMs: value.refreshExpiresAtMs,
-          });
-          return session;
-        }),
-      ),
+    const rows = yield* guard(
+      database.insert(authSessions).values({
+        id: value.id,
+        userId: value.userId,
+        deviceId: value.deviceId,
+        sessionTokenHash: value.sessionTokenHash,
+        issuedAtMs: value.issuedAtMs,
+        lastUsedAtMs: value.issuedAtMs,
+        expiresAtMs: value.expiresAtMs,
+      }).returning(sessionSelection),
       "auth.createSession",
     );
-    return yield* boundary(AuthSession, row, "auth.createSession.result");
-  });
-
-  const getSessionByTokenHash = Effect.fn("AuthRepository.getSessionByTokenHash")(function* (
-    input: unknown,
-  ) {
-    const value = yield* boundary(FindByDigest, input, "auth.getSessionByTokenHash");
-    const row = yield* guard(
-      database
-        .select(sessionSelection)
-        .from(authSessions)
-        .where(eq(authSessions.sessionTokenHash, value.digest))
-        .get(),
-      "auth.getSessionByTokenHash",
-    );
-    if (row == null) return null;
-    return yield* boundary(AuthSession, row, "auth.getSessionByTokenHash.result");
-  });
-
-  const getRefreshTokenByHash = Effect.fn("AuthRepository.getRefreshTokenByHash")(function* (
-    input: unknown,
-  ) {
-    const value = yield* boundary(FindByDigest, input, "auth.getRefreshTokenByHash");
-    const row = yield* guard(
-      database
-        .select(refreshSelection)
-        .from(refreshTokens)
-        .where(eq(refreshTokens.tokenHash, value.digest))
-        .get(),
-      "auth.getRefreshTokenByHash",
-    );
-    if (row == null) return null;
-    return yield* boundary(RefreshToken, row, "auth.getRefreshTokenByHash.result");
-  });
-
-  const rotateRefreshToken = Effect.fn("AuthRepository.rotateRefreshToken")(function* (
-    input: unknown,
-  ) {
-    const value = yield* boundary(RotateRefreshToken, input, "auth.rotateRefreshToken");
-    const row = yield* guard(
-      database.transaction((transaction) =>
-        Effect.gen(function* () {
-          const [current] = yield* transaction
-            .select(refreshSelection)
-            .from(refreshTokens)
-            .where(
-              and(
-                eq(refreshTokens.id, value.currentTokenId),
-                eq(refreshTokens.sessionId, value.sessionId),
-                isNull(refreshTokens.usedAtMs),
-                isNull(refreshTokens.revokedAtMs),
-              ),
-            )
-            .limit(1);
-          const currentValue = yield* boundary(
-            RefreshToken,
-            current,
-            "auth.rotateRefreshToken.current",
-          );
-          const [replacement] = yield* transaction
-            .insert(refreshTokens)
-            .values({
-              id: value.replacementTokenId,
-              sessionId: value.sessionId,
-              tokenHash: value.replacementTokenHash,
-              familyId: currentValue.familyId,
-              generation: currentValue.generation + 1,
-              issuedAtMs: value.issuedAtMs,
-              expiresAtMs: value.expiresAtMs,
-            })
-            .returning(refreshSelection);
-          const [consumed] = yield* transaction
-            .update(refreshTokens)
-            .set({
-              usedAtMs: value.issuedAtMs,
-              revokedAtMs: value.issuedAtMs,
-              replacedByTokenId: value.replacementTokenId,
-            })
-            .where(
-              and(
-                eq(refreshTokens.id, value.currentTokenId),
-                eq(refreshTokens.sessionId, value.sessionId),
-                isNull(refreshTokens.usedAtMs),
-                isNull(refreshTokens.revokedAtMs),
-              ),
-            )
-            .returning(refreshSelection);
-          yield* boundary(RefreshToken, consumed, "auth.rotateRefreshToken.consume");
-          if (value.accessTokenHash !== undefined && value.accessExpiresAtMs !== undefined) {
-            yield* transaction.update(authSessions).set({
-              sessionTokenHash: value.accessTokenHash,
-              lastUsedAtMs: value.issuedAtMs,
-              expiresAtMs: value.accessExpiresAtMs,
-            }).where(and(eq(authSessions.id, value.sessionId), isNull(authSessions.revokedAtMs)));
-          }
-          return replacement;
-        }),
-      ),
-      "auth.rotateRefreshToken",
-    );
-    return yield* boundary(RefreshToken, row, "auth.rotateRefreshToken.result");
+    return yield* boundary(AuthSession, rows[0], "auth.createSession.result");
   });
 
   const revokeSession = Effect.fn("AuthRepository.revokeSession")(function* (input: unknown) {
     const value = yield* boundary(RevokeSession, input, "auth.revokeSession");
     yield* guard(
-      database.transaction((transaction) =>
-        Effect.gen(function* () {
-          yield* transaction
-            .update(authSessions)
-            .set({ revokedAtMs: value.nowMs })
-            .where(and(eq(authSessions.id, value.sessionId), isNull(authSessions.revokedAtMs)));
-          yield* transaction
-            .update(refreshTokens)
-            .set({ revokedAtMs: value.nowMs })
-            .where(
-              and(eq(refreshTokens.sessionId, value.sessionId), isNull(refreshTokens.revokedAtMs)),
-            );
-        }),
-      ),
+      database.update(authSessions).set({ revokedAtMs: value.nowMs })
+        .where(and(eq(authSessions.id, value.sessionId), isNull(authSessions.revokedAtMs))),
       "auth.revokeSession",
     );
   });
@@ -315,9 +170,6 @@ export const makeAuthRepository = (database: DatabaseClient) => {
     getCredentialsByUsername,
     createDevice,
     createSession,
-    getSessionByTokenHash,
-    getRefreshTokenByHash,
-    rotateRefreshToken,
     revokeSession,
     listActiveSessions,
   };
