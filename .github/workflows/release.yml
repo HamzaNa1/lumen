@@ -107,7 +107,7 @@ jobs:
           bun scripts/verify-native-binaries.ts --write-manifest
           bun scripts/verify-native-binaries.ts
       - run: bun run --cwd apps/desktop build
-      - run: bun run --cwd apps/desktop exec electron-builder --publish never
+      - run: bun run --cwd apps/desktop package
       - uses: actions/upload-artifact@v4
         with:
           name: lumen-${{ needs.preflight.outputs.version }}-${{ matrix.os }}
