@@ -1,3 +1,0 @@
-# Packaging
-
-The desktop application packages MPV under `resources/native` outside the archive contents. The release workflow installs pinned MPV versions through signed/checksummed OS package sources, then stages a portable Windows distribution, an executable plus private shared libraries on Linux, or `libmpv.dylib` plus its rewritten runtime dependencies on macOS. `scripts/verify-native-binaries.ts` seals the staged file set in a SHA-256 manifest and verifies it before packaging or signing. On macOS the library is loaded in-process, and its video window is attached to the Electron player surface as an owned native child window. The server container runs as a non-root user, keeps SQLite on local storage, and expects media mounts to be configured read-only.
