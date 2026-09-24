@@ -142,16 +142,19 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-qemu-action@v4
       - uses: docker/setup-buildx-action@v4
       - name: Build and publish server image
         uses: docker/build-push-action@v7
         with:
           context: .
           file: apps/server/Dockerfile
+          platforms: linux/amd64,linux/arm64
           push: true
           tags: |
             ${{ steps.image.outputs.name }}:${{ needs.preflight.outputs.version }}
             ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+            ${{ !contains(needs.preflight.outputs.version, '-') && format('{0}:latest', steps.image.outputs.name) || '' }}
           labels: |
             org.opencontainers.image.source=https://github.com/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.sha }}

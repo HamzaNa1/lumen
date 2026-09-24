@@ -25,7 +25,7 @@ All workspaces currently use `0.0.1` for the first release. Check it, then commi
 bun run version:check 0.0.1
 ```
 
-In GitHub Actions, run the `release` workflow from the default branch and enter `0.0.1` as the version. The workflow requires that version to match every workspace and rejects an existing `v0.0.1` tag. After the desktop installers and server image succeed, it creates a GitHub Release and tag named `v0.0.1`, attaches the installers, and publishes the server image as `ghcr.io/<owner>/<repository>-server:0.0.1` and `:sha-<commit-sha>`. GitHub Container Registry controls whether the image is public or private.
+In GitHub Actions, run the `release` workflow from the default branch and enter `0.0.1` as the version. The workflow requires that version to match every workspace and rejects an existing `v0.0.1` tag. After the desktop installers and server image succeed, it creates a GitHub Release and tag named `v0.0.1`, attaches the installers, and publishes a multi-platform server image for AMD64 and ARM64 as `ghcr.io/<owner>/<repository>-server:0.0.1` and `:sha-<commit-sha>`. Stable releases also update `:latest`; prereleases do not. GitHub Container Registry controls whether the image is public or private.
 
 For later releases, run `bun run version:set 0.0.2`, commit the updated manifests and `bun.lock`, push to the default branch, and enter `0.0.2` in the workflow. A version such as `0.0.2-rc.1` creates a prerelease.
 
@@ -36,5 +36,5 @@ docker run -d --name lumen-server --restart unless-stopped \
   -p 3210:3210 \
   -v lumen-data:/data \
   -v /path/to/media:/media:ro \
-  ghcr.io/<owner>/<repository>-server:0.0.1
+  ghcr.io/<owner>/<repository>-server
 ```
