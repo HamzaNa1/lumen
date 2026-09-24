@@ -1,5 +1,5 @@
+import type { IpcPlayerDisplay, IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { contextBridge, ipcRenderer } from "electron";
-import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 
 const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
@@ -48,7 +48,33 @@ const api = {
     selectSubtitle: (sessionId: string, streamId: string | null) =>
       invoke<unknown>("player:select-subtitle", { sessionId, streamId }),
     state: () => invoke<unknown>("player:state"),
+    display: (display: IpcPlayerDisplay) => invoke<unknown>("player:display", display),
+    displayState: () => invoke<unknown>("player:display-state"),
+    overlayAction: (action: "back" | "retry" | "stop") =>
+      invoke<unknown>("player:overlay-action", action),
+    fullscreen: (enabled: boolean) => invoke<unknown>("player:fullscreen", enabled),
+    fullscreenState: () => invoke<unknown>("player:fullscreen-state"),
     stop: () => invoke<unknown>("player:stop"),
+    onDisplay: (callback: (display: IpcPlayerDisplay) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, display: IpcPlayerDisplay): void =>
+        callback(display);
+      ipcRenderer.on("player:display", listener);
+      return () => ipcRenderer.removeListener("player:display", listener);
+    },
+    onOverlayAction: (callback: (action: "back" | "retry" | "stop") => void): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        action: "back" | "retry" | "stop",
+      ): void => callback(action);
+      ipcRenderer.on("player:overlay-action", listener);
+      return () => ipcRenderer.removeListener("player:overlay-action", listener);
+    },
+    onFullscreenChange: (callback: (fullscreen: boolean) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, fullscreen: boolean): void =>
+        callback(fullscreen);
+      ipcRenderer.on("player:fullscreen-state", listener);
+      return () => ipcRenderer.removeListener("player:fullscreen-state", listener);
+    },
     onState: (callback: (state: unknown) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, state: unknown): void => callback(state);
       ipcRenderer.on("player:state", listener);

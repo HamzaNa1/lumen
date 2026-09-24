@@ -12,7 +12,6 @@ import {
   CheckboxField,
   Form,
   MediaCard,
-  MediaPlayer,
   Modal,
   SelectField,
   Shell,
@@ -20,7 +19,7 @@ import {
   TextField,
 } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, Outlet, useNavigate } from "@tanstack/react-router";
+import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
   ArrowRight,
@@ -70,8 +69,6 @@ interface WorkspaceValue {
   readonly playbackLoading: boolean;
   readonly playbackError: string | null;
   readonly beginPlayback: (item: IpcItem) => Promise<void>;
-  readonly updatePlayer: (state: IpcPlayerState) => void;
-  readonly stopPlayback: () => Promise<void>;
   readonly reportPlaybackError: (cause: unknown) => void;
 }
 
@@ -89,6 +86,7 @@ export const App = (): React.ReactElement => {
   const accountsQuery = useAccounts();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const onPlayerRoute = useLocation({ select: (location) => location.pathname === "/player" });
   const [selectedItem, setSelectedItem] = useState<IpcItem | null>(null);
   const [playingItem, setPlayingItem] = useState<IpcItem | null>(null);
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
@@ -132,11 +130,6 @@ export const App = (): React.ReactElement => {
     },
     [updatePlayer],
   );
-  const stopPlayback = useCallback(async (): Promise<void> => {
-    await bridge.player.stop();
-    updatePlayer(null);
-    setPlayingItem(null);
-  }, [updatePlayer]);
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
@@ -150,6 +143,30 @@ export const App = (): React.ReactElement => {
   const active =
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
     null;
+  const playerUnavailable = player === null;
+  useEffect(() => {
+    if (!onPlayerRoute) return;
+    void bridge.player.display({
+      title: playingItem?.title ?? "Now playing",
+      context: `${active?.serverLabel ?? "Lumen"} · ${active?.username ?? ""} · Original quality`,
+      duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
+      loading: playbackLoading,
+      error: playerUnavailable ? playbackError : null,
+    });
+  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError]);
+  useEffect(
+    () =>
+      bridge.player.onOverlayAction((action) => {
+        if (action === "back" || action === "stop") {
+          if (action === "stop") {
+            updatePlayer(null);
+            setPlayingItem(null);
+          }
+          void navigate({ to: "/library" });
+        } else if (playingItem !== null) void beginPlayback(playingItem);
+      }),
+    [beginPlayback, navigate, playingItem, updatePlayer],
+  );
 
   if (accountsQuery.isLoading)
     return (
@@ -183,49 +200,51 @@ export const App = (): React.ReactElement => {
     playbackLoading,
     playbackError,
     beginPlayback,
-    updatePlayer,
-    stopPlayback,
     reportPlaybackError,
   } satisfies WorkspaceValue;
 
   return (
     <WorkspaceContext.Provider value={workspace}>
-      <Shell
-        sidebar={
-          <Sidebar
-            account={active}
-            accounts={accounts}
-            onActivate={(id) => {
-              void bridge.accounts
-                .activate(id)
-                .then(() => queryClient.invalidateQueries())
-                .catch(() => undefined);
-            }}
-            onRemove={(id) => {
-              void bridge.accounts
-                .remove(id)
-                .then(() => queryClient.invalidateQueries())
-                .catch(() => undefined);
-            }}
-          />
-        }
-      >
-        {playbackError === null ? null : (
-          <div className="toast error-toast" role="alert">
-            <AlertCircle aria-hidden="true" size={18} />
-            <span>{playbackError}</span>
-            <Button variant="ghost" onClick={() => setPlaybackError(null)}>
-              Dismiss
-            </Button>
-          </div>
-        )}
+      {onPlayerRoute ? (
         <Outlet />
-        <ItemDetails
-          item={selectedItem}
-          onClose={() => setSelectedItem(null)}
-          onPlay={queuePlayback}
-        />
-      </Shell>
+      ) : (
+        <Shell
+          sidebar={
+            <Sidebar
+              account={active}
+              accounts={accounts}
+              onActivate={(id) => {
+                void bridge.accounts
+                  .activate(id)
+                  .then(() => queryClient.invalidateQueries())
+                  .catch(() => undefined);
+              }}
+              onRemove={(id) => {
+                void bridge.accounts
+                  .remove(id)
+                  .then(() => queryClient.invalidateQueries())
+                  .catch(() => undefined);
+              }}
+            />
+          }
+        >
+          {playbackError === null ? null : (
+            <div className="toast error-toast" role="alert">
+              <AlertCircle aria-hidden="true" size={18} />
+              <span>{playbackError}</span>
+              <Button variant="ghost" onClick={() => setPlaybackError(null)}>
+                Dismiss
+              </Button>
+            </div>
+          )}
+          <Outlet />
+          <ItemDetails
+            item={selectedItem}
+            onClose={() => setSelectedItem(null)}
+            onPlay={queuePlayback}
+          />
+        </Shell>
+      )}
     </WorkspaceContext.Provider>
   );
 };
@@ -726,20 +745,17 @@ export const SearchPage = (): React.ReactElement => {
 };
 
 export const PlayerPage = (): React.ReactElement => {
-  const {
-    account,
-    playingItem,
-    player,
-    playbackLoading,
-    playbackError,
-    beginPlayback,
-    updatePlayer,
-    stopPlayback,
-    reportPlaybackError,
-  } = useWorkspace();
+  const { playingItem, player, beginPlayback, reportPlaybackError } = useWorkspace();
   const navigate = useNavigate();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const hasPlayback = playingItem !== null || player !== null;
+
+  useEffect(
+    () => () => {
+      void bridge.player.fullscreen(false).catch(() => undefined);
+    },
+    [],
+  );
 
   useLayoutEffect(() => {
     if (!hasPlayback) return;
@@ -772,7 +788,10 @@ export const PlayerPage = (): React.ReactElement => {
 
   if (playingItem === null && player === null) {
     return (
-      <div className="page player-empty-page">
+      <div className="player-empty-page">
+        <Button variant="ghost" onClick={() => void navigate({ to: "/library" })}>
+          Back to library
+        </Button>
         <EmptyState
           icon={MonitorPlay}
           title="Nothing is playing"
@@ -784,58 +803,7 @@ export const PlayerPage = (): React.ReactElement => {
 
   return (
     <div className="watch-page">
-      <MediaPlayer
-        title={playingItem?.title ?? "Now playing"}
-        context={`${account.serverLabel} · ${account.username} · Original quality`}
-        paused={player?.paused ?? true}
-        loading={playbackLoading}
-        error={player === null ? playbackError : null}
-        position={player?.positionSeconds ?? 0}
-        duration={
-          player?.durationSeconds ??
-          (playingItem?.durationMs === null || playingItem?.durationMs === undefined
-            ? null
-            : Math.floor(playingItem.durationMs / 1_000))
-        }
-        volume={player?.volume ?? 100}
-        muted={player?.muted ?? false}
-        streams={player?.streams ?? []}
-        selectedAudioStreamId={player?.selectedAudioStreamId ?? null}
-        selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
-        surfaceRef={surfaceRef}
-        onBack={() => void navigate({ to: "/library" })}
-        onRetry={() => {
-          if (playingItem !== null) void beginPlayback(playingItem);
-        }}
-        onPause={() => {
-          if (player !== null) {
-            void bridge.player.pause(player.sessionId, !player.paused).then(updatePlayer);
-          }
-        }}
-        onStop={() => {
-          void stopPlayback().then(() => navigate({ to: "/library" }));
-        }}
-        onSeek={(positionSeconds) => {
-          if (player !== null) {
-            void bridge.player.seek(player.sessionId, positionSeconds).then(updatePlayer);
-          }
-        }}
-        onVolume={(volume, muted) => {
-          if (player !== null) {
-            void bridge.player.volume(player.sessionId, volume, muted).then(updatePlayer);
-          }
-        }}
-        onSelectAudio={(streamId) => {
-          if (player !== null) {
-            void bridge.player.selectAudio(player.sessionId, streamId).then(updatePlayer);
-          }
-        }}
-        onSelectSubtitle={(streamId) => {
-          if (player !== null) {
-            void bridge.player.selectSubtitle(player.sessionId, streamId).then(updatePlayer);
-          }
-        }}
-      />
+      <div className="watch-surface" ref={surfaceRef} />
     </div>
   );
 };

@@ -1308,26 +1308,49 @@ button:disabled {
 }
 
 .watch-page {
-  min-height: 100%;
-  padding: 28px clamp(24px, 3.5vw, 56px) 40px;
-  animation: page-in 240ms ease-out;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: #000;
+}
+.watch-surface {
+  width: 100%;
+  height: 100%;
+  background: #000;
 }
 .player-empty-page {
-  min-height: 100%;
+  min-height: 100vh;
   display: grid;
-  align-items: center;
+  place-items: center;
+  position: relative;
+}
+.player-empty-page > .button {
+  position: absolute;
+  top: 24px;
+  left: 24px;
 }
 .media-player {
-  width: min(100%, 1280px);
-  margin: 0 auto;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: #000;
+}
+.media-player:not(.controls-visible) {
+  grid-template-rows: minmax(0, 1fr);
+}
+.media-player:not(.controls-visible) .media-player-header,
+.media-player:not(.controls-visible) .media-player-console {
+  display: none;
 }
 .media-player-header {
-  min-height: 76px;
+  min-height: 68px;
   display: grid;
   grid-template-columns: minmax(160px, 1fr) minmax(280px, 2fr) minmax(160px, 1fr);
   align-items: center;
   gap: 24px;
-  margin-bottom: 20px;
+  padding: 8px 24px;
+  background: #0c0f14;
 }
 .media-player-header > .quality-badge {
   justify-self: end;
@@ -1356,20 +1379,15 @@ button:disabled {
   white-space: nowrap;
 }
 .media-player-frame {
-  overflow: hidden;
-  border: 1px solid var(--border-strong);
-  border-radius: 22px;
-  background: #050608;
-  box-shadow:
-    0 30px 90px rgba(0, 0, 0, 0.46),
-    0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  background: #000;
 }
 .media-player-surface {
   position: relative;
   width: 100%;
-  aspect-ratio: 16 / 9;
-  max-height: calc(100vh - 340px);
-  min-height: 300px;
+  min-height: 0;
   overflow: hidden;
   background:
     radial-gradient(circle at 50% 42%, rgba(201, 245, 96, 0.07), transparent 30%),
@@ -1414,8 +1432,8 @@ button:disabled {
 .media-player-console {
   position: relative;
   display: grid;
-  gap: 15px;
-  padding: 20px 24px 18px;
+  gap: 10px;
+  padding: 10px 24px 12px;
   border-top: 1px solid var(--border-subtle);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.022), transparent), #0c0f14;
 }
@@ -1526,6 +1544,48 @@ button:disabled {
   background: rgba(255, 255, 255, 0.025);
 }
 
+.overlay-window,
+.overlay-window body,
+.overlay-window #root {
+  background: transparent;
+}
+.player-overlay {
+  width: 100vw;
+  height: 100vh;
+  background: transparent;
+}
+.player-overlay .media-player,
+.player-overlay .media-player-frame {
+  position: relative;
+  display: block;
+  height: 100%;
+  background: transparent;
+}
+.player-overlay .media-player-header,
+.player-overlay .media-player-console {
+  position: absolute;
+  z-index: 2;
+  width: 100%;
+  background: rgba(10, 12, 16, 0.86);
+  backdrop-filter: blur(18px);
+}
+.player-overlay .media-player-header {
+  top: 0;
+}
+.player-overlay .media-player-console {
+  bottom: 0;
+}
+.player-overlay .media-player-surface {
+  position: absolute;
+  inset: 0;
+  height: 100%;
+  background: transparent;
+}
+.player-overlay .media-player-surface::after,
+.player-overlay .media-player[data-status="ready"] .media-player-placeholder {
+  display: none;
+}
+
 @media (max-width: 1100px) {
   .admin-row,
   .library-fields {
@@ -1543,9 +1603,6 @@ button:disabled {
   .feature-list {
     display: grid;
     gap: 10px;
-  }
-  .media-player-surface {
-    min-height: 260px;
   }
 }
 @media (max-width: 820px) {
@@ -1595,9 +1652,6 @@ button:disabled {
   .settings-grid {
     grid-template-columns: 1fr;
   }
-  .watch-page {
-    padding: 24px 20px 36px;
-  }
   .media-player-header {
     grid-template-columns: auto minmax(0, 1fr);
   }
@@ -1609,10 +1663,6 @@ button:disabled {
   }
   .media-player-title .eyebrow {
     justify-content: flex-end;
-  }
-  .media-player-surface {
-    min-height: 220px;
-    max-height: none;
   }
 }
 @media (max-width: 560px) {
@@ -1691,12 +1741,6 @@ button:disabled {
   }
   .media-player-title .eyebrow {
     justify-content: flex-start;
-  }
-  .media-player-frame {
-    border-radius: 15px;
-  }
-  .media-player-surface {
-    min-height: 190px;
   }
   .media-player-console {
     padding: 17px 16px;

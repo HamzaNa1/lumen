@@ -158,6 +158,15 @@ export const IpcPlayerState = Schema.Struct({
 });
 export type IpcPlayerState = Schema.Schema.Type<typeof IpcPlayerState>;
 
+export const IpcPlayerDisplay = Schema.Struct({
+  title: Schema.String,
+  context: Schema.String,
+  duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  loading: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
+});
+export type IpcPlayerDisplay = Schema.Schema.Type<typeof IpcPlayerDisplay>;
+
 export const IpcPlayerSurfaceBounds = Schema.Struct({
   x: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   y: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),

@@ -1,9 +1,11 @@
-import type { IpcPlayableStream } from "@lumen/contracts";
 import { Slider } from "@base-ui/react/slider";
+import type { IpcPlayableStream } from "@lumen/contracts";
 import {
   ArrowLeft,
   Captions,
   ListMusic,
+  Maximize,
+  Minimize,
   MonitorPlay,
   Pause,
   Play,
@@ -11,7 +13,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { useState, type Ref } from "react";
+import { type Ref, useState } from "react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
 import { formatPlayerTime, streamLabel } from "./PlayerFormatting";
@@ -30,7 +32,10 @@ interface MediaPlayerProps {
   readonly selectedAudioStreamId: string | null;
   readonly selectedSubtitleStreamId: string | null;
   readonly surfaceRef: Ref<HTMLDivElement>;
+  readonly controlsVisible: boolean;
+  readonly fullscreen: boolean;
   readonly onBack: () => void;
+  readonly onFullscreen: () => void;
   readonly onRetry: () => void;
   readonly onPause: () => void;
   readonly onStop: () => void;
@@ -54,7 +59,10 @@ export const MediaPlayer = ({
   selectedAudioStreamId,
   selectedSubtitleStreamId,
   surfaceRef,
+  controlsVisible,
+  fullscreen,
   onBack,
+  onFullscreen,
   onRetry,
   onPause,
   onStop,
@@ -71,7 +79,11 @@ export const MediaPlayer = ({
   const volumeValue = volumePreview ?? volume;
 
   return (
-    <section className="media-player" aria-label="Media player">
+    <section
+      className={`media-player${controlsVisible ? " controls-visible" : ""}`}
+      aria-label="Media player"
+      data-status={error !== null ? "error" : loading ? "loading" : "ready"}
+    >
       <header className="media-player-header">
         <Button variant="ghost" onClick={onBack}>
           <ArrowLeft aria-hidden="true" size={18} />
@@ -185,6 +197,17 @@ export const MediaPlayer = ({
                   </Slider.Track>
                 </Slider.Control>
               </Slider.Root>
+              <Button
+                variant="icon"
+                onClick={onFullscreen}
+                aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+              >
+                {fullscreen ? (
+                  <Minimize aria-hidden="true" size={18} />
+                ) : (
+                  <Maximize aria-hidden="true" size={18} />
+                )}
+              </Button>
             </div>
           </div>
 

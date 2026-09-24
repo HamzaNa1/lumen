@@ -2,9 +2,10 @@ import type {
   IpcAccounts,
   IpcItemPage,
   IpcLibrary,
+  IpcPlayerDisplay,
+  IpcPlayerSession,
   IpcPlayerState,
   IpcPlayerSurfaceBounds,
-  IpcPlayerSession,
   IpcServerDiscovery,
   ScanRun,
   User,
@@ -86,8 +87,16 @@ export interface LumenBridge {
       streamId: string | null,
     ) => Promise<IpcPlayerState>;
     readonly state: () => Promise<IpcPlayerState | null>;
+    readonly display: (display: IpcPlayerDisplay) => Promise<void>;
+    readonly displayState: () => Promise<IpcPlayerDisplay | null>;
+    readonly overlayAction: (action: "back" | "retry" | "stop") => Promise<void>;
+    readonly fullscreen: (enabled: boolean) => Promise<boolean>;
+    readonly fullscreenState: () => Promise<boolean>;
     readonly stop: () => Promise<unknown>;
     readonly onState: (callback: (state: IpcPlayerState) => void) => () => void;
+    readonly onDisplay: (callback: (display: IpcPlayerDisplay) => void) => () => void;
+    readonly onOverlayAction: (callback: (action: "back" | "retry" | "stop") => void) => () => void;
+    readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => () => void;
   };
 }
 

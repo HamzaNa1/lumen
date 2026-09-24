@@ -1,13 +1,14 @@
-import { app, type BrowserWindow } from "electron";
 import { join } from "node:path";
+import { app, type BrowserWindow } from "electron";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import type { ServerClient } from "./api/ServerClient";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
-import { createMainWindow } from "./windows";
+import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
 import { PlayerController } from "./player/PlayerController";
-import { MpvSurface } from "./player/MpvSurface";
+import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
+import { createMainWindow } from "./windows";
 
 let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
@@ -25,21 +26,37 @@ const bootstrap = async (): Promise<void> => {
   await bridge.listen();
   const preloadPath = join(__dirname, "../preload/index.cjs");
   mainWindow = createMainWindow({ preloadPath });
+  const overlay = new PlayerOverlayWindow(mainWindow, preloadPath);
   player = new PlayerController({
     bridge,
-    surface: new MpvSurface(mainWindow),
+    surface: new MpvSurface(mainWindow, overlay),
     onState: (state) => {
       mainWindow?.webContents.send("player:state", state);
+      if (!overlay.window.isDestroyed()) overlay.window.webContents.send("player:state", state);
     },
   });
   mainWindow.once("closed", () => {
     void player?.stop();
   });
   const clients = new Map<string, ServerClient>();
-  registerIpcHandlers({ registry, clients, player, bridge, installationId });
+  registerIpcHandlers({
+    registry,
+    clients,
+    player,
+    bridge,
+    installationId,
+    window: mainWindow,
+    overlay,
+  });
+  const sendFullscreenState = (): void => {
+    mainWindow?.webContents.send("player:fullscreen-state", mainWindow.isFullScreen());
+  };
+  mainWindow.on("enter-full-screen", sendFullscreenState);
+  mainWindow.on("leave-full-screen", sendFullscreenState);
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
   else await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+  await overlay.load(rendererUrl, join(__dirname, "../renderer/index.html"));
   setInterval(() => void player?.tick(), 3_000);
 };
 

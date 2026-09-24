@@ -1,11 +1,16 @@
-import { IpcPlayerSurfaceBounds, type IpcServerDiscovery } from "@lumen/contracts";
-import { ipcMain, type IpcMainInvokeEvent } from "electron";
+import {
+  IpcPlayerDisplay,
+  IpcPlayerSurfaceBounds,
+  type IpcServerDiscovery,
+} from "@lumen/contracts";
 import { Schema } from "effect";
+import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { ServerClient } from "../api/ServerClient";
-import type { PlayerController } from "../player/PlayerController";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
+import type { PlayerController } from "../player/PlayerController";
+import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
   Schema.decodeUnknownSync(schema)(value);
@@ -26,6 +31,8 @@ export interface IpcDependencies {
   readonly player: PlayerController;
   readonly bridge: PlaybackBridge;
   readonly installationId: string;
+  readonly window: BrowserWindow;
+  readonly overlay: PlayerOverlayWindow;
 }
 
 const activeClient = (dependencies: IpcDependencies): ServerClient => {
@@ -44,6 +51,7 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const discoveredServers = new Map<string, IpcServerDiscovery>();
+  let playerDisplay: IpcPlayerDisplay | null = null;
   const handle = <A>(
     name: string,
     action: (event: IpcMainInvokeEvent, ...args: ReadonlyArray<unknown>) => Promise<A>,
@@ -288,6 +296,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("player:surface", async (_event, raw) => {
     const bounds = decode(Schema.NullOr(IpcPlayerSurfaceBounds), raw);
     await dependencies.player.setSurface(bounds);
+    dependencies.overlay.setVisible(bounds !== null);
     return { ok: true };
   });
   handle("player:select-audio", async (_event, raw) => {
@@ -302,6 +311,20 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return dependencies.player.selectSubtitleStream(input.sessionId, input.streamId);
   });
   handle("player:state", async () => dependencies.player.getState());
+  handle("player:display", async (_event, raw) => {
+    playerDisplay = decode(IpcPlayerDisplay, raw);
+    dependencies.overlay.window.webContents.send("player:display", playerDisplay);
+  });
+  handle("player:display-state", async () => playerDisplay);
+  handle("player:overlay-action", async (_event, raw) => {
+    const action = decode(Schema.Literals(["back", "retry", "stop"]), raw);
+    dependencies.window.webContents.send("player:overlay-action", action);
+  });
+  handle("player:fullscreen", async (_event, raw) => {
+    dependencies.window.setFullScreen(decode(Schema.Boolean, raw));
+    return dependencies.window.isFullScreen();
+  });
+  handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
     await dependencies.player.stop();
     return { ok: true };
@@ -339,6 +362,11 @@ export const unregisterIpcHandlers = (): void => {
     "player:select-audio",
     "player:select-subtitle",
     "player:state",
+    "player:display",
+    "player:display-state",
+    "player:overlay-action",
+    "player:fullscreen",
+    "player:fullscreen-state",
     "player:stop",
   ])
     ipcMain.removeHandler(name);

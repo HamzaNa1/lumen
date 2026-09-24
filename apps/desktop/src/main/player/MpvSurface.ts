@@ -1,6 +1,7 @@
 import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { BaseWindow, type BrowserWindow } from "electron";
 import { MacMpvWindow } from "./MacMpvWindow";
+import type { PlayerOverlayWindow } from "./PlayerOverlayWindow";
 
 const nativeWindowId = (handle: Buffer): string => {
   if (process.platform === "win32") return String(handle.readUInt32LE(0));
@@ -14,15 +15,25 @@ export class MpvSurface {
   private macWindow: MacMpvWindow | null = null;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private playbackVisible = false;
+  private readonly overlay?: PlayerOverlayWindow;
 
-  constructor(parent: BrowserWindow) {
+  constructor(parent: BrowserWindow, overlay?: PlayerOverlayWindow) {
     this.parent = parent;
+    this.overlay = overlay;
     parent.on("move", () => this.syncHostBounds());
     parent.on("resize", () => this.syncHostBounds());
     parent.on("restore", () => this.show());
     parent.on("focus", () => this.show());
     parent.on("minimize", () => this.host?.hide());
-    parent.on("blur", () => this.host?.hide());
+    const syncFocus = (): void => {
+      setTimeout(() => {
+        if (parent.isFocused() || overlay?.window.isFocused()) this.show();
+        else this.host?.hide();
+      }, 0);
+    };
+    parent.on("blur", syncFocus);
+    overlay?.window.on("focus", syncFocus);
+    overlay?.window.on("blur", syncFocus);
     parent.on("show", () => this.show());
     parent.once("closed", () => this.dispose());
   }
@@ -39,6 +50,7 @@ export class MpvSurface {
     }
     this.bounds = bounds;
     if (bounds === null) this.host?.hide();
+    else if (this.playbackVisible) this.show();
     else this.syncHostBounds();
   }
 
@@ -66,6 +78,7 @@ export class MpvSurface {
     if (this.bounds === null || !this.playbackVisible) return;
     this.syncHostBounds();
     this.host?.showInactive();
+    this.overlay?.moveAboveVideo();
   }
 
   hide(): void {
@@ -115,5 +128,6 @@ export class MpvSurface {
       height: this.bounds.height,
     });
     this.macWindow?.sync();
+    this.overlay?.moveAboveVideo();
   }
 }
