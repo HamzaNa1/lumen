@@ -84,6 +84,7 @@ export class PlayerController extends EventEmitter {
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
   private startGeneration = 0;
+  private stopping: Promise<void> | null = null;
 
   constructor(options: PlayerControllerOptions) {
     super();
@@ -225,16 +226,7 @@ export class PlayerController extends EventEmitter {
     } catch (cause) {
       const current = this.active;
       if (current !== null && current.session.sessionId === session.sessionId) {
-        this.active = null;
-        this.state = null;
-        this.surface.hide();
-        await this.cleanup({
-          session: current.session,
-          client: current.client,
-          process: current.process,
-          ipc: current.ipc,
-          capability: current.capability,
-        });
+        await this.stopActive();
       } else {
         if (this.active === null && generation === this.startGeneration) this.surface.hide();
         await this.cleanup({
@@ -341,13 +333,20 @@ export class PlayerController extends EventEmitter {
     await this.stopActive();
   }
 
-  private async stopActive(): Promise<void> {
+  private stopActive(): Promise<void> {
+    if (this.stopping !== null) return this.stopping;
     const active = this.active;
     this.active = null;
     this.state = null;
     this.surface.hide();
-    if (active === null) return;
-    await this.cleanup(active);
+    if (active === null) return Promise.resolve();
+    const stopping = this.cleanup(active);
+    this.stopping = stopping;
+    const clearStopping = (): void => {
+      if (this.stopping === stopping) this.stopping = null;
+    };
+    void stopping.then(clearStopping, clearStopping);
+    return stopping;
   }
 
   async tick(): Promise<void> {
@@ -391,7 +390,7 @@ export class PlayerController extends EventEmitter {
   }: PlaybackResources): Promise<void> {
     if (capability !== null) this.bridge.revoke(capability);
     ipc?.close();
-    process?.stop();
+    await process?.stop();
     try {
       await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
         method: "DELETE",

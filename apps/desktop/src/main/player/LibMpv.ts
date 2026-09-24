@@ -6,7 +6,9 @@ type NativeHandle = object;
 type CreateMpv = () => NativeHandle | null;
 type SetOption = (handle: NativeHandle, name: string, value: string) => number;
 type InitializeMpv = (handle: NativeHandle) => number;
-type DestroyMpv = (handle: NativeHandle) => void;
+type DestroyMpv = ((handle: NativeHandle) => void) & {
+  async: (handle: NativeHandle, callback: (cause: Error | null) => void) => void;
+};
 type ErrorString = (code: number) => string;
 
 const libraryCandidates = (cwd: string, resourcesPath: string): ReadonlyArray<string> => [
@@ -71,8 +73,18 @@ export class LibMpv {
     }
   }
 
-  stop(): void {
-    this.destroyMpv(this.handle);
-    this.library.unload();
+  async stop(): Promise<void> {
+    try {
+      // The macOS video output dispatches its destruction to the main thread.
+      // A synchronous FFI call here deadlocks the Electron main thread.
+      await new Promise<void>((resolve, reject) => {
+        this.destroyMpv.async(this.handle, (cause) => {
+          if (cause !== null) reject(cause);
+          else resolve();
+        });
+      });
+    } finally {
+      this.library.unload();
+    }
   }
 }

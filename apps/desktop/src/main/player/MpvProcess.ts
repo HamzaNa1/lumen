@@ -91,10 +91,10 @@ export class MpvProcess {
     return this.child;
   }
 
-  stop(): void {
+  async stop(): Promise<void> {
     if (this.exited) return;
     this.exited = true;
     if (this.child !== null) this.child.kill("SIGTERM");
-    else this.native?.stop();
+    else await this.native?.stop();
   }
 }
