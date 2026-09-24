@@ -37,6 +37,7 @@ export class MpvProcess {
       "--no-config",
       "--load-scripts=no",
       "--idle=yes",
+      "--demuxer=ffmpeg",
       "--no-terminal",
       `--input-ipc-server=${socketPath}`,
     ], { shell: false, stdio: ["ignore", "ignore", "pipe"], windowsHide: true });

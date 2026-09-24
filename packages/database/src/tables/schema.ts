@@ -288,6 +288,8 @@ export const streams = sqliteTable(
     container: text("container"),
     codec: text("codec"),
     language: text("language"),
+    title: text("title"),
+    ordinal: integer("ordinal"),
     isDefault: integer("is_default", { mode: "boolean" }).notNull().default(false),
     bitrate: integer("bitrate"),
     sampleRateHz: integer("sample_rate_hz"),
@@ -302,16 +304,13 @@ export const streams = sqliteTable(
       foreignColumns: [mediaSources.id],
     }).onDelete("cascade"),
     uniqueIndex("streams_id_source_uq").on(table.id, table.sourceId),
-    uniqueIndex("streams_source_kind_language_uq").on(
-      table.sourceId,
-      table.kind,
-      sql<string>`coalesce(${table.language}, '')`,
-    ),
+    uniqueIndex("streams_source_ordinal_uq").on(table.sourceId, table.ordinal),
     uniqueIndex("streams_source_default_uq")
-      .on(table.sourceId)
-      .where(sql`${table.kind} = 'audio' and ${table.isDefault} = 1`),
-    index("streams_source_idx").on(table.sourceId),
+      .on(table.sourceId, table.kind)
+      .where(sql`${table.isDefault} = 1`),
+    index("streams_source_kind_ordinal_idx").on(table.sourceId, table.kind, table.ordinal),
     check("streams_kind_chk", sql`${table.kind} in ('audio', 'video', 'subtitle')`),
+    check("streams_ordinal_chk", sql`${table.ordinal} is null or ${table.ordinal} >= 0`),
     check("streams_bitrate_chk", sql`${table.bitrate} is null or ${table.bitrate} >= 0`),
     check(
       "streams_sample_rate_chk",

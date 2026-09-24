@@ -54,6 +54,8 @@ export const fixtures = {
     container: "flac",
     codec: "flac",
     language: null,
+    title: null,
+    ordinal: 0,
     isDefault: true,
     bitrate: 900_000,
     sampleRateHz: 44_100,

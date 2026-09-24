@@ -89,42 +89,74 @@ export const makeMediaIngest = Effect.gen(function* () {
       UPDATE catalog_items SET duration_seconds = ${probe.durationMs === null ? null : Math.round(probe.durationMs / 1000)}, updated_at_ms = unixepoch() * 1000
       WHERE id = ${itemId}
     `);
-    const existingTrack = yield* database.get<{ id: string }>(sql`SELECT id FROM tracks WHERE source_id = ${sourceId}`);
-    let primaryStreamId: string | null = null;
+    const existingTrack = yield* database.get<{ id: string; primaryStreamId: string }>(sql`SELECT id, primary_stream_id AS primaryStreamId FROM tracks WHERE source_id = ${sourceId}`);
+    const needsStreamRefresh = existingTrack === null ? false : (yield* database.get<{ count: number }>(sql`
+      SELECT count(*) AS count FROM streams WHERE source_id = ${sourceId} AND ordinal IS NULL
+    `))?.count !== 0;
+    const defaultOrdinals = new Set<number>();
+    for (const kind of ["audio", "video", "subtitle"] as const) {
+      const streams = probe.streams.filter((stream) => stream.kind === kind);
+      const selected = streams.find((stream) => stream.isDefault) ?? (kind === "audio" || kind === "video" ? streams[0] : undefined);
+      if (selected !== undefined) defaultOrdinals.add(selected.ordinal);
+    }
+    let primaryStreamId: string | null = existingTrack?.primaryStreamId ?? null;
     if (existingTrack == null) {
-      for (const [index, stream] of probe.streams.entries()) {
-        const streamId = newUuid();
-        yield* database.run(sql`
-          INSERT INTO streams(id, source_id, kind, container, codec, language, is_default, bitrate, sample_rate_hz, channels, width, height)
-          VALUES (${streamId}, ${sourceId}, ${stream.kind}, NULL, ${stream.codec}, ${stream.language}, ${index === 0 ? 1 : 0}, ${stream.bitrate}, ${stream.sampleRateHz}, ${stream.channels}, ${stream.width}, ${stream.height})
-        `);
-        if (primaryStreamId == null && (stream.kind === "audio" || stream.kind === "video")) primaryStreamId = streamId;
-      }
-      if (primaryStreamId !== null) {
-        const parts = source.relativePath.split("/").filter(Boolean);
-        const filename = parts.at(-1) ?? "Track";
-        const title = basename(filename, extname(filename)).replaceAll("_", " ").replaceAll(/\s+/gu, " ").trim() || "Track";
-        const albumTitle = parts.length > 2 ? parts.at(-2) ?? null : null;
-        const artistName = parts.length > 2 ? parts.at(-3) ?? null : null;
-        let albumId: string | null = null;
-        let artistId: string | null = null;
-        if (artistName !== null) {
-          const artist = yield* repositories.catalog.upsertArtist({
-            id: newUuid(), libraryId: source.libraryId, name: artistName, normalizedName: normalize(artistName), sortName: null, externalIds: {}, nowMs: Date.now(),
+      const parts = source.relativePath.split("/").filter(Boolean);
+      const filename = parts.at(-1) ?? "Track";
+      const title = basename(filename, extname(filename)).replaceAll("_", " ").replaceAll(/\s+/gu, " ").trim() || "Track";
+      const albumTitle = parts.length > 2 ? parts.at(-2) ?? null : null;
+      const artistName = parts.length > 2 ? parts.at(-3) ?? null : null;
+      let albumId: string | null = null;
+      if (artistName !== null) {
+        const artist = yield* repositories.catalog.upsertArtist({
+          id: newUuid(), libraryId: source.libraryId, name: artistName, normalizedName: normalize(artistName), sortName: null, externalIds: {}, nowMs: Date.now(),
+        }).pipe(Effect.mapError(mapRepositoryError));
+        if (albumTitle !== null) {
+          const album = yield* repositories.catalog.upsertAlbum({
+            id: newUuid(), libraryId: source.libraryId, title: albumTitle, normalizedTitle: normalize(albumTitle), albumArtistId: artist.id,
+            releaseDate: null, originalReleaseDate: null, releaseYear: null, barcode: null, externalIds: {}, nowMs: Date.now(),
           }).pipe(Effect.mapError(mapRepositoryError));
-          artistId = artist.id;
-          if (albumTitle !== null) {
-            const album = yield* repositories.catalog.upsertAlbum({
-              id: newUuid(), libraryId: source.libraryId, title: albumTitle, normalizedTitle: normalize(albumTitle), albumArtistId: artist.id,
-              releaseDate: null, originalReleaseDate: null, releaseYear: null, barcode: null, externalIds: {}, nowMs: Date.now(),
-            }).pipe(Effect.mapError(mapRepositoryError));
-            albumId = album.id;
-          }
+          albumId = album.id;
         }
-        yield* database.run(sql`
-          INSERT INTO tracks(id, library_id, source_id, primary_stream_id, album_id, title, normalized_title, track_number, disc_number, duration_ms, is_explicit, created_at_ms, updated_at_ms)
-          VALUES (${newUuid()}, ${source.libraryId}, ${sourceId}, ${primaryStreamId}, ${albumId}, ${title}, ${normalize(title)}, NULL, NULL, ${probe.durationMs}, 0, unixepoch() * 1000, unixepoch() * 1000)
-        `);
+      }
+      const ingested = yield* database.transaction((transaction) => Effect.gen(function* () {
+        yield* transaction.run(sql`DELETE FROM streams WHERE source_id = ${sourceId}`);
+        let primary: string | null = null;
+        for (const stream of probe.streams) {
+          const streamId = newUuid();
+          yield* transaction.run(sql`
+            INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default, bitrate, sample_rate_hz, channels, width, height)
+            VALUES (${streamId}, ${sourceId}, ${stream.kind}, NULL, ${stream.codec}, ${stream.language}, ${stream.title}, ${stream.ordinal}, ${defaultOrdinals.has(stream.ordinal) ? 1 : 0}, ${stream.bitrate}, ${stream.sampleRateHz}, ${stream.channels}, ${stream.width}, ${stream.height})
+          `);
+          if (primary == null && (stream.kind === "audio" || stream.kind === "video")) primary = streamId;
+        }
+        if (primary !== null) {
+          yield* transaction.run(sql`
+            INSERT INTO tracks(id, library_id, source_id, primary_stream_id, album_id, title, normalized_title, track_number, disc_number, duration_ms, is_explicit, created_at_ms, updated_at_ms)
+            VALUES (${newUuid()}, ${source.libraryId}, ${sourceId}, ${primary}, ${albumId}, ${title}, ${normalize(title)}, NULL, NULL, ${probe.durationMs}, 0, unixepoch() * 1000, unixepoch() * 1000)
+          `);
+        }
+        return { primary };
+      }));
+      primaryStreamId = ingested.primary;
+    } else if (needsStreamRefresh && primaryStreamId !== null) {
+      const primary = probe.streams.find((stream) => stream.kind === "audio" || stream.kind === "video");
+      if (primary !== undefined) {
+        yield* database.transaction((transaction) => Effect.gen(function* () {
+          yield* transaction.run(sql`DELETE FROM streams WHERE source_id = ${sourceId} AND id <> ${primaryStreamId}`);
+          yield* transaction.run(sql`
+            UPDATE streams SET kind = ${primary.kind}, container = NULL, codec = ${primary.codec}, language = ${primary.language}, title = ${primary.title}, ordinal = ${primary.ordinal}, is_default = ${defaultOrdinals.has(primary.ordinal) ? 1 : 0}, bitrate = ${primary.bitrate}, sample_rate_hz = ${primary.sampleRateHz}, channels = ${primary.channels}, width = ${primary.width}, height = ${primary.height}
+            WHERE id = ${primaryStreamId} AND source_id = ${sourceId}
+          `);
+          for (const stream of probe.streams) {
+            if (stream.ordinal === primary.ordinal) continue;
+            yield* transaction.run(sql`
+              INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default, bitrate, sample_rate_hz, channels, width, height)
+              VALUES (${newUuid()}, ${sourceId}, ${stream.kind}, NULL, ${stream.codec}, ${stream.language}, ${stream.title}, ${stream.ordinal}, ${defaultOrdinals.has(stream.ordinal) ? 1 : 0}, ${stream.bitrate}, ${stream.sampleRateHz}, ${stream.channels}, ${stream.width}, ${stream.height})
+            `);
+          }
+          yield* transaction.run(sql`UPDATE tracks SET duration_ms = ${probe.durationMs}, updated_at_ms = unixepoch() * 1000 WHERE id = ${existingTrack.id}`);
+        }));
       }
     }
     const fingerprint = createHash("sha256").update(`${source.absolutePath}:${details.size}:${Math.trunc(details.mtimeMs)}`).digest("hex");
@@ -136,18 +168,18 @@ export const makeMediaIngest = Effect.gen(function* () {
     if (primaryStreamId !== null) {
       for (const [suffix, kind, mediaType] of sidecars) {
         const sidecarPath = join(dirname(source.absolutePath), `${base}${suffix}`);
-        const sidecarDetails = yield* Effect.tryPromise({ try: () => lstat(sidecarPath), catch: () => null });
+        const sidecarDetails = yield* Effect.tryPromise({ try: () => lstat(sidecarPath), catch: (cause) => cause instanceof Error ? cause : new Error("Sidecar is unavailable") }).pipe(Effect.catch(() => Effect.succeed(null)));
         if (sidecarDetails == null || !sidecarDetails.isFile() || sidecarDetails.isSymbolicLink()) continue;
-        const bytes = yield* Effect.tryPromise({ try: () => readFile(sidecarPath), catch: () => new Uint8Array() });
+        const bytes = yield* Effect.tryPromise({ try: () => readFile(sidecarPath), catch: (cause) => cause instanceof Error ? cause : new Error("Sidecar is unavailable") }).pipe(Effect.catch(() => Effect.succeed(new Uint8Array())));
         yield* repositories.catalog.createSidecar({
           id: newUuid(), streamId: primaryStreamId, kind, relativePath: sidecarPath, mediaType, contentHash: hashBytes(bytes),
         }).pipe(Effect.catch(() => Effect.void));
       }
       for (const suffix of [".jpg", ".jpeg", ".png", ".webp"]) {
         const artworkPath = join(dirname(source.absolutePath), `${base}${suffix}`);
-        const artworkDetails = yield* Effect.tryPromise({ try: () => lstat(artworkPath), catch: () => null });
+        const artworkDetails = yield* Effect.tryPromise({ try: () => lstat(artworkPath), catch: (cause) => cause instanceof Error ? cause : new Error("Artwork is unavailable") }).pipe(Effect.catch(() => Effect.succeed(null)));
         if (artworkDetails == null || !artworkDetails.isFile() || artworkDetails.isSymbolicLink()) continue;
-        const bytes = yield* Effect.tryPromise({ try: () => readFile(artworkPath), catch: () => new Uint8Array() });
+        const bytes = yield* Effect.tryPromise({ try: () => readFile(artworkPath), catch: (cause) => cause instanceof Error ? cause : new Error("Artwork is unavailable") }).pipe(Effect.catch(() => Effect.succeed(new Uint8Array())));
         const dimensions = imageDimensions(bytes);
         if (dimensions == null) continue;
         const artwork = yield* repositories.catalog.upsertArtwork({

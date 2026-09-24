@@ -32,6 +32,8 @@ export interface LumenBridge {
     readonly start: (itemId: string, deviceId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
+    readonly selectAudio: (sessionId: string, streamId: string) => Promise<IpcPlayerState>;
+    readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<IpcPlayerState>;
     readonly state: () => Promise<IpcPlayerState | null>;
     readonly stop: () => Promise<unknown>;
     readonly onState: (callback: (state: IpcPlayerState) => void) => () => void;

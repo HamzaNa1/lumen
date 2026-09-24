@@ -1,4 +1,4 @@
-import type { PlaybackGrant, PlaybackProgress, PlaybackSession } from "@lumen/contracts";
+import type { IpcPlayableStream, PlaybackProgress, PlaybackSession } from "@lumen/contracts";
 import { Database, Repositories, sql } from "@lumen/database";
 import { Context, Effect, Layer } from "effect";
 import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
@@ -7,11 +7,13 @@ import { canonicalPath, isPathWithin } from "../core/Paths";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
 import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Schemas";
-import { Schema } from "effect";
+import type { Schema } from "effect";
 
 type PlaybackInput = Schema.Schema.Type<typeof StartPlaybackBody>;
 type HeartbeatInput = Schema.Schema.Type<typeof HeartbeatBody>;
 type ProgressInput = Schema.Schema.Type<typeof ProgressBody>;
+
+export type PlaybackStream = IpcPlayableStream;
 
 export interface PlaybackStartResponse {
   readonly session: PlaybackSession;
@@ -22,6 +24,7 @@ export interface PlaybackStartResponse {
   readonly title: string;
   readonly streamPath: string;
   readonly durationSeconds: number | null;
+  readonly streams: ReadonlyArray<PlaybackStream>;
   readonly grantExpiresInSeconds: number;
 }
 
@@ -68,16 +71,24 @@ export const makePlaybackService = Effect.gen(function* () {
       nowMs,
       expiresAtMs: nowMs + 3_600_000,
     }).pipe(Effect.mapError((cause) => conflict(cause instanceof Error ? cause.message : "Playback could not start")));
-    {
-      yield* repositories.activity.upsertGrant({
-        id: newUuid(), sessionId: session.id, trackId, canSeek: true, canSkip: false, maxBitrateKbps: null, expiresAtMs: nowMs + 3_600_000,
-      }).pipe(Effect.mapError((cause) => conflict(cause instanceof Error ? cause.message : "Grant could not be created")));
-    }
+    yield* repositories.activity.upsertGrant({
+      id: newUuid(), sessionId: session.id, trackId, canSeek: true, canSkip: false, maxBitrateKbps: null, expiresAtMs: nowMs + 3_600_000,
+    }).pipe(Effect.mapError((cause) => conflict(cause instanceof Error ? cause.message : "Grant could not be created")));
     const source = yield* database.get<{ sourceId: string; title: string; durationMs: number | null }>(sql`
       SELECT t.source_id AS sourceId, t.title, t.duration_ms AS durationMs
       FROM tracks t WHERE t.id = ${trackId}
     `);
     if (source == null) return yield* notFound("Media source not found");
+    const streamRows = yield* database.all<Omit<PlaybackStream, "isDefault"> & { readonly isDefault: number | boolean }>(sql`
+      SELECT id, kind, ordinal, codec, language, title, is_default AS isDefault
+      FROM streams
+      WHERE source_id = ${source.sourceId} AND kind in ('audio', 'subtitle') AND ordinal IS NOT NULL
+      ORDER BY ordinal
+    `);
+    const streams: ReadonlyArray<PlaybackStream> = streamRows.map((stream) => ({
+      ...stream,
+      isDefault: stream.isDefault === true || stream.isDefault === 1,
+    }));
     return {
       session,
       grantToken,
@@ -87,6 +98,7 @@ export const makePlaybackService = Effect.gen(function* () {
       title: source.title,
       streamPath: `/api/v1/media/${encodeURIComponent(trackId)}`,
       durationSeconds: source.durationMs === null ? null : Math.round(source.durationMs / 1000),
+      streams,
       grantExpiresInSeconds: 3_600,
     };
   });

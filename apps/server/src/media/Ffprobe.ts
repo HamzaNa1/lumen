@@ -7,6 +7,7 @@ const FfprobeOutput = Schema.Struct({
     tags: Schema.optional(Schema.Record(Schema.String, Schema.String)),
   })),
   streams: Schema.Array(Schema.Struct({
+    index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
     codec_type: Schema.String,
     codec_name: Schema.optional(Schema.String),
     bit_rate: Schema.optional(Schema.String),
@@ -15,6 +16,7 @@ const FfprobeOutput = Schema.Struct({
     width: Schema.optional(Schema.Int),
     height: Schema.optional(Schema.Int),
     tags: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    disposition: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
   })),
 });
 
@@ -22,6 +24,7 @@ export interface FfprobeResult {
   readonly durationMs: number | null;
   readonly streams: ReadonlyArray<{
     readonly kind: "audio" | "video" | "subtitle";
+    readonly ordinal: number;
     readonly codec: string | null;
     readonly bitrate: number | null;
     readonly sampleRateHz: number | null;
@@ -29,6 +32,8 @@ export interface FfprobeResult {
     readonly width: number | null;
     readonly height: number | null;
     readonly language: string | null;
+    readonly title: string | null;
+    readonly isDefault: boolean;
   }>;
   readonly tags: Readonly<Record<string, string>>;
 }
@@ -49,6 +54,7 @@ const parse = (output: unknown): FfprobeResult => {
       if (stream.codec_type !== "audio" && stream.codec_type !== "video" && stream.codec_type !== "subtitle") return [];
       return [{
         kind: stream.codec_type,
+        ordinal: stream.index,
         codec: stream.codec_name ?? null,
         bitrate: asNumber(stream.bit_rate),
         sampleRateHz: asNumber(stream.sample_rate),
@@ -56,6 +62,8 @@ const parse = (output: unknown): FfprobeResult => {
         width: asNumber(stream.width?.toString()),
         height: asNumber(stream.height?.toString()),
         language: stream.tags?.language ?? null,
+        title: stream.tags?.title ?? null,
+        isDefault: stream.disposition?.default === 1,
       }];
     }),
   };

@@ -16,7 +16,7 @@ afterEach(async () => {
   for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true });
 });
 
-const seed = async (root: string, databasePath: string): Promise<{ readonly userId: string; readonly libraryId: string; readonly trackId: string; readonly itemId: string }> => {
+const seed = async (root: string, databasePath: string): Promise<{ readonly userId: string; readonly libraryId: string; readonly trackId: string; readonly itemId: string; readonly audioStreamId: string; readonly subtitleStreamId: string }> => {
   const mediaPath = join(root, "clip.mkv");
   await Bun.write(mediaPath, "0123456789");
   const databaseLayer = makeDatabaseLayers({ databasePath } as never);
@@ -35,6 +35,8 @@ const seed = async (root: string, databasePath: string): Promise<{ readonly user
     yield* database.run(sql`INSERT INTO library_profiles(library_id, kind, scan_mode) VALUES (${libraryId}, 'movies', 'full')`);
     const sourceId = newUuid();
     const streamId = newUuid();
+    const audioStreamId = newUuid();
+    const subtitleStreamId = newUuid();
     const rootId = newUuid();
     yield* database.run(sql`
       INSERT INTO library_roots(id, library_id, path, is_enabled, priority, created_at_ms, updated_at_ms)
@@ -46,7 +48,9 @@ const seed = async (root: string, databasePath: string): Promise<{ readonly user
     `);
     const source = yield* database.get<{ id: string }>(sql`SELECT id FROM media_sources WHERE absolute_path = ${mediaPath}`);
     if (source !== null) {
-      yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, is_default) VALUES (${streamId}, ${source.id}, 'video', 'matroska', 'h264', 1)`);
+      yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (${streamId}, ${source.id}, 'video', 'matroska', 'h264', 0, 1)`);
+      yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (${audioStreamId}, ${source.id}, 'audio', 'matroska', 'aac', 'eng', 'English', 1, 1)`);
+      yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (${subtitleStreamId}, ${source.id}, 'subtitle', 'matroska', 'subrip', 'eng', 'English', 2, 1)`);
       yield* database.run(sql`
         INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
         VALUES (${trackId}, ${libraryId}, ${source.id}, ${streamId}, 'Clip', 'clip', 10000, 0, unixepoch() * 1000, unixepoch() * 1000)
@@ -57,7 +61,7 @@ const seed = async (root: string, databasePath: string): Promise<{ readonly user
       `);
       yield* database.run(sql`INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (${itemId}, ${source.id}, 1, 1)`);
     }
-    return { userId, libraryId, trackId, itemId };
+    return { userId, libraryId, trackId, itemId, audioStreamId, subtitleStreamId };
   }).pipe(Effect.provide(layer)));
 };
 
@@ -85,7 +89,17 @@ describe("direct-play HTTP delivery", () => {
       body: JSON.stringify({ deviceId, trackId: seeded.itemId }),
     });
     expect(started.status).toBe(201);
-    const playback = await started.json() as { sessionId: string; grantToken: string; streamUrl: string };
+    const playback = await started.json() as {
+      sessionId: string;
+      grantToken: string;
+      streamUrl: string;
+      streams: ReadonlyArray<{ id: string; kind: string; ordinal: number; language: string | null; title: string | null; isDefault: boolean }>;
+    };
+    expect(playback.streams.every((stream) => typeof stream.isDefault === "boolean")).toBe(true);
+    expect(playback.streams).toEqual([
+      expect.objectContaining({ id: seeded.audioStreamId, kind: "audio", ordinal: 1, language: "eng", title: "English" }),
+      expect.objectContaining({ id: seeded.subtitleStreamId, kind: "subtitle", ordinal: 2, language: "eng", title: "English" }),
+    ]);
     const streamUrl = new URL(playback.streamUrl, base);
     const full = await fetch(streamUrl, { headers: { authorization: `Bearer ${playback.grantToken}` } });
     expect(full.status).toBe(200);

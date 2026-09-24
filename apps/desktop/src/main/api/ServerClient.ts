@@ -1,3 +1,4 @@
+import { IpcPlayableStream } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
@@ -84,6 +85,7 @@ const playerSessionSchema = Schema.Struct({
   title: Schema.String,
   streamUrl: Schema.String,
   durationSeconds: Schema.NullOr(Schema.Number),
+  streams: Schema.Array(IpcPlayableStream),
   grantExpiresInSeconds: Schema.Number,
   grantToken: Schema.String,
 });
@@ -97,6 +99,9 @@ const playerStateSchema = Schema.Struct({
   volume: Schema.Number,
   muted: Schema.Boolean,
   ended: Schema.Boolean,
+  streams: Schema.Array(IpcPlayableStream),
+  selectedAudioStreamId: Schema.NullOr(Schema.String),
+  selectedSubtitleStreamId: Schema.NullOr(Schema.String),
 });
 
 const normalizeOrigin = (value: string): string => {

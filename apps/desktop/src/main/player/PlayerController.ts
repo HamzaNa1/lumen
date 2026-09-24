@@ -1,14 +1,20 @@
 import { EventEmitter } from "node:events";
 import type { IpcPlayerSession, IpcPlayerState } from "@lumen/contracts";
 import { app } from "electron";
-import { ServerClient } from "../api/ServerClient";
+import type { ServerClient } from "../api/ServerClient";
 import { MpvIpc } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
-import { PlaybackBridge } from "./PlaybackBridge";
+import type { PlaybackBridge } from "./PlaybackBridge";
 
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
   readonly onState: (state: IpcPlayerState) => void;
+}
+
+interface MpvTrack {
+  readonly id: number;
+  readonly type: "audio" | "sub";
+  readonly "ff-index"?: number;
 }
 
 interface ActiveSession {
@@ -18,8 +24,30 @@ interface ActiveSession {
   readonly process: MpvProcess;
   readonly ipc: MpvIpc;
   readonly capability: string;
+  readonly trackIds: ReadonlyMap<string, number>;
   sequence: number;
 }
+
+const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
+
+const resolveTrackIds = async (ipc: MpvIpc, streams: IpcPlayerSession["streams"]): Promise<ReadonlyMap<string, number>> => {
+  const trackIds = new Map<string, number>();
+  for (let attempt = 0; attempt < 40 && trackIds.size < streams.length; attempt += 1) {
+    const value = await ipc.command(["get_property", "track-list"]);
+    if (Array.isArray(value)) {
+      for (const candidate of value) {
+        if (typeof candidate !== "object" || candidate === null) continue;
+        const track = candidate as MpvTrack;
+        if (!Number.isInteger(track.id) || (track.type !== "audio" && track.type !== "sub") || !Number.isInteger(track["ff-index"])) continue;
+        const ordinal = track["ff-index"] as number;
+        const stream = streams.find((candidateStream) => candidateStream.ordinal === ordinal && candidateStream.kind === (track.type === "audio" ? "audio" : "subtitle"));
+        if (stream !== undefined) trackIds.set(stream.id, track.id);
+      }
+    }
+    if (trackIds.size < streams.length) await wait(50);
+  }
+  return trackIds;
+};
 
 export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
@@ -52,8 +80,17 @@ export class PlayerController extends EventEmitter {
     });
     const capability = registered.capability;
     const streamUrl = registered.url;
-    this.active = { session, client: input.client, connectionId: input.connectionId, process: playerProcess, ipc, capability, sequence: 0 };
+    const active: ActiveSession = { session, client: input.client, connectionId: input.connectionId, process: playerProcess, ipc, capability, trackIds: new Map(), sequence: 0 };
+    this.active = active;
+    await ipc.command(["set_property", "pause", "yes"]);
     await ipc.command(["loadfile", streamUrl, "replace"]);
+    const trackIds = await resolveTrackIds(ipc, session.streams);
+    this.active = { ...active, trackIds };
+    const streams = session.streams.filter((stream) => trackIds.has(stream.id));
+    const selectedAudioStream = streams.find((stream) => stream.kind === "audio" && stream.isDefault) ?? streams.find((stream) => stream.kind === "audio");
+    const selectedSubtitleStream = streams.find((stream) => stream.kind === "subtitle" && stream.isDefault) ?? null;
+    if (selectedAudioStream !== undefined) await ipc.command(["set_property", "aid", trackIds.get(selectedAudioStream.id) ?? "no"]);
+    await ipc.command(["set_property", "sid", selectedSubtitleStream === null ? "no" : trackIds.get(selectedSubtitleStream.id) ?? "no"]);
     await ipc.command(["set_property", "pause", "no"]);
     this.state = {
       sessionId: session.sessionId,
@@ -64,6 +101,9 @@ export class PlayerController extends EventEmitter {
       volume: 100,
       muted: false,
       ended: false,
+      streams,
+      selectedAudioStreamId: selectedAudioStream?.id ?? null,
+      selectedSubtitleStreamId: selectedSubtitleStream?.id ?? null,
     };
     this.publish();
     return this.sanitized(session);
@@ -92,6 +132,38 @@ export class PlayerController extends EventEmitter {
     this.active?.ipc.command(["set_property", "volume", bounded]).catch(() => this.emit("error"));
     this.active?.ipc.command(["set_property", "mute", muted ? "yes" : "no"]).catch(() => this.emit("error"));
     this.state = { ...this.requireState(), volume: bounded, muted };
+    this.publish();
+    return this.requireState();
+  }
+
+  async selectAudioStream(sessionId: string, streamId: string): Promise<IpcPlayerState> {
+    this.assertActive(sessionId);
+    const active = this.active;
+    if (active === null) throw new Error("Playback session is not active");
+    const state = this.requireState();
+    const stream = state.streams.find((candidate) => candidate.id === streamId && candidate.kind === "audio");
+    const trackId = stream === undefined ? undefined : active.trackIds.get(streamId);
+    if (stream === undefined || trackId === undefined) throw new Error("Audio stream is unavailable");
+    await active.ipc.command(["set_property", "aid", trackId]);
+    this.assertActive(sessionId);
+    const currentState = this.requireState();
+    this.state = { ...currentState, selectedAudioStreamId: streamId };
+    this.publish();
+    return this.requireState();
+  }
+
+  async selectSubtitleStream(sessionId: string, streamId: string | null): Promise<IpcPlayerState> {
+    this.assertActive(sessionId);
+    const active = this.active;
+    if (active === null) throw new Error("Playback session is not active");
+    const state = this.requireState();
+    const stream = streamId === null ? null : state.streams.find((candidate) => candidate.id === streamId && candidate.kind === "subtitle");
+    const trackId = stream === null || stream === undefined ? null : active.trackIds.get(streamId ?? "");
+    if (streamId !== null && (stream === undefined || trackId === undefined)) throw new Error("Subtitle stream is unavailable");
+    await active.ipc.command(["set_property", "sid", trackId ?? "no"]);
+    this.assertActive(sessionId);
+    const currentState = this.requireState();
+    this.state = { ...currentState, selectedSubtitleStreamId: stream?.id ?? null };
     this.publish();
     return this.requireState();
   }

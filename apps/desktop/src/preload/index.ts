@@ -34,6 +34,8 @@ const api = {
     start: (itemId: string, deviceId: string) => invoke<unknown>("player:start", { itemId, deviceId }),
     pause: (sessionId: string, paused: boolean) => invoke<unknown>("player:pause", { sessionId, paused }),
     seek: (sessionId: string, positionSeconds: number) => invoke<unknown>("player:seek", { sessionId, positionSeconds }),
+    selectAudio: (sessionId: string, streamId: string) => invoke<unknown>("player:select-audio", { sessionId, streamId }),
+    selectSubtitle: (sessionId: string, streamId: string | null) => invoke<unknown>("player:select-subtitle", { sessionId, streamId }),
     state: () => invoke<unknown>("player:state"),
     stop: () => invoke<unknown>("player:stop"),
     onState: (callback: (state: unknown) => void): (() => void) => {

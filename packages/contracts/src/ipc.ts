@@ -120,6 +120,17 @@ export const IpcItemPage = Schema.Struct({
 });
 export type IpcItemPage = Schema.Schema.Type<typeof IpcItemPage>;
 
+export const IpcPlayableStream = Schema.Struct({
+  id: Uuid,
+  kind: Schema.Literals(["audio", "subtitle"]),
+  ordinal: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  codec: Schema.NullOr(Schema.String),
+  language: Schema.NullOr(Schema.String),
+  title: Schema.NullOr(Schema.String),
+  isDefault: Schema.Boolean,
+});
+export type IpcPlayableStream = Schema.Schema.Type<typeof IpcPlayableStream>;
+
 export const IpcPlayerSession = Schema.Struct({
   sessionId: Uuid,
   itemId: Uuid,
@@ -127,6 +138,7 @@ export const IpcPlayerSession = Schema.Struct({
   title: Schema.String.check(Schema.isMinLength(1)),
   streamUrl: Schema.String.check(Schema.isMinLength(1)),
   durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  streams: Schema.Array(IpcPlayableStream),
   grantExpiresInSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   grantToken: Schema.String.check(Schema.isMinLength(1)),
 });
@@ -141,6 +153,9 @@ export const IpcPlayerState = Schema.Struct({
   volume: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   muted: Schema.Boolean,
   ended: Schema.Boolean,
+  streams: Schema.Array(IpcPlayableStream),
+  selectedAudioStreamId: Schema.NullOr(Uuid),
+  selectedSubtitleStreamId: Schema.NullOr(Uuid),
 });
 export type IpcPlayerState = Schema.Schema.Type<typeof IpcPlayerState>;
 

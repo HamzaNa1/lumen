@@ -62,7 +62,8 @@ button { cursor: pointer; }
 .player-copy { display: grid; gap: var(--space-1); min-width: 0; }
 .player-copy strong, .player-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .player-copy span { color: var(--text-secondary); font-size: 0.85rem; }
-.player-controls { display: flex; gap: var(--space-2); }
+.player-controls { display: flex; gap: var(--space-2); align-items: center; }
+.player-picker select { max-width: 180px; background: var(--surface-raised); color: var(--text-primary); border: 1px solid var(--border-subtle); border-radius: var(--radius-control); padding: var(--space-2); }
 .player-progress { display: flex; align-items: center; gap: var(--space-3); color: var(--text-secondary); font-size: 0.8rem; }
 .player-progress input { flex: 1; accent-color: var(--accent); }
 .empty-state { border: 1px dashed var(--border-subtle); border-radius: var(--radius-card); padding: var(--space-8); color: var(--text-secondary); }

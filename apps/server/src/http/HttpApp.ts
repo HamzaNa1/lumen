@@ -338,6 +338,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
         title: result.title,
         streamUrl: result.streamPath,
         durationSeconds: result.durationSeconds,
+        streams: result.streams,
         grantExpiresInSeconds: result.grantExpiresInSeconds,
         grantToken: result.grantToken,
         mode: "DirectPlay",

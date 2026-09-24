@@ -185,6 +185,14 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, positionSeconds: Schema.Number }), raw);
     return dependencies.player.seek(input.sessionId, input.positionSeconds);
   });
+  handle("player:select-audio", async (_event, raw) => {
+    const input = decode(Schema.Struct({ sessionId: Schema.String, streamId: Schema.String }), raw);
+    return dependencies.player.selectAudioStream(input.sessionId, input.streamId);
+  });
+  handle("player:select-subtitle", async (_event, raw) => {
+    const input = decode(Schema.Struct({ sessionId: Schema.String, streamId: Schema.NullOr(Schema.String) }), raw);
+    return dependencies.player.selectSubtitleStream(input.sessionId, input.streamId);
+  });
   handle("player:state", async () => dependencies.player.getState());
   handle("player:stop", async () => {
     await dependencies.player.stop();
@@ -193,5 +201,5 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
 };
 
 export const unregisterIpcHandlers = (): void => {
-  for (const name of ["accounts:list", "accounts:setup", "accounts:discover-server", "accounts:connect", "accounts:activate", "accounts:remove", "library:list", "library:items", "library:search", "admin:listUsers", "admin:createUser", "admin:updateUser", "admin:listLibraries", "admin:createLibrary", "admin:updateLibrary", "admin:deleteLibrary", "admin:listRoots", "admin:addRoot", "admin:deleteRoot", "admin:startScan", "admin:scanStatus", "player:start", "player:pause", "player:seek", "player:state", "player:stop"]) ipcMain.removeHandler(name);
+  for (const name of ["accounts:list", "accounts:setup", "accounts:discover-server", "accounts:connect", "accounts:activate", "accounts:remove", "library:list", "library:items", "library:search", "admin:listUsers", "admin:createUser", "admin:updateUser", "admin:listLibraries", "admin:createLibrary", "admin:updateLibrary", "admin:deleteLibrary", "admin:listRoots", "admin:addRoot", "admin:deleteRoot", "admin:startScan", "admin:scanStatus", "player:start", "player:pause", "player:seek", "player:select-audio", "player:select-subtitle", "player:state", "player:stop"]) ipcMain.removeHandler(name);
 };
