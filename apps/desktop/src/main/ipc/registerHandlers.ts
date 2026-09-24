@@ -1,4 +1,4 @@
-import type { IpcServerDiscovery } from "@lumen/contracts";
+import { IpcPlayerSurfaceBounds, type IpcServerDiscovery } from "@lumen/contracts";
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { Schema } from "effect";
 import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
@@ -286,17 +286,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return dependencies.player.volume(input.sessionId, input.volume, input.muted);
   });
   handle("player:surface", async (_event, raw) => {
-    const bounds = decode(
-      Schema.NullOr(
-        Schema.Struct({
-          x: Schema.Int,
-          y: Schema.Int,
-          width: Schema.Int,
-          height: Schema.Int,
-        }),
-      ),
-      raw,
-    );
+    const bounds = decode(Schema.NullOr(IpcPlayerSurfaceBounds), raw);
     await dependencies.player.setSurface(bounds);
     return { ok: true };
   });

@@ -14,7 +14,7 @@ export default defineConfig({
     resolve: { alias: workspaceAlias },
     ssr: { noExternal: workspacePackages },
     build: {
-      rollupOptions: { external: ["electron", "drizzle-orm", "effect"] },
+      rollupOptions: { external: ["electron", "drizzle-orm", "effect", "koffi"] },
     },
   },
   preload: {

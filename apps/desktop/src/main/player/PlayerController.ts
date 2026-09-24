@@ -5,7 +5,8 @@ import type { ServerClient } from "../api/ServerClient";
 import { MpvIpc } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { PlaybackBridge } from "./PlaybackBridge";
-import type { PlayerSurfaceBounds, MpvSurface } from "./MpvSurface";
+import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
+import type { MpvSurface } from "./MpvSurface";
 
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
@@ -190,7 +191,7 @@ export class PlayerController extends EventEmitter {
         selectedSubtitleStream === null ? "no" : (trackIds.get(selectedSubtitleStream.id) ?? "no"),
       ]);
       await ipc.command(["set_property", "pause", "no"]);
-      await this.surface.syncPlaybackWindow(ipc);
+      this.surface.show();
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
@@ -267,9 +268,9 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
-  async setSurface(bounds: PlayerSurfaceBounds | null): Promise<void> {
+  async setSurface(bounds: IpcPlayerSurfaceBounds | null): Promise<void> {
     this.surface.setBounds(bounds);
-    if (this.active !== null) await this.surface.syncPlaybackWindow(this.active.ipc);
+    if (this.active !== null) this.surface.show();
   }
 
   async selectAudioStream(sessionId: string, streamId: string): Promise<IpcPlayerState> {
@@ -367,7 +368,7 @@ export class PlayerController extends EventEmitter {
     capability,
   }: PlaybackResources): Promise<void> {
     if (capability !== null) this.bridge.revoke(capability);
-    this.surface.detach();
+    this.surface.hide();
     ipc?.close();
     process?.stop();
     try {

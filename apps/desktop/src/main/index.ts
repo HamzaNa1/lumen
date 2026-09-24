@@ -13,6 +13,8 @@ let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
 
+if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform", "x11");
+
 const bootstrap = async (): Promise<void> => {
   await app.whenReady();
   const registry = await AccountRegistry.open();
@@ -29,6 +31,9 @@ const bootstrap = async (): Promise<void> => {
     onState: (state) => {
       mainWindow?.webContents.send("player:state", state);
     },
+  });
+  mainWindow.once("closed", () => {
+    void player?.stop();
   });
   const clients = new Map<string, ServerClient>();
   registerIpcHandlers({ registry, clients, player, bridge, installationId });

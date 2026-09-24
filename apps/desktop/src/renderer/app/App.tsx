@@ -68,6 +68,7 @@ interface WorkspaceValue {
   readonly playingItem: IpcItem | null;
   readonly player: IpcPlayerState | null;
   readonly playbackLoading: boolean;
+  readonly playbackError: string | null;
   readonly beginPlayback: (item: IpcItem) => Promise<void>;
   readonly updatePlayer: (state: IpcPlayerState) => void;
   readonly stopPlayback: () => Promise<void>;
@@ -180,6 +181,7 @@ export const App = (): React.ReactElement => {
     playingItem,
     player,
     playbackLoading,
+    playbackError,
     beginPlayback,
     updatePlayer,
     stopPlayback,
@@ -729,6 +731,7 @@ export const PlayerPage = (): React.ReactElement => {
     playingItem,
     player,
     playbackLoading,
+    playbackError,
     beginPlayback,
     updatePlayer,
     stopPlayback,
@@ -785,7 +788,8 @@ export const PlayerPage = (): React.ReactElement => {
         title={playingItem?.title ?? "Now playing"}
         context={`${account.serverLabel} · ${account.username} · Original quality`}
         paused={player?.paused ?? true}
-        loading={playbackLoading || player === null}
+        loading={playbackLoading}
+        error={player === null ? playbackError : null}
         position={player?.positionSeconds ?? 0}
         duration={
           player?.durationSeconds ??
@@ -800,6 +804,9 @@ export const PlayerPage = (): React.ReactElement => {
         selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
         surfaceRef={surfaceRef}
         onBack={() => void navigate({ to: "/library" })}
+        onRetry={() => {
+          if (playingItem !== null) void beginPlayback(playingItem);
+        }}
         onPause={() => {
           if (player !== null) {
             void bridge.player.pause(player.sessionId, !player.paused).then(updatePlayer);

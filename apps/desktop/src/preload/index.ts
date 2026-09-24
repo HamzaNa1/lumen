@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
+import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 
 const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
@@ -41,7 +42,7 @@ const api = {
       invoke<unknown>("player:seek", { sessionId, positionSeconds }),
     volume: (sessionId: string, volume: number, muted: boolean) =>
       invoke<unknown>("player:volume", { sessionId, volume, muted }),
-    surface: (bounds: unknown) => invoke<unknown>("player:surface", bounds),
+    surface: (bounds: IpcPlayerSurfaceBounds | null) => invoke<unknown>("player:surface", bounds),
     selectAudio: (sessionId: string, streamId: string) =>
       invoke<unknown>("player:select-audio", { sessionId, streamId }),
     selectSubtitle: (sessionId: string, streamId: string | null) =>

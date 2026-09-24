@@ -3,6 +3,7 @@ import type {
   IpcItemPage,
   IpcLibrary,
   IpcPlayerState,
+  IpcPlayerSurfaceBounds,
   IpcPlayerSession,
   IpcServerDiscovery,
   ScanRun,
@@ -78,14 +79,7 @@ export interface LumenBridge {
     readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<IpcPlayerState>;
-    readonly surface: (
-      bounds: {
-        readonly x: number;
-        readonly y: number;
-        readonly width: number;
-        readonly height: number;
-      } | null,
-    ) => Promise<unknown>;
+    readonly surface: (bounds: IpcPlayerSurfaceBounds | null) => Promise<unknown>;
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<IpcPlayerState>;
     readonly selectSubtitle: (
       sessionId: string,

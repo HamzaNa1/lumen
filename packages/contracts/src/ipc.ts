@@ -158,6 +158,14 @@ export const IpcPlayerState = Schema.Struct({
 });
 export type IpcPlayerState = Schema.Schema.Type<typeof IpcPlayerState>;
 
+export const IpcPlayerSurfaceBounds = Schema.Struct({
+  x: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  y: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  width: Schema.Int.check(Schema.isGreaterThan(0)),
+  height: Schema.Int.check(Schema.isGreaterThan(0)),
+});
+export type IpcPlayerSurfaceBounds = Schema.Schema.Type<typeof IpcPlayerSurfaceBounds>;
+
 export const IpcRequest = Schema.Union([
   IpcLogin,
   IpcRefresh,

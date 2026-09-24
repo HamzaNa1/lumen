@@ -21,6 +21,7 @@ interface MediaPlayerProps {
   readonly context: string;
   readonly paused: boolean;
   readonly loading: boolean;
+  readonly error: string | null;
   readonly position: number;
   readonly duration: number | null;
   readonly volume: number;
@@ -30,6 +31,7 @@ interface MediaPlayerProps {
   readonly selectedSubtitleStreamId: string | null;
   readonly surfaceRef: Ref<HTMLDivElement>;
   readonly onBack: () => void;
+  readonly onRetry: () => void;
   readonly onPause: () => void;
   readonly onStop: () => void;
   readonly onSeek: (positionSeconds: number) => void;
@@ -43,6 +45,7 @@ export const MediaPlayer = ({
   context,
   paused,
   loading,
+  error,
   position,
   duration,
   volume,
@@ -52,6 +55,7 @@ export const MediaPlayer = ({
   selectedSubtitleStreamId,
   surfaceRef,
   onBack,
+  onRetry,
   onPause,
   onStop,
   onSeek,
@@ -87,10 +91,19 @@ export const MediaPlayer = ({
             <span className="media-player-mark">
               <MonitorPlay aria-hidden="true" size={28} />
             </span>
-            <strong>{loading ? "Preparing your movie…" : "MPV playback surface"}</strong>
+            <strong>{error ?? (loading ? "Preparing your movie…" : "MPV playback surface")}</strong>
             <span>
-              {loading ? "Opening the original file" : "Original quality · no transcoding"}
+              {error === null
+                ? loading
+                  ? "Opening the original file"
+                  : "Original quality · no transcoding"
+                : "Check that embedded MPV is installed, then try again."}
             </span>
+            {error === null ? null : (
+              <Button variant="primary" onClick={onRetry}>
+                Try again
+              </Button>
+            )}
           </div>
         </div>
 
