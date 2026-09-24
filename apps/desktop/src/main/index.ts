@@ -14,6 +14,9 @@ let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
 
+const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
+const rendererPath = join(import.meta.dirname, "../renderer/index.html");
+
 if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform", "x11");
 
 const bootstrap = async (): Promise<void> => {
@@ -24,7 +27,6 @@ const bootstrap = async (): Promise<void> => {
   );
   bridge = new PlaybackBridge();
   await bridge.listen();
-  const preloadPath = join(__dirname, "../preload/index.cjs");
   mainWindow = createMainWindow({ preloadPath });
   const overlay = new PlayerOverlayWindow(mainWindow, preloadPath);
   player = new PlayerController({
@@ -55,8 +57,8 @@ const bootstrap = async (): Promise<void> => {
   mainWindow.on("leave-full-screen", sendFullscreenState);
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
-  else await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
-  await overlay.load(rendererUrl, join(__dirname, "../renderer/index.html"));
+  else await mainWindow.loadFile(rendererPath);
+  await overlay.load(rendererUrl, rendererPath);
   setInterval(() => void player?.tick(), 3_000);
 };
 
