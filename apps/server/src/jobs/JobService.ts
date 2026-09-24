@@ -40,6 +40,38 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
     });
   });
 
+  const queueMissingMetadata = Effect.fn("JobService.queueMissingMetadata")(function* (nowMs: number) {
+    if (!config?.tmdbApiKey) return 0;
+    const sources = yield* database.all<{ sourceId: string; libraryId: string }>(sql`
+      SELECT DISTINCT s.id AS sourceId, s.library_id AS libraryId
+      FROM media_sources s
+      JOIN library_profiles p ON p.library_id = s.library_id
+      JOIN catalog_item_sources link ON link.source_id = s.id
+      JOIN catalog_items item ON item.id = link.item_id
+      LEFT JOIN media_source_availability a ON a.source_id = s.id
+      WHERE p.kind IN ('movies', 'shows') AND item.kind IN ('movie', 'episode')
+        AND COALESCE(a.is_available, 1) = 1
+        AND NOT EXISTS (SELECT 1 FROM provider_records record WHERE record.item_id = item.id AND record.provider = 'tmdb')
+        AND NOT EXISTS (SELECT 1 FROM scan_jobs job WHERE job.source_id = s.id AND job.operation = 'metadata' AND job.status IN ('queued', 'running'))
+      ORDER BY s.library_id, s.id
+    `);
+    const runs = new Map<string, string>();
+    for (const source of sources) {
+      let runId = runs.get(source.libraryId);
+      if (runId === undefined) {
+        const run = yield* repositories.scanning.startRun({ runId: newUuid(), libraryId: source.libraryId, mode: "refresh", startedAtMs: nowMs });
+        runId = run.id;
+        runs.set(source.libraryId, runId);
+      }
+      yield* repositories.scanning.createJob({
+        id: newUuid(), runId, parentJobId: null, sourceId: source.sourceId,
+        dedupeKey: `metadata:startup:${source.sourceId}`, operation: "metadata", priority: 50,
+        maxAttempts: 3, availableAtMs: nowMs,
+      });
+    }
+    return sources.length;
+  });
+
   const recover: JobServiceShape["recover"] = Effect.fn("JobService.recover")(function* (nowMs) {
     const rows = yield* database.all<{ id: string }>(sql`
       SELECT id FROM scan_jobs
@@ -72,7 +104,11 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
         if (job.sourceId === null) throw new Error("Job has no source");
         if (Option.isSome(ingest)) yield* ingest.value.ingest(job.sourceId);
         if (config?.tmdbApiKey && Option.isSome(tmdb)) {
-          const source = yield* database.get<{ libraryId: string }>(sql`SELECT library_id AS libraryId FROM media_sources WHERE id = ${job.sourceId}`);
+          const source = yield* database.get<{ libraryId: string }>(sql`
+            SELECT s.library_id AS libraryId FROM media_sources s
+            JOIN library_profiles p ON p.library_id = s.library_id
+            WHERE s.id = ${job.sourceId} AND p.kind IN ('movies', 'shows')
+          `);
           if (source != null) {
             const enrichmentRun = yield* repositories.scanning.startRun({ runId: newUuid(), libraryId: source.libraryId, mode: "refresh", startedAtMs: nowMs });
             yield* repositories.scanning.createJob({
@@ -118,6 +154,7 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
   });
 
   const start = async (signal: AbortSignal): Promise<void> => {
+    await Effect.runPromise(queueMissingMetadata(Date.now()).pipe(Effect.catch(() => Effect.succeed(0))));
     while (!signal.aborted) {
       await Effect.runPromise(recover(Date.now()).pipe(Effect.catch(() => Effect.void)));
       const didWork = await Effect.runPromise(runOne(Date.now()).pipe(Effect.catch(() => Effect.succeed(false))));

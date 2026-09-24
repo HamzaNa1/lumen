@@ -952,7 +952,7 @@ const ItemDetails = ({ item, onClose, onPlay }: {
   readonly onClose: () => void;
   readonly onPlay: (item: IpcItem) => void;
 }): React.ReactElement => {
-  const { scope } = useWorkspace();
+  const { scope, account } = useWorkspace();
   const [path, setPath] = useState<IpcItem[]>([]);
   const [failedPoster, setFailedPoster] = useState<string | null>(null);
   const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null);
@@ -995,7 +995,9 @@ const ItemDetails = ({ item, onClose, onPlay }: {
             </div>
             <div className="details-copy">
               <span className="quality-badge">{playable ? "Original quality · Direct Play" : titleCase(current.kind)}</span>
-              {metadata?.overview ? <p>{metadata.overview}</p> : <p>Details are not available yet.</p>}
+              {metadata?.overview ? <p>{metadata.overview}</p> : <p>{details.data?.metadataProviderConfigured === false
+                ? account.role === "admin" ? "Configure TMDb on the server to fetch details and artwork." : "Metadata is not configured on this server."
+                : "Details are not available yet."}</p>}
               <p>{[metadata?.releaseDate ?? current.year, metadata?.contentRating, metadata?.communityRating === null || metadata?.communityRating === undefined ? null : `★ ${metadata.communityRating.toFixed(1)}`].filter(Boolean).join(" · ")}</p>
               {metadataList(metadata?.genresJson).length ? <p>Genres: {metadataList(metadata?.genresJson).join(", ")}</p> : null}
               {metadataList(metadata?.studiosJson).length ? <p>Studios: {metadataList(metadata?.studiosJson).join(", ")}</p> : null}

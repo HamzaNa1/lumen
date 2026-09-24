@@ -139,6 +139,7 @@ export const IpcItemDetails = Schema.Struct({
   sources: Schema.Array(Schema.Unknown),
   watchState: Schema.NullOr(Schema.Unknown),
   isFavorite: Schema.Boolean,
+  metadataProviderConfigured: Schema.Boolean,
 });
 export type IpcItemDetails = Schema.Schema.Type<typeof IpcItemDetails>;
 

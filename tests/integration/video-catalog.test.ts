@@ -116,7 +116,8 @@ test("video folders browse as series, seasons, episodes and movies without requi
     const ingest = yield* makeMediaIngest;
     for (const sourceId of ids.sourceIds) yield* ingest.ingest(sourceId);
   }).pipe(Effect.provide(layer)));
-  const showDetails = await (await get(`/api/v1/items/${showId}`, admin)).json() as { item: { overview: string; genresJson: string; communityRating: number; artworkId: string } };
+  const showDetails = await (await get(`/api/v1/items/${showId}`, admin)).json() as { item: { overview: string; genresJson: string; communityRating: number; artworkId: string }; metadataProviderConfigured: boolean };
+  expect(showDetails.metadataProviderConfigured).toBe(false);
   expect(showDetails.item.overview).toBe("A local synopsis.");
   expect(JSON.parse(showDetails.item.genresJson)).toEqual(["Drama"]);
   expect(showDetails.item.communityRating).toBe(8.5);
@@ -223,8 +224,6 @@ test("video folders browse as series, seasons, episodes and movies without requi
     const remoteGet = (path: string) => fetch(new URL(path, remoteBase), { headers: { authorization: `Bearer ${admin}` } });
     const movedEpisodes = await (await remoteGet(`/api/v1/items/${must(seasons.items[0]).id}/children`)).json() as { items: { id: string }[] };
     expect(movedEpisodes.items.map((episode) => episode.id)).toEqual(firstSeason.items.map((episode) => episode.id));
-    const refresh = await fetch(new URL(`/api/v1/items/${showId}/refresh`, remoteBase), { method: "POST", headers: { authorization: `Bearer ${admin}` } });
-    expect(refresh.status).toBe(200);
     let enrichedEpisodeTitle: string | undefined;
     for (let attempt = 0; attempt < 40; attempt++) {
       const response = await remoteGet(`/api/v1/items/${must(firstSeason.items[0]).id}`);
@@ -233,6 +232,8 @@ test("video folders browse as series, seasons, episodes and movies without requi
       await Bun.sleep(100);
     }
     expect(enrichedEpisodeTitle).toBe("Pilot");
+    const refresh = await fetch(new URL(`/api/v1/items/${showId}/refresh`, remoteBase), { method: "POST", headers: { authorization: `Bearer ${admin}` } });
+    expect(refresh.status).toBe(200);
     const enrichedShow = await (await remoteGet(`/api/v1/items/${showId}`)).json() as { item: { title: string; overview: string; year: number; communityRating: number } };
     expect(enrichedShow.item.title).toBe("Dr. House");
     expect(enrichedShow.item.overview).toBe("A local synopsis.");

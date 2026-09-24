@@ -399,7 +399,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
         SELECT position_seconds AS positionSeconds, completed FROM item_watch_states WHERE user_id = ${principal.user.id} AND item_id = ${item.id}
       `));
       const favorite = await call(services.database.get<{ itemId: string }>(sql`SELECT item_id AS itemId FROM item_favorites WHERE user_id = ${principal.user.id} AND item_id = ${item.id}`));
-      return unknownJson({ item, sources: sources.map((source) => ({ ...source, available: source.available === 1 })), watchState: watchState == null ? null : { ...watchState, completed: watchState.completed === 1 }, isFavorite: favorite != null });
+      return unknownJson({ item, sources: sources.map((source) => ({ ...source, available: source.available === 1 })), watchState: watchState == null ? null : { ...watchState, completed: watchState.completed === 1 }, isFavorite: favorite != null, metadataProviderConfigured: config.tmdbApiKey !== null });
     }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "tracks") return unknownJson(await call(services.catalog.listTracks(principal, url.searchParams.get("libraryId"), page(url), Date.now())));
     if (method === "PUT" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "favorite") {
