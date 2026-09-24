@@ -53,6 +53,8 @@ export interface LumenBridge {
       readonly isActive?: boolean;
     }) => Promise<User>;
     readonly listLibraries: () => Promise<ReadonlyArray<IpcLibrary>>;
+    readonly metadataSettings: () => Promise<{ readonly tmdbConfigured: boolean }>;
+    readonly updateMetadataSettings: (input: { readonly tmdbApiKey: string | null }) => Promise<{ readonly tmdbConfigured: boolean }>;
     readonly createLibrary: (input: {
       readonly id: string;
       readonly name: string;

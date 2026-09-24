@@ -218,10 +218,22 @@ test("video folders browse as series, seasons, episodes and movies without requi
     return nativeFetch(input, init);
   }) as typeof fetch;
   try {
-    const enrichedServer = await startServer({ databasePath, dataDir: join(root, "data"), tmdbApiKey: "test", host: "127.0.0.1", port: 0 });
+    const enrichedServer = await startServer({ databasePath, dataDir: join(root, "data"), host: "127.0.0.1", port: 0 });
     servers.push(enrichedServer);
     const remoteBase = new URL(enrichedServer.server.url);
     const remoteGet = (path: string) => fetch(new URL(path, remoteBase), { headers: { authorization: `Bearer ${admin}` } });
+    const settingPath = new URL("/api/v1/admin/metadata-settings", remoteBase);
+    expect((await remoteGet(settingPath.pathname)).status).toBe(200);
+    expect(await (await remoteGet(settingPath.pathname)).json()).toEqual({ tmdbConfigured: false });
+    expect((await fetch(settingPath, { headers: { authorization: `Bearer ${viewer}` } })).status).toBe(403);
+    expect((await fetch(settingPath, { method: "PUT", headers: { authorization: `Bearer ${viewer}`, "content-type": "application/json" }, body: JSON.stringify({ tmdbApiKey: "test" }) })).status).toBe(403);
+    const savedSetting = await fetch(settingPath, { method: "PUT", headers: { authorization: `Bearer ${admin}`, "content-type": "application/json" }, body: JSON.stringify({ tmdbApiKey: "test" }) });
+    expect(savedSetting.status).toBe(200);
+    expect(await savedSetting.json()).toEqual({ tmdbConfigured: true });
+    expect((await stat(databasePath)).mode & 0o077).toBe(0);
+    expect((await stat(`${databasePath}-wal`)).mode & 0o077).toBe(0);
+    expect(await (await remoteGet(settingPath.pathname)).json()).toEqual({ tmdbConfigured: true });
+    expect((await (await remoteGet(`/api/v1/items/${showId}`)).json() as { metadataProviderConfigured: boolean }).metadataProviderConfigured).toBe(true);
     const movedEpisodes = await (await remoteGet(`/api/v1/items/${must(seasons.items[0]).id}/children`)).json() as { items: { id: string }[] };
     expect(movedEpisodes.items.map((episode) => episode.id)).toEqual(firstSeason.items.map((episode) => episode.id));
     let enrichedEpisodeTitle: string | undefined;
@@ -291,6 +303,15 @@ test("video folders browse as series, seasons, episodes and movies without requi
     expect((await fetch(new URL(`/api/v1/items/${showId}/refresh`, remoteBase), { method: "POST", headers: { authorization: `Bearer ${admin}` } })).status).toBe(200);
     await Bun.sleep(250);
     expect((await remoteGet(`/api/v1/items/${showId}`)).status).toBe(200);
+    await enrichedServer.stop();
+    servers.pop();
+    const restartedServer = await startServer({ databasePath, dataDir: join(root, "data"), host: "127.0.0.1", port: 0 });
+    servers.push(restartedServer);
+    const restartedSettings = new URL("/api/v1/admin/metadata-settings", restartedServer.server.url);
+    expect(await (await fetch(restartedSettings, { headers: { authorization: `Bearer ${admin}` } })).json()).toEqual({ tmdbConfigured: true });
+    const cleared = await fetch(restartedSettings, { method: "PUT", headers: { authorization: `Bearer ${admin}`, "content-type": "application/json" }, body: JSON.stringify({ tmdbApiKey: null }) });
+    expect(await cleared.json()).toEqual({ tmdbConfigured: false });
+    expect((await (await fetch(new URL(`/api/v1/items/${showId}`, restartedServer.server.url), { headers: { authorization: `Bearer ${admin}` } })).json() as { metadataProviderConfigured: boolean }).metadataProviderConfigured).toBe(false);
   } finally {
     globalThis.fetch = nativeFetch;
   }

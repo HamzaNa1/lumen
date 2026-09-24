@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { JobService, JobServiceLive } from "../../apps/server/src/jobs/JobService";
+import { MetadataSettingsLive } from "../../apps/server/src/services/MetadataSettings";
 import { Scanner, ScannerLive, scanRoot } from "../../apps/server/src/services/Scanner";
 
 const paths: string[] = [];
@@ -33,8 +34,9 @@ describe("durable jobs and scanner reconciliation", () => {
     const databaseLayer = makeDatabaseLayers({ databasePath } as never);
     const repositories = RepositoriesLive(databaseLayer);
     const scanner = ScannerLive.pipe(Layer.provide(Layer.mergeAll(databaseLayer, repositories)));
-    const jobs = JobServiceLive.pipe(Layer.provide(Layer.mergeAll(databaseLayer, repositories, scanner)));
-    const layer = Layer.mergeAll(databaseLayer, repositories, scanner, jobs);
+    const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(databaseLayer));
+    const jobs = JobServiceLive.pipe(Layer.provide(Layer.mergeAll(databaseLayer, repositories, scanner, metadataSettings)));
+    const layer = Layer.mergeAll(databaseLayer, repositories, scanner, metadataSettings, jobs);
     const result = await Effect.runPromise(Effect.gen(function* () {
       const database = yield* Database;
       const repos = yield* Repositories;

@@ -18,9 +18,10 @@ import { LibraryService, LibraryServiceLive } from "./services/LibraryService";
 import { ScanService, ScanServiceLive } from "./services/ScanService";
 import { PlaybackService, PlaybackServiceLive } from "./services/PlaybackService";
 import { ScannerLive } from "./services/Scanner";
+import { MetadataSettings, MetadataSettingsLive, type MetadataSettingsShape } from "./services/MetadataSettings";
 import { makeHttpHandler, type HttpServices } from "./http/HttpApp";
 import { sql } from "drizzle-orm";
-import { mkdir } from "node:fs/promises";
+import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface ServerServices {
@@ -36,6 +37,7 @@ export interface ServerServices {
   readonly jobs: JobServiceShape;
   readonly database: Database["Service"];
   readonly identity: ServerIdentity;
+  readonly metadataSettings: MetadataSettingsShape;
 }
 
 export const makeLayers = (config: ServerConfig) => {
@@ -51,13 +53,14 @@ export const makeLayers = (config: ServerConfig) => {
   const catalog = CatalogServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const playback = PlaybackServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
+  const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(dependencies));
   const ffprobe = FfprobeLive(config);
   const media = MediaIngestLive.pipe(Layer.provide(Layer.mergeAll(dependencies, ffprobe)));
-  const tmdb = TmdbProviderLive(config).pipe(Layer.provide(dependencies));
-  const jobs = JobServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, media, tmdb)));
+  const tmdb = TmdbProviderLive(config).pipe(Layer.provide(Layer.mergeAll(dependencies, metadataSettings)));
+  const jobs = JobServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, media, tmdb, metadataSettings)));
   const events = EventServiceLive.pipe(Layer.provide(dependencies));
   const identity = ServerIdentityLive.pipe(Layer.provide(dependencies));
-  return Layer.mergeAll(dependencies, auth, access, assets, admin, catalog, libraries, scans, playback, events, jobs, identity);
+  return Layer.mergeAll(dependencies, auth, access, assets, admin, catalog, libraries, scans, playback, events, jobs, identity, metadataSettings);
 };
 
 const makeServices = Effect.gen(function* () {
@@ -76,6 +79,7 @@ const makeServices = Effect.gen(function* () {
     jobs: yield* JobService,
     database,
     identity,
+    metadataSettings: yield* MetadataSettings,
   };
 });
 
@@ -102,6 +106,10 @@ export const startServer = async (overrides: Partial<ServerConfig> = {}): Promis
     servicesPromise,
     new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Server services did not initialize")), 30_000)),
   ]);
+  for (const path of [config.databasePath, `${config.databasePath}-wal`, `${config.databasePath}-shm`]) {
+    try { await chmod(path, 0o600); }
+    catch (cause) { if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause; }
+  }
   const httpServices: HttpServices = {
     auth: services.auth,
     access: services.access,
@@ -114,6 +122,7 @@ export const startServer = async (overrides: Partial<ServerConfig> = {}): Promis
     playback: services.playback,
     jobs: services.jobs,
     identity: services.identity,
+    metadataSettings: services.metadataSettings,
     database: services.database,
     startedAtMs: Date.now(),
     databaseReady: async () => {

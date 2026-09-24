@@ -876,6 +876,11 @@ export const AdminPage = (): React.ReactElement => {
     queryFn: () => bridge.admin.listUsers(),
     enabled: account.role === "admin",
   });
+  const metadata = useQuery({
+    queryKey: [...scope, "admin", "metadata"],
+    queryFn: () => bridge.admin.metadataSettings(),
+    enabled: account.role === "admin",
+  });
   const libraries = useQuery({
     queryKey: [...scope, "admin", "libraries"],
     queryFn: () => bridge.admin.listLibraries(),
@@ -898,22 +903,57 @@ export const AdminPage = (): React.ReactElement => {
         title="Administration"
         description="Manage who can connect and what appears in Lumen."
       />
-      {users.isLoading || libraries.isLoading ? (
+      {users.isLoading || libraries.isLoading || metadata.isLoading ? (
         <StatusState loading title="Loading administration" message="Reading server settings." />
       ) : null}
-      {users.isError || libraries.isError ? (
+      {users.isError || libraries.isError || metadata.isError ? (
         <StatusState
           title="Administration unavailable"
           message="The server settings could not be loaded."
         />
       ) : null}
-      {users.data !== undefined && libraries.data !== undefined ? (
+      {users.data !== undefined && libraries.data !== undefined && metadata.data !== undefined ? (
         <div className="admin-grid">
+          <AdminMetadataSettings configured={metadata.data.tmdbConfigured} scope={scope} />
           <AdminUsers users={users.data} scope={scope} />
           <AdminLibraries libraries={libraries.data} scope={scope} />
         </div>
       ) : null}
     </div>
+  );
+};
+
+const AdminMetadataSettings = ({ configured, scope }: { readonly configured: boolean; readonly scope: readonly unknown[] }): React.ReactElement => {
+  const queryClient = useQueryClient();
+  const [key, setKey] = useState("");
+  const update = useMutation({
+    mutationFn: (tmdbApiKey: string | null) => bridge.admin.updateMetadataSettings({ tmdbApiKey }),
+    onSuccess: async () => {
+      setKey("");
+      await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "metadata"] });
+      await queryClient.invalidateQueries({ queryKey: [...scope, "item"] });
+    },
+  });
+  return (
+    <section className="admin-panel">
+      <div className="panel-heading">
+        <span className="panel-icon"><Sparkles aria-hidden="true" size={19} /></span>
+        <div>
+          <h2>Movie and TV metadata</h2>
+          <p>TMDb API key {configured ? "configured" : "not configured"}</p>
+        </div>
+      </div>
+      <Form className="modal-form" onSubmit={(event) => { event.preventDefault(); update.mutate(key.trim()); }}>
+        <TextField label="TMDb v3 API key" type="password" value={key} onValueChange={setKey} />
+        <p>Saving a key starts fetching details for scanned movies and shows. The key stays on this server.</p>
+        {update.isError ? <p className="error-message" role="alert">{errorMessage(update.error, "Could not save TMDb key")}</p> : null}
+        {update.isSuccess ? <p role="status">Metadata setting saved.</p> : null}
+        <div className="form-actions">
+          {configured ? <Button variant="danger" type="button" disabled={update.isPending} onClick={() => update.mutate(null)}>Remove key</Button> : null}
+          <Button variant="primary" type="submit" disabled={update.isPending || key.trim() === ""}>{update.isPending ? "Saving…" : configured ? "Replace key" : "Save key"}</Button>
+        </div>
+      </Form>
+    </section>
   );
 };
 

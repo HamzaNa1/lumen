@@ -29,7 +29,6 @@ const Environment = Schema.Struct({
   LUMEN_FFPROBE_MAX_OUTPUT_BYTES: Schema.optional(Numeric),
   LUMEN_SHUTDOWN_GRACE_MS: Schema.optional(Numeric),
   LUMEN_HEARTBEAT_INTERVAL_MS: Schema.optional(Numeric),
-  LUMEN_TMDB_API_KEY: Schema.optional(Schema.String),
 });
 
 export interface ServerConfig {
@@ -50,7 +49,6 @@ export interface ServerConfig {
   readonly ffprobeMaxOutputBytes: number;
   readonly shutdownGraceMs: number;
   readonly heartbeatIntervalMs: number;
-  readonly tmdbApiKey: string | null;
 }
 
 const toInteger = (name: string, raw: string | undefined, fallback: number): number => {
@@ -90,6 +88,5 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     ffprobeMaxOutputBytes: toBoundedInteger("LUMEN_FFPROBE_MAX_OUTPUT_BYTES", parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES, 1_048_576, 1_024, 100_000_000),
     shutdownGraceMs: toBoundedInteger("LUMEN_SHUTDOWN_GRACE_MS", parsed.LUMEN_SHUTDOWN_GRACE_MS, 10_000, 100, 600_000),
     heartbeatIntervalMs: toBoundedInteger("LUMEN_HEARTBEAT_INTERVAL_MS", parsed.LUMEN_HEARTBEAT_INTERVAL_MS, 20_000, 1_000, 600_000),
-    tmdbApiKey: parsed.LUMEN_TMDB_API_KEY?.trim() || null,
   };
 };

@@ -7,6 +7,7 @@ import type { ServerConfig } from "../config/Config";
 import { newUuid } from "../core/Security";
 import { readResponseBytes } from "./BoundedInput";
 import { imageInfo } from "./ImageInfo";
+import { MetadataSettings } from "../services/MetadataSettings";
 
 type TmdbObject = Record<string, unknown>;
 type Item = { id: string; kind: string; parentId: string | null; title: string; year: number | null; indexNumber: number | null; origin: string | null };
@@ -80,8 +81,9 @@ const lookup = async (item: Item, parentProviderId: string | null, key: string, 
 
 export const makeTmdbProvider = (config: ServerConfig) => Effect.gen(function* () {
   const database = yield* Database;
+  const settings = yield* MetadataSettings;
   const enrichSource: MetadataProvider["enrichSource"] = Effect.fn("Tmdb.enrichSource")(function* (sourceId) {
-    const apiKey = config.tmdbApiKey;
+    const apiKey = yield* settings.tmdbKey();
     if (apiKey === null) return;
     const file = yield* database.get<{ id: string; parentId: string | null }>(sql`
       SELECT i.id, i.parent_id AS parentId FROM catalog_items i JOIN catalog_item_sources s ON s.item_id = i.id

@@ -18,6 +18,7 @@ import type { LibraryServiceShape } from "../services/LibraryService";
 import type { ScanServiceShape } from "../services/ScanService";
 import type { PlaybackServiceShape } from "../services/PlaybackService";
 import type { JobServiceShape } from "../jobs/JobService";
+import type { MetadataSettingsShape } from "../services/MetadataSettings";
 import * as S from "../http/Schemas";
 
 export interface HttpServices {
@@ -31,6 +32,7 @@ export interface HttpServices {
   readonly assets: AssetServiceShape;
   readonly playback: PlaybackServiceShape;
   readonly jobs?: JobServiceShape;
+  readonly metadataSettings: MetadataSettingsShape;
   readonly database: Database["Service"];
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
@@ -204,6 +206,22 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     }
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
+    if (url.pathname === "/api/v1/admin/metadata-settings" && (method === "GET" || method === "PUT")) {
+      await call(services.access.requireAdmin(principal));
+      if (method === "PUT") {
+        const input = await body(request, config.maxRequestBodyBytes);
+        if (input === null || typeof input !== "object" || !("tmdbApiKey" in input) ||
+          (input.tmdbApiKey !== null && typeof input.tmdbApiKey !== "string") ||
+          (typeof input.tmdbApiKey === "string" && input.tmdbApiKey.length > 512)) {
+          throw badRequest("Expected a TMDb API key with at most 512 characters, or null");
+        }
+        const key = input.tmdbApiKey?.trim() ?? null;
+        if (input.tmdbApiKey !== null && key === "") throw badRequest("TMDb API key cannot be empty");
+        await call(services.metadataSettings.setTmdbKey(key, Date.now()));
+        if (key !== null) await call(services.jobs?.queueMissingMetadata(Date.now()) ?? Effect.void);
+      }
+      return unknownJson({ tmdbConfigured: (await call(services.metadataSettings.tmdbKey())) !== null });
+    }
     if ((method === "POST" && url.pathname === "/api/v1/auth/logout") || (method === "DELETE" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "auth" && parts[3] === "sessions" && parts[4] !== undefined)) {
       const input = method === "POST" ? decode(S.LogoutBody, await body(request, config.maxRequestBodyBytes)) : { sessionId: parts[4] ?? "" };
       await call(services.auth.logout(principal, input.sessionId, Date.now()));
@@ -399,7 +417,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
         SELECT position_seconds AS positionSeconds, completed FROM item_watch_states WHERE user_id = ${principal.user.id} AND item_id = ${item.id}
       `));
       const favorite = await call(services.database.get<{ itemId: string }>(sql`SELECT item_id AS itemId FROM item_favorites WHERE user_id = ${principal.user.id} AND item_id = ${item.id}`));
-      return unknownJson({ item, sources: sources.map((source) => ({ ...source, available: source.available === 1 })), watchState: watchState == null ? null : { ...watchState, completed: watchState.completed === 1 }, isFavorite: favorite != null, metadataProviderConfigured: config.tmdbApiKey !== null });
+      return unknownJson({ item, sources: sources.map((source) => ({ ...source, available: source.available === 1 })), watchState: watchState == null ? null : { ...watchState, completed: watchState.completed === 1 }, isFavorite: favorite != null, metadataProviderConfigured: (await call(services.metadataSettings.tmdbKey())) !== null });
     }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "tracks") return unknownJson(await call(services.catalog.listTracks(principal, url.searchParams.get("libraryId"), page(url), Date.now())));
     if (method === "PUT" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "favorite") {

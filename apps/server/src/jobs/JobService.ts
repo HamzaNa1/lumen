@@ -5,11 +5,13 @@ import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
 import { Scanner } from "../services/Scanner";
+import { MetadataSettings } from "../services/MetadataSettings";
 
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
   readonly runOne: (nowMs: number) => Effect.Effect<boolean, unknown>;
   readonly refresh: (itemId: string, nowMs: number) => Effect.Effect<void, unknown>;
+  readonly queueMissingMetadata: (nowMs: number) => Effect.Effect<number, unknown>;
   readonly start: (signal: AbortSignal) => Promise<void>;
 }
 
@@ -19,9 +21,10 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
   const scanner = yield* Scanner;
   const ingest = yield* Effect.serviceOption(MediaIngest);
   const tmdb = yield* Effect.serviceOption(TmdbProvider);
+  const settings = yield* MetadataSettings;
 
   const refresh: JobServiceShape["refresh"] = Effect.fn("JobService.refresh")(function* (itemId, nowMs) {
-    if (!config?.tmdbApiKey) throw new Error("TMDb is not configured");
+    if ((yield* settings.tmdbKey()) === null) throw new Error("TMDb is not configured");
     const item = yield* database.get<{ libraryId: string }>(sql`SELECT library_id AS libraryId FROM catalog_items WHERE id = ${itemId}`);
     if (item == null) throw new Error("Item not found");
     const sources = yield* database.all<{ sourceId: string }>(sql`
@@ -41,7 +44,7 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
   });
 
   const queueMissingMetadata = Effect.fn("JobService.queueMissingMetadata")(function* (nowMs: number) {
-    if (!config?.tmdbApiKey) return 0;
+    if ((yield* settings.tmdbKey()) === null) return 0;
     const sources = yield* database.all<{ sourceId: string; libraryId: string }>(sql`
       SELECT DISTINCT s.id AS sourceId, s.library_id AS libraryId
       FROM media_sources s
@@ -103,7 +106,7 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
       } else if (job.operation === "probe") {
         if (job.sourceId === null) throw new Error("Job has no source");
         if (Option.isSome(ingest)) yield* ingest.value.ingest(job.sourceId);
-        if (config?.tmdbApiKey && Option.isSome(tmdb)) {
+        if ((yield* settings.tmdbKey()) !== null && Option.isSome(tmdb)) {
           const source = yield* database.get<{ libraryId: string }>(sql`
             SELECT s.library_id AS libraryId FROM media_sources s
             JOIN library_profiles p ON p.library_id = s.library_id
@@ -162,7 +165,7 @@ export const makeJobService = (config?: ServerConfig) => Effect.gen(function* ()
     }
   };
 
-  return { recover, runOne, refresh, start };
+  return { recover, runOne, refresh, queueMissingMetadata, start };
 });
 
 export class JobService extends Context.Service<JobService, JobServiceShape>()("@lumen/server/Jobs") {}

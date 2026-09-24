@@ -243,6 +243,18 @@ export class ServerClient {
     return this.request("/api/v1/admin/libraries", {}, librarySchema);
   }
 
+  async metadataSettings(): Promise<{ readonly tmdbConfigured: boolean }> {
+    return this.request("/api/v1/admin/metadata-settings", {}, Schema.Struct({ tmdbConfigured: Schema.Boolean }));
+  }
+
+  async updateMetadataSettings(tmdbApiKey: string | null): Promise<{ readonly tmdbConfigured: boolean }> {
+    return this.request("/api/v1/admin/metadata-settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ tmdbApiKey }),
+    }, Schema.Struct({ tmdbConfigured: Schema.Boolean }));
+  }
+
   async users(): Promise<ReadonlyArray<User>> {
     return this.request("/api/v1/users", {}, Schema.Array(User));
   }

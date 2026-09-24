@@ -24,6 +24,12 @@ export const serverSettings = sqliteTable("server_settings", {
   updatedAtMs: millis("updated_at_ms"),
 });
 
+export const metadataProviderSettings = sqliteTable("metadata_provider_settings", {
+  provider: text("provider").primaryKey(),
+  apiKey: text("api_key").notNull(),
+  updatedAtMs: millis("updated_at_ms"),
+});
+
 export const libraryProfiles = sqliteTable(
   "library_profiles",
   {

@@ -211,6 +211,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return activeClient(dependencies).updateUser(input.userId, input);
   });
   handle("admin:listLibraries", async () => activeClient(dependencies).adminLibraries());
+  handle("admin:metadataSettings", async () => activeClient(dependencies).metadataSettings());
+  handle("admin:updateMetadataSettings", async (_event, raw) => {
+    const input = decode(Schema.Struct({ tmdbApiKey: Schema.NullOr(Schema.String) }), raw);
+    return activeClient(dependencies).updateMetadataSettings(input.tmdbApiKey);
+  });
   handle("admin:createLibrary", async (_event, raw) =>
     activeClient(dependencies).createLibrary(
       decode(
@@ -353,6 +358,8 @@ export const unregisterIpcHandlers = (): void => {
     "admin:createUser",
     "admin:updateUser",
     "admin:listLibraries",
+    "admin:metadataSettings",
+    "admin:updateMetadataSettings",
     "admin:createLibrary",
     "admin:updateLibrary",
     "admin:deleteLibrary",
