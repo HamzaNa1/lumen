@@ -175,6 +175,13 @@ export class PlayerController extends EventEmitter {
       } finally {
         detachLoadListeners();
       }
+      if (process.platform === "darwin") {
+        const windowId = await ipc.command(["get_property", "window-id"]);
+        if (typeof windowId !== "number" || !Number.isSafeInteger(windowId) || windowId <= 0) {
+          throw new Error("MPV did not create a native video window");
+        }
+        this.surface.attachNativeWindow(windowId);
+      }
       const trackIds = await resolveTrackIds(ipc, session.streams);
       this.active = { ...active, trackIds };
       const streams = session.streams.filter((stream) => trackIds.has(stream.id));

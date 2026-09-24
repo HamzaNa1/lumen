@@ -52,6 +52,16 @@ export class MpvProcess {
       "--idle=yes",
       "--no-terminal",
       `--input-ipc-server=${socketPath}`,
+      ...(process.platform === "darwin"
+        ? [
+            "--vo=gpu",
+            "--force-window=yes",
+            "--border=no",
+            "--auto-window-resize=no",
+            "--window-dragging=no",
+            "--input-cursor-passthrough=yes",
+          ]
+        : []),
       ...(options.videoOutputArguments ?? []),
     ];
     if (process.platform === "darwin") {

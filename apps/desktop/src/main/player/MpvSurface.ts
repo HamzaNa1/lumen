@@ -1,5 +1,6 @@
 import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
-import { BrowserWindow } from "electron";
+import { BaseWindow, type BrowserWindow } from "electron";
+import { MacMpvWindow } from "./MacMpvWindow";
 
 const nativeWindowId = (handle: Buffer): string => {
   if (process.platform === "win32") return String(handle.readUInt32LE(0));
@@ -9,7 +10,8 @@ const nativeWindowId = (handle: Buffer): string => {
 
 export class MpvSurface {
   private readonly parent: BrowserWindow;
-  private host: BrowserWindow | null = null;
+  private host: BaseWindow | null = null;
+  private macWindow: MacMpvWindow | null = null;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private playbackVisible = false;
 
@@ -46,7 +48,18 @@ export class MpvSurface {
     this.playbackVisible = true;
     this.syncHostBounds();
     host.showInactive();
+    if (process.platform === "darwin") return [];
     return [`--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
+  }
+
+  attachNativeWindow(windowId: number): void {
+    if (process.platform !== "darwin") return;
+    this.macWindow?.dispose();
+    const host = this.ensureHost();
+    this.macWindow = new MacMpvWindow(
+      BigInt(nativeWindowId(host.getNativeWindowHandle())),
+      BigInt(Math.trunc(windowId)),
+    );
   }
 
   show(): void {
@@ -57,18 +70,22 @@ export class MpvSurface {
 
   hide(): void {
     this.playbackVisible = false;
+    this.macWindow?.dispose();
+    this.macWindow = null;
     this.host?.hide();
   }
 
   dispose(): void {
     this.playbackVisible = false;
+    this.macWindow?.dispose();
+    this.macWindow = null;
     if (this.host !== null && !this.host.isDestroyed()) this.host.destroy();
     this.host = null;
   }
 
-  private ensureHost(): BrowserWindow {
+  private ensureHost(): BaseWindow {
     if (this.host !== null && !this.host.isDestroyed()) return this.host;
-    const host = new BrowserWindow({
+    const host = new BaseWindow({
       parent: this.parent,
       frame: false,
       show: false,
@@ -82,16 +99,8 @@ export class MpvSurface {
       hasShadow: false,
       roundedCorners: false,
       backgroundColor: "#000000",
-      webPreferences: {
-        contextIsolation: true,
-        sandbox: true,
-        nodeIntegration: false,
-      },
     });
     host.setMenuBarVisibility(false);
-    host.webContents.setAudioMuted(true);
-    host.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
-    host.webContents.on("will-navigate", (event) => event.preventDefault());
     this.host = host;
     return host;
   }
@@ -105,5 +114,6 @@ export class MpvSurface {
       width: this.bounds.width,
       height: this.bounds.height,
     });
+    this.macWindow?.sync();
   }
 }
