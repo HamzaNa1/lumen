@@ -20,6 +20,7 @@ export interface IpcDependencies {
   readonly clients: Map<string, ServerClient>;
   readonly player: PlayerController;
   readonly bridge: PlaybackBridge;
+  readonly installationId: string;
 }
 
 const activeClient = (dependencies: IpcDependencies): ServerClient => {
@@ -84,7 +85,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     if (discovery === undefined) throw new Error("Connect to the server first");
     const identity = await client.identity();
     if (identity.serverId !== discovery.identity.serverId) throw new Error("Server identity changed; connect to the server again");
-    const session = await (discovery.setupRequired ? client.register(input, requestId()) : client.login(input, requestId()));
+    const session = await (discovery.setupRequired ? client.register(input, dependencies.installationId) : client.login(input, dependencies.installationId));
     const user = await client.me();
     const connectionId = requestId();
     await dependencies.registry.save({
@@ -167,12 +168,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("admin:scanStatus", async (_event, raw) => activeClient(dependencies).scanStatus(decode(Schema.String, raw)));
   handle("player:start", async (_event, raw) => {
-    const input = decode(Schema.Struct({ itemId: Schema.String, deviceId: Schema.String }), raw);
+    const input = decode(Schema.Struct({ itemId: Schema.String }), raw);
     const result = await dependencies.player.start({
       client: activeClient(dependencies),
       connectionId: activeConnectionId(dependencies),
       itemId: input.itemId,
-      deviceId: input.deviceId,
     });
     const { grantToken: _grantToken, ...safe } = result;
     return safe;

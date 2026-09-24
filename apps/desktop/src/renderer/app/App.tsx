@@ -6,15 +6,6 @@ import { useEffect, useMemo, useState } from "react";
 const bridge = window.lumen;
 type View = "home" | "library" | "search" | "settings" | "admin";
 
-const deviceId = (): string => {
-  const key = "lumen-device-id";
-  const existing = window.localStorage.getItem(key);
-  if (existing !== null) return existing;
-  const created = crypto.randomUUID();
-  window.localStorage.setItem(key, created);
-  return created;
-};
-
 const useAccounts = () => useQuery({ queryKey: ["accounts"], queryFn: () => bridge.accounts.list() });
 
 export const App = (): React.ReactElement => {
@@ -52,7 +43,7 @@ export const App = (): React.ReactElement => {
   async function startPlayback(item: IpcItem): Promise<void> {
     setPlaybackError(null);
     try {
-      const result = await bridge.player.start(item.id, deviceId()) as IpcPlayerSession;
+      const result = await bridge.player.start(item.id) as IpcPlayerSession;
       setSelectedItem(item);
       setPlayer(await bridge.player.state());
       if (result.sessionId !== undefined) setView("home");

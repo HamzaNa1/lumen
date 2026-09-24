@@ -111,7 +111,6 @@ export const StartScanBody = Schema.Struct({
 });
 
 export const StartPlaybackBody = Schema.Struct({
-  deviceId: Identifier,
   trackId: Schema.NullOr(Identifier),
 });
 

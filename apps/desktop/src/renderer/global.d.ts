@@ -29,7 +29,7 @@ export interface LumenBridge {
     readonly scanStatus: (runId: string) => Promise<ScanRun>;
   };
   readonly player: {
-    readonly start: (itemId: string, deviceId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;
+    readonly start: (itemId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<IpcPlayerState>;

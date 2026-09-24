@@ -31,7 +31,7 @@ const api = {
     scanStatus: (runId: string) => invoke<unknown>("admin:scanStatus", runId),
   },
   player: {
-    start: (itemId: string, deviceId: string) => invoke<unknown>("player:start", { itemId, deviceId }),
+    start: (itemId: string) => invoke<unknown>("player:start", { itemId }),
     pause: (sessionId: string, paused: boolean) => invoke<unknown>("player:pause", { sessionId, paused }),
     seek: (sessionId: string, positionSeconds: number) => invoke<unknown>("player:seek", { sessionId, positionSeconds }),
     selectAudio: (sessionId: string, streamId: string) => invoke<unknown>("player:select-audio", { sessionId, streamId }),

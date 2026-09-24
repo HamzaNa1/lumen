@@ -1,6 +1,27 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { getOrCreateInstallationId } from "../../apps/desktop/src/main/accounts/InstallationId";
 import { ids } from "../../packages/testkit/src/ids";
+
+describe("desktop installation identity", () => {
+  test("persists one installation ID across loads", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-installation-id-"));
+    const path = join(root, "installation.json");
+
+    try {
+      const first = await getOrCreateInstallationId(path);
+      const second = await getOrCreateInstallationId(path);
+
+      expect(second).toBe(first);
+      expect(JSON.parse(await readFile(path, "utf8"))).toEqual({ id: first });
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("ServerClient discovery", () => {
   test("discovers a server and its setup status before authentication", async () => {
@@ -71,5 +92,31 @@ describe("ServerClient discovery", () => {
       `POST https://media.example/api/v1/scans`,
       `GET https://media.example/api/v1/scans/${ids.scanRun}`,
     ]);
+  });
+
+  test("ignores a stale renderer device ID when starting playback", async () => {
+    let requestBody: unknown;
+    const client = new ServerClient({
+      origin: "https://media.example",
+      fetchImpl: async (_input, init) => {
+        requestBody = JSON.parse(String(init?.body));
+        return new Response(JSON.stringify({
+          sessionId: ids.playbackSession,
+          itemId: ids.track,
+          sourceId: ids.source,
+          title: "Track",
+          streamUrl: "/stream",
+          durationSeconds: 10,
+          streams: [],
+          grantExpiresInSeconds: 3_600,
+          grantToken: "grant",
+        }), { status: 201 });
+      },
+    });
+    client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "access", refreshToken: "refresh", accessExpiresAtMs: 10_000, refreshExpiresAtMs: 20_000 });
+
+    await Reflect.apply(client.startPlayback, client, [ids.track, ids.device]);
+
+    expect(requestBody).toEqual({ trackId: ids.track });
   });
 });

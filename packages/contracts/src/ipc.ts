@@ -35,7 +35,6 @@ export type IpcSearchCatalog = Schema.Schema.Type<typeof IpcSearchCatalog>;
 
 export const IpcStartPlayback = Schema.Struct({
   _tag: Schema.Literal("playback.start"),
-  deviceId: Uuid,
   trackId: Schema.NullOr(Uuid),
   nowMs: UtcMillis,
   expiresAtMs: UtcMillis,

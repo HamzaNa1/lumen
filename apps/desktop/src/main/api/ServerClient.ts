@@ -315,11 +315,11 @@ export class ServerClient {
     return this.request(`/api/v1/items?${query.toString()}`, {}, itemPageSchema);
   }
 
-  async startPlayback(itemId: string, deviceId: string): Promise<IpcPlayerSession> {
+  async startPlayback(itemId: string): Promise<IpcPlayerSession> {
     return this.request("/api/v1/playback/sessions", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ deviceId, trackId: itemId }),
+      body: JSON.stringify({ trackId: itemId }),
     }, playerSessionSchema);
   }
 

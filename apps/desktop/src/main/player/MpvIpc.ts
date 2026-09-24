@@ -1,8 +1,15 @@
 import { createConnection, type Socket } from "node:net";
 import type { MpvProcess } from "./MpvProcess";
 
+const CONNECTION_TIMEOUT_MS = 5_000;
+const CONNECTION_RETRY_MS = 50;
+
 export type MpvEvent = { readonly event: string; readonly properties?: Record<string, unknown> };
-type Pending = { readonly resolve: (value: unknown) => void; readonly reject: (cause: Error) => void; readonly timer: ReturnType<typeof setTimeout> };
+type Pending = {
+  readonly resolve: (value: unknown) => void;
+  readonly reject: (cause: Error) => void;
+  readonly timer: ReturnType<typeof setTimeout>;
+};
 
 export class MpvIpc {
   private socket: Socket | null = null;
@@ -13,11 +20,7 @@ export class MpvIpc {
   async connect(process: MpvProcess): Promise<void> {
     const socketPath = process.socketPath;
     if (socketPath === null) throw new Error("MPV has exited");
-    this.socket = await new Promise<Socket>((resolve, reject) => {
-      const socket = createConnection(socketPath);
-      socket.once("connect", () => resolve(socket));
-      socket.once("error", reject);
-    });
+    this.socket = await this.connectWithRetry(process, socketPath);
     this.socket.setEncoding("utf8");
     this.socket.on("data", (chunk: string) => this.consume(chunk));
     this.socket.on("error", () => this.rejectAll(new Error("MPV IPC disconnected")));
@@ -49,6 +52,39 @@ export class MpvIpc {
     this.socket = null;
   }
 
+  private connectWithRetry(process: MpvProcess, socketPath: string): Promise<Socket> {
+    const deadline = Date.now() + CONNECTION_TIMEOUT_MS;
+
+    const attempt = (): Promise<Socket> => {
+      if (process.socketPath === null) return Promise.reject(new Error("MPV has exited"));
+      return new Promise<Socket>((resolve, reject) => {
+        const socket = createConnection(socketPath);
+        const cleanup = (): void => {
+          socket.removeListener("connect", onConnect);
+          socket.removeListener("error", onError);
+        };
+        const onConnect = (): void => {
+          cleanup();
+          resolve(socket);
+        };
+        const onError = (cause: Error): void => {
+          cleanup();
+          socket.destroy();
+          const code = (cause as NodeJS.ErrnoException).code;
+          if ((code === "ENOENT" || code === "ECONNREFUSED") && Date.now() < deadline) {
+            setTimeout(() => void attempt().then(resolve, reject), CONNECTION_RETRY_MS);
+            return;
+          }
+          reject(cause);
+        };
+        socket.once("connect", onConnect);
+        socket.once("error", onError);
+      });
+    };
+
+    return attempt();
+  }
+
   private consume(chunk: string): void {
     this.buffer += chunk;
     if (this.buffer.length > 2_000_000) {
@@ -66,7 +102,12 @@ export class MpvIpc {
 
   private handle(line: string): void {
     try {
-      const message = JSON.parse(line) as { request_id?: number; error?: string; data?: unknown; event?: string };
+      const message = JSON.parse(line) as {
+        request_id?: number;
+        error?: string;
+        data?: unknown;
+        event?: string;
+      };
       if (message.request_id !== undefined) {
         const pending = this.pending.get(message.request_id);
         if (pending === undefined) return;

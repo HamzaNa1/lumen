@@ -54,7 +54,7 @@ export const makePlaybackService = Effect.gen(function* () {
 
   const start: PlaybackServiceShape["start"] = Effect.fn("Playback.start")(function* (principal, input, nowMs) {
     const device = yield* database.get<{ id: string; revokedAtMs: number | null }>(sql`
-      SELECT id, revoked_at_ms AS revokedAtMs FROM devices WHERE id = ${input.deviceId} AND user_id = ${principal.user.id}
+      SELECT id, revoked_at_ms AS revokedAtMs FROM devices WHERE id = ${principal.deviceId} AND user_id = ${principal.user.id}
     `);
     if (device == null || device.revokedAtMs !== null) return yield* forbidden("Device is unavailable");
     if (input.trackId === null) return yield* badRequest("A source is required for direct play");
@@ -65,7 +65,7 @@ export const makePlaybackService = Effect.gen(function* () {
     const session = yield* repositories.activity.startPlayback({
       sessionId,
       userId: principal.user.id,
-      deviceId: input.deviceId,
+      deviceId: principal.deviceId,
       grantTokenHash: hashToken(grantToken),
       activeTrackId: trackId,
       nowMs,

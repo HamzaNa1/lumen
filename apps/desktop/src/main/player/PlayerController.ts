@@ -61,9 +61,9 @@ export class PlayerController extends EventEmitter {
     this.onState = options.onState;
   }
 
-  async start(input: { readonly client: ServerClient; readonly connectionId: string; readonly itemId: string; readonly deviceId: string }): Promise<IpcPlayerSession> {
+  async start(input: { readonly client: ServerClient; readonly connectionId: string; readonly itemId: string }): Promise<IpcPlayerSession> {
     await this.stop();
-    const session = await input.client.startPlayback(input.itemId, input.deviceId);
+    const session = await input.client.startPlayback(input.itemId);
     const playerProcess = MpvProcess.start({
       cwd: process.cwd(),
       resourcesPath: process.resourcesPath,

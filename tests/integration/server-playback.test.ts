@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
+import { Database as SqliteDatabase } from "bun:sqlite";
 import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
 import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -86,7 +87,7 @@ describe("direct-play HTTP delivery", () => {
     const started = await fetch(new URL("/api/v1/playback/sessions", base), {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${session.accessToken}` },
-      body: JSON.stringify({ deviceId, trackId: seeded.itemId }),
+      body: JSON.stringify({ trackId: seeded.itemId }),
     });
     expect(started.status).toBe(201);
     const playback = await started.json() as {
@@ -115,5 +116,36 @@ describe("direct-play HTTP delivery", () => {
     expect(head.headers.get("content-length")).toBe("10");
     const denied = await fetch(streamUrl, { headers: { authorization: "Bearer invalid" } });
     expect(denied.status).toBe(404);
+  });
+
+  test("uses the access-token session device when the renderer device is stale", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-playback-device-test-"));
+    paths.push(root);
+    const databasePath = join(root, "server.sqlite");
+    const seeded = await seed(root, databasePath);
+    const running = await startServer({ databasePath, host: "127.0.0.1", port: 0 });
+    runningServers.push(running);
+    const base = new URL(running.server.url);
+    const sessionDeviceId = newUuid();
+    const login = await fetch(new URL("/api/v1/auth/login", base), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "correct horse battery staple", deviceId: sessionDeviceId, deviceName: "Playback test", platform: "desktop", platformDeviceId: sessionDeviceId }),
+    });
+    const session = await login.json() as { accessToken: string };
+    const started = await fetch(new URL("/api/v1/playback/sessions", base), {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${session.accessToken}` },
+      body: JSON.stringify({ deviceId: newUuid(), trackId: seeded.itemId }),
+    });
+    expect(started.status).toBe(201);
+    const playback = await started.json() as { sessionId: string };
+    const sqlite = new SqliteDatabase(databasePath, { readonly: true });
+    try {
+      const storedDevice = sqlite.query<{ deviceId: string }, [string]>("SELECT device_id AS deviceId FROM playback_sessions WHERE id = ?").get(playback.sessionId);
+      expect(storedDevice?.deviceId).toBe(sessionDeviceId);
+    } finally {
+      sqlite.close();
+    }
   });
 });

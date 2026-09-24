@@ -1,7 +1,8 @@
 import { app, BrowserWindow } from "electron";
 import { join } from "node:path";
 import { AccountRegistry } from "./accounts/AccountRegistry";
-import { ServerClient } from "./api/ServerClient";
+import { getOrCreateInstallationId } from "./accounts/InstallationId";
+import type { ServerClient } from "./api/ServerClient";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
 import { createMainWindow } from "./windows";
 import { PlaybackBridge } from "./player/PlaybackBridge";
@@ -14,6 +15,7 @@ let player: PlayerController | null = null;
 const bootstrap = async (): Promise<void> => {
   await app.whenReady();
   const registry = await AccountRegistry.open();
+  const installationId = await getOrCreateInstallationId(join(app.getPath("userData"), "installation.json"));
   bridge = new PlaybackBridge();
   await bridge.listen();
   player = new PlayerController({
@@ -23,7 +25,7 @@ const bootstrap = async (): Promise<void> => {
     },
   });
   const clients = new Map<string, ServerClient>();
-  registerIpcHandlers({ registry, clients, player, bridge });
+  registerIpcHandlers({ registry, clients, player, bridge, installationId });
   const preloadPath = join(__dirname, "../preload/index.cjs");
   mainWindow = createMainWindow({ preloadPath });
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
