@@ -99,6 +99,8 @@ export const RotateRefreshToken = Schema.Struct({
   sessionId: Uuid,
   replacementTokenId: Uuid,
   replacementTokenHash: Sha256Digest,
+  accessTokenHash: Schema.optional(Sha256Digest),
+  accessExpiresAtMs: Schema.optional(UtcMillis),
   issuedAtMs: UtcMillis,
   expiresAtMs: UtcMillis,
 });

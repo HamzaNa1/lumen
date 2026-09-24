@@ -93,6 +93,7 @@ export const App = (): React.ReactElement => {
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const [connectionsView, setConnectionsView] = useState<"saved" | "add" | null>("saved");
   const startingItemId = useRef<string | null>(null);
   const activePlayer = useRef<IpcPlayerState | null>(null);
   const wasOnPlayerRoute = useRef(onPlayerRoute);
@@ -219,7 +220,23 @@ export const App = (): React.ReactElement => {
     return (
       <ConnectPage
         accounts={accounts}
-        onChanged={() => void queryClient.invalidateQueries({ queryKey: ["accounts"] })}
+        onChanged={() => {
+          setConnectionsView(null);
+          void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+        }}
+      />
+    );
+
+  if (connectionsView !== null)
+    return (
+      <ConnectPage
+        accounts={accounts}
+        initialShowAddServer={connectionsView === "add"}
+        onClose={() => setConnectionsView(null)}
+        onChanged={() => {
+          setConnectionsView(null);
+          void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+        }}
       />
     );
 
@@ -259,6 +276,7 @@ export const App = (): React.ReactElement => {
                   .then(() => queryClient.invalidateQueries())
                   .catch(() => undefined);
               }}
+              onAddServer={() => setConnectionsView("add")}
             />
           }
         >
@@ -288,11 +306,13 @@ const Sidebar = ({
   accounts,
   onActivate,
   onRemove,
+  onAddServer,
 }: {
   readonly account: IpcAccount;
   readonly accounts: ReadonlyArray<IpcAccount>;
   readonly onActivate: (id: string) => void;
   readonly onRemove: (id: string) => void;
+  readonly onAddServer: () => void;
 }): React.ReactElement => {
   const links = [
     { to: "/" as const, label: "Home", icon: Home, exact: true },
@@ -334,6 +354,9 @@ const Sidebar = ({
         onActivate={onActivate}
         onRemove={onRemove}
       />
+      <Button variant="ghost" onClick={onAddServer}>
+        <Plus aria-hidden="true" size={16} /> Add server
+      </Button>
     </>
   );
 };
@@ -341,10 +364,14 @@ const Sidebar = ({
 const ConnectPage = ({
   accounts = [],
   initialError,
+  initialShowAddServer = false,
+  onClose,
   onChanged,
 }: {
   readonly accounts?: ReadonlyArray<IpcAccount>;
   readonly initialError?: string;
+  readonly initialShowAddServer?: boolean;
+  readonly onClose?: () => void;
   readonly onChanged?: () => void;
 }): React.ReactElement => {
   const [origin, setOrigin] = useState("http://127.0.0.1:3210");
@@ -353,6 +380,8 @@ const ConnectPage = ({
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [server, setServer] = useState<IpcServerDiscovery | null>(null);
+  const [showAddServer, setShowAddServer] = useState(accounts.length === 0 || initialShowAddServer);
+  const [removing, setRemoving] = useState<IpcAccount | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const discoverServer = useMutation({
     mutationFn: () => bridge.accounts.discoverServer(origin),
@@ -398,6 +427,14 @@ const ConnectPage = ({
       .then(() => onChanged?.())
       .catch((cause) => setError(errorMessage(cause, "Could not remove account")));
   };
+  const signInAgain = (account: IpcAccount): void => {
+    setOrigin(account.origin);
+    setServerLabel(account.serverLabel);
+    setUsername(account.username);
+    setServer(null);
+    setShowAddServer(true);
+    setError(null);
+  };
 
   return (
     <main className="connect-page">
@@ -439,38 +476,52 @@ const ConnectPage = ({
         </div>
       </section>
       <section className="connect-card">
-        <div className="step-indicator">
-          <span className="active">1</span>
-          <i />
-          <span className={server === null ? "" : "active"}>2</span>
-        </div>
-        <div className="connect-heading">
-          <span className="eyebrow">{server === null ? "Get started" : "Almost there"}</span>
-          <h2>
-            {server === null
-              ? "Connect your server"
-              : server.setupRequired
-                ? "Create administrator"
-                : "Welcome back"}
-          </h2>
-          <p>
-            {server === null
-              ? "Enter the address of a Lumen server on your network."
-              : `Connected to ${server.identity.displayName}`}
-          </p>
-        </div>
-        {accounts.length === 0 ? null : (
-          <div className="saved-connections">
-            <span className="section-kicker">Saved connections</span>
-            <AccountSwitcher
-              accounts={accounts}
-              activeId={null}
-              onActivate={activateAccount}
-              onRemove={removeAccount}
-            />
+        {accounts.length > 0 && !showAddServer ? null : (
+          <div className="step-indicator">
+            <span className="active">1</span>
+            <i />
+            <span className={server === null ? "" : "active"}>2</span>
           </div>
         )}
-        {server === null ? (
+        <div className="connect-heading">
+          <span className="eyebrow">
+            {accounts.length > 0 && !showAddServer ? "Your servers" : server === null ? "Get started" : "Almost there"}
+          </span>
+          <h2>
+            {accounts.length > 0 && !showAddServer
+              ? "Saved servers"
+              : server === null
+                ? "Connect your server"
+                : server.setupRequired
+                  ? "Create administrator"
+                  : "Welcome back"}
+          </h2>
+          <p>
+            {accounts.length > 0 && !showAddServer
+              ? "Choose a server to continue."
+              : server === null
+                ? "Enter the address of a Lumen server on your network."
+                : `Connected to ${server.identity.displayName}`}
+          </p>
+        </div>
+        {accounts.length === 0 || showAddServer ? null : (
+          <div className="saved-connections">
+            <span className="section-kicker">Saved connections</span>
+            {accounts.map((account) => (
+              <div className="saved-server" key={account.connectionId}>
+                <div><strong>{account.serverLabel}</strong><span>{account.origin} · {account.username}</span></div>
+                <Button variant="ghost" onClick={() => activateAccount(account.connectionId)}>Open</Button>
+                <Button variant="ghost" onClick={() => signInAgain(account)}>Sign in</Button>
+                <Button variant="ghost" onClick={() => setRemoving(account)}>Remove</Button>
+              </div>
+            ))}
+          </div>
+        )}
+        {accounts.length > 0 && !showAddServer ? (
+          <Button variant="primary" onClick={() => { setShowAddServer(true); setServer(null); setError(null); }}>
+            <Plus aria-hidden="true" size={17} /> Add server
+          </Button>
+        ) : server === null ? (
           <Form
             className="connect-form"
             onSubmit={(event) => {
@@ -509,6 +560,11 @@ const ConnectPage = ({
                 </>
               )}
             </Button>
+            {accounts.length > 0 ? (
+              <Button variant="ghost" onClick={() => { setShowAddServer(false); setError(null); }}>
+                Back to saved servers
+              </Button>
+            ) : null}
           </Form>
         ) : (
           <Form
@@ -567,6 +623,21 @@ const ConnectPage = ({
             {error}
           </p>
         )}
+        {onClose === undefined ? null : <Button variant="ghost" onClick={onClose}>Back to library</Button>}
+        <Modal
+          open={removing !== null}
+          onOpenChange={(open) => { if (!open) setRemoving(null); }}
+          title={`Remove ${removing?.serverLabel ?? "connection"}?`}
+          description="This removes the saved sign-in from this device. Nothing on the server will be deleted."
+        >
+          <div className="confirm-actions">
+            <Button variant="ghost" onClick={() => setRemoving(null)}>Cancel</Button>
+            <Button variant="danger" onClick={() => {
+              if (removing !== null) removeAccount(removing.connectionId);
+              setRemoving(null);
+            }}>Remove connection</Button>
+          </div>
+        </Modal>
       </section>
     </main>
   );

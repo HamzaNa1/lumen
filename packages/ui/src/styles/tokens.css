@@ -990,6 +990,28 @@ button:disabled {
 .saved-connections .account-heading {
   display: none;
 }
+.saved-server {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--border-subtle);
+}
+.saved-server > div {
+  display: grid;
+  gap: 3px;
+  flex: 1 1 100%;
+  min-width: 0;
+}
+.saved-server strong {
+  font-size: 0.9rem;
+}
+.saved-server span {
+  overflow-wrap: anywhere;
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+}
 
 .error-message {
   display: flex;

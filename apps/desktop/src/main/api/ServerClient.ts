@@ -23,6 +23,7 @@ export interface AccountSession {
 export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: typeof fetch;
+  readonly onSessionChanged?: (session: AccountSession) => Promise<void>;
 }
 
 const identitySchema = Schema.Struct({
@@ -123,12 +124,14 @@ const decodeSession = (value: unknown): AccountSession => {
 export class ServerClient {
   private readonly origin: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly onSessionChanged?: (session: AccountSession) => Promise<void>;
   private session: AccountSession | null = null;
   private refreshPromise: Promise<AccountSession> | null = null;
 
   constructor(options: ServerClientOptions) {
     this.origin = normalizeOrigin(options.origin);
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.onSessionChanged = options.onSessionChanged;
   }
 
   get serverOrigin(): string {
@@ -137,6 +140,10 @@ export class ServerClient {
 
   get accessToken(): string | null {
     return this.session?.accessToken ?? null;
+  }
+
+  get currentSession(): AccountSession | null {
+    return this.session;
   }
 
   setSession(session: AccountSession | null): void {
@@ -215,6 +222,7 @@ export class ServerClient {
       });
       const session = decodeSession(await readJson(response));
       this.session = session;
+      await this.onSessionChanged?.(session);
       return session;
     })().finally(() => { this.refreshPromise = null; });
     return this.refreshPromise;
@@ -222,11 +230,13 @@ export class ServerClient {
 
   async request<T>(path: string, init: RequestInit = {}, schema?: Schema.Decoder<unknown, never>): Promise<T> {
     if (this.session === null) throw new Error("Authentication required");
+    if (this.session.accessExpiresAtMs <= Date.now() + 30_000 && this.session.refreshToken !== "") await this.refresh();
+    const accessToken = this.session.accessToken;
     const headers = new Headers(init.headers);
-    headers.set("authorization", `Bearer ${this.session.accessToken}`);
+    headers.set("authorization", `Bearer ${accessToken}`);
     let response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers, redirect: "manual" });
     if (response.status === 401 && this.session.refreshToken !== "") {
-      await this.refresh();
+      if (this.session.accessToken === accessToken) await this.refresh();
       const retryHeaders = new Headers(init.headers);
       retryHeaders.set("authorization", `Bearer ${this.session.accessToken}`);
       response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers: retryHeaders, redirect: "manual" });
@@ -346,10 +356,12 @@ export class ServerClient {
 
   async artworkDataUrl(artworkId: string): Promise<string | null> {
     if (this.session === null) throw new Error("Authentication required");
+    if (this.session.accessExpiresAtMs <= Date.now() + 30_000 && this.session.refreshToken !== "") await this.refresh();
+    const accessToken = this.session.accessToken;
     const url = new URL(`/api/v1/artwork/${encodeURIComponent(artworkId)}`, this.origin);
-    let response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${this.session.accessToken}` }, redirect: "manual" });
+    let response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` }, redirect: "manual" });
     if (response.status === 401 && this.session.refreshToken !== "") {
-      await this.refresh();
+      if (this.session.accessToken === accessToken) await this.refresh();
       response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${this.session.accessToken}` }, redirect: "manual" });
     }
     if (!response.ok) return null;

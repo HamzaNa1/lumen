@@ -109,6 +109,7 @@ export const makeAuthService = Effect.gen(function* () {
     const session = yield* repositories.auth
       .getSessionByTokenHash({ digest: hashToken(accessToken) })
       .pipe(Effect.mapError(mapRepositoryError));
+    if (session === null) return yield* unauthorized("Session is invalid");
     return {
       userId: credentials.user.id,
       role: credentials.user.role,
@@ -123,6 +124,7 @@ export const makeAuthService = Effect.gen(function* () {
   const refresh: AuthServiceShape["refresh"] = Effect.fn("AuthService.refresh")(function* (input, nowMs) {
     const digest = hashToken(input.refreshToken);
     const current = yield* repositories.auth.getRefreshTokenByHash({ digest }).pipe(Effect.mapError(mapRepositoryError));
+    if (current === null) return yield* unauthorized("Refresh token is invalid");
     if (current.usedAtMs !== null || current.revokedAtMs !== null || current.expiresAtMs <= nowMs) {
       yield* repositories.auth.revokeSession({ sessionId: current.sessionId, nowMs }).pipe(Effect.mapError(mapRepositoryError));
       return yield* unauthorized("Refresh token is invalid");
@@ -135,13 +137,16 @@ export const makeAuthService = Effect.gen(function* () {
       isActive: number;
       expiresAtMs: number;
       revokedAtMs: number | null;
+      deviceRevokedAtMs: number | null;
     }>(sql`
       SELECT s.id, s.user_id AS userId, s.device_id AS deviceId, u.role, u.is_active AS isActive,
-        s.expires_at_ms AS expiresAtMs, s.revoked_at_ms AS revokedAtMs
+        s.expires_at_ms AS expiresAtMs, s.revoked_at_ms AS revokedAtMs,
+        d.revoked_at_ms AS deviceRevokedAtMs
       FROM auth_sessions s JOIN users u ON u.id = s.user_id
+      JOIN devices d ON d.id = s.device_id AND d.user_id = s.user_id
       WHERE s.id = ${current.sessionId}
     `);
-    if (session == null || session.isActive !== 1 || session.revokedAtMs !== null || session.expiresAtMs <= nowMs) {
+    if (session == null || session.isActive !== 1 || session.revokedAtMs !== null || session.deviceRevokedAtMs !== null) {
       return yield* unauthorized("Session is invalid");
     }
     const accessToken = newOpaqueToken();
@@ -151,14 +156,11 @@ export const makeAuthService = Effect.gen(function* () {
       sessionId: current.sessionId,
       replacementTokenId: newUuid(),
       replacementTokenHash: hashToken(replacement),
+      accessTokenHash: hashToken(accessToken),
+      accessExpiresAtMs: nowMs + 900_000,
       issuedAtMs: nowMs,
       expiresAtMs: nowMs + 2_592_000_000,
     }).pipe(Effect.mapError(mapRepositoryError));
-    yield* database.run(sql`
-      UPDATE auth_sessions
-      SET last_used_at_ms = ${nowMs}, expires_at_ms = ${nowMs + 900_000}
-      WHERE id = ${current.sessionId} AND revoked_at_ms IS NULL
-    `);
     return {
       userId: session.userId,
       role: session.role,
@@ -173,7 +175,7 @@ export const makeAuthService = Effect.gen(function* () {
   const authenticate: AuthServiceShape["authenticate"] = Effect.fn("AuthService.authenticate")(function* (token, nowMs) {
     if (token.length < 32 || token.length > 1024) return yield* unauthorized();
     const session = yield* repositories.auth.getSessionByTokenHash({ digest: hashToken(token) }).pipe(Effect.mapError(mapRepositoryError));
-    if (session.revokedAtMs !== null || session.expiresAtMs <= nowMs) return yield* unauthorized();
+    if (session === null || session.revokedAtMs !== null || session.expiresAtMs <= nowMs) return yield* unauthorized();
     const row = yield* database.get<{
       id: string;
       username: string;

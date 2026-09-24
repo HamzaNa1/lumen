@@ -39,6 +39,42 @@ afterEach(async () => {
 });
 
 describe("server authentication and ACL", () => {
+  test("refreshes an expired access session and accepts the rotated access token", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-server-refresh-test-"));
+    const databasePath = join(root, "server.sqlite");
+    paths.push(root);
+    await seedAdmin(databasePath);
+    const base = await start(databasePath);
+    const login = await request(base, "/api/v1/auth/login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "correct horse battery staple", deviceId: newUuid(), deviceName: "Test", platform: "desktop", platformDeviceId: null }),
+    });
+    expect(login.status).toBe(200);
+    const first = await login.json() as { sessionId: string; accessToken: string; refreshToken: string };
+    const databaseLayer = makeDatabaseLayers({ databasePath } as never);
+    await Effect.runPromise(Effect.gen(function* () {
+      const database = yield* Database;
+      yield* database.run(sql`UPDATE auth_sessions SET issued_at_ms = 1, last_used_at_ms = 1, expires_at_ms = 2 WHERE id = ${first.sessionId}`);
+    }).pipe(Effect.provide(databaseLayer)));
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${first.accessToken}` } })).status).toBe(401);
+    const refreshed = await request(base, "/api/v1/auth/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: first.refreshToken }),
+    });
+    expect(refreshed.status).toBe(200);
+    const second = await refreshed.json() as { accessToken: string; refreshToken: string };
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${second.accessToken}` } })).status).toBe(200);
+    expect((await request(base, "/api/v1/auth/me", { headers: { authorization: `Bearer ${first.accessToken}` } })).status).toBe(401);
+    const next = await request(base, "/api/v1/auth/refresh", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ refreshToken: second.refreshToken }),
+    });
+    expect(next.status).toBe(200);
+  });
+
   test("lets the first account register as the administrator", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-server-setup-test-"));
     const databasePath = join(root, "server.sqlite");

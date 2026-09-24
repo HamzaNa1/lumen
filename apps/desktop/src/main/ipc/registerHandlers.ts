@@ -7,6 +7,7 @@ import { Schema } from "effect";
 import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
+import { deviceIdForAccount } from "../accounts/InstallationId";
 import { ServerClient } from "../api/ServerClient";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import type { PlayerController } from "../player/PlayerController";
@@ -51,7 +52,32 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const discoveredServers = new Map<string, IpcServerDiscovery>();
+  const restoring = new Map<string, Promise<ServerClient>>();
   let playerDisplay: IpcPlayerDisplay | null = null;
+  const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
+    const cached = dependencies.clients.get(account.connectionId);
+    if (cached !== undefined) return Promise.resolve(cached);
+    const pending = restoring.get(account.connectionId);
+    if (pending !== undefined) return pending;
+    const next = (async () => {
+      const client = new ServerClient({ origin: account.origin, onSessionChanged: (session) => dependencies.registry.updateSession(account.connectionId, session) });
+      const identity = await client.identity();
+      if (identity.serverId !== account.serverId) throw new Error("Server identity changed; remove this connection and enroll it again");
+      const session = await dependencies.registry.session(account.connectionId);
+      if (session === null) throw new Error("Connection credentials are unavailable; sign in again");
+      client.setSession(session);
+      const user = await client.me();
+      if (user.role !== account.role) {
+        await dependencies.registry.updateRole(account.connectionId, user.role);
+        const current = client.currentSession;
+        if (current !== null) client.setSession({ ...current, role: user.role });
+      }
+      dependencies.clients.set(account.connectionId, client);
+      return client;
+    })().finally(() => { restoring.delete(account.connectionId); });
+    restoring.set(account.connectionId, next);
+    return next;
+  };
   const handle = <A>(
     name: string,
     action: (event: IpcMainInvokeEvent, ...args: ReadonlyArray<unknown>) => Promise<A>,
@@ -68,20 +94,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       (account) => account.connectionId === result.activeConnectionId,
     );
     if (active !== undefined && !dependencies.clients.has(active.connectionId)) {
-      const client = new ServerClient({ origin: active.origin });
-      const identity = await client.identity();
-      if (identity.serverId !== active.serverId)
-        throw new Error("Server identity changed; remove this connection and enroll it again");
-      const session = await dependencies.registry.session(active.connectionId);
-      if (session !== null) {
-        client.setSession(session);
-        const user = await client.me();
-        if (user.role !== active.role) {
-          await dependencies.registry.updateRole(active.connectionId, user.role);
-          client.setSession({ ...session, role: user.role });
-        }
-        dependencies.clients.set(active.connectionId, client);
-      } else {
+      try {
+        await restoreClient(active);
+      } catch {
         return { ...result, activeConnectionId: null };
       }
     }
@@ -104,17 +119,20 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("accounts:connect", async (_event, raw) => {
     const input = decode(IpcConnectionInput, raw);
-    const client = new ServerClient({ origin: input.origin });
+    let connectionId = requestId();
+    const client = new ServerClient({ origin: input.origin, onSessionChanged: (session) => dependencies.registry.updateSession(connectionId, session) });
     const discovery = discoveredServers.get(client.serverOrigin);
     if (discovery === undefined) throw new Error("Connect to the server first");
     const identity = await client.identity();
     if (identity.serverId !== discovery.identity.serverId)
       throw new Error("Server identity changed; connect to the server again");
+    const deviceId = deviceIdForAccount(dependencies.installationId, identity.serverId, input.username);
     const session = await (discovery.setupRequired
-      ? client.register(input, dependencies.installationId)
-      : client.login(input, dependencies.installationId));
+      ? client.register(input, deviceId)
+      : client.login(input, deviceId));
     const user = await client.me();
-    const connectionId = requestId();
+    const current = client.currentSession ?? session;
+    connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
     await dependencies.registry.save({
       connectionId,
       serverId: identity.serverId,
@@ -123,11 +141,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       username: input.username,
       userId: session.userId,
       role: user.role,
-      sessionId: session.sessionId,
-      accessToken: session.accessToken,
-      refreshToken: session.refreshToken,
-      accessExpiresAtMs: session.accessExpiresAtMs,
-      refreshExpiresAtMs: session.refreshExpiresAtMs,
+      sessionId: current.sessionId,
+      accessToken: current.accessToken,
+      refreshToken: current.refreshToken,
+      accessExpiresAtMs: current.accessExpiresAtMs,
+      refreshExpiresAtMs: current.refreshExpiresAtMs,
     });
     dependencies.clients.set(connectionId, client);
     discoveredServers.delete(client.serverOrigin);
@@ -137,21 +155,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const connectionId = decode(Schema.String, raw);
     const account = dependencies.registry.find(connectionId);
     if (account === null) throw new Error("Connection not found");
-    const client =
-      dependencies.clients.get(connectionId) ?? new ServerClient({ origin: account.origin });
-    const identity = await client.identity();
-    if (identity.serverId !== account.serverId)
-      throw new Error("Server identity changed; remove this connection and enroll it again");
-    const session = await dependencies.registry.session(connectionId);
-    if (session === null) throw new Error("Connection credentials are unavailable; sign in again");
-    client.setSession(session);
-    const user = await client.me();
-    if (user.role !== account.role) {
-      await dependencies.registry.updateRole(connectionId, user.role);
-      client.setSession({ ...session, role: user.role });
-    }
+    await restoreClient(account);
     await dependencies.registry.activate(connectionId);
-    dependencies.clients.set(connectionId, client);
     return dependencies.registry.list();
   });
   handle("accounts:remove", async (_event, raw) => {

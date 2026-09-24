@@ -180,6 +180,7 @@ export const makeAuthRepository = (database: DatabaseClient) => {
         .get(),
       "auth.getSessionByTokenHash",
     );
+    if (row == null) return null;
     return yield* boundary(AuthSession, row, "auth.getSessionByTokenHash.result");
   });
 
@@ -195,6 +196,7 @@ export const makeAuthRepository = (database: DatabaseClient) => {
         .get(),
       "auth.getRefreshTokenByHash",
     );
+    if (row == null) return null;
     return yield* boundary(RefreshToken, row, "auth.getRefreshTokenByHash.result");
   });
 
@@ -251,6 +253,13 @@ export const makeAuthRepository = (database: DatabaseClient) => {
             )
             .returning(refreshSelection);
           yield* boundary(RefreshToken, consumed, "auth.rotateRefreshToken.consume");
+          if (value.accessTokenHash !== undefined && value.accessExpiresAtMs !== undefined) {
+            yield* transaction.update(authSessions).set({
+              sessionTokenHash: value.accessTokenHash,
+              lastUsedAtMs: value.issuedAtMs,
+              expiresAtMs: value.accessExpiresAtMs,
+            }).where(and(eq(authSessions.id, value.sessionId), isNull(authSessions.revokedAtMs)));
+          }
           return replacement;
         }),
       ),

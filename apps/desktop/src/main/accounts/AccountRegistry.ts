@@ -101,6 +101,7 @@ export class AccountRegistry {
     const vault = await this.vaultFor(input.connectionId);
     await vault.write(JSON.stringify({
       userId: input.userId,
+      role: input.role,
       sessionId: input.sessionId,
       accessToken: input.accessToken,
       refreshToken: input.refreshToken,
