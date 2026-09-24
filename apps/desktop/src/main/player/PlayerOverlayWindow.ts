@@ -1,4 +1,5 @@
 import { BrowserWindow } from "electron";
+import { MacPlayerFocus } from "./MacPlayerFocus";
 
 export class PlayerOverlayWindow {
   readonly window: BrowserWindow;
@@ -15,6 +16,7 @@ export class PlayerOverlayWindow {
       show: false,
       skipTaskbar: true,
       hasShadow: false,
+      roundedCorners: false,
       resizable: false,
       movable: false,
       backgroundColor: "#00000000",
@@ -26,6 +28,18 @@ export class PlayerOverlayWindow {
         preload: preloadPath,
       },
     });
+    if (process.platform === "darwin") {
+      const focus = new MacPlayerFocus(parent.getNativeWindowHandle());
+      this.window.on("focus", () => {
+        // AppKit finishes promoting the key window after Electron's focus event.
+        setImmediate(() => {
+          if (!parent.isDestroyed() && !this.window.isDestroyed() && this.window.isFocused()) {
+            focus.restoreMainWindow();
+          }
+        });
+      });
+      this.window.once("closed", () => focus.dispose());
+    }
     parent.on("move", () => this.sync());
     parent.on("resize", () => this.sync());
     parent.on("enter-full-screen", () => this.sync());

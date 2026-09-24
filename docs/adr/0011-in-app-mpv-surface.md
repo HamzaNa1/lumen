@@ -2,6 +2,8 @@
 
 Supersedes the dedicated-window presentation in ADR 0008.
 
-Playback remains owned by Electron main, but MPV is presented inside a dedicated renderer route instead of as a separately decorated player. Electron creates a child native host window and MPV attaches to it with `--wid`. Windows and Linux use the packaged MPV process; Linux runs Electron through X11/XWayland so both processes share an X11 window ID. macOS loads packaged libmpv in the Electron main process, allowing MPV to attach to Electron's `NSView` without creating another application window.
+Playback remains owned by Electron main, but MPV is presented inside a dedicated renderer route instead of as a separately decorated player. Electron creates a child native host window. Windows and Linux attach the packaged MPV process with `--wid`; Linux runs Electron through X11/XWayland so both processes share an X11 window ID. macOS loads packaged libmpv in the Electron main process and attaches its video window as an owned native child of the host window. This is still a composition of native windows, not rendering directly into the app's view.
+
+On macOS, the video window explicitly uses the borderless Cocoa style with no shadow and ignores mouse events. MPV's `--border=no` alone only hides its title bar and retains rounded window corners. The transparent controls window also has square corners. When controls receive keyboard focus, the app remains Cocoa's main window so its title bar stays active; the controls retain key-window status for keyboard navigation and track selection. Geometry updates do not reorder the video window; showing the surface restores the video and controls in order.
 
 The renderer may report only integer surface bounds and invoke named playback operations. Credentials, capability URLs, arbitrary MPV commands, and native handles stay in Electron main.

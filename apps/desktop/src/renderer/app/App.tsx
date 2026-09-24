@@ -94,16 +94,25 @@ export const App = (): React.ReactElement => {
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const startingItemId = useRef<string | null>(null);
   const activePlayer = useRef<IpcPlayerState | null>(null);
+  const wasOnPlayerRoute = useRef(onPlayerRoute);
+  const onPlayerRouteRef = useRef(onPlayerRoute);
+  onPlayerRouteRef.current = onPlayerRoute;
   const updatePlayer = useCallback((state: IpcPlayerState | null): void => {
     activePlayer.current = state;
     setPlayer(state);
   }, []);
 
   useEffect(() => {
-    const unsubscribe = bridge.player.onState(updatePlayer);
+    const receivePlayer = (state: IpcPlayerState | null): void => {
+      if (state !== null && !onPlayerRouteRef.current) {
+        void bridge.player.stop().catch(() => undefined);
+        updatePlayer(null);
+      } else updatePlayer(state);
+    };
+    const unsubscribe = bridge.player.onState(receivePlayer);
     void bridge.player
       .state()
-      .then(updatePlayer)
+      .then(receivePlayer)
       .catch(() => undefined);
     return unsubscribe;
   }, [updatePlayer]);
@@ -116,8 +125,20 @@ export const App = (): React.ReactElement => {
       updatePlayer(null);
       try {
         await bridge.player.start(item.id);
-        updatePlayer(await bridge.player.state());
+        if (!onPlayerRouteRef.current) {
+          await bridge.player.stop();
+          updatePlayer(null);
+          return;
+        }
+        const state = await bridge.player.state();
+        if (!onPlayerRouteRef.current) {
+          await bridge.player.stop();
+          updatePlayer(null);
+          return;
+        }
+        updatePlayer(state);
       } catch (cause) {
+        if (!onPlayerRouteRef.current) return;
         setPlaybackError(
           cause instanceof Error && cause.message.trim() !== ""
             ? cause.message
@@ -125,7 +146,7 @@ export const App = (): React.ReactElement => {
         );
       } finally {
         startingItemId.current = null;
-        setPlaybackLoading(false);
+        if (onPlayerRouteRef.current) setPlaybackLoading(false);
       }
     },
     [updatePlayer],
@@ -145,6 +166,16 @@ export const App = (): React.ReactElement => {
     null;
   const playerUnavailable = player === null;
   useEffect(() => {
+    const leavingPlayer = wasOnPlayerRoute.current && !onPlayerRoute;
+    wasOnPlayerRoute.current = onPlayerRoute;
+    if (!leavingPlayer) return;
+    updatePlayer(null);
+    setPlayingItem(null);
+    setPlaybackLoading(false);
+    setPlaybackError(null);
+    void bridge.player.stop().catch(() => undefined);
+  }, [onPlayerRoute, updatePlayer]);
+  useEffect(() => {
     if (!onPlayerRoute) return;
     void bridge.player.display({
       title: playingItem?.title ?? "Now playing",
@@ -158,10 +189,8 @@ export const App = (): React.ReactElement => {
     () =>
       bridge.player.onOverlayAction((action) => {
         if (action === "back" || action === "stop") {
-          if (action === "stop") {
-            updatePlayer(null);
-            setPlayingItem(null);
-          }
+          updatePlayer(null);
+          setPlayingItem(null);
           void navigate({ to: "/library" });
         } else if (playingItem !== null) void beginPlayback(playingItem);
       }),
@@ -264,7 +293,6 @@ const Sidebar = ({
     { to: "/" as const, label: "Home", icon: Home, exact: true },
     { to: "/library" as const, label: "Library", icon: LibraryBig },
     { to: "/search" as const, label: "Search", icon: SearchIcon },
-    { to: "/player" as const, label: "Player", icon: MonitorPlay },
     { to: "/settings" as const, label: "Settings", icon: SettingsIcon },
     ...(account.role === "admin"
       ? [{ to: "/admin" as const, label: "Administration", icon: Shield }]
@@ -750,6 +778,10 @@ export const PlayerPage = (): React.ReactElement => {
   const surfaceRef = useRef<HTMLDivElement>(null);
   const hasPlayback = playingItem !== null || player !== null;
 
+  useEffect(() => {
+    if (!hasPlayback) void navigate({ to: "/library", replace: true });
+  }, [hasPlayback, navigate]);
+
   useEffect(
     () => () => {
       void bridge.player.fullscreen(false).catch(() => undefined);
@@ -787,18 +819,7 @@ export const PlayerPage = (): React.ReactElement => {
   }, [beginPlayback, hasPlayback, playingItem, reportPlaybackError]);
 
   if (playingItem === null && player === null) {
-    return (
-      <div className="player-empty-page">
-        <Button variant="ghost" onClick={() => void navigate({ to: "/library" })}>
-          Back to library
-        </Button>
-        <EmptyState
-          icon={MonitorPlay}
-          title="Nothing is playing"
-          message="Choose a title from your library to open it here in the in-app MPV player."
-        />
-      </div>
-    );
+    return <div className="watch-page" />;
   }
 
   return (

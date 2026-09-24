@@ -31,6 +31,7 @@ export const PlayerOverlay = (): React.ReactElement => {
     const unsubscribeState = bridge.player.onState(setPlayer);
     const unsubscribeDisplay = bridge.player.onDisplay((next) => {
       setDisplay(next);
+      if (next.loading) setPlayer(null);
       revealControls();
     });
     const unsubscribeFullscreen = bridge.player.onFullscreenChange(setFullscreen);
@@ -64,7 +65,6 @@ export const PlayerOverlay = (): React.ReactElement => {
     <div className="player-overlay">
       <MediaPlayer
         title={display.title}
-        context={display.context}
         paused={player?.paused ?? true}
         loading={display.loading}
         error={display.error}
@@ -78,18 +78,20 @@ export const PlayerOverlay = (): React.ReactElement => {
         surfaceRef={surfaceRef}
         controlsVisible={controlsVisible || display.loading || display.error !== null}
         fullscreen={fullscreen}
-        onBack={() => void bridge.player.overlayAction("back")}
+        onBack={() => {
+          void bridge.player
+            .stop()
+            .catch(() => undefined)
+            .then(() => {
+              setPlayer(null);
+              return bridge.player.overlayAction("back");
+            });
+        }}
         onRetry={() => void bridge.player.overlayAction("retry")}
         onFullscreen={() => void bridge.player.fullscreen(!fullscreen).then(setFullscreen)}
         onPause={() => {
           if (player !== null)
             void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer);
-        }}
-        onStop={() => {
-          void bridge.player.stop().then(() => {
-            setPlayer(null);
-            return bridge.player.overlayAction("stop");
-          });
         }}
         onSeek={(positionSeconds) => {
           if (player !== null)

@@ -1,12 +1,11 @@
 import { EventEmitter } from "node:events";
-import type { IpcPlayerSession, IpcPlayerState } from "@lumen/contracts";
+import type { IpcPlayerSession, IpcPlayerState, IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { MpvIpc } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
-import type { PlaybackBridge } from "./PlaybackBridge";
-import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import type { MpvSurface } from "./MpvSurface";
+import type { PlaybackBridge } from "./PlaybackBridge";
 
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
@@ -84,6 +83,7 @@ export class PlayerController extends EventEmitter {
   private readonly onState: (state: IpcPlayerState) => void;
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
+  private startGeneration = 0;
 
   constructor(options: PlayerControllerOptions) {
     super();
@@ -97,12 +97,15 @@ export class PlayerController extends EventEmitter {
     readonly connectionId: string;
     readonly itemId: string;
   }): Promise<IpcPlayerSession> {
-    await this.stop();
+    const generation = ++this.startGeneration;
+    await this.stopActive();
+    if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
     const session = await input.client.startPlayback(input.itemId);
     let playerProcess: MpvProcess | null = null;
     let ipc: MpvIpc | null = null;
     let capability: string | null = null;
     try {
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       playerProcess = MpvProcess.start({
         cwd: process.cwd(),
         resourcesPath: process.resourcesPath,
@@ -111,6 +114,7 @@ export class PlayerController extends EventEmitter {
       });
       ipc = new MpvIpc();
       await ipc.connect(playerProcess);
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       const registered = this.bridge.register({
         connectionId: input.connectionId,
         serverClient: input.client,
@@ -175,14 +179,17 @@ export class PlayerController extends EventEmitter {
       } finally {
         detachLoadListeners();
       }
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       if (process.platform === "darwin") {
         const windowId = await ipc.command(["get_property", "window-id"]);
+        if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
         if (typeof windowId !== "number" || !Number.isSafeInteger(windowId) || windowId <= 0) {
           throw new Error("MPV did not create a native video window");
         }
         this.surface.attachNativeWindow(windowId);
       }
       const trackIds = await resolveTrackIds(ipc, session.streams);
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.active = { ...active, trackIds };
       const streams = session.streams.filter((stream) => trackIds.has(stream.id));
       const selectedAudioStream =
@@ -198,6 +205,7 @@ export class PlayerController extends EventEmitter {
         selectedSubtitleStream === null ? "no" : (trackIds.get(selectedSubtitleStream.id) ?? "no"),
       ]);
       await ipc.command(["set_property", "pause", "no"]);
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.surface.show();
       this.state = {
         sessionId: session.sessionId,
@@ -219,6 +227,7 @@ export class PlayerController extends EventEmitter {
       if (current !== null && current.session.sessionId === session.sessionId) {
         this.active = null;
         this.state = null;
+        this.surface.hide();
         await this.cleanup({
           session: current.session,
           client: current.client,
@@ -227,6 +236,7 @@ export class PlayerController extends EventEmitter {
           capability: current.capability,
         });
       } else {
+        if (this.active === null && generation === this.startGeneration) this.surface.hide();
         await this.cleanup({
           session,
           client: input.client,
@@ -327,6 +337,11 @@ export class PlayerController extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    this.startGeneration += 1;
+    await this.stopActive();
+  }
+
+  private async stopActive(): Promise<void> {
     const active = this.active;
     this.active = null;
     this.state = null;
@@ -375,7 +390,6 @@ export class PlayerController extends EventEmitter {
     capability,
   }: PlaybackResources): Promise<void> {
     if (capability !== null) this.bridge.revoke(capability);
-    this.surface.hide();
     ipc?.close();
     process?.stop();
     try {

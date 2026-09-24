@@ -78,6 +78,7 @@ export class MpvSurface {
     if (this.bounds === null || !this.playbackVisible) return;
     this.syncHostBounds();
     this.host?.showInactive();
+    this.macWindow?.show();
     this.overlay?.moveAboveVideo();
   }
 
@@ -114,6 +115,7 @@ export class MpvSurface {
       backgroundColor: "#000000",
     });
     host.setMenuBarVisibility(false);
+    if (process.platform === "darwin") host.setIgnoreMouseEvents(true);
     this.host = host;
     return host;
   }
