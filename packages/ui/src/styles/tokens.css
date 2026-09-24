@@ -80,6 +80,9 @@ button:disabled {
   font-size: 0.86rem;
 }
 
+body:has(.app-shell) {
+  overflow: hidden;
+}
 .app-shell {
   display: grid;
   grid-template-columns: 244px minmax(0, 1fr);
