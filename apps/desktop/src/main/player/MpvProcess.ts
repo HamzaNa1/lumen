@@ -37,10 +37,12 @@ export class MpvProcess {
       "--no-config",
       "--load-scripts=no",
       "--idle=yes",
-      "--demuxer=ffmpeg",
       "--no-terminal",
       `--input-ipc-server=${socketPath}`,
     ], { shell: false, stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
+    // Drain stderr so buffered mpv errors (e.g. demuxer failures) can never
+    // block the child via backpressure; mpv diagnostics are otherwise lost.
+    child.stderr?.resume();
     return new MpvProcess(child, socketPath, options.onExit ?? (() => undefined));
   }
 

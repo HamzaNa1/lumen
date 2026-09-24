@@ -1,17 +1,18 @@
+import { EventEmitter } from "node:events";
 import { createConnection, type Socket } from "node:net";
 import type { MpvProcess } from "./MpvProcess";
 
 const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_RETRY_MS = 50;
 
-export type MpvEvent = { readonly event: string; readonly properties?: Record<string, unknown> };
+export type MpvEvent = { readonly event: string } & Record<string, unknown>;
 type Pending = {
   readonly resolve: (value: unknown) => void;
   readonly reject: (cause: Error) => void;
   readonly timer: ReturnType<typeof setTimeout>;
 };
 
-export class MpvIpc {
+export class MpvIpc extends EventEmitter {
   private socket: Socket | null = null;
   private buffer = "";
   private nextId = 1;
@@ -107,13 +108,23 @@ export class MpvIpc {
         error?: string;
         data?: unknown;
         event?: string;
+        [key: string]: unknown;
       };
+      if (typeof message.event === "string") {
+        const { event, ...rest } = message;
+        const payload: MpvEvent = { event, ...rest };
+        // Surface async mpv events (start-file, file-loaded, end-file, idle,
+        // property-change, ...) so callers can fail fast on load errors instead
+        // of polling properties on an unloaded file.
+        this.emit(event, payload);
+        this.emit("mpv-event", payload);
+      }
       if (message.request_id !== undefined) {
         const pending = this.pending.get(message.request_id);
         if (pending === undefined) return;
         this.pending.delete(message.request_id);
         clearTimeout(pending.timer);
-        if (message.error !== undefined) pending.reject(new Error(message.error));
+        if (message.error !== undefined && message.error !== "success") pending.reject(new Error(message.error));
         else pending.resolve(message.data ?? null);
       }
     } catch {
