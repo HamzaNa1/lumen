@@ -1,6 +1,6 @@
 import { createHashHistory } from "@tanstack/history";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { AdminPage, App, HomePage, LibraryPage, SearchPage, SettingsPage } from "./App";
+import { AdminPage, App, HomePage, LibraryPage, PlayerPage, SearchPage, SettingsPage } from "./App";
 
 const rootRoute = createRootRoute({ component: App });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
@@ -13,6 +13,11 @@ const searchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/search",
   component: SearchPage,
+});
+const playerRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/player",
+  component: PlayerPage,
 });
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -29,6 +34,7 @@ const routeTree = rootRoute.addChildren([
   homeRoute,
   libraryRoute,
   searchRoute,
+  playerRoute,
   settingsRoute,
   adminRoute,
 ]);

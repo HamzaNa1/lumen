@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from "electron";
 
-const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T> => ipcRenderer.invoke(channel, ...args) as Promise<T>;
+const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T> =>
+  ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 const api = {
   accounts: {
@@ -13,8 +14,10 @@ const api = {
   },
   library: {
     list: () => invoke<unknown>("library:list"),
-    items: (libraryId: string, cursor: string | null = null) => invoke<unknown>("library:items", { libraryId, cursor }),
-    search: (query: string, libraryId: string | null = null) => invoke<unknown>("library:search", { query, libraryId }),
+    items: (libraryId: string, cursor: string | null = null) =>
+      invoke<unknown>("library:items", { libraryId, cursor }),
+    search: (query: string, libraryId: string | null = null) =>
+      invoke<unknown>("library:search", { query, libraryId }),
   },
   admin: {
     listUsers: () => invoke<unknown>("admin:listUsers"),
@@ -32,10 +35,17 @@ const api = {
   },
   player: {
     start: (itemId: string) => invoke<unknown>("player:start", { itemId }),
-    pause: (sessionId: string, paused: boolean) => invoke<unknown>("player:pause", { sessionId, paused }),
-    seek: (sessionId: string, positionSeconds: number) => invoke<unknown>("player:seek", { sessionId, positionSeconds }),
-    selectAudio: (sessionId: string, streamId: string) => invoke<unknown>("player:select-audio", { sessionId, streamId }),
-    selectSubtitle: (sessionId: string, streamId: string | null) => invoke<unknown>("player:select-subtitle", { sessionId, streamId }),
+    pause: (sessionId: string, paused: boolean) =>
+      invoke<unknown>("player:pause", { sessionId, paused }),
+    seek: (sessionId: string, positionSeconds: number) =>
+      invoke<unknown>("player:seek", { sessionId, positionSeconds }),
+    volume: (sessionId: string, volume: number, muted: boolean) =>
+      invoke<unknown>("player:volume", { sessionId, volume, muted }),
+    surface: (bounds: unknown) => invoke<unknown>("player:surface", bounds),
+    selectAudio: (sessionId: string, streamId: string) =>
+      invoke<unknown>("player:select-audio", { sessionId, streamId }),
+    selectSubtitle: (sessionId: string, streamId: string | null) =>
+      invoke<unknown>("player:select-subtitle", { sessionId, streamId }),
     state: () => invoke<unknown>("player:state"),
     stop: () => invoke<unknown>("player:stop"),
     onState: (callback: (state: unknown) => void): (() => void) => {

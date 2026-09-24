@@ -5,6 +5,7 @@ import { join } from "node:path";
 export interface MpvProcessOptions {
   readonly cwd: string;
   readonly resourcesPath: string;
+  readonly videoOutputArguments?: ReadonlyArray<string>;
   readonly onExit?: (code: number | null) => void;
 }
 
@@ -32,14 +33,22 @@ export class MpvProcess {
       process.platform === "win32" ? "mpv.exe" : "/usr/bin/mpv",
     ];
     const binary = candidates.find(existsSync) ?? executable;
-    const socketPath = process.platform === "win32" ? `\\\\.\\pipe\\lumen-mpv-${process.pid}-${Date.now()}` : `/tmp/lumen-mpv-${process.pid}-${Date.now()}.sock`;
-    const child = spawn(binary, [
-      "--no-config",
-      "--load-scripts=no",
-      "--idle=yes",
-      "--no-terminal",
-      `--input-ipc-server=${socketPath}`,
-    ], { shell: false, stdio: ["ignore", "ignore", "pipe"], windowsHide: true });
+    const socketPath =
+      process.platform === "win32"
+        ? `\\\\.\\pipe\\lumen-mpv-${process.pid}-${Date.now()}`
+        : `/tmp/lumen-mpv-${process.pid}-${Date.now()}.sock`;
+    const child = spawn(
+      binary,
+      [
+        "--no-config",
+        "--load-scripts=no",
+        "--idle=yes",
+        "--no-terminal",
+        `--input-ipc-server=${socketPath}`,
+        ...(options.videoOutputArguments ?? []),
+      ],
+      { shell: false, stdio: ["ignore", "ignore", "pipe"], windowsHide: true },
+    );
     // Drain stderr so buffered mpv errors (e.g. demuxer failures) can never
     // block the child via backpressure; mpv diagnostics are otherwise lost.
     child.stderr?.resume();

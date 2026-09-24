@@ -3,6 +3,7 @@ import { Slider } from "@base-ui/react/slider";
 import { Captions, ListMusic, Pause, Play, Square } from "lucide-react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
+import { formatPlayerTime, streamLabel } from "./PlayerFormatting";
 
 interface PlayerBarProps {
   readonly title: string;
@@ -105,26 +106,9 @@ export const PlayerBar = ({
           </Slider.Track>
         </Slider.Control>
         <span>
-          {formatTime(position)} / {duration === null ? "--:--" : formatTime(duration)}
+          {formatPlayerTime(position)} / {duration === null ? "--:--" : formatPlayerTime(duration)}
         </span>
       </Slider.Root>
     </div>
   );
-};
-
-const streamLabel = (stream: IpcPlayableStream, index: number, count: number): string => {
-  const name =
-    stream.title ??
-    stream.language?.toUpperCase() ??
-    (stream.kind === "audio" ? "Audio" : "Subtitles");
-  const language =
-    stream.title !== null && stream.language !== null ? ` · ${stream.language.toUpperCase()}` : "";
-  const codec = stream.codec === null ? "" : ` · ${stream.codec.toUpperCase()}`;
-  const position = count > 1 ? ` · ${index + 1}` : "";
-  return `${name}${language}${codec}${position}`;
-};
-
-const formatTime = (seconds: number): string => {
-  const value = Math.max(0, Math.floor(seconds));
-  return `${Math.floor(value / 60)}:${String(value % 60).padStart(2, "0")}`;
 };

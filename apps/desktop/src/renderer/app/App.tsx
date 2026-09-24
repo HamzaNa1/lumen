@@ -2,7 +2,6 @@ import type {
   IpcAccount,
   IpcItem,
   IpcLibrary,
-  IpcPlayerSession,
   IpcPlayerState,
   IpcServerDiscovery,
   User,
@@ -13,8 +12,8 @@ import {
   CheckboxField,
   Form,
   MediaCard,
+  MediaPlayer,
   Modal,
-  PlayerBar,
   SelectField,
   Shell,
   StatusState,
@@ -38,7 +37,16 @@ import {
   Sparkles,
   Users,
 } from "lucide-react";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 
 const bridge = window.lumen;
 const roleOptions = [
@@ -57,6 +65,13 @@ interface WorkspaceValue {
   readonly scope: readonly unknown[];
   readonly openItem: (item: IpcItem) => void;
   readonly playItem: (item: IpcItem) => void;
+  readonly playingItem: IpcItem | null;
+  readonly player: IpcPlayerState | null;
+  readonly playbackLoading: boolean;
+  readonly beginPlayback: (item: IpcItem) => Promise<void>;
+  readonly updatePlayer: (state: IpcPlayerState) => void;
+  readonly stopPlayback: () => Promise<void>;
+  readonly reportPlaybackError: (cause: unknown) => void;
 }
 
 const WorkspaceContext = createContext<WorkspaceValue | null>(null);
@@ -74,11 +89,62 @@ export const App = (): React.ReactElement => {
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const [selectedItem, setSelectedItem] = useState<IpcItem | null>(null);
-  const [playingTitle, setPlayingTitle] = useState("Now playing");
+  const [playingItem, setPlayingItem] = useState<IpcItem | null>(null);
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
+  const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
+  const startingItemId = useRef<string | null>(null);
+  const activePlayer = useRef<IpcPlayerState | null>(null);
+  const updatePlayer = useCallback((state: IpcPlayerState | null): void => {
+    activePlayer.current = state;
+    setPlayer(state);
+  }, []);
 
-  useEffect(() => bridge.player.onState(setPlayer), []);
+  useEffect(() => {
+    const unsubscribe = bridge.player.onState(updatePlayer);
+    void bridge.player
+      .state()
+      .then(updatePlayer)
+      .catch(() => undefined);
+    return unsubscribe;
+  }, [updatePlayer]);
+  const beginPlayback = useCallback(
+    async (item: IpcItem): Promise<void> => {
+      if (startingItemId.current === item.id || activePlayer.current?.itemId === item.id) return;
+      startingItemId.current = item.id;
+      setPlaybackLoading(true);
+      setPlaybackError(null);
+      updatePlayer(null);
+      try {
+        await bridge.player.start(item.id);
+        updatePlayer(await bridge.player.state());
+      } catch (cause) {
+        setPlaybackError(
+          cause instanceof Error && cause.message.trim() !== ""
+            ? cause.message
+            : "Playback could not start",
+        );
+      } finally {
+        startingItemId.current = null;
+        setPlaybackLoading(false);
+      }
+    },
+    [updatePlayer],
+  );
+  const stopPlayback = useCallback(async (): Promise<void> => {
+    await bridge.player.stop();
+    updatePlayer(null);
+    setPlayingItem(null);
+  }, [updatePlayer]);
+  const reportPlaybackError = useCallback((cause: unknown): void => {
+    setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
+  }, []);
+  const queuePlayback = (item: IpcItem): void => {
+    setPlaybackError(null);
+    setPlayingItem(item);
+    setSelectedItem(null);
+    void navigate({ to: "/player" });
+  };
   const accounts = accountsQuery.data?.accounts ?? [];
   const active =
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
@@ -106,27 +172,18 @@ export const App = (): React.ReactElement => {
     );
 
   const scope = [active.connectionId, active.serverId, active.userId] as const;
-  const startPlayback = async (item: IpcItem): Promise<void> => {
-    setPlaybackError(null);
-    try {
-      const result = (await bridge.player.start(item.id)) as IpcPlayerSession;
-      setPlayingTitle(item.title);
-      setSelectedItem(null);
-      setPlayer(await bridge.player.state());
-      if (result.sessionId !== undefined) void navigate({ to: "/" });
-    } catch (cause) {
-      setPlaybackError(
-        cause instanceof Error && cause.message.trim() !== ""
-          ? cause.message
-          : "Playback could not start",
-      );
-    }
-  };
   const workspace = {
     account: active,
     scope,
     openItem: setSelectedItem,
-    playItem: (item: IpcItem) => void startPlayback(item),
+    playItem: queuePlayback,
+    playingItem,
+    player,
+    playbackLoading,
+    beginPlayback,
+    updatePlayer,
+    stopPlayback,
+    reportPlaybackError,
   } satisfies WorkspaceValue;
 
   return (
@@ -150,30 +207,6 @@ export const App = (): React.ReactElement => {
             }}
           />
         }
-        player={
-          player === null ? undefined : (
-            <PlayerBar
-              title={playingTitle}
-              server={`${active.serverLabel} · ${active.username}`}
-              paused={player.paused}
-              onPause={() =>
-                void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer)
-              }
-              onStop={() => void bridge.player.stop().then(() => setPlayer(null))}
-              position={player.positionSeconds}
-              duration={player.durationSeconds}
-              streams={player.streams}
-              selectedAudioStreamId={player.selectedAudioStreamId}
-              selectedSubtitleStreamId={player.selectedSubtitleStreamId}
-              onSelectAudio={(streamId) =>
-                void bridge.player.selectAudio(player.sessionId, streamId).then(setPlayer)
-              }
-              onSelectSubtitle={(streamId) =>
-                void bridge.player.selectSubtitle(player.sessionId, streamId).then(setPlayer)
-              }
-            />
-          )
-        }
       >
         {playbackError === null ? null : (
           <div className="toast error-toast" role="alert">
@@ -188,7 +221,7 @@ export const App = (): React.ReactElement => {
         <ItemDetails
           item={selectedItem}
           onClose={() => setSelectedItem(null)}
-          onPlay={(item) => void startPlayback(item)}
+          onPlay={queuePlayback}
         />
       </Shell>
     </WorkspaceContext.Provider>
@@ -210,6 +243,7 @@ const Sidebar = ({
     { to: "/" as const, label: "Home", icon: Home, exact: true },
     { to: "/library" as const, label: "Library", icon: LibraryBig },
     { to: "/search" as const, label: "Search", icon: SearchIcon },
+    { to: "/player" as const, label: "Player", icon: MonitorPlay },
     { to: "/settings" as const, label: "Settings", icon: SettingsIcon },
     ...(account.role === "admin"
       ? [{ to: "/admin" as const, label: "Administration", icon: Shield }]
@@ -685,6 +719,116 @@ export const SearchPage = (): React.ReactElement => {
           </div>
         </>
       )}
+    </div>
+  );
+};
+
+export const PlayerPage = (): React.ReactElement => {
+  const {
+    account,
+    playingItem,
+    player,
+    playbackLoading,
+    beginPlayback,
+    updatePlayer,
+    stopPlayback,
+    reportPlaybackError,
+  } = useWorkspace();
+  const navigate = useNavigate();
+  const surfaceRef = useRef<HTMLDivElement>(null);
+  const hasPlayback = playingItem !== null || player !== null;
+
+  useLayoutEffect(() => {
+    if (!hasPlayback) return;
+    const surface = surfaceRef.current;
+    if (surface === null) return;
+    let disposed = false;
+    const syncSurface = async (): Promise<void> => {
+      const bounds = surface.getBoundingClientRect();
+      if (bounds.width < 1 || bounds.height < 1) return;
+      await bridge.player.surface({
+        x: Math.round(bounds.x),
+        y: Math.round(bounds.y),
+        width: Math.round(bounds.width),
+        height: Math.round(bounds.height),
+      });
+    };
+    void syncSurface()
+      .then(() => {
+        if (!disposed && playingItem !== null) void beginPlayback(playingItem);
+      })
+      .catch(reportPlaybackError);
+    const observer = new ResizeObserver(() => void syncSurface().catch(reportPlaybackError));
+    observer.observe(surface);
+    return () => {
+      disposed = true;
+      observer.disconnect();
+      void bridge.player.surface(null).catch(() => undefined);
+    };
+  }, [beginPlayback, hasPlayback, playingItem, reportPlaybackError]);
+
+  if (playingItem === null && player === null) {
+    return (
+      <div className="page player-empty-page">
+        <EmptyState
+          icon={MonitorPlay}
+          title="Nothing is playing"
+          message="Choose a title from your library to open it here in the in-app MPV player."
+        />
+      </div>
+    );
+  }
+
+  return (
+    <div className="watch-page">
+      <MediaPlayer
+        title={playingItem?.title ?? "Now playing"}
+        context={`${account.serverLabel} · ${account.username} · Original quality`}
+        paused={player?.paused ?? true}
+        loading={playbackLoading || player === null}
+        position={player?.positionSeconds ?? 0}
+        duration={
+          player?.durationSeconds ??
+          (playingItem?.durationMs === null || playingItem?.durationMs === undefined
+            ? null
+            : Math.floor(playingItem.durationMs / 1_000))
+        }
+        volume={player?.volume ?? 100}
+        muted={player?.muted ?? false}
+        streams={player?.streams ?? []}
+        selectedAudioStreamId={player?.selectedAudioStreamId ?? null}
+        selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
+        surfaceRef={surfaceRef}
+        onBack={() => void navigate({ to: "/library" })}
+        onPause={() => {
+          if (player !== null) {
+            void bridge.player.pause(player.sessionId, !player.paused).then(updatePlayer);
+          }
+        }}
+        onStop={() => {
+          void stopPlayback().then(() => navigate({ to: "/library" }));
+        }}
+        onSeek={(positionSeconds) => {
+          if (player !== null) {
+            void bridge.player.seek(player.sessionId, positionSeconds).then(updatePlayer);
+          }
+        }}
+        onVolume={(volume, muted) => {
+          if (player !== null) {
+            void bridge.player.volume(player.sessionId, volume, muted).then(updatePlayer);
+          }
+        }}
+        onSelectAudio={(streamId) => {
+          if (player !== null) {
+            void bridge.player.selectAudio(player.sessionId, streamId).then(updatePlayer);
+          }
+        }}
+        onSelectSubtitle={(streamId) => {
+          if (player !== null) {
+            void bridge.player.selectSubtitle(player.sessionId, streamId).then(updatePlayer);
+          }
+        }}
+      />
     </div>
   );
 };
@@ -1182,13 +1326,11 @@ const LibraryRow = ({
                 <Button
                   variant="ghost"
                   onClick={() =>
-                    void bridge.admin
-                      .deleteRoot(root.id)
-                      .then(() =>
-                        queryClient.invalidateQueries({
-                          queryKey: [...scope, "admin", "roots", library.id],
-                        }),
-                      )
+                    void bridge.admin.deleteRoot(root.id).then(() =>
+                      queryClient.invalidateQueries({
+                        queryKey: [...scope, "admin", "roots", library.id],
+                      }),
+                    )
                   }
                 >
                   Remove

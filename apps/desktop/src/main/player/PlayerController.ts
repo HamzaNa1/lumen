@@ -5,9 +5,11 @@ import type { ServerClient } from "../api/ServerClient";
 import { MpvIpc } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { PlaybackBridge } from "./PlaybackBridge";
+import type { PlayerSurfaceBounds, MpvSurface } from "./MpvSurface";
 
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
+  readonly surface: MpvSurface;
   readonly onState: (state: IpcPlayerState) => void;
 }
 
@@ -36,14 +38,18 @@ interface PlaybackResources {
   readonly capability: string | null;
 }
 
-const wait = (milliseconds: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, milliseconds));
+const wait = (milliseconds: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const FILE_LOADED_TIMEOUT_MS = 15_000;
 
 const isPropertyUnavailable = (cause: unknown): boolean =>
   cause instanceof Error && cause.message.includes("property unavailable");
 
-const resolveTrackIds = async (ipc: MpvIpc, streams: IpcPlayerSession["streams"]): Promise<ReadonlyMap<string, number>> => {
+const resolveTrackIds = async (
+  ipc: MpvIpc,
+  streams: IpcPlayerSession["streams"],
+): Promise<ReadonlyMap<string, number>> => {
   const trackIds = new Map<string, number>();
   for (let attempt = 0; attempt < 40 && trackIds.size < streams.length; attempt += 1) {
     const value = await ipc.command(["get_property", "track-list"]);
@@ -51,9 +57,18 @@ const resolveTrackIds = async (ipc: MpvIpc, streams: IpcPlayerSession["streams"]
       for (const candidate of value) {
         if (typeof candidate !== "object" || candidate === null) continue;
         const track = candidate as MpvTrack;
-        if (!Number.isInteger(track.id) || (track.type !== "audio" && track.type !== "sub") || !Number.isInteger(track["ff-index"])) continue;
+        if (
+          !Number.isInteger(track.id) ||
+          (track.type !== "audio" && track.type !== "sub") ||
+          !Number.isInteger(track["ff-index"])
+        )
+          continue;
         const ordinal = track["ff-index"] as number;
-        const stream = streams.find((candidateStream) => candidateStream.ordinal === ordinal && candidateStream.kind === (track.type === "audio" ? "audio" : "subtitle"));
+        const stream = streams.find(
+          (candidateStream) =>
+            candidateStream.ordinal === ordinal &&
+            candidateStream.kind === (track.type === "audio" ? "audio" : "subtitle"),
+        );
         if (stream !== undefined) trackIds.set(stream.id, track.id);
       }
     }
@@ -64,6 +79,7 @@ const resolveTrackIds = async (ipc: MpvIpc, streams: IpcPlayerSession["streams"]
 
 export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
+  private readonly surface: MpvSurface;
   private readonly onState: (state: IpcPlayerState) => void;
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
@@ -71,10 +87,15 @@ export class PlayerController extends EventEmitter {
   constructor(options: PlayerControllerOptions) {
     super();
     this.bridge = options.bridge;
+    this.surface = options.surface;
     this.onState = options.onState;
   }
 
-  async start(input: { readonly client: ServerClient; readonly connectionId: string; readonly itemId: string }): Promise<IpcPlayerSession> {
+  async start(input: {
+    readonly client: ServerClient;
+    readonly connectionId: string;
+    readonly itemId: string;
+  }): Promise<IpcPlayerSession> {
     await this.stop();
     const session = await input.client.startPlayback(input.itemId);
     let playerProcess: MpvProcess | null = null;
@@ -84,6 +105,7 @@ export class PlayerController extends EventEmitter {
       playerProcess = MpvProcess.start({
         cwd: process.cwd(),
         resourcesPath: process.resourcesPath,
+        videoOutputArguments: this.surface.prepare(),
         onExit: () => this.emit("ended"),
       });
       ipc = new MpvIpc();
@@ -97,7 +119,16 @@ export class PlayerController extends EventEmitter {
       });
       capability = registered.capability;
       const streamUrl = registered.url;
-      const active: ActiveSession = { session, client: input.client, connectionId: input.connectionId, process: playerProcess, ipc, capability, trackIds: new Map(), sequence: 0 };
+      const active: ActiveSession = {
+        session,
+        client: input.client,
+        connectionId: input.connectionId,
+        process: playerProcess,
+        ipc,
+        capability,
+        trackIds: new Map(),
+        sequence: 0,
+      };
       this.active = active;
       // The loadfile ack only means mpv accepted the command, not that the
       // file demuxed. Wait for file-loaded and fail fast on end-file/error
@@ -119,7 +150,13 @@ export class PlayerController extends EventEmitter {
           const fileError = (event as { readonly file_error?: unknown } | null)?.file_error;
           if (reason === "error") {
             detachLoadListeners();
-            reject(new Error(typeof fileError === "string" && fileError.length > 0 ? `Playback failed: ${fileError}` : "Playback failed"));
+            reject(
+              new Error(
+                typeof fileError === "string" && fileError.length > 0
+                  ? `Playback failed: ${fileError}`
+                  : "Playback failed",
+              ),
+            );
           }
         };
         detachLoadListeners = (): void => {
@@ -140,11 +177,20 @@ export class PlayerController extends EventEmitter {
       const trackIds = await resolveTrackIds(ipc, session.streams);
       this.active = { ...active, trackIds };
       const streams = session.streams.filter((stream) => trackIds.has(stream.id));
-      const selectedAudioStream = streams.find((stream) => stream.kind === "audio" && stream.isDefault) ?? streams.find((stream) => stream.kind === "audio");
-      const selectedSubtitleStream = streams.find((stream) => stream.kind === "subtitle" && stream.isDefault) ?? null;
-      if (selectedAudioStream !== undefined) await ipc.command(["set_property", "aid", trackIds.get(selectedAudioStream.id) ?? "no"]);
-      await ipc.command(["set_property", "sid", selectedSubtitleStream === null ? "no" : trackIds.get(selectedSubtitleStream.id) ?? "no"]);
+      const selectedAudioStream =
+        streams.find((stream) => stream.kind === "audio" && stream.isDefault) ??
+        streams.find((stream) => stream.kind === "audio");
+      const selectedSubtitleStream =
+        streams.find((stream) => stream.kind === "subtitle" && stream.isDefault) ?? null;
+      if (selectedAudioStream !== undefined)
+        await ipc.command(["set_property", "aid", trackIds.get(selectedAudioStream.id) ?? "no"]);
+      await ipc.command([
+        "set_property",
+        "sid",
+        selectedSubtitleStream === null ? "no" : (trackIds.get(selectedSubtitleStream.id) ?? "no"),
+      ]);
       await ipc.command(["set_property", "pause", "no"]);
+      await this.surface.syncPlaybackWindow(ipc);
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
@@ -165,9 +211,21 @@ export class PlayerController extends EventEmitter {
       if (current !== null && current.session.sessionId === session.sessionId) {
         this.active = null;
         this.state = null;
-        await this.cleanup({ session: current.session, client: current.client, process: current.process, ipc: current.ipc, capability: current.capability });
+        await this.cleanup({
+          session: current.session,
+          client: current.client,
+          process: current.process,
+          ipc: current.ipc,
+          capability: current.capability,
+        });
       } else {
-        await this.cleanup({ session, client: input.client, process: playerProcess, ipc, capability });
+        await this.cleanup({
+          session,
+          client: input.client,
+          process: playerProcess,
+          ipc,
+          capability,
+        });
       }
       throw cause;
     }
@@ -176,15 +234,20 @@ export class PlayerController extends EventEmitter {
   pause(sessionId: string, paused: boolean): IpcPlayerState {
     this.assertActive(sessionId);
     this.state = { ...this.requireState(), paused };
-    this.active?.ipc.command(["set_property", "pause", paused ? "yes" : "no"]).catch((cause: unknown) => this.emitError(cause));
+    this.active?.ipc
+      .command(["set_property", "pause", paused ? "yes" : "no"])
+      .catch((cause: unknown) => this.emitError(cause));
     this.publish();
     return this.requireState();
   }
 
   seek(sessionId: string, positionSeconds: number): IpcPlayerState {
     this.assertActive(sessionId);
-    if (!Number.isFinite(positionSeconds) || positionSeconds < 0) throw new Error("Invalid position");
-    this.active?.ipc.command(["seek", positionSeconds, "absolute"]).catch((cause: unknown) => this.emitError(cause));
+    if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
+      throw new Error("Invalid position");
+    this.active?.ipc
+      .command(["seek", positionSeconds, "absolute"])
+      .catch((cause: unknown) => this.emitError(cause));
     this.state = { ...this.requireState(), positionSeconds, ended: false };
     this.publish();
     return this.requireState();
@@ -193,11 +256,20 @@ export class PlayerController extends EventEmitter {
   volume(sessionId: string, volume: number, muted = false): IpcPlayerState {
     this.assertActive(sessionId);
     const bounded = Math.max(0, Math.min(100, Math.round(volume)));
-    this.active?.ipc.command(["set_property", "volume", bounded]).catch((cause: unknown) => this.emitError(cause));
-    this.active?.ipc.command(["set_property", "mute", muted ? "yes" : "no"]).catch((cause: unknown) => this.emitError(cause));
+    this.active?.ipc
+      .command(["set_property", "volume", bounded])
+      .catch((cause: unknown) => this.emitError(cause));
+    this.active?.ipc
+      .command(["set_property", "mute", muted ? "yes" : "no"])
+      .catch((cause: unknown) => this.emitError(cause));
     this.state = { ...this.requireState(), volume: bounded, muted };
     this.publish();
     return this.requireState();
+  }
+
+  async setSurface(bounds: PlayerSurfaceBounds | null): Promise<void> {
+    this.surface.setBounds(bounds);
+    if (this.active !== null) await this.surface.syncPlaybackWindow(this.active.ipc);
   }
 
   async selectAudioStream(sessionId: string, streamId: string): Promise<IpcPlayerState> {
@@ -205,9 +277,12 @@ export class PlayerController extends EventEmitter {
     const active = this.active;
     if (active === null) throw new Error("Playback session is not active");
     const state = this.requireState();
-    const stream = state.streams.find((candidate) => candidate.id === streamId && candidate.kind === "audio");
+    const stream = state.streams.find(
+      (candidate) => candidate.id === streamId && candidate.kind === "audio",
+    );
     const trackId = stream === undefined ? undefined : active.trackIds.get(streamId);
-    if (stream === undefined || trackId === undefined) throw new Error("Audio stream is unavailable");
+    if (stream === undefined || trackId === undefined)
+      throw new Error("Audio stream is unavailable");
     await active.ipc.command(["set_property", "aid", trackId]);
     this.assertActive(sessionId);
     const currentState = this.requireState();
@@ -221,9 +296,16 @@ export class PlayerController extends EventEmitter {
     const active = this.active;
     if (active === null) throw new Error("Playback session is not active");
     const state = this.requireState();
-    const stream = streamId === null ? null : state.streams.find((candidate) => candidate.id === streamId && candidate.kind === "subtitle");
-    const trackId = stream === null || stream === undefined ? null : active.trackIds.get(streamId ?? "");
-    if (streamId !== null && (stream === undefined || trackId === undefined)) throw new Error("Subtitle stream is unavailable");
+    const stream =
+      streamId === null
+        ? null
+        : state.streams.find(
+            (candidate) => candidate.id === streamId && candidate.kind === "subtitle",
+          );
+    const trackId =
+      stream === null || stream === undefined ? null : active.trackIds.get(streamId ?? "");
+    if (streamId !== null && (stream === undefined || trackId === undefined))
+      throw new Error("Subtitle stream is unavailable");
     await active.ipc.command(["set_property", "sid", trackId ?? "no"]);
     this.assertActive(sessionId);
     const currentState = this.requireState();
@@ -240,6 +322,7 @@ export class PlayerController extends EventEmitter {
     const active = this.active;
     this.active = null;
     this.state = null;
+    this.surface.hide();
     if (active === null) return;
     await this.cleanup(active);
   }
@@ -254,8 +337,10 @@ export class PlayerController extends EventEmitter {
       const ended = await active.ipc.command(["get_property", "eof-reached"]);
       const next: IpcPlayerState = {
         ...this.state,
-        positionSeconds: typeof value === "number" && value >= 0 ? value : this.state.positionSeconds,
-        durationSeconds: typeof duration === "number" && duration >= 0 ? duration : this.state.durationSeconds,
+        positionSeconds:
+          typeof value === "number" && value >= 0 ? value : this.state.positionSeconds,
+        durationSeconds:
+          typeof duration === "number" && duration >= 0 ? duration : this.state.durationSeconds,
         paused: paused === true,
         ended: ended === true,
       };
@@ -263,7 +348,8 @@ export class PlayerController extends EventEmitter {
       this.publish();
       active.sequence += 1;
       if (active.sequence % 3 === 0) await active.client.heartbeat(next.sessionId, next);
-      if (active.sequence % 6 === 0) await active.client.progress(next.sessionId, next, active.sequence);
+      if (active.sequence % 6 === 0)
+        await active.client.progress(next.sessionId, next, active.sequence);
     } catch (cause) {
       // `property unavailable` is expected while no file is loaded (e.g. in
       // the window between spawn and file-loaded); keep the last state and
@@ -273,17 +359,27 @@ export class PlayerController extends EventEmitter {
     }
   }
 
-  private async cleanup({ session, client, process, ipc, capability }: PlaybackResources): Promise<void> {
+  private async cleanup({
+    session,
+    client,
+    process,
+    ipc,
+    capability,
+  }: PlaybackResources): Promise<void> {
     if (capability !== null) this.bridge.revoke(capability);
+    this.surface.detach();
     ipc?.close();
     process?.stop();
     try {
-      await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, { method: "DELETE" });
+      await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
+        method: "DELETE",
+      });
     } catch {}
   }
 
   private assertActive(sessionId: string): void {
-    if (this.active === null || this.active.session.sessionId !== sessionId) throw new Error("Playback session is not active");
+    if (this.active === null || this.active.session.sessionId !== sessionId)
+      throw new Error("Playback session is not active");
   }
 
   private requireState(): IpcPlayerState {
