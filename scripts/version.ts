@@ -1,20 +1,29 @@
-import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { spawnSync } from "node:child_process";
 
 const root = fileURLToPath(new URL("../", import.meta.url));
 const [command, version] = process.argv.slice(2);
 
 const validVersion = (value: string | undefined): value is string => {
   if (value === undefined) return false;
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(value);
+  const match =
+    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(
+      value,
+    );
   if (match === null) return false;
   return match[4]?.split(".").every((part) => !/^0\d+$/.test(part)) ?? true;
 };
 
 const readManifest = (path: string): { version?: string; workspaces?: string[] } =>
   JSON.parse(readFileSync(join(root, path), "utf8")) as { version?: string; workspaces?: string[] };
+
+const run = (executable: string, args: string[]): void => {
+  const result = spawnSync(executable, args, { cwd: root, stdio: "inherit" });
+  if (result.error !== undefined) throw result.error;
+  if (result.status !== 0) process.exit(result.status ?? 1);
+};
 
 const workspaceManifests = (): string[] => {
   const patterns = readManifest("package.json").workspaces ?? [];
@@ -32,7 +41,9 @@ const workspaceManifests = (): string[] => {
 };
 
 if ((command !== "set" && command !== "check") || !validVersion(version)) {
-  throw new Error("Usage: bun run version:set <major.minor.patch[-prerelease]> or bun run version:check <version>");
+  throw new Error(
+    "Usage: bun run version:set <major.minor.patch[-prerelease]> or bun run version:check <version>",
+  );
 }
 
 const files = workspaceManifests();
@@ -41,22 +52,35 @@ if (command === "set") {
     const path = join(root, file);
     const source = readFileSync(path, "utf8");
     if (readManifest(file).version === undefined) throw new Error(`${file} has no version`);
-    const updated = source.replace(/("version"\s*:\s*")[^"]+/, (_, prefix: string) => `${prefix}${version}`);
-    if (updated === source && readManifest(file).version !== version) throw new Error(`Could not update ${file}`);
+    const updated = source.replace(
+      /("version"\s*:\s*")[^"]+/,
+      (_, prefix: string) => `${prefix}${version}`,
+    );
+    if (updated === source && readManifest(file).version !== version)
+      throw new Error(`Could not update ${file}`);
     writeFileSync(path, updated);
   }
-  const install = spawnSync(process.execPath, ["install", "--lockfile-only"], { cwd: root, stdio: "inherit" });
-  if (install.status !== 0) process.exit(install.status ?? 1);
+  run(process.execPath, ["install", "--lockfile-only"]);
 }
 
 for (const file of files) {
   const actual = readManifest(file).version;
-  if (actual !== version) throw new Error(`${file} is ${actual ?? "unversioned"}; expected ${version}`);
+  if (actual !== version)
+    throw new Error(`${file} is ${actual ?? "unversioned"}; expected ${version}`);
 }
 
-const install = spawnSync(process.execPath, ["install", "--frozen-lockfile", "--dry-run"], { cwd: root, encoding: "utf8" });
+const install = spawnSync(process.execPath, ["install", "--frozen-lockfile", "--dry-run"], {
+  cwd: root,
+  encoding: "utf8",
+});
 if (install.status !== 0) {
   process.stderr.write(install.stderr || install.stdout || "Lockfile check failed\n");
   process.exit(install.status ?? 1);
 }
 console.log(`Verified ${version} in ${files.length} package manifests and bun.lock`);
+
+if (command === "set") {
+  const versionFiles = [...files, "bun.lock"];
+  run("git", ["add", "--", ...versionFiles]);
+  run("git", ["commit", "--only", "-m", `chore: release ${version}`, "--", ...versionFiles]);
+}
