@@ -47,6 +47,7 @@ import {
   useRef,
   useState,
 } from "react";
+import { LumenMark } from "./LumenMark";
 
 const bridge = window.lumen;
 const roleOptions = [
@@ -334,9 +335,7 @@ const Sidebar = ({
   return (
     <>
       <div className="brand">
-        <span className="brand-mark">
-          <Play aria-hidden="true" size={17} fill="currentColor" />
-        </span>
+        <LumenMark />
         <span>Lumen</span>
       </div>
       <nav className="nav" aria-label="Primary navigation">
@@ -471,9 +470,7 @@ const ConnectPage = ({
     <main className="connect-page">
       <section className="connect-hero">
         <div className="brand brand-large">
-          <span className="brand-mark">
-            <Play aria-hidden="true" size={20} fill="currentColor" />
-          </span>
+          <LumenMark />
           <span>Lumen</span>
         </div>
         <div>

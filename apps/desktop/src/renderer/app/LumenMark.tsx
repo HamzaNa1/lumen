@@ -1,0 +1,19 @@
+export const LumenMark = (): React.ReactElement => (
+  <svg
+    aria-hidden="true"
+    className="brand-mark"
+    focusable="false"
+    viewBox="0 0 64 64"
+    xmlns="http://www.w3.org/2000/svg"
+  >
+    <rect x="2" y="2" width="60" height="60" rx="15" fill="#0d1016" />
+    <path
+      d="M15 14a4 4 0 0 1 4-4h3a4 4 0 0 1 4 4v29h22a4 4 0 0 1 4 4v3a4 4 0 0 1-4 4H19a4 4 0 0 1-4-4V14Z"
+      fill="#c9f560"
+    />
+    <path
+      d="M32 18.8c0-1.75 1.93-2.82 3.42-1.9l17.1 10.56c1.42.88 1.42 2.94 0 3.82l-17.1 10.56C33.93 42.76 32 41.69 32 39.94V18.8Z"
+      fill="#f5f7f2"
+    />
+  </svg>
+);

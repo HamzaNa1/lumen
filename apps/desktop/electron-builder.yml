@@ -8,13 +8,18 @@
   "directories": { "output": "release" },
   "mac": {
     "category": "public.app-category.video",
+    "icon": "resources/icons/icon.icns",
     "target": [
       { "target": "dmg", "arch": "arm64" },
       { "target": "zip", "arch": "arm64" }
     ]
   },
-  "win": { "target": ["nsis", "portable"] },
+  "win": {
+    "icon": "resources/icons/icon.ico",
+    "target": ["nsis", "portable"]
+  },
   "linux": {
+    "icon": "resources/icons/icon.png",
     "target": ["AppImage", "deb"],
     "category": "AudioVideo",
     "maintainer": "Lumen <HamzaNa1@users.noreply.github.com>"

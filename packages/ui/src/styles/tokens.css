@@ -131,14 +131,10 @@ body:has(.app-shell) {
   letter-spacing: -0.025em;
 }
 .brand-mark {
+  flex: 0 0 auto;
   width: 32px;
   height: 32px;
-  display: grid;
-  place-items: center;
-  color: var(--accent-ink);
-  background: var(--accent);
-  border-radius: 10px;
-  box-shadow: 0 0 24px rgba(201, 245, 96, 0.16);
+  filter: drop-shadow(0 0 12px rgba(201, 245, 96, 0.12));
 }
 .brand-large {
   font-size: 1.42rem;
