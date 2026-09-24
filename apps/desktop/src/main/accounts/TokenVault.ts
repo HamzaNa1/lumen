@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { app, safeStorage } from "electron";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { canEncryptTokens } from "./TokenStoragePolicy";
 
 export interface VaultValue {
   readonly available: boolean;
@@ -12,7 +13,7 @@ export interface VaultValue {
 
 export const createTokenVault = async (fileName: string): Promise<VaultValue> => {
   const filePath = join(app.getPath("userData"), fileName);
-  const canUseSafeStorage = safeStorage.isEncryptionAvailable() && safeStorage.getSelectedStorageBackend() !== "basic_text";
+  const canUseSafeStorage = canEncryptTokens(safeStorage, process.platform);
   if (canUseSafeStorage) {
     return {
       available: true,

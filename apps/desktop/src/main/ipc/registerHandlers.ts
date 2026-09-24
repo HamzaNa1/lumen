@@ -134,20 +134,24 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const user = await client.me();
     const current = client.currentSession ?? session;
     connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
-    await dependencies.registry.save({
-      connectionId,
-      serverId: identity.serverId,
-      serverLabel: input.serverLabel,
-      origin: client.serverOrigin,
-      username: input.username,
-      userId: session.userId,
-      role: user.role,
-      sessionId: current.sessionId,
-      accessToken: current.accessToken,
-      refreshToken: current.refreshToken,
-      accessExpiresAtMs: current.accessExpiresAtMs,
-      refreshExpiresAtMs: current.refreshExpiresAtMs,
-    });
+    try {
+      await dependencies.registry.save({
+        connectionId,
+        serverId: identity.serverId,
+        serverLabel: input.serverLabel,
+        origin: client.serverOrigin,
+        username: input.username,
+        userId: session.userId,
+        role: user.role,
+        sessionId: current.sessionId,
+        accessToken: current.accessToken,
+        refreshToken: current.refreshToken,
+        accessExpiresAtMs: current.accessExpiresAtMs,
+        refreshExpiresAtMs: current.refreshExpiresAtMs,
+      });
+    } catch (cause) {
+      throw new Error(`${setupRequired ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
+    }
     dependencies.clients.set(connectionId, client);
     discoveredServers.delete(client.serverOrigin);
     return dependencies.registry.list();

@@ -94,7 +94,7 @@ export class AccountRegistry {
       role: input.role,
       lastConnectedAtMs: Date.now(),
     };
-    this.data = {
+    const next: RegistryData = {
       activeConnectionId: input.connectionId,
       accounts: [...this.data.accounts.filter((account) => account.connectionId !== input.connectionId), record],
     };
@@ -108,7 +108,8 @@ export class AccountRegistry {
       accessExpiresAtMs: input.accessExpiresAtMs,
       refreshExpiresAtMs: input.refreshExpiresAtMs,
     }));
-    await writePrivateJson(this.path, this.data);
+    await writePrivateJson(this.path, next);
+    this.data = next;
   }
 
   async activate(connectionId: string): Promise<void> {
