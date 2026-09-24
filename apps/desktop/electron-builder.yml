@@ -7,6 +7,10 @@
   "directories": { "output": "release" },
   "mac": { "category": "public.app-category.video", "target": ["dmg", "zip"] },
   "win": { "target": ["nsis", "portable"] },
-  "linux": { "target": ["AppImage", "deb"], "category": "AudioVideo" },
+  "linux": {
+    "target": ["AppImage", "deb"],
+    "category": "AudioVideo",
+    "maintainer": "Lumen <HamzaNa1@users.noreply.github.com>"
+  },
   "publish": [{ "provider": "generic", "url": "https://updates.lumen.invalid" }]
 }

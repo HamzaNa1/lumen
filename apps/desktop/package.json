@@ -1,6 +1,7 @@
 {
   "name": "lumen-desktop",
   "version": "0.0.1",
+  "homepage": "https://github.com/HamzaNa1/lumen",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
