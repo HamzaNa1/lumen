@@ -5,7 +5,13 @@
   "files": ["out/**", "package.json"],
   "extraResources": [{ "from": "resources/native", "to": "resources/native" }],
   "directories": { "output": "release" },
-  "mac": { "category": "public.app-category.video", "target": ["dmg", "zip"] },
+  "mac": {
+    "category": "public.app-category.video",
+    "target": [
+      { "target": "dmg", "arch": "arm64" },
+      { "target": "zip", "arch": "arm64" }
+    ]
+  },
   "win": { "target": ["nsis", "portable"] },
   "linux": {
     "target": ["AppImage", "deb"],

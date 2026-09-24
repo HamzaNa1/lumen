@@ -51,7 +51,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-24.04, macos-14, windows-latest]
+        os: [ubuntu-24.04, macos-26, windows-latest]
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -85,6 +85,10 @@ jobs:
         if: runner.os == 'macOS'
         shell: bash
         run: |
+          if [[ "$(uname -m)" != 'arm64' ]]; then
+            echo 'macOS releases require an Apple Silicon runner.' >&2
+            exit 1
+          fi
           brew install mpv dylibbundler
           mpv_version="$(brew list --versions mpv | awk '{ print $2 }')"
           test "${mpv_version%%_*}" = '0.41.0'
