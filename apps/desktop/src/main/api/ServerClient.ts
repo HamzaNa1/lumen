@@ -1,4 +1,4 @@
-import type { IpcConnectionInput, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState } from "@lumen/contracts";
+import type { IpcConnectionInput, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
 
@@ -50,6 +50,18 @@ const librarySchema = Schema.Array(Schema.Struct({
   createdAtMs: Schema.Number,
   updatedAtMs: Schema.Number,
 }));
+
+const scanRunSchema = Schema.Struct({
+  id: Schema.String,
+  libraryId: Schema.String,
+  mode: Schema.Literals(["full", "incremental", "refresh"]),
+  status: Schema.Literals(["queued", "running", "succeeded", "failed", "cancelled"]),
+  startedAtMs: Schema.NullOr(Schema.Number),
+  finishedAtMs: Schema.NullOr(Schema.Number),
+  errorCode: Schema.NullOr(Schema.String),
+  errorMessage: Schema.NullOr(Schema.String),
+  createdAtMs: Schema.Number,
+});
 
 const itemPageSchema = Schema.Struct({
   items: Schema.Array(Schema.Struct({
@@ -133,6 +145,11 @@ export class ServerClient {
     const response = await this.fetchImpl(new URL("/api/v1/auth/setup", this.origin), { redirect: "manual" });
     if (response.status === 404) return false;
     return decode(Schema.Struct({ setupRequired: Schema.Boolean }), await readJson(response)).setupRequired;
+  }
+
+  async discover(): Promise<IpcServerDiscovery> {
+    const identity = await this.identity();
+    return { origin: this.origin, identity, setupRequired: identity.setupRequired ?? await this.setupRequired() };
   }
 
   async me(): Promise<User> {
@@ -273,6 +290,18 @@ export class ServerClient {
 
   async deleteLibraryRoot(rootId: string): Promise<void> {
     await this.request(`/api/v1/roots/${encodeURIComponent(rootId)}`, { method: "DELETE" });
+  }
+
+  async startScan(libraryId: string, mode: "full" | "incremental" | "refresh"): Promise<{ readonly runId: string }> {
+    return this.request("/api/v1/scans", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ libraryId, mode }),
+    }, Schema.Struct({ runId: Schema.String }));
+  }
+
+  async scanStatus(runId: string): Promise<ScanRun> {
+    return this.request(`/api/v1/scans/${encodeURIComponent(runId)}`, {}, scanRunSchema);
   }
 
   async items(libraryId: string, cursor: string | null = null): Promise<IpcItemPage> {

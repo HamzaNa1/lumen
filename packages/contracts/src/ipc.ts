@@ -70,6 +70,18 @@ export const IpcAccounts = Schema.Struct({
 });
 export type IpcAccounts = Schema.Schema.Type<typeof IpcAccounts>;
 
+export const IpcServerDiscovery = Schema.Struct({
+  origin: Schema.String.check(Schema.isMinLength(1)),
+  identity: Schema.Struct({
+    serverId: Schema.String.check(Schema.isMinLength(1)),
+    displayName: Schema.String.check(Schema.isMinLength(1)),
+    apiVersion: Schema.String.check(Schema.isMinLength(1)),
+    setupRequired: Schema.optional(Schema.Boolean),
+  }),
+  setupRequired: Schema.Boolean,
+});
+export type IpcServerDiscovery = Schema.Schema.Type<typeof IpcServerDiscovery>;
+
 export const IpcConnectionInput = Schema.Struct({
   origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),

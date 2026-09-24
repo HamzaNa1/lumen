@@ -1,3 +1,4 @@
+import type { IpcServerDiscovery } from "@lumen/contracts";
 import { ipcMain, type IpcMainInvokeEvent } from "electron";
 import { Schema } from "effect";
 import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
@@ -36,6 +37,7 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 };
 
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
+  const discoveredServers = new Map<string, IpcServerDiscovery>();
   const handle = <A>(name: string, action: (event: IpcMainInvokeEvent, ...args: ReadonlyArray<unknown>) => Promise<A>): void => {
     ipcMain.handle(name, async (event, ...args) => {
       if (!trustedSender(event)) throw new Error("IPC sender is not trusted");
@@ -59,6 +61,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
           client.setSession({ ...session, role: user.role });
         }
         dependencies.clients.set(active.connectionId, client);
+      } else {
+        return { ...result, activeConnectionId: null };
       }
     }
     return await dependencies.registry.list();
@@ -67,11 +71,20 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)) }), raw);
     return new ServerClient({ origin: input.origin }).setupRequired();
   });
+  handle("accounts:discover-server", async (_event, raw) => {
+    const input = decode(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)), raw);
+    const discovery = await new ServerClient({ origin: input }).discover();
+    discoveredServers.set(discovery.origin, discovery);
+    return discovery;
+  });
   handle("accounts:connect", async (_event, raw) => {
     const input = decode(IpcConnectionInput, raw);
     const client = new ServerClient({ origin: input.origin });
+    const discovery = discoveredServers.get(client.serverOrigin);
+    if (discovery === undefined) throw new Error("Connect to the server first");
     const identity = await client.identity();
-    const session = await (await client.setupRequired() ? client.register(input, requestId()) : client.login(input, requestId()));
+    if (identity.serverId !== discovery.identity.serverId) throw new Error("Server identity changed; connect to the server again");
+    const session = await (discovery.setupRequired ? client.register(input, requestId()) : client.login(input, requestId()));
     const user = await client.me();
     const connectionId = requestId();
     await dependencies.registry.save({
@@ -89,11 +102,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       refreshExpiresAtMs: session.refreshExpiresAtMs,
     });
     dependencies.clients.set(connectionId, client);
+    discoveredServers.delete(client.serverOrigin);
     return dependencies.registry.list();
   });
   handle("accounts:activate", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
-    await dependencies.registry.activate(connectionId);
     const account = dependencies.registry.find(connectionId);
     if (account === null) throw new Error("Connection not found");
     const client = dependencies.clients.get(connectionId) ?? new ServerClient({ origin: account.origin });
@@ -107,6 +120,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       await dependencies.registry.updateRole(connectionId, user.role);
       client.setSession({ ...session, role: user.role });
     }
+    await dependencies.registry.activate(connectionId);
     dependencies.clients.set(connectionId, client);
     return dependencies.registry.list();
   });
@@ -147,6 +161,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("admin:listRoots", async (_event, raw) => activeClient(dependencies).libraryRoots(decode(Schema.String, raw)));
   handle("admin:addRoot", async (_event, raw) => activeClient(dependencies).addLibraryRoot(decode(Schema.Struct({ id: Schema.String, libraryId: Schema.String, path: Schema.String, priority: Schema.Number }), raw)));
   handle("admin:deleteRoot", async (_event, raw) => activeClient(dependencies).deleteLibraryRoot(decode(Schema.String, raw)));
+  handle("admin:startScan", async (_event, raw) => {
+    const input = decode(Schema.Struct({ libraryId: Schema.String, mode: Schema.Literals(["full", "incremental", "refresh"]) }), raw);
+    return activeClient(dependencies).startScan(input.libraryId, input.mode);
+  });
+  handle("admin:scanStatus", async (_event, raw) => activeClient(dependencies).scanStatus(decode(Schema.String, raw)));
   handle("player:start", async (_event, raw) => {
     const input = decode(Schema.Struct({ itemId: Schema.String, deviceId: Schema.String }), raw);
     const result = await dependencies.player.start({
@@ -174,5 +193,5 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
 };
 
 export const unregisterIpcHandlers = (): void => {
-  for (const name of ["accounts:list", "accounts:setup", "accounts:connect", "accounts:activate", "accounts:remove", "library:list", "library:items", "library:search", "admin:listUsers", "admin:createUser", "admin:updateUser", "admin:listLibraries", "admin:createLibrary", "admin:updateLibrary", "admin:deleteLibrary", "admin:listRoots", "admin:addRoot", "admin:deleteRoot", "player:start", "player:pause", "player:seek", "player:state", "player:stop"]) ipcMain.removeHandler(name);
+  for (const name of ["accounts:list", "accounts:setup", "accounts:discover-server", "accounts:connect", "accounts:activate", "accounts:remove", "library:list", "library:items", "library:search", "admin:listUsers", "admin:createUser", "admin:updateUser", "admin:listLibraries", "admin:createLibrary", "admin:updateLibrary", "admin:deleteLibrary", "admin:listRoots", "admin:addRoot", "admin:deleteRoot", "admin:startScan", "admin:scanStatus", "player:start", "player:pause", "player:seek", "player:state", "player:stop"]) ipcMain.removeHandler(name);
 };

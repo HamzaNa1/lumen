@@ -6,6 +6,7 @@ const api = {
   accounts: {
     list: () => invoke<unknown>("accounts:list"),
     setup: (origin: string) => invoke<unknown>("accounts:setup", { origin }),
+    discoverServer: (origin: string) => invoke<unknown>("accounts:discover-server", origin),
     connect: (input: unknown) => invoke<unknown>("accounts:connect", input),
     activate: (connectionId: string) => invoke<unknown>("accounts:activate", connectionId),
     remove: (connectionId: string) => invoke<unknown>("accounts:remove", connectionId),
@@ -26,6 +27,8 @@ const api = {
     listRoots: (libraryId: string) => invoke<unknown>("admin:listRoots", libraryId),
     addRoot: (input: unknown) => invoke<unknown>("admin:addRoot", input),
     deleteRoot: (rootId: string) => invoke<unknown>("admin:deleteRoot", rootId),
+    startScan: (input: unknown) => invoke<unknown>("admin:startScan", input),
+    scanStatus: (runId: string) => invoke<unknown>("admin:scanStatus", runId),
   },
   player: {
     start: (itemId: string, deviceId: string) => invoke<unknown>("player:start", { itemId, deviceId }),

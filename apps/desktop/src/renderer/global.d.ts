@@ -1,8 +1,9 @@
-import type { IpcAccounts, IpcItemPage, IpcLibrary, IpcPlayerState, IpcPlayerSession, User } from "@lumen/contracts";
+import type { IpcAccounts, IpcItemPage, IpcLibrary, IpcPlayerState, IpcPlayerSession, IpcServerDiscovery, ScanRun, User } from "@lumen/contracts";
 
 export interface LumenBridge {
   readonly accounts: {
     readonly list: () => Promise<IpcAccounts>;
+    readonly discoverServer: (origin: string) => Promise<IpcServerDiscovery>;
     readonly connect: (input: { readonly origin: string; readonly username: string; readonly displayName?: string; readonly password: string; readonly serverLabel: string }) => Promise<IpcAccounts>;
     readonly setup: (origin: string) => Promise<boolean>;
     readonly activate: (connectionId: string) => Promise<IpcAccounts>;
@@ -24,6 +25,8 @@ export interface LumenBridge {
     readonly listRoots: (libraryId: string) => Promise<ReadonlyArray<unknown>>;
     readonly addRoot: (input: { readonly id: string; readonly libraryId: string; readonly path: string; readonly priority: number }) => Promise<unknown>;
     readonly deleteRoot: (rootId: string) => Promise<unknown>;
+    readonly startScan: (input: { readonly libraryId: string; readonly mode: "full" | "incremental" | "refresh" }) => Promise<{ readonly runId: string }>;
+    readonly scanStatus: (runId: string) => Promise<ScanRun>;
   };
   readonly player: {
     readonly start: (itemId: string, deviceId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;

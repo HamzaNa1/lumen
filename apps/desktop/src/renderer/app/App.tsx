@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import type { IpcAccount, IpcItem, IpcLibrary, IpcPlayerSession, IpcPlayerState, User } from "@lumen/contracts";
+import type { IpcAccount, IpcItem, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, User } from "@lumen/contracts";
 import { AccountSwitcher, Button, MediaCard, PlayerBar, Shell, StatusState } from "@lumen/ui";
 import { useEffect, useMemo, useState } from "react";
 
@@ -30,12 +30,12 @@ export const App = (): React.ReactElement => {
   const scope = active === null ? null : [active.connectionId, active.serverId, active.userId] as const;
 
   if (accountsQuery.isLoading) return <StatusState title="Starting Lumen" message="Loading secure server connections." />;
-  if (accountsQuery.isError) return <ConnectPage initialError="The connection registry could not be loaded." />;
+  if (accountsQuery.isError) return <ConnectPage initialError="The connection registry could not be loaded." onChanged={() => void queryClient.invalidateQueries({ queryKey: ["accounts"] })} />;
   if (accounts.length === 0 || active === null) return <ConnectPage accounts={accounts} onChanged={() => void queryClient.invalidateQueries({ queryKey: ["accounts"] })} />;
 
   return (
     <Shell
-      sidebar={<Sidebar view={view} setView={setView} accounts={accounts} activeId={active.connectionId} isAdmin={active.role === "admin"} onActivate={(id) => { void bridge.accounts.activate(id).then(() => queryClient.invalidateQueries()); }} />}
+      sidebar={<Sidebar view={view} setView={setView} accounts={accounts} activeId={active.connectionId} isAdmin={active.role === "admin"} onActivate={(id) => { void bridge.accounts.activate(id).then(() => queryClient.invalidateQueries()).catch(() => undefined); }} onRemove={(id) => { void bridge.accounts.remove(id).then(() => queryClient.invalidateQueries()).catch(() => undefined); }} />}
       player={player === null ? undefined : <PlayerBar title={selectedItem?.title ?? "Now playing"} server={`${active.serverLabel} · ${active.username}`} paused={player.paused} onPause={() => void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer)} onStop={() => void bridge.player.stop().then(() => setPlayer(null))} position={player.positionSeconds} duration={player.durationSeconds} />}
     >
       {view === "home" ? <Home account={active} onOpen={setSelectedItem} onPlay={startPlayback} /> : null}
@@ -55,13 +55,13 @@ export const App = (): React.ReactElement => {
   }
 };
 
-const Sidebar = ({ view, setView, accounts, activeId, isAdmin, onActivate }: { readonly view: View; readonly setView: (view: View) => void; readonly accounts: ReadonlyArray<IpcAccount>; readonly activeId: string; readonly isAdmin: boolean; readonly onActivate: (id: string) => void }): React.ReactElement => (
+const Sidebar = ({ view, setView, accounts, activeId, isAdmin, onActivate, onRemove }: { readonly view: View; readonly setView: (view: View) => void; readonly accounts: ReadonlyArray<IpcAccount>; readonly activeId: string; readonly isAdmin: boolean; readonly onActivate: (id: string) => void; readonly onRemove: (id: string) => void }): React.ReactElement => (
   <>
     <div className="brand">LUMEN</div>
     <nav className="nav" aria-label="Primary navigation">
       {([["home", "Home"], ["library", "Library"], ["search", "Search"], ["settings", "Settings"], ...(isAdmin ? [["admin", "Administration"]] as const : [])]).map(([id, label]) => <button key={id} type="button" aria-current={view === id ? "page" : undefined} onClick={() => setView(id as View)}>{label}</button>)}
     </nav>
-    <AccountSwitcher accounts={accounts} activeId={activeId} onActivate={onActivate} onRemove={(id) => void window.lumen.accounts.remove(id)} />
+    <AccountSwitcher accounts={accounts} activeId={activeId} onActivate={onActivate} onRemove={onRemove} />
   </>
 );
 
@@ -71,21 +71,38 @@ const ConnectPage = ({ accounts = [], initialError, onChanged }: { readonly acco
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
-  const [setupRequired, setSetupRequired] = useState(false);
+  const [server, setServer] = useState<IpcServerDiscovery | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
-  useEffect(() => {
-    let cancelled = false;
-    const timeout = setTimeout(() => {
-      void bridge.accounts.setup(origin).then((required) => { if (!cancelled) setSetupRequired(required); }).catch(() => undefined);
-    }, 250);
-    return () => { cancelled = true; clearTimeout(timeout); };
-  }, [origin]);
-  const connect = useMutation({
-    mutationFn: () => bridge.accounts.connect({ origin, serverLabel, username, displayName: setupRequired ? displayName || username : undefined, password }),
-    onSuccess: () => { setPassword(""); onChanged?.(); },
-    onError: (cause) => setError(cause instanceof Error ? cause.message : "Connection failed"),
+  const discoverServer = useMutation({
+    mutationFn: () => bridge.accounts.discoverServer(origin),
+    onSuccess: (result) => {
+      setServer(result);
+      setError(null);
+    },
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Could not connect to server"),
   });
-  return <main className="login-panel"><div className="brand">LUMEN</div><p className="muted">Your media, your servers, direct playback.</p>{accounts.length > 0 ? <AccountSwitcher accounts={accounts} activeId={null} onActivate={(id) => void bridge.accounts.activate(id)} onRemove={(id) => void bridge.accounts.remove(id)} /> : null}<div className="field"><label htmlFor="server">Server address</label><input id="server" value={origin} onChange={(event) => setOrigin(event.target.value)} /></div><div className="field"><label htmlFor="server-label">Server name</label><input id="server-label" value={serverLabel} onChange={(event) => setServerLabel(event.target.value)} /></div><div className="field"><label htmlFor="username">Username</label><input id="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></div>{setupRequired ? <div className="field"><label htmlFor="display-name">Display name</label><input id="display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></div> : null}<div className="field"><label htmlFor="password">Password</label><input id="password" type="password" autoComplete={setupRequired ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} /></div>{setupRequired ? <p className="muted">This server has no users. The first account becomes its administrator.</p> : null}{error === null ? null : <p className="error-message" role="alert">{error}</p>}<Button variant="primary" disabled={connect.isPending} onClick={() => connect.mutate()}>{connect.isPending ? "Connecting…" : setupRequired ? "Create administrator" : "Connect securely"}</Button></main>;
+  const connect = useMutation({
+    mutationFn: () => {
+      if (server === null) throw new Error("Connect to a server first");
+      return bridge.accounts.connect({ origin: server.origin, serverLabel, username, displayName: server.setupRequired ? displayName || username : undefined, password });
+    },
+    onSuccess: () => { setPassword(""); onChanged?.(); },
+    onError: (cause) => setError(cause instanceof Error ? cause.message : "Could not sign in"),
+  });
+  const changeServer = (): void => {
+    setServer(null);
+    setUsername("");
+    setDisplayName("");
+    setPassword("");
+    setError(null);
+  };
+  const activateAccount = (connectionId: string): void => {
+    void bridge.accounts.activate(connectionId).then(() => onChanged?.()).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not activate account"));
+  };
+  const removeAccount = (connectionId: string): void => {
+    void bridge.accounts.remove(connectionId).then(() => onChanged?.()).catch((cause) => setError(cause instanceof Error ? cause.message : "Could not remove account"));
+  };
+  return <main className="login-panel"><div className="brand">LUMEN</div><p className="muted">Your media, your servers, direct playback.</p>{accounts.length > 0 ? <AccountSwitcher accounts={accounts} activeId={null} onActivate={activateAccount} onRemove={removeAccount} /> : null}{server === null ? <><p className="muted">Step 1 of 2 · Connect to your server</p><div className="field"><label htmlFor="server">Server address</label><input id="server" value={origin} onChange={(event) => { setOrigin(event.target.value); setError(null); }} /></div><div className="field"><label htmlFor="server-label">Server name</label><input id="server-label" value={serverLabel} onChange={(event) => setServerLabel(event.target.value)} /></div><Button variant="primary" disabled={discoverServer.isPending || origin.trim() === "" || serverLabel.trim() === ""} onClick={() => discoverServer.mutate()}>{discoverServer.isPending ? "Connecting…" : "Connect to server"}</Button></> : <><p className="muted">Step 2 of 2 · {server.setupRequired ? "Create the first account" : "Sign in"}</p><div className="field"><p className="muted">Connected server</p><p className="muted">{server.identity.displayName} · {server.origin}</p></div><div className="field"><label htmlFor="username">Username</label><input id="username" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} /></div>{server.setupRequired ? <div className="field"><label htmlFor="display-name">Display name</label><input id="display-name" value={displayName} onChange={(event) => setDisplayName(event.target.value)} /></div> : null}<div className="field"><label htmlFor="password">Password</label><input id="password" type="password" autoComplete={server.setupRequired ? "new-password" : "current-password"} value={password} onChange={(event) => setPassword(event.target.value)} /></div>{server.setupRequired ? <p className="muted">This server has no users. The first account becomes its administrator.</p> : null}<Button variant="ghost" onClick={changeServer}>Change server</Button><Button variant="primary" disabled={connect.isPending || username.trim() === "" || password === ""} onClick={() => connect.mutate()}>{connect.isPending ? "Connecting…" : server.setupRequired ? "Create administrator" : "Sign in"}</Button></>}{error === null ? null : <p className="error-message" role="alert">{error}</p>}</main>;
 };
 
 const Home = ({ account, onOpen, onPlay }: { readonly account: IpcAccount; readonly onOpen: (item: IpcItem) => void; readonly onPlay: (item: IpcItem) => void }): React.ReactElement => <><div className="content-header"><div><p className="muted">Connected to {account.serverLabel}</p><h1>Continue watching</h1></div></div><Library account={account} scope={[account.connectionId, account.serverId, account.userId]} onOpen={onOpen} onPlay={onPlay} /></>;
@@ -177,6 +194,18 @@ const LibraryRow = ({ library, scope }: { readonly library: IpcLibrary; readonly
     mutationFn: () => bridge.admin.addRoot({ id: crypto.randomUUID(), libraryId: library.id, path: rootPath, priority: roots.data?.length ?? 0 }),
     onSuccess: async () => { setRootPath(""); await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "roots", library.id] }); },
   });
+  const scan = useMutation({
+    mutationFn: async () => {
+      const { runId } = await bridge.admin.startScan({ libraryId: library.id, mode: "full" });
+      while (true) {
+        const run = await bridge.admin.scanStatus(runId);
+        if (run.status === "succeeded") return;
+        if (run.status === "failed" || run.status === "cancelled") throw new Error(run.errorMessage ?? "Library scan failed");
+        await new Promise<void>((resolve) => setTimeout(resolve, 500));
+      }
+    },
+    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: [...scope, "items", library.id] }); },
+  });
   const remove = useMutation({ mutationFn: () => bridge.admin.deleteLibrary(library.id), onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "libraries"] }); } });
-  return <div className="library-admin-row"><div className="admin-row"><div className="field"><label htmlFor={`library-name-${library.id}`}>Name</label><input id={`library-name-${library.id}`} value={name} onChange={(event) => setName(event.target.value)} /></div><div className="field"><label htmlFor={`library-slug-${library.id}`}>Slug</label><input id={`library-slug-${library.id}`} value={slug} onChange={(event) => setSlug(event.target.value)} /></div><div className="field"><label htmlFor={`library-kind-${library.id}`}>Type</label><select id={`library-kind-${library.id}`} value={kind} onChange={(event) => setKind(event.target.value as IpcLibrary["kind"])}><option value="movies">Movies</option><option value="shows">Shows</option><option value="music">Music</option></select></div><label className="checkbox-field"><input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} /> Enabled</label><Button disabled={update.isPending || remove.isPending} onClick={() => update.mutate()}>{update.isPending ? "Saving…" : "Save"}</Button><Button variant="ghost" disabled={remove.isPending} onClick={() => remove.mutate()}>Delete</Button></div><div className="root-editor"><h3>Roots</h3>{roots.data?.length === 0 ? <p className="muted">No roots configured.</p> : roots.data?.map((value) => { const root = value as { id: string; path: string }; return <div className="root-row" key={root.id}><code>{root.path}</code><Button variant="ghost" onClick={() => void bridge.admin.deleteRoot(root.id).then(() => queryClient.invalidateQueries({ queryKey: [...scope, "admin", "roots", library.id] }))}>Remove</Button></div>; })}<form className="root-form" onSubmit={(event) => { event.preventDefault(); addRoot.mutate(); }}><label htmlFor={`root-${library.id}`}>Filesystem path</label><input id={`root-${library.id}`} value={rootPath} onChange={(event) => setRootPath(event.target.value)} placeholder="/media/movies" /><Button disabled={addRoot.isPending || rootPath.trim() === ""} type="submit">{addRoot.isPending ? "Adding…" : "Add root"}</Button></form></div></div>;
+  return <div className="library-admin-row"><div className="admin-row"><div className="field"><label htmlFor={`library-name-${library.id}`}>Name</label><input id={`library-name-${library.id}`} value={name} onChange={(event) => setName(event.target.value)} /></div><div className="field"><label htmlFor={`library-slug-${library.id}`}>Slug</label><input id={`library-slug-${library.id}`} value={slug} onChange={(event) => setSlug(event.target.value)} /></div><div className="field"><label htmlFor={`library-kind-${library.id}`}>Type</label><select id={`library-kind-${library.id}`} value={kind} onChange={(event) => setKind(event.target.value as IpcLibrary["kind"])}><option value="movies">Movies</option><option value="shows">Shows</option><option value="music">Music</option></select></div><label className="checkbox-field"><input type="checkbox" checked={isEnabled} onChange={(event) => setIsEnabled(event.target.checked)} /> Enabled</label><Button disabled={update.isPending || remove.isPending} onClick={() => update.mutate()}>{update.isPending ? "Saving…" : "Save"}</Button><Button variant="ghost" disabled={remove.isPending || scan.isPending} onClick={() => remove.mutate()}>Delete</Button><Button variant="ghost" disabled={scan.isPending || roots.isLoading || (roots.data?.length ?? 0) === 0} onClick={() => scan.mutate()}>{scan.isPending ? "Scanning…" : "Scan library"}</Button></div><div className="root-editor"><h3>Roots</h3>{scan.isError ? <p className="error-message" role="alert">{scan.error instanceof Error ? scan.error.message : "Could not scan library"}</p> : null}{roots.data?.length === 0 ? <p className="muted">No roots configured.</p> : roots.data?.map((value) => { const root = value as { id: string; path: string }; return <div className="root-row" key={root.id}><code>{root.path}</code><Button variant="ghost" onClick={() => void bridge.admin.deleteRoot(root.id).then(() => queryClient.invalidateQueries({ queryKey: [...scope, "admin", "roots", library.id] }))}>Remove</Button></div>; })}<form className="root-form" onSubmit={(event) => { event.preventDefault(); addRoot.mutate(); }}><label htmlFor={`root-${library.id}`}>Filesystem path</label><input id={`root-${library.id}`} value={rootPath} onChange={(event) => setRootPath(event.target.value)} placeholder="/media/movies" /><Button disabled={addRoot.isPending || rootPath.trim() === ""} type="submit">{addRoot.isPending ? "Adding…" : "Add root"}</Button></form></div></div>;
 };
