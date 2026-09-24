@@ -110,8 +110,37 @@ export const IpcItem = Schema.Struct({
   year: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   artworkId: Schema.NullOr(Uuid),
   resumePositionSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  parentId: Schema.optional(Schema.NullOr(Uuid)),
+  indexNumber: Schema.optional(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
 });
 export type IpcItem = Schema.Schema.Type<typeof IpcItem>;
+
+export const IpcItemDetails = Schema.Struct({
+  item: Schema.Struct({
+    id: Uuid,
+    libraryId: Uuid,
+    parentId: Schema.NullOr(Uuid),
+    indexNumber: Schema.NullOr(Schema.Number),
+    title: Schema.String,
+    kind: Schema.String,
+    year: Schema.NullOr(Schema.Number),
+    durationSeconds: Schema.NullOr(Schema.Number),
+    artworkId: Schema.NullOr(Uuid),
+    overview: Schema.NullOr(Schema.String),
+    releaseDate: Schema.NullOr(Schema.String),
+    contentRating: Schema.NullOr(Schema.String),
+    communityRating: Schema.NullOr(Schema.Number),
+    genresJson: Schema.String,
+    studiosJson: Schema.String,
+    tagsJson: Schema.String,
+    externalIdsJson: Schema.String,
+    backdropId: Schema.NullOr(Uuid),
+  }),
+  sources: Schema.Array(Schema.Unknown),
+  watchState: Schema.NullOr(Schema.Unknown),
+  isFavorite: Schema.Boolean,
+});
+export type IpcItemDetails = Schema.Schema.Type<typeof IpcItemDetails>;
 
 export const IpcItemPage = Schema.Struct({
   items: Schema.Array(IpcItem),

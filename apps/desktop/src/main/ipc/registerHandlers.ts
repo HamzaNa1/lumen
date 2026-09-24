@@ -169,6 +169,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     );
     return activeClient(dependencies).items(input.libraryId, input.cursor);
   });
+  handle("library:item-details", async (_event, raw) => activeClient(dependencies).itemDetails(decode(Schema.String, raw)));
+  handle("library:item-children", async (_event, raw) => {
+    const input = decode(Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }), raw);
+    return activeClient(dependencies).itemChildren(input.itemId, input.cursor);
+  });
+  handle("library:next-up", async (_event, raw) => activeClient(dependencies).nextUp(decode(Schema.String, raw)));
+  handle("library:artwork", async (_event, raw) => activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)));
   handle("library:search", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ query: Schema.String, libraryId: Schema.NullOr(Schema.String) }),

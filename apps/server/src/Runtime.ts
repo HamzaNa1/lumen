@@ -7,8 +7,9 @@ import { ServerIdentityLive, ServerIdentityService, type ServerIdentity } from "
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
 import { FfprobeLive } from "./media/Ffprobe";
 import { MediaIngestLive } from "./media/MediaIngest";
+import { TmdbProviderLive } from "./media/Tmdb";
 import { AccessControl, AccessControlLive } from "./services/AccessControl";
-import { AssetService, AssetServiceLive } from "./services/AssetService";
+import { AssetService, AssetServiceLiveWithConfig } from "./services/AssetService";
 import { AdminService, AdminServiceLive } from "./services/AdminService";
 import { AuthService, AuthServiceLive } from "./services/AuthService";
 import { CatalogService, CatalogServiceLive } from "./services/CatalogService";
@@ -45,14 +46,15 @@ export const makeLayers = (config: ServerConfig) => {
   const auth = AuthServiceLive.pipe(Layer.provide(dependencies));
   const libraries = LibraryServiceLive.pipe(Layer.provide(dependencies));
   const scans = ScanServiceLive.pipe(Layer.provide(dependencies));
-  const assets = AssetServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
+  const assets = AssetServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const admin = AdminServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const catalog = CatalogServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const playback = PlaybackServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
   const ffprobe = FfprobeLive(config);
   const media = MediaIngestLive.pipe(Layer.provide(Layer.mergeAll(dependencies, ffprobe)));
-  const jobs = JobServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, media)));
+  const tmdb = TmdbProviderLive(config).pipe(Layer.provide(dependencies));
+  const jobs = JobServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, media, tmdb)));
   const events = EventServiceLive.pipe(Layer.provide(dependencies));
   const identity = ServerIdentityLive.pipe(Layer.provide(dependencies));
   return Layer.mergeAll(dependencies, auth, access, assets, admin, catalog, libraries, scans, playback, events, jobs, identity);
@@ -110,6 +112,7 @@ export const startServer = async (overrides: Partial<ServerConfig> = {}): Promis
     scans: services.scans,
     assets: services.assets,
     playback: services.playback,
+    jobs: services.jobs,
     identity: services.identity,
     database: services.database,
     startedAtMs: Date.now(),

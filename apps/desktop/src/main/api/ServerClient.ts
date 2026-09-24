@@ -1,5 +1,5 @@
-import { IpcPlayableStream } from "@lumen/contracts";
-import type { IpcConnectionInput, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
+import { IpcItemDetails, IpcPlayableStream } from "@lumen/contracts";
+import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
 
@@ -74,6 +74,8 @@ const itemPageSchema = Schema.Struct({
     year: Schema.NullOr(Schema.Number),
     artworkId: Schema.NullOr(Schema.String),
     resumePositionSeconds: Schema.NullOr(Schema.Number),
+    parentId: Schema.optional(Schema.NullOr(Schema.String)),
+    indexNumber: Schema.optional(Schema.NullOr(Schema.Number)),
   })),
   nextCursor: Schema.NullOr(Schema.String),
 });
@@ -313,6 +315,37 @@ export class ServerClient {
     const query = new URLSearchParams({ libraryId, limit: "50" });
     if (cursor !== null) query.set("cursor", cursor);
     return this.request(`/api/v1/items?${query.toString()}`, {}, itemPageSchema);
+  }
+
+  async itemDetails(itemId: string): Promise<IpcItemDetails> {
+    return this.request(`/api/v1/items/${encodeURIComponent(itemId)}`, {}, IpcItemDetails);
+  }
+
+  async itemChildren(itemId: string, cursor: string | null = null): Promise<IpcItemPage> {
+    const query = new URLSearchParams({ limit: "100" });
+    if (cursor !== null) query.set("cursor", cursor);
+    return this.request(`/api/v1/items/${encodeURIComponent(itemId)}/children?${query}`, {}, itemPageSchema);
+  }
+
+  async nextUp(itemId: string): Promise<IpcItem | null> {
+    const response = await this.request<{ item: IpcItem | null }>(`/api/v1/items/${encodeURIComponent(itemId)}/next-up`);
+    return response.item;
+  }
+
+  async artworkDataUrl(artworkId: string): Promise<string | null> {
+    if (this.session === null) throw new Error("Authentication required");
+    const url = new URL(`/api/v1/artwork/${encodeURIComponent(artworkId)}`, this.origin);
+    let response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${this.session.accessToken}` }, redirect: "manual" });
+    if (response.status === 401 && this.session.refreshToken !== "") {
+      await this.refresh();
+      response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${this.session.accessToken}` }, redirect: "manual" });
+    }
+    if (!response.ok) return null;
+    const mime = response.headers.get("content-type")?.split(";")[0];
+    if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") return null;
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > 20_000_000) return null;
+    return `data:${mime};base64,${Buffer.from(bytes).toString("base64")}`;
   }
 
   async startPlayback(itemId: string): Promise<IpcPlayerSession> {

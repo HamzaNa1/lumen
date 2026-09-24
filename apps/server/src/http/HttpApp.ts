@@ -1,12 +1,11 @@
-import { User, type UserRole } from "@lumen/contracts";
-import { Database, sql } from "@lumen/database";
+import { User } from "@lumen/contracts";
+import { sql, type Database } from "@lumen/database";
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
-import { badRequest, forbidden, internal, notFound, ServerError, unauthorized } from "../core/Errors";
+import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
 import { newUuid } from "../core/Security";
 import { RequestLimiter, LimitExceeded } from "../core/Limits";
 import { lstat } from "node:fs/promises";
-import { basename } from "node:path";
 import type { ServerConfig } from "../config/Config";
 import type { ServerIdentity } from "../database/Identity";
 import type { AssetServiceShape } from "../services/AssetService";
@@ -18,6 +17,7 @@ import type { EventServiceShape } from "../services/EventService";
 import type { LibraryServiceShape } from "../services/LibraryService";
 import type { ScanServiceShape } from "../services/ScanService";
 import type { PlaybackServiceShape } from "../services/PlaybackService";
+import type { JobServiceShape } from "../jobs/JobService";
 import * as S from "../http/Schemas";
 
 export interface HttpServices {
@@ -30,6 +30,7 @@ export interface HttpServices {
   readonly scans: ScanServiceShape;
   readonly assets: AssetServiceShape;
   readonly playback: PlaybackServiceShape;
+  readonly jobs?: JobServiceShape;
   readonly database: Database["Service"];
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
@@ -48,7 +49,6 @@ const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unkn
     throw badRequest(cause instanceof Error ? cause.message : "Request validation failed");
   }
 };
-const decodePath = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] => decode(schema, value);
 
 const body = async (request: Request, maxBytes: number): Promise<unknown> => {
   if (request.method === "GET" || request.method === "HEAD") return {};
@@ -162,7 +162,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     if (token === null) throw unauthorized();
     return call(services.auth.authenticate(token, Date.now()));
   };
-  const dispatch = async (request: Request, requestId: string): Promise<Response> => {
+  const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
     const method = request.method.toUpperCase();
@@ -229,7 +229,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.startScan(decode(S.StartScanBody, await body(request, config.maxRequestBodyBytes)), Date.now())), 202); }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans" && parts[3] !== undefined && parts[4] === "jobs") return unknownJson(await call(services.scans.listJobs(parts[3])));
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans" && parts[3] !== undefined) return unknownJson(await call(services.scans.getRun(parts[3])));
-    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items") {
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts.length === 3) {
       const libraryId = url.searchParams.get("libraryId");
       const pagination = page(url);
       const offset = decodeCursor(pagination.cursor);
@@ -250,20 +250,142 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
       const rows = (await call(services.database.all<CatalogItemRow>(sql`
         SELECT i.id, i.library_id AS libraryId, i.title, i.kind,
           i.duration_seconds * 1000 AS durationMs, i.year,
-          NULL AS artworkId, w.position_seconds AS resumePositionSeconds
+          (SELECT a.artwork_id FROM catalog_item_artwork a WHERE a.item_id = i.id AND a.role = 'poster') AS artworkId,
+          w.position_seconds AS resumePositionSeconds
         FROM catalog_items i
         LEFT JOIN item_watch_states w ON w.item_id = i.id AND w.user_id = ${principal.user.id}
-        WHERE i.library_id IN (${sql.join(placeholders, sql`, `)})
+        WHERE i.library_id IN (${sql.join(placeholders, sql`, `)}) AND i.parent_id IS NULL
         ORDER BY i.sort_title ASC, i.id ASC
         LIMIT ${pagination.limit + 1} OFFSET ${offset}
       `))) as ReadonlyArray<CatalogItemRow>;
       const hasMore = rows.length > pagination.limit;
       return unknownJson({ items: rows.slice(0, pagination.limit), nextCursor: hasMore ? encodeCursor(offset + pagination.limit) : null });
     }
+    if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "refresh") {
+      await call(services.access.requireAdmin(principal));
+      if (services.jobs === undefined) throw badRequest("Metadata refresh is unavailable");
+      await call(services.jobs.refresh(parts[3], Date.now()));
+      return ack();
+    }
+    if (method === "PATCH" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "metadata") {
+      await call(services.access.requireAdmin(principal));
+      const input = decode(Schema.Struct({
+        title: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+        overview: Schema.optional(Schema.NullOr(Schema.String)),
+        year: Schema.optional(Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1800, maximum: 9999 })))),
+        releaseDate: Schema.optional(Schema.NullOr(Schema.String)),
+        contentRating: Schema.optional(Schema.NullOr(Schema.String)),
+        communityRating: Schema.optional(Schema.NullOr(Schema.Number)),
+        genres: Schema.optional(Schema.Array(Schema.String)),
+        studios: Schema.optional(Schema.Array(Schema.String)),
+        tags: Schema.optional(Schema.Array(Schema.String)),
+      }), await body(request, config.maxRequestBodyBytes));
+      const old = await call(services.database.get<{ title: string; overview: string | null; year: number | null; releaseDate: string | null; contentRating: string | null; communityRating: number | null; genresJson: string | null; studiosJson: string | null; tagsJson: string | null; externalIdsJson: string | null; fieldSourcesJson: string | null; lockedFieldsJson: string | null }>(sql`
+        SELECT i.title, i.overview, i.year, m.release_date AS releaseDate, m.content_rating AS contentRating,
+          m.community_rating AS communityRating, m.genres_json AS genresJson, m.studios_json AS studiosJson,
+          m.tags_json AS tagsJson, m.external_ids_json AS externalIdsJson, m.field_sources_json AS fieldSourcesJson,
+          m.locked_fields_json AS lockedFieldsJson FROM catalog_items i LEFT JOIN catalog_item_metadata m ON m.item_id = i.id WHERE i.id = ${parts[3]}
+      `));
+      if (old == null) throw notFound("Item not found");
+      const locks = new Set(JSON.parse(old.lockedFieldsJson ?? "[]") as string[]);
+      const sources = JSON.parse(old.fieldSourcesJson ?? "{}") as Record<string, string>;
+      for (const key of Object.keys(input)) { locks.add(key); sources[key] = "user"; }
+      const title = input.title ?? old.title;
+      await call(services.database.run(sql`
+        UPDATE catalog_items SET title = ${title}, sort_title = ${title.toLowerCase()},
+          overview = ${input.overview === undefined ? old.overview : input.overview},
+          year = ${input.year === undefined ? old.year : input.year}, metadata_state = 'user',
+          updated_at_ms = unixepoch() * 1000 WHERE id = ${parts[3]}
+      `));
+      await call(services.database.run(sql`
+        INSERT INTO catalog_item_metadata(item_id, release_date, content_rating, community_rating,
+          genres_json, studios_json, tags_json, external_ids_json, field_sources_json, locked_fields_json)
+        VALUES (${parts[3]}, ${input.releaseDate === undefined ? old.releaseDate : input.releaseDate},
+          ${input.contentRating === undefined ? old.contentRating : input.contentRating},
+          ${input.communityRating === undefined ? old.communityRating : input.communityRating},
+          ${JSON.stringify(input.genres ?? JSON.parse(old.genresJson ?? "[]"))},
+          ${JSON.stringify(input.studios ?? JSON.parse(old.studiosJson ?? "[]"))},
+          ${JSON.stringify(input.tags ?? JSON.parse(old.tagsJson ?? "[]"))},
+          ${old.externalIdsJson ?? "{}"}, ${JSON.stringify(sources)}, ${JSON.stringify([...locks])})
+        ON CONFLICT(item_id) DO UPDATE SET release_date = excluded.release_date, content_rating = excluded.content_rating,
+          community_rating = excluded.community_rating, genres_json = excluded.genres_json, studios_json = excluded.studios_json,
+          tags_json = excluded.tags_json, field_sources_json = excluded.field_sources_json, locked_fields_json = excluded.locked_fields_json
+      `));
+      return ack();
+    }
+    if (method === "PUT" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "match") {
+      await call(services.access.requireAdmin(principal));
+      const input = decode(Schema.Struct({ tmdbId: Schema.String.check(Schema.isPattern(/^\d+$/u)) }), await body(request, config.maxRequestBodyBytes));
+      const item = await call(services.database.get<{ kind: string }>(sql`SELECT kind FROM catalog_items WHERE id = ${parts[3]}`));
+      if (item == null || (item.kind !== "movie" && item.kind !== "show")) throw badRequest("Choose a movie or series");
+      const existing = await call(services.database.get<{ externalIdsJson: string; fieldSourcesJson: string; lockedFieldsJson: string }>(sql`
+        SELECT external_ids_json AS externalIdsJson, field_sources_json AS fieldSourcesJson,
+          locked_fields_json AS lockedFieldsJson FROM catalog_item_metadata WHERE item_id = ${parts[3]}
+      `));
+      const externalIds = { ...JSON.parse(existing?.externalIdsJson ?? "{}") as Record<string, string>, tmdb: input.tmdbId };
+      const fieldSources = { ...JSON.parse(existing?.fieldSourcesJson ?? "{}") as Record<string, string>, tmdb: "user" };
+      const locks = new Set(JSON.parse(existing?.lockedFieldsJson ?? "[]") as string[]);
+      locks.add("tmdb");
+      await call(services.database.run(sql`
+        INSERT INTO catalog_item_metadata(item_id, external_ids_json, field_sources_json, locked_fields_json)
+        VALUES (${parts[3]}, ${JSON.stringify(externalIds)}, ${JSON.stringify(fieldSources)}, ${JSON.stringify([...locks])})
+        ON CONFLICT(item_id) DO UPDATE SET external_ids_json = excluded.external_ids_json,
+          field_sources_json = excluded.field_sources_json, locked_fields_json = excluded.locked_fields_json
+      `));
+      await call(services.database.run(sql`
+        WITH RECURSIVE descendants(id) AS (SELECT id FROM catalog_items WHERE id = ${parts[3]}
+          UNION ALL SELECT i.id FROM catalog_items i JOIN descendants d ON i.parent_id = d.id)
+        DELETE FROM provider_records WHERE item_id IN (SELECT id FROM descendants) AND provider = 'tmdb'
+      `));
+      if (services.jobs !== undefined) await call(services.jobs.refresh(parts[3], Date.now()));
+      return ack();
+    }
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "children") {
+      const parent = await call(services.database.get<{ libraryId: string; kind: string }>(sql`SELECT library_id AS libraryId, kind FROM catalog_items WHERE id = ${parts[3]}`));
+      if (parent == null) throw notFound("Item not found");
+      await call(services.access.requireLibrary(principal, parent.libraryId, "library:read", Date.now()));
+      const pagination = page(url);
+      const offset = decodeCursor(pagination.cursor);
+      const rows = await call(services.database.all(sql`
+        SELECT i.id, i.library_id AS libraryId, i.parent_id AS parentId, i.title, i.kind,
+          i.index_number AS indexNumber, i.duration_seconds * 1000 AS durationMs, i.year,
+          (SELECT a.artwork_id FROM catalog_item_artwork a WHERE a.item_id = i.id AND a.role IN ('poster', 'still') ORDER BY a.role LIMIT 1) AS artworkId,
+          w.position_seconds AS resumePositionSeconds
+        FROM catalog_items i
+        LEFT JOIN item_watch_states w ON w.item_id = i.id AND w.user_id = ${principal.user.id}
+        WHERE i.parent_id = ${parts[3]} AND i.library_id = ${parent.libraryId}
+        ORDER BY i.index_number ASC, i.sort_title ASC, i.id ASC
+        LIMIT ${pagination.limit + 1} OFFSET ${offset}
+      `));
+      return unknownJson({ items: rows.slice(0, pagination.limit), nextCursor: rows.length > pagination.limit ? encodeCursor(offset + pagination.limit) : null });
+    }
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "next-up") {
+      const show = await call(services.database.get<{ libraryId: string; kind: string }>(sql`SELECT library_id AS libraryId, kind FROM catalog_items WHERE id = ${parts[3]}`));
+      if (show == null || show.kind !== "show") throw notFound("Series not found");
+      await call(services.access.requireLibrary(principal, show.libraryId, "library:read", Date.now()));
+      const episode = await call(services.database.get(sql`
+        SELECT e.id, e.library_id AS libraryId, e.parent_id AS parentId, e.title, e.kind,
+          e.index_number AS indexNumber, e.duration_seconds * 1000 AS durationMs, e.year,
+          (SELECT a.artwork_id FROM catalog_item_artwork a WHERE a.item_id = e.id AND a.role = 'still') AS artworkId,
+          w.position_seconds AS resumePositionSeconds
+        FROM catalog_items e LEFT JOIN catalog_items season ON season.id = e.parent_id
+        LEFT JOIN item_watch_states w ON w.item_id = e.id AND w.user_id = ${principal.user.id}
+        WHERE (season.parent_id = ${parts[3]} OR e.parent_id = ${parts[3]})
+          AND e.kind = 'episode' AND COALESCE(w.completed, 0) = 0
+        ORDER BY COALESCE(season.index_number, 0) ASC, e.index_number ASC, e.sort_title ASC, e.id ASC LIMIT 1
+      `));
+      return unknownJson({ item: episode });
+    }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined) {
       const item = await call(services.database.get<{ id: string; libraryId: string; title: string; kind: string; year: number | null; overview: string | null; durationSeconds: number | null }>(sql`
-        SELECT id, library_id AS libraryId, title, kind, year, overview, duration_seconds AS durationSeconds
-        FROM catalog_items WHERE id = ${parts[3]}
+        SELECT i.id, i.library_id AS libraryId, i.parent_id AS parentId, i.title, i.kind, i.year,
+          i.index_number AS indexNumber, i.overview, i.duration_seconds AS durationSeconds,
+          m.release_date AS releaseDate, m.content_rating AS contentRating, m.community_rating AS communityRating,
+          COALESCE(m.genres_json, '[]') AS genresJson, COALESCE(m.studios_json, '[]') AS studiosJson,
+          COALESCE(m.tags_json, '[]') AS tagsJson, COALESCE(m.external_ids_json, '{}') AS externalIdsJson,
+          (SELECT a.artwork_id FROM catalog_item_artwork a WHERE a.item_id = i.id AND a.role = 'poster') AS artworkId,
+          (SELECT a.artwork_id FROM catalog_item_artwork a WHERE a.item_id = i.id AND a.role = 'backdrop') AS backdropId
+        FROM catalog_items i LEFT JOIN catalog_item_metadata m ON m.item_id = i.id WHERE i.id = ${parts[3]}
       `));
       if (item == null) throw notFound("Item not found");
       await call(services.access.requireLibrary(principal, item.libraryId, "library:read", Date.now()));
@@ -276,7 +398,8 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
       const watchState = await call(services.database.get<{ positionSeconds: number; completed: number }>(sql`
         SELECT position_seconds AS positionSeconds, completed FROM item_watch_states WHERE user_id = ${principal.user.id} AND item_id = ${item.id}
       `));
-      return unknownJson({ item, sources: sources.map((source) => ({ ...source, available: source.available === 1 })), watchState: watchState == null ? null : { ...watchState, completed: watchState.completed === 1 } });
+      const favorite = await call(services.database.get<{ itemId: string }>(sql`SELECT item_id AS itemId FROM item_favorites WHERE user_id = ${principal.user.id} AND item_id = ${item.id}`));
+      return unknownJson({ item, sources: sources.map((source) => ({ ...source, available: source.available === 1 })), watchState: watchState == null ? null : { ...watchState, completed: watchState.completed === 1 }, isFavorite: favorite != null });
     }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "tracks") return unknownJson(await call(services.catalog.listTracks(principal, url.searchParams.get("libraryId"), page(url), Date.now())));
     if (method === "PUT" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts[3] !== undefined && parts[4] === "favorite") {
@@ -368,7 +491,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     const key = clientKey(request);
     const login = new URL(request.url).pathname.endsWith("/auth/login") || new URL(request.url).pathname.endsWith("/auth/register");
     try {
-      const execute = Effect.tryPromise({ try: () => dispatch(request, requestId), catch: (cause) => cause });
+      const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
       const checked = limiter.check(key, Date.now(), login ? "login" : "request");
       return await Effect.runPromise(checked.pipe(Effect.flatMap(() => limiter.run(key, execute))));
     } catch (cause) {

@@ -5,7 +5,6 @@ import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { newUuid } from "../core/Security";
 import { safePath } from "../core/Paths";
-import { mapRepositoryError } from "../core/Cause";
 
 const mediaExtensions = new Set([
   ".aac", ".aif", ".aiff", ".alac", ".ape", ".flac", ".m4a", ".m4v", ".mkv", ".mp3", ".mp4", ".mpeg", ".mpg", ".oga", ".ogg", ".opus", ".wav", ".webm", ".wma", ".wmv",
@@ -13,12 +12,8 @@ const mediaExtensions = new Set([
 
 const isMedia = (path: string): boolean => mediaExtensions.has(path.slice(path.lastIndexOf(".")).toLowerCase());
 
-const existsDirectory = async (path: string): Promise<boolean> => {
-  try {
-    return (await stat(path)).isDirectory();
-  } catch {
-    return false;
-  }
+const existsFile = async (path: string): Promise<boolean> => {
+  try { return (await stat(path)).isFile(); } catch { return false; }
 };
 
 const walk = async function* (root: string, current = root): AsyncGenerator<{ absolutePath: string; relativePath: string; size: number; modifiedAtMs: number; inode: string }> {
@@ -77,9 +72,22 @@ export const makeScanner = Effect.gen(function* () {
       const target = yield* safePath(root.path, file.relativePath);
       let sourceId = "";
       yield* database.transaction((transaction) => Effect.gen(function* () {
-        const existing = yield* transaction.get<{ id: string }>(sql`
+        let existing = yield* transaction.get<{ id: string }>(sql`
           SELECT id FROM media_sources WHERE absolute_path = ${target}
         `);
+        if (existing == null) {
+          const candidates = yield* transaction.all<{ id: string; absolutePath: string }>(sql`
+            SELECT id, absolute_path AS absolutePath FROM media_sources
+            WHERE library_id = ${root.libraryId} AND inode = ${file.inode} AND file_size_bytes = ${file.size}
+              AND NOT EXISTS (SELECT 1 FROM server_scan_seen ss WHERE ss.run_id = ${runId} AND ss.source_id = media_sources.id)
+          `);
+          for (const candidate of candidates) {
+            if (!(yield* Effect.promise(() => existsFile(candidate.absolutePath)))) {
+              existing = candidate;
+              break;
+            }
+          }
+        }
         sourceId = existing?.id ?? newUuid();
         if (existing == null) {
           yield* transaction.run(sql`
@@ -88,7 +96,8 @@ export const makeScanner = Effect.gen(function* () {
           `);
         } else {
           yield* transaction.run(sql`
-            UPDATE media_sources SET file_size_bytes = ${file.size}, modified_at_ms = ${file.modifiedAtMs}, inode = ${file.inode}, scanned_at_ms = unixepoch() * 1000
+            UPDATE media_sources SET root_id = ${rootId}, relative_path = ${file.relativePath}, absolute_path = ${target},
+              file_size_bytes = ${file.size}, modified_at_ms = ${file.modifiedAtMs}, inode = ${file.inode}, scanned_at_ms = unixepoch() * 1000
             WHERE id = ${sourceId}
           `);
         }

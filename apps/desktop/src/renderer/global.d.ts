@@ -1,6 +1,8 @@
 import type {
   IpcAccounts,
   IpcItemPage,
+  IpcItem,
+  IpcItemDetails,
   IpcLibrary,
   IpcPlayerDisplay,
   IpcPlayerSession,
@@ -29,6 +31,10 @@ export interface LumenBridge {
   readonly library: {
     readonly list: () => Promise<ReadonlyArray<IpcLibrary>>;
     readonly items: (libraryId: string, cursor?: string | null) => Promise<IpcItemPage>;
+    readonly itemDetails: (itemId: string) => Promise<IpcItemDetails>;
+    readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<IpcItemPage>;
+    readonly nextUp: (itemId: string) => Promise<IpcItem | null>;
+    readonly artwork: (artworkId: string) => Promise<string | null>;
     readonly search: (query: string, libraryId?: string | null) => Promise<unknown>;
   };
   readonly admin: {

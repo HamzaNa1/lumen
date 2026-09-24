@@ -1,6 +1,7 @@
 import type {
   IpcAccount,
   IpcItem,
+  IpcItemDetails,
   IpcLibrary,
   IpcPlayerState,
   IpcServerDiscovery,
@@ -18,7 +19,7 @@ import {
   StatusState,
   TextField,
 } from "@lumen/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
@@ -155,6 +156,10 @@ export const App = (): React.ReactElement => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
   const queuePlayback = (item: IpcItem): void => {
+    if (item.kind === "show" || item.kind === "season") {
+      setSelectedItem(item);
+      return;
+    }
     setPlaybackError(null);
     setPlayingItem(item);
     setSelectedItem(null);
@@ -683,8 +688,9 @@ const LibraryCollection = ({
       ) : (
         <div className="media-grid">
           {items.data?.items.map((item) => (
-            <MediaCard
+            <CatalogCard
               key={item.id}
+              item={item}
               title={item.title}
               subtitle={
                 item.year === null ? titleCase(item.kind) : `${item.year} · ${titleCase(item.kind)}`
@@ -757,8 +763,9 @@ export const SearchPage = (): React.ReactElement => {
           </div>
           <div className="media-grid">
             {items.map((item) => (
-              <MediaCard
+              <CatalogCard
                 key={item.id}
+                item={item}
                 title={item.title}
                 subtitle={titleCase(item.kind)}
                 onOpen={() => openItem(item)}
@@ -910,55 +917,105 @@ export const AdminPage = (): React.ReactElement => {
   );
 };
 
-const ItemDetails = ({
-  item,
-  onClose,
-  onPlay,
+const useArtwork = (artworkId: string | null | undefined, scope: readonly unknown[]) =>
+  useQuery({
+    queryKey: [...scope, "artwork", artworkId],
+    queryFn: () => bridge.library.artwork(artworkId ?? ""),
+    enabled: artworkId != null,
+  });
+
+const CatalogCard = ({
+  item, title, subtitle, onOpen, onPlay,
 }: {
+  readonly item?: IpcItem;
+  readonly title: string;
+  readonly subtitle?: string | null;
+  readonly onOpen: () => void;
+  readonly onPlay: () => void;
+}): React.ReactElement => {
+  const { scope } = useWorkspace();
+  const artwork = useArtwork(item?.artworkId, scope);
+  return <MediaCard title={title} subtitle={subtitle} imageUrl={artwork.data ?? null} onOpen={onOpen} onPlay={onPlay} />;
+};
+
+const metadataList = (value: string | undefined): string[] => {
+  try {
+    const parsed: unknown = JSON.parse(value ?? "[]");
+    return Array.isArray(parsed) ? parsed.filter((entry): entry is string => typeof entry === "string") : [];
+  } catch {
+    return [];
+  }
+};
+
+const ItemDetails = ({ item, onClose, onPlay }: {
   readonly item: IpcItem | null;
   readonly onClose: () => void;
   readonly onPlay: (item: IpcItem) => void;
-}): React.ReactElement => (
-  <Modal
-    open={item !== null}
-    onOpenChange={(open) => {
-      if (!open) onClose();
-    }}
-    title={item?.title ?? "Media details"}
-    description={
-      item === null
-        ? undefined
-        : `${item.year === null ? "Release year unavailable" : item.year} · ${titleCase(item.kind)}`
-    }
-    className="details-dialog"
-  >
-    {item === null ? null : (
-      <div className="details-content">
-        <div className="details-poster">
-          <Film aria-hidden="true" size={46} />
-          <span>{item.title.slice(0, 1)}</span>
+}): React.ReactElement => {
+  const { scope } = useWorkspace();
+  const [path, setPath] = useState<IpcItem[]>([]);
+  const [failedPoster, setFailedPoster] = useState<string | null>(null);
+  const [failedBackdrop, setFailedBackdrop] = useState<string | null>(null);
+  useEffect(() => { if (item !== null) setPath([]); }, [item]);
+  const current = path.at(-1) ?? item;
+  const details = useQuery({
+    queryKey: [...scope, "item", current?.id],
+    queryFn: () => bridge.library.itemDetails(current?.id ?? ""),
+    enabled: current !== null,
+  });
+  const children = useInfiniteQuery({
+    queryKey: [...scope, "children", current?.id],
+    queryFn: ({ pageParam }) => bridge.library.itemChildren(current?.id ?? "", pageParam),
+    initialPageParam: null as string | null,
+    getNextPageParam: (lastPage) => lastPage.nextCursor,
+    enabled: current?.kind === "show" || current?.kind === "season",
+  });
+  const nextUp = useQuery({
+    queryKey: [...scope, "next-up", current?.id],
+    queryFn: () => bridge.library.nextUp(current?.id ?? ""),
+    enabled: current?.kind === "show",
+  });
+  const poster = useArtwork(details.data?.item.artworkId ?? current?.artworkId, scope);
+  const backdrop = useArtwork(details.data?.item.backdropId, scope);
+  const metadata: IpcItemDetails["item"] | undefined = details.data?.item;
+  const childItems = children.data?.pages.flatMap((page) => page.items) ?? [];
+  const playable = current?.kind === "movie" || current?.kind === "episode" || current?.kind === "track";
+  return (
+    <Modal open={item !== null} onOpenChange={(open) => { if (!open) onClose(); }}
+      title={current?.title ?? "Media details"}
+      description={current === null ? undefined : `${current.year ?? "Year unavailable"} · ${titleCase(current.kind)}`}
+      className="details-dialog">
+      {current === null ? null : (
+        <div className="details-page">
+          {path.length > 0 ? <Button variant="ghost" onClick={() => setPath((previous) => previous.slice(0, -1))}>Back to {path.length > 1 ? path.at(-2)?.title : item?.title}</Button> : null}
+          {backdrop.data && failedBackdrop !== backdrop.data ? <img className="details-backdrop" src={backdrop.data} alt="" onError={() => setFailedBackdrop(backdrop.data ?? null)} /> : null}
+          <div className="details-content">
+            <div className="details-poster">
+              {poster.data && failedPoster !== poster.data ? <img src={poster.data} alt="" onError={() => setFailedPoster(poster.data ?? null)} /> : <><Film aria-hidden="true" size={46} /><span>{current.title.slice(0, 1)}</span></>}
+            </div>
+            <div className="details-copy">
+              <span className="quality-badge">{playable ? "Original quality · Direct Play" : titleCase(current.kind)}</span>
+              {metadata?.overview ? <p>{metadata.overview}</p> : <p>Details are not available yet.</p>}
+              <p>{[metadata?.releaseDate ?? current.year, metadata?.contentRating, metadata?.communityRating === null || metadata?.communityRating === undefined ? null : `★ ${metadata.communityRating.toFixed(1)}`].filter(Boolean).join(" · ")}</p>
+              {metadataList(metadata?.genresJson).length ? <p>Genres: {metadataList(metadata?.genresJson).join(", ")}</p> : null}
+              {metadataList(metadata?.studiosJson).length ? <p>Studios: {metadataList(metadata?.studiosJson).join(", ")}</p> : null}
+              {metadataList(metadata?.tagsJson).length ? <p>Tags: {metadataList(metadata?.tagsJson).join(", ")}</p> : null}
+              {playable && current.durationMs !== null ? <p>{formatDuration(current.durationMs)}</p> : null}
+              {playable && current.resumePositionSeconds ? <p className="resume-copy">You left off at {formatTime(current.resumePositionSeconds)}.</p> : null}
+              {playable ? <Button className="button-wide" variant="primary" onClick={() => onPlay(current)}><Play aria-hidden="true" size={17} fill="currentColor" />{current.resumePositionSeconds ? "Resume playback" : "Play now"}</Button> : null}
+            </div>
+          </div>
+          {current.kind === "show" && nextUp.data ? <section className="details-children"><h3>Next Up</h3><Button variant="ghost" onClick={() => { const episode = nextUp.data; if (episode) setPath((previous) => [...previous, episode]); }}>{nextUp.data.title}</Button></section> : null}
+          {current.kind === "show" || current.kind === "season" ? <section className="details-children">
+            <h3>{current.kind === "show" ? "Seasons" : "Episodes"}</h3>
+            {childItems.length ? childItems.map((child) => <Button key={child.id} variant="ghost" onClick={() => setPath((previous) => [...previous, child])}>{child.indexNumber === undefined || child.indexNumber === null ? "" : `${child.indexNumber}. `}{child.title}</Button>) : <p>No entries found.</p>}
+            {children.hasNextPage ? <Button variant="ghost" disabled={children.isFetchingNextPage} onClick={() => void children.fetchNextPage()}>{children.isFetchingNextPage ? "Loading…" : "Load more"}</Button> : null}
+          </section> : null}
         </div>
-        <div className="details-copy">
-          <span className="quality-badge">Original quality · Direct Play</span>
-          <p>
-            {item.durationMs === null
-              ? "Ready to play in MPV."
-              : `${formatDuration(item.durationMs)} · Ready to play in MPV.`}
-          </p>
-          {item.resumePositionSeconds === null || item.resumePositionSeconds === 0 ? null : (
-            <p className="resume-copy">You left off at {formatTime(item.resumePositionSeconds)}.</p>
-          )}
-          <Button className="button-wide" variant="primary" onClick={() => onPlay(item)}>
-            <Play aria-hidden="true" size={17} fill="currentColor" />
-            {item.resumePositionSeconds === null || item.resumePositionSeconds === 0
-              ? "Play now"
-              : "Resume playback"}
-          </Button>
-        </div>
-      </div>
-    )}
-  </Modal>
-);
+      )}
+    </Modal>
+  );
+};
 
 const AdminUsers = ({
   users,

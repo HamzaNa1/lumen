@@ -5,11 +5,12 @@ import {
   index,
   integer,
   primaryKey,
+  real,
   sqliteTable,
   text,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
-import { libraryRoots, libraries, mediaSources, outboxEvents, users } from "./schema";
+import { artwork, libraryRoots, libraries, mediaSources, outboxEvents, users } from "./schema";
 
 const millis = (name: string) => integer(name).notNull();
 
@@ -115,6 +116,8 @@ export const catalogItems = sqliteTable(
   ],
 );
 
+// Reserved for secondary relationships. The navigable show → season → episode
+// tree has one parent and is represented only by catalog_items.parent_id.
 export const catalogItemParents = sqliteTable(
   "catalog_item_parents",
   {
@@ -165,6 +168,38 @@ export const catalogItemSources = sqliteTable(
     check("catalog_item_sources_generation_chk", sql`${table.sourceGeneration} > 0`),
   ],
 );
+
+// One primary path identity per logical item. A separate roots/path key prevents
+// same-named series in different roots from being merged by their display title.
+export const catalogItemOrigins = sqliteTable("catalog_item_origins", {
+  itemId: text("item_id").primaryKey().references(() => catalogItems.id, { onDelete: "cascade" }),
+  rootId: text("root_id").notNull().references(() => libraryRoots.id, { onDelete: "cascade" }),
+  relativePath: text("relative_path").notNull(),
+  kind: text("kind").notNull(),
+}, (table) => [
+  uniqueIndex("catalog_item_origins_path_uq").on(table.rootId, table.relativePath, table.kind),
+  index("catalog_item_origins_root_idx").on(table.rootId),
+]);
+
+export const catalogItemMetadata = sqliteTable("catalog_item_metadata", {
+  itemId: text("item_id").primaryKey().references(() => catalogItems.id, { onDelete: "cascade" }),
+  releaseDate: text("release_date"),
+  contentRating: text("content_rating"),
+  communityRating: real("community_rating"),
+  genresJson: text("genres_json").notNull().default("[]"),
+  studiosJson: text("studios_json").notNull().default("[]"),
+  tagsJson: text("tags_json").notNull().default("[]"),
+  externalIdsJson: text("external_ids_json").notNull().default("{}"),
+  fieldSourcesJson: text("field_sources_json").notNull().default("{}"),
+  lockedFieldsJson: text("locked_fields_json").notNull().default("[]"),
+});
+
+export const catalogItemArtwork = sqliteTable("catalog_item_artwork", {
+  itemId: text("item_id").notNull().references(() => catalogItems.id, { onDelete: "cascade" }),
+  role: text("role").notNull(),
+  artworkId: text("artwork_id").notNull().references(() => artwork.id, { onDelete: "cascade" }),
+  source: text("source").notNull(),
+}, (table) => [primaryKey({ name: "catalog_item_artwork_pk", columns: [table.itemId, table.role] })]);
 
 export const mediaSourceAvailability = sqliteTable(
   "media_source_availability",

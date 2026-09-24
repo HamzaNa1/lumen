@@ -640,7 +640,7 @@ export const artwork = sqliteTable(
       columns: [table.sourceId, table.libraryId],
       foreignColumns: [mediaSources.id, mediaSources.libraryId],
     }).onDelete("restrict"),
-    uniqueIndex("artwork_library_hash_kind_uq").on(table.libraryId, table.contentHash, table.kind),
+    index("artwork_library_hash_kind_idx").on(table.libraryId, table.contentHash, table.kind),
     uniqueIndex("artwork_library_path_uq").on(table.libraryId, table.relativePath),
     index("artwork_source_idx").on(table.sourceId),
     check("artwork_kind_chk", sql`${table.kind} in ('front', 'back', 'disc', 'artist', 'other')`),

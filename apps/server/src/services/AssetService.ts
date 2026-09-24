@@ -5,6 +5,8 @@ import { notFound } from "../core/Errors";
 import { canonicalPath, isPathWithin } from "../core/Paths";
 import { AccessControl } from "../services/AccessControl";
 import type { AuthPrincipal } from "../services/AuthService";
+import type { ServerConfig } from "../config/Config";
+import { lstat } from "node:fs/promises";
 
 export interface AssetFile {
   readonly path: string;
@@ -18,19 +20,25 @@ export interface AssetServiceShape {
   readonly sidecar: (principal: AuthPrincipal, sidecarId: string, nowMs: number) => Effect.Effect<AssetFile, unknown>;
 }
 
-export const makeAssetService = Effect.gen(function* () {
+export const makeAssetService = (config?: ServerConfig) => Effect.gen(function* () {
   const database = yield* Database;
   const access = yield* AccessControl;
   const artwork: AssetServiceShape["artwork"] = Effect.fn("Assets.artwork")(function* (principal, artworkId, nowMs) {
-    const row = yield* database.get<{ libraryId: string; rootPath: string; path: string; size: number; modifiedAtMs: number; mimeType: string }>(sql`
-      SELECT a.library_id AS libraryId, r.path AS rootPath, a.relative_path AS path, s.file_size_bytes AS size, s.modified_at_ms AS modifiedAtMs, a.mime_type AS mimeType
-      FROM artwork a JOIN media_sources s ON s.id = a.source_id JOIN library_roots r ON r.id = s.root_id WHERE a.id = ${artworkId}
+    const row = yield* database.get<{ libraryId: string; rootPath: string | null; path: string; mimeType: string }>(sql`
+      SELECT a.library_id AS libraryId, r.path AS rootPath, a.relative_path AS path, a.mime_type AS mimeType
+      FROM artwork a LEFT JOIN media_sources s ON s.id = a.source_id LEFT JOIN library_roots r ON r.id = s.root_id WHERE a.id = ${artworkId}
     `);
-    if (row == null || row.size == null) return yield* notFound("Artwork not found");
-    const [root, file] = yield* Effect.all([Effect.promise(() => canonicalPath(row.rootPath)), Effect.promise(() => canonicalPath(row.path))]);
-    if (!isPathWithin(root, file)) return yield* notFound("Artwork not found");
+    if (row == null) return yield* notFound("Artwork not found");
     yield* access.requireLibrary(principal, row.libraryId, "library:read", nowMs);
-    return { ...row, path: file };
+    const allowedRoot = row.rootPath ?? config?.dataDir;
+    if (allowedRoot === undefined) return yield* notFound("Artwork not found");
+    const paths = yield* Effect.all([Effect.promise(() => canonicalPath(allowedRoot)), Effect.promise(() => canonicalPath(row.path))])
+      .pipe(Effect.catch(() => notFound("Artwork not found")));
+    const [root, file] = paths;
+    if (!isPathWithin(root, file)) return yield* notFound("Artwork not found");
+    const details = yield* Effect.promise(() => lstat(file)).pipe(Effect.catch(() => notFound("Artwork not found")));
+    if (!details.isFile() || details.isSymbolicLink()) return yield* notFound("Artwork not found");
+    return { path: file, size: details.size, modifiedAtMs: Math.trunc(details.mtimeMs), mimeType: row.mimeType };
   });
   const sidecar: AssetServiceShape["sidecar"] = Effect.fn("Assets.sidecar")(function* (principal, sidecarId, nowMs) {
     const row = yield* database.get<{ libraryId: string; rootPath: string; path: string; mediaType: string | null }>(sql`
@@ -55,4 +63,5 @@ export const makeAssetService = Effect.gen(function* () {
 });
 
 export class AssetService extends Context.Service<AssetService, AssetServiceShape>()("@lumen/server/Assets") {}
-export const AssetServiceLive = Layer.effect(AssetService, makeAssetService);
+export const AssetServiceLive = Layer.effect(AssetService, makeAssetService());
+export const AssetServiceLiveWithConfig = (config: ServerConfig) => Layer.effect(AssetService, makeAssetService(config));

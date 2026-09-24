@@ -11,4 +11,4 @@ data/
 .DS_Store
 apps/desktop/resources/native/*
 !apps/desktop/resources/native/.gitkeep
-media/
+/media/
