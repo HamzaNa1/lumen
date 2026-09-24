@@ -114,7 +114,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: lumen-${{ needs.preflight.outputs.version }}-${{ matrix.os }}
-          path: apps/desktop/release
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
           if-no-files-found: error
   server-image:
     needs: [preflight, package]
@@ -164,7 +169,7 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          mapfile -d '' assets < <(find release-assets -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) -print0)
+          mapfile -d '' assets < <(find release-assets -mindepth 2 -maxdepth 2 -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) -print0)
           if [[ "${#assets[@]}" -ne 6 ]]; then
             echo "Expected six desktop installers, found ${#assets[@]}." >&2
             exit 1
