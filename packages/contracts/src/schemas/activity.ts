@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { DurationMillis, Sha256Digest, UtcMillis, Uuid } from "./common";
+import { DurationMillis, Sha256Digest, UtcMillis, Uuid } from "./common.ts";
 
 export const PlaybackState = Schema.Literals([
   "idle",

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { NonEmptyText, Uuid } from "./common";
+import { NonEmptyText, Uuid } from "./common.ts";
 
 export const CatalogSearchResult = Schema.Struct({
   entityType: Schema.Literals(["artist", "album", "track"]),

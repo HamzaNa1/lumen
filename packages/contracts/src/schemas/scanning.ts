@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { NonEmptyText, UtcMillis, Uuid } from "./common";
+import { NonEmptyText, UtcMillis, Uuid } from "./common.ts";
 
 export const ScanRunStatus = Schema.Literals([
   "queued",

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { DurationMillis, NonEmptyText, Sha256Digest, UtcMillis, Uuid } from "./common";
+import { DurationMillis, NonEmptyText, Sha256Digest, UtcMillis, Uuid } from "./common.ts";
 
 export const MediaSourceKind = Schema.Literals(["local", "smb", "nfs", "remote"]);
 export const StreamKind = Schema.Literals(["audio", "video", "subtitle"]);

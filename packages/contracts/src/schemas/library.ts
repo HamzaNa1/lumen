@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { GrantCapability, NonEmptyText, UserRole, UtcMillis, Uuid } from "./common";
+import { GrantCapability, NonEmptyText, UserRole, UtcMillis, Uuid } from "./common.ts";
 
 export const LibraryScanMode = Schema.Literals(["full", "incremental", "refresh"]);
 

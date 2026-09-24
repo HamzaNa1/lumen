@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { NonEmptyText, Sha256Digest, UserRole, UtcMillis, Uuid } from "./common";
+import { NonEmptyText, Sha256Digest, UserRole, UtcMillis, Uuid } from "./common.ts";
 
 export const DevicePlatform = Schema.Literals(["web", "desktop", "ios", "android", "other"]);
 

@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { UserRole, UtcMillis, Uuid } from "./schemas/common";
+import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 
 export const IpcLogin = Schema.Struct({
   _tag: Schema.Literal("auth.login"),
