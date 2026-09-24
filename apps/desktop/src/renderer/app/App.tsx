@@ -22,6 +22,7 @@ export const App = (): React.ReactElement => {
   const [view, setView] = useState<View>("home");
   const [selectedItem, setSelectedItem] = useState<IpcItem | null>(null);
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
   const queryClient = useQueryClient();
 
   useEffect(() => bridge.player.onState(setPlayer), []);
@@ -38,6 +39,7 @@ export const App = (): React.ReactElement => {
       sidebar={<Sidebar view={view} setView={setView} accounts={accounts} activeId={active.connectionId} isAdmin={active.role === "admin"} onActivate={(id) => { void bridge.accounts.activate(id).then(() => queryClient.invalidateQueries()).catch(() => undefined); }} onRemove={(id) => { void bridge.accounts.remove(id).then(() => queryClient.invalidateQueries()).catch(() => undefined); }} />}
       player={player === null ? undefined : <PlayerBar title={selectedItem?.title ?? "Now playing"} server={`${active.serverLabel} · ${active.username}`} paused={player.paused} onPause={() => void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer)} onStop={() => void bridge.player.stop().then(() => setPlayer(null))} position={player.positionSeconds} duration={player.durationSeconds} />}
     >
+      {playbackError === null ? null : <p className="error-message" role="alert">{playbackError}</p>}
       {view === "home" ? <Home account={active} onOpen={setSelectedItem} onPlay={startPlayback} /> : null}
       {view === "library" ? <Library account={active} scope={scope ?? []} onOpen={setSelectedItem} onPlay={startPlayback} /> : null}
       {view === "search" ? <Search account={active} onOpen={setSelectedItem} onPlay={startPlayback} /> : null}
@@ -48,10 +50,15 @@ export const App = (): React.ReactElement => {
   );
 
   async function startPlayback(item: IpcItem): Promise<void> {
-    const result = await bridge.player.start(item.id, deviceId()) as IpcPlayerSession;
-    setSelectedItem(item);
-    setPlayer(await bridge.player.state());
-    if (result.sessionId !== undefined) setView("home");
+    setPlaybackError(null);
+    try {
+      const result = await bridge.player.start(item.id, deviceId()) as IpcPlayerSession;
+      setSelectedItem(item);
+      setPlayer(await bridge.player.state());
+      if (result.sessionId !== undefined) setView("home");
+    } catch (cause) {
+      setPlaybackError(cause instanceof Error && cause.message.trim() !== "" ? cause.message : "Playback could not start");
+    }
   }
 };
 
