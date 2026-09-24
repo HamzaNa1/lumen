@@ -171,7 +171,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     const authless = method === "GET" && url.pathname === "/health/live";
     if (authless) return unknownJson({ status: "ok" });
     if (method === "GET" && url.pathname === "/api/v1/server") {
-      return unknownJson({ serverId: services.identity.installationId, displayName: "Lumen", apiVersion: "1.0.0", setupRequired: await call(services.auth.setupRequired()), capabilities: { directPlayOnly: true } });
+      return json(Schema.Unknown, { serverId: services.identity.installationId, displayName: "Lumen", apiVersion: "1.0.0", setupRequired: await call(services.auth.setupRequired()), capabilities: { directPlayOnly: true } }, 200, { "cache-control": "no-store" });
     }
     if (method === "GET" && (url.pathname === "/health/ready" || url.pathname === "/ready")) {
       const ready = await services.databaseReady();
@@ -184,7 +184,7 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     }
     if (method === "GET" && url.pathname === "/metrics") return new Response(`lumen_uptime_ms ${Date.now() - services.startedAtMs}\n`, { headers: { "content-type": "text/plain; version=0.0.4" } });
     if (method === "GET" && url.pathname === "/api/v1/auth/setup") {
-      return unknownJson({ setupRequired: await call(services.auth.setupRequired()) });
+      return json(Schema.Unknown, { setupRequired: await call(services.auth.setupRequired()) }, 200, { "cache-control": "no-store" });
     }
     if (method === "POST" && url.pathname === "/api/v1/auth/register") {
       const input = decode(S.RegisterBody, await body(request, config.maxRequestBodyBytes));

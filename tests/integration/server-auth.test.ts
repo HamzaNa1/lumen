@@ -80,7 +80,9 @@ describe("server authentication and ACL", () => {
     const databasePath = join(root, "server.sqlite");
     paths.push(root);
     const base = await start(databasePath);
-    expect((await request(base, "/api/v1/auth/setup")).status).toBe(200);
+    const setup = await request(base, "/api/v1/auth/setup");
+    expect(setup.status).toBe(200);
+    expect(setup.headers.get("cache-control")).toBe("no-store");
     expect((await (await request(base, "/api/v1/auth/setup")).json() as { setupRequired: boolean }).setupRequired).toBe(true);
     const registration = await request(base, "/api/v1/auth/register", {
       method: "POST",

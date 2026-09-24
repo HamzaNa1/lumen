@@ -151,19 +151,19 @@ export class ServerClient {
   }
 
   async identity(): Promise<ServerIdentity> {
-    const response = await this.fetchImpl(new URL("/api/v1/server", this.origin), { redirect: "manual" });
+    const response = await this.fetchImpl(new URL("/api/v1/server", this.origin), { redirect: "manual", cache: "no-store" });
     return decode(identitySchema, await readJson(response));
   }
 
-  async setupRequired(): Promise<boolean> {
-    const response = await this.fetchImpl(new URL("/api/v1/auth/setup", this.origin), { redirect: "manual" });
-    if (response.status === 404) return false;
+  async setupRequired(fallback = false): Promise<boolean> {
+    const response = await this.fetchImpl(new URL("/api/v1/auth/setup", this.origin), { redirect: "manual", cache: "no-store" });
+    if (response.status === 404) return fallback;
     return decode(Schema.Struct({ setupRequired: Schema.Boolean }), await readJson(response)).setupRequired;
   }
 
   async discover(): Promise<IpcServerDiscovery> {
     const identity = await this.identity();
-    return { origin: this.origin, identity, setupRequired: identity.setupRequired ?? await this.setupRequired() };
+    return { origin: this.origin, identity, setupRequired: await this.setupRequired(identity.setupRequired ?? false) };
   }
 
   async me(): Promise<User> {

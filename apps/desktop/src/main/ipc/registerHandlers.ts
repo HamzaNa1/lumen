@@ -127,7 +127,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     if (identity.serverId !== discovery.identity.serverId)
       throw new Error("Server identity changed; connect to the server again");
     const deviceId = deviceIdForAccount(dependencies.installationId, identity.serverId, input.username);
-    const session = await (discovery.setupRequired
+    const setupRequired = await client.setupRequired(discovery.setupRequired);
+    const session = await (setupRequired
       ? client.register(input, deviceId)
       : client.login(input, deviceId));
     const user = await client.me();

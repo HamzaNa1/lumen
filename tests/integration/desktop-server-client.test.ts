@@ -85,7 +85,7 @@ describe("ServerClient discovery", () => {
     expect(result.origin).toBe("http://localhost:3210");
     expect(result.identity.serverId).toBe("server-1");
     expect(result.setupRequired).toBe(true);
-    expect(requests).toEqual(["http://localhost:3210/api/v1/server"]);
+    expect(requests).toEqual(["http://localhost:3210/api/v1/server", "http://localhost:3210/api/v1/auth/setup"]);
   });
 
   test("falls back to the setup endpoint when the server identity omits setup status", async () => {
@@ -104,6 +104,21 @@ describe("ServerClient discovery", () => {
 
     expect(result.setupRequired).toBe(false);
     expect(requests).toEqual(["https://media.example/api/v1/server", "https://media.example/api/v1/auth/setup"]);
+  });
+
+  test("uses the current setup endpoint when the identity response is stale", async () => {
+    const client = new ServerClient({
+      origin: "https://media.example",
+      fetchImpl: async (input, init) => {
+        expect(init?.cache).toBe("no-store");
+        const path = new URL(String(input)).pathname;
+        return new Response(JSON.stringify(path === "/api/v1/server"
+          ? { serverId: "server-3", displayName: "Lumen", apiVersion: "1.0.0", setupRequired: false }
+          : { setupRequired: true }), { status: 200 });
+      },
+    });
+
+    expect((await client.discover()).setupRequired).toBe(true);
   });
 
   test("starts and monitors a library scan", async () => {
