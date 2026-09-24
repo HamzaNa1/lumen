@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+**/node_modules
+**/.DS_Store
+apps/desktop
+packages/config
+packages/testkit
+packages/ui
+data
+media
+scripts
+tests

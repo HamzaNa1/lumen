@@ -1,5 +1,6 @@
 {
   "name": "lumen",
+  "version": "0.0.1",
   "private": true,
   "type": "module",
   "packageManager": "bun@1.4.2",
@@ -14,6 +15,8 @@
     "check": "bun run lint && bun run typecheck && bun test && bun run build",
     "db:generate": "bun run --cwd packages/database generate",
     "db:migrate": "bun run --cwd apps/server db:migrate",
+    "version:set": "bun scripts/version.ts set",
+    "version:check": "bun scripts/version.ts check",
     "backup": "bun scripts/backup.ts"
   },
   "devDependencies": {

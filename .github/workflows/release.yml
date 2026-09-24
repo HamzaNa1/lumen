@@ -1,9 +1,51 @@
 name: release
 on:
   workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release (for example, 0.0.1 or 0.0.2-rc.1)'
+        required: true
+        type: string
+concurrency:
+  group: release-${{ inputs.version }}
+  cancel-in-progress: false
 jobs:
+  preflight:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Validate release version
+        id: version
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
+            echo 'Run releases from the default branch.' >&2
+            exit 1
+          fi
+          bun scripts/version.ts check "$RELEASE_VERSION"
+          if git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" >/dev/null; then
+            echo "v$RELEASE_VERSION already exists." >&2
+            exit 1
+          else
+            status=$?
+            if [[ "$status" -ne 2 ]]; then exit "$status"; fi
+          fi
+          echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
   package:
+    needs: preflight
     runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
     strategy:
       matrix:
         os: [ubuntu-24.04, macos-14, windows-latest]
@@ -68,5 +110,66 @@ jobs:
       - run: bun run --cwd apps/desktop exec electron-builder --publish never
       - uses: actions/upload-artifact@v4
         with:
-          name: lumen-${{ matrix.os }}
+          name: lumen-${{ needs.preflight.outputs.version }}-${{ matrix.os }}
           path: apps/desktop/release
+          if-no-files-found: error
+  server-image:
+    needs: [preflight, package]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}-server" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and publish server image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.preflight.outputs.version }}
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.preflight.outputs.version }}
+  publish:
+    needs: [preflight, package, server-image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: lumen-${{ needs.preflight.outputs.version }}-*
+          path: release-assets
+      - name: Create versioned GitHub Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          mapfile -d '' assets < <(find release-assets -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) -print0)
+          if [[ "${#assets[@]}" -ne 6 ]]; then
+            echo "Expected six desktop installers, found ${#assets[@]}." >&2
+            exit 1
+          fi
+          flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease --latest=false); fi
+          gh release create "v$RELEASE_VERSION" "${assets[@]}" \
+            --target "$GITHUB_SHA" \
+            --title "Lumen v$RELEASE_VERSION" \
+            --generate-notes \
+            "${flags[@]}"
