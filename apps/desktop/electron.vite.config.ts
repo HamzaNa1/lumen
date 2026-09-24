@@ -12,9 +12,9 @@ const workspaceAlias = {
 export default defineConfig({
   main: {
     resolve: { alias: workspaceAlias },
-    ssr: { noExternal: workspacePackages },
+    ssr: { noExternal: [...workspacePackages, "effect"] },
     build: {
-      rollupOptions: { external: ["electron", "drizzle-orm", "effect", "koffi"] },
+      rollupOptions: { external: ["electron", "drizzle-orm", "koffi"] },
     },
   },
   preload: {

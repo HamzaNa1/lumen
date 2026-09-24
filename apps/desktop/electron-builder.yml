@@ -2,6 +2,7 @@
   "appId": "dev.lumen.desktop",
   "productName": "Lumen",
   "asar": true,
+  "electronLanguages": ["en-US"],
   "files": ["out/**", "package.json"],
   "extraResources": [{ "from": "resources/native", "to": "resources/native" }],
   "directories": { "output": "release" },
