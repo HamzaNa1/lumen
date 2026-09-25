@@ -1,9 +1,9 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "fb7f76e1-b163-4fd1-be7d-a5a893d09608",
+  "id": "853912e7-fbb5-410d-a1dd-2ae4f18d9a2a",
   "prevIds": [
-    "fa5cccbf-8017-492d-85fe-1b2737845762"
+    "00000000-0000-0000-0000-000000000000"
   ],
   "ddl": [
     {
@@ -115,6 +115,18 @@
       "entityType": "tables"
     },
     {
+      "name": "catalog_item_artwork",
+      "entityType": "tables"
+    },
+    {
+      "name": "catalog_item_metadata",
+      "entityType": "tables"
+    },
+    {
+      "name": "catalog_item_origins",
+      "entityType": "tables"
+    },
+    {
       "name": "catalog_item_outbox",
       "entityType": "tables"
     },
@@ -163,11 +175,39 @@
       "entityType": "tables"
     },
     {
+      "name": "metadata_provider_settings",
+      "entityType": "tables"
+    },
+    {
       "name": "provider_records",
       "entityType": "tables"
     },
     {
       "name": "server_audit_events",
+      "entityType": "tables"
+    },
+    {
+      "name": "server_event_log",
+      "entityType": "tables"
+    },
+    {
+      "name": "server_identity",
+      "entityType": "tables"
+    },
+    {
+      "name": "server_library_watch_state",
+      "entityType": "tables"
+    },
+    {
+      "name": "server_playback_sequences",
+      "entityType": "tables"
+    },
+    {
+      "name": "server_scan_seen",
+      "entityType": "tables"
+    },
+    {
+      "name": "server_scheduled_jobs",
       "entityType": "tables"
     },
     {
@@ -1995,6 +2035,26 @@
       "table": "streams"
     },
     {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "title",
+      "entityType": "columns",
+      "table": "streams"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "ordinal",
+      "entityType": "columns",
+      "table": "streams"
+    },
+    {
       "type": "integer",
       "notNull": true,
       "autoincrement": false,
@@ -2443,6 +2503,186 @@
       "name": "updated_at_ms",
       "entityType": "columns",
       "table": "watch_states"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "item_id",
+      "entityType": "columns",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "role",
+      "entityType": "columns",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "artwork_id",
+      "entityType": "columns",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source",
+      "entityType": "columns",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "item_id",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "release_date",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "content_rating",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "real",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "community_rating",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "genres_json",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "studios_json",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "tags_json",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'{}'",
+      "generated": null,
+      "name": "external_ids_json",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'{}'",
+      "generated": null,
+      "name": "field_sources_json",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": "'[]'",
+      "generated": null,
+      "name": "locked_fields_json",
+      "entityType": "columns",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "item_id",
+      "entityType": "columns",
+      "table": "catalog_item_origins"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "root_id",
+      "entityType": "columns",
+      "table": "catalog_item_origins"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "relative_path",
+      "entityType": "columns",
+      "table": "catalog_item_origins"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "kind",
+      "entityType": "columns",
+      "table": "catalog_item_origins"
     },
     {
       "type": "text",
@@ -3370,6 +3610,36 @@
       "autoincrement": false,
       "default": null,
       "generated": null,
+      "name": "provider",
+      "entityType": "columns",
+      "table": "metadata_provider_settings"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "api_key",
+      "entityType": "columns",
+      "table": "metadata_provider_settings"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at_ms",
+      "entityType": "columns",
+      "table": "metadata_provider_settings"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
       "name": "id",
       "entityType": "columns",
       "table": "provider_records"
@@ -3523,6 +3793,256 @@
       "name": "created_at_ms",
       "entityType": "columns",
       "table": "server_audit_events"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": true,
+      "default": null,
+      "generated": null,
+      "name": "id",
+      "entityType": "columns",
+      "table": "server_event_log"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at_ms",
+      "entityType": "columns",
+      "table": "server_event_log"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "topic",
+      "entityType": "columns",
+      "table": "server_event_log"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "user_id",
+      "entityType": "columns",
+      "table": "server_event_log"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "payload_json",
+      "entityType": "columns",
+      "table": "server_event_log"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "singleton",
+      "entityType": "columns",
+      "table": "server_identity"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "installation_id",
+      "entityType": "columns",
+      "table": "server_identity"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "created_at_ms",
+      "entityType": "columns",
+      "table": "server_identity"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at_ms",
+      "entityType": "columns",
+      "table": "server_identity"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "root_id",
+      "entityType": "columns",
+      "table": "server_library_watch_state"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "modified_at_ms",
+      "entityType": "columns",
+      "table": "server_library_watch_state"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "checked_at_ms",
+      "entityType": "columns",
+      "table": "server_library_watch_state"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "session_id",
+      "entityType": "columns",
+      "table": "server_playback_sequences"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "track_id",
+      "entityType": "columns",
+      "table": "server_playback_sequences"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "sequence",
+      "entityType": "columns",
+      "table": "server_playback_sequences"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "run_id",
+      "entityType": "columns",
+      "table": "server_scan_seen"
+    },
+    {
+      "type": "text",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "source_id",
+      "entityType": "columns",
+      "table": "server_scan_seen"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "seen_at_ms",
+      "entityType": "columns",
+      "table": "server_scan_seen"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "name",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "interval_ms",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "next_run_at_ms",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_started_at_ms",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
+    },
+    {
+      "type": "integer",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_finished_at_ms",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
+    },
+    {
+      "type": "text",
+      "notNull": false,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "last_error",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
+    },
+    {
+      "type": "integer",
+      "notNull": true,
+      "autoincrement": false,
+      "default": null,
+      "generated": null,
+      "name": "updated_at_ms",
+      "entityType": "columns",
+      "table": "server_scheduled_jobs"
     },
     {
       "type": "integer",
@@ -4317,6 +4837,81 @@
     },
     {
       "columns": [
+        "item_id"
+      ],
+      "tableTo": "catalog_items",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_catalog_item_artwork_item_id_catalog_items_id_fk",
+      "entityType": "fks",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "columns": [
+        "artwork_id"
+      ],
+      "tableTo": "artwork",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_catalog_item_artwork_artwork_id_artwork_id_fk",
+      "entityType": "fks",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "columns": [
+        "item_id"
+      ],
+      "tableTo": "catalog_items",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_catalog_item_metadata_item_id_catalog_items_id_fk",
+      "entityType": "fks",
+      "table": "catalog_item_metadata"
+    },
+    {
+      "columns": [
+        "item_id"
+      ],
+      "tableTo": "catalog_items",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_catalog_item_origins_item_id_catalog_items_id_fk",
+      "entityType": "fks",
+      "table": "catalog_item_origins"
+    },
+    {
+      "columns": [
+        "root_id"
+      ],
+      "tableTo": "library_roots",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_catalog_item_origins_root_id_library_roots_id_fk",
+      "entityType": "fks",
+      "table": "catalog_item_origins"
+    },
+    {
+      "columns": [
         "event_id"
       ],
       "tableTo": "outbox_events",
@@ -4604,6 +5199,81 @@
     },
     {
       "columns": [
+        "root_id"
+      ],
+      "tableTo": "library_roots",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_server_library_watch_state_root_id_library_roots_id_fk",
+      "entityType": "fks",
+      "table": "server_library_watch_state"
+    },
+    {
+      "columns": [
+        "session_id"
+      ],
+      "tableTo": "playback_sessions",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_server_playback_sequences_session_id_playback_sessions_id_fk",
+      "entityType": "fks",
+      "table": "server_playback_sequences"
+    },
+    {
+      "columns": [
+        "track_id"
+      ],
+      "tableTo": "tracks",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_server_playback_sequences_track_id_tracks_id_fk",
+      "entityType": "fks",
+      "table": "server_playback_sequences"
+    },
+    {
+      "columns": [
+        "run_id"
+      ],
+      "tableTo": "scan_runs",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_server_scan_seen_run_id_scan_runs_id_fk",
+      "entityType": "fks",
+      "table": "server_scan_seen"
+    },
+    {
+      "columns": [
+        "source_id"
+      ],
+      "tableTo": "media_sources",
+      "columnsTo": [
+        "id"
+      ],
+      "onUpdate": "NO ACTION",
+      "onDelete": "CASCADE",
+      "nameExplicit": false,
+      "name": "fk_server_scan_seen_source_id_media_sources_id_fk",
+      "entityType": "fks",
+      "table": "server_scan_seen"
+    },
+    {
+      "columns": [
         "album_id",
         "artist_id",
         "role"
@@ -4658,6 +5328,16 @@
     },
     {
       "columns": [
+        "item_id",
+        "role"
+      ],
+      "nameExplicit": true,
+      "name": "catalog_item_artwork_pk",
+      "entityType": "pks",
+      "table": "catalog_item_artwork"
+    },
+    {
+      "columns": [
         "parent_id",
         "child_id"
       ],
@@ -4695,6 +5375,26 @@
       "name": "item_watch_states_pk",
       "entityType": "pks",
       "table": "item_watch_states"
+    },
+    {
+      "columns": [
+        "session_id",
+        "track_id"
+      ],
+      "nameExplicit": true,
+      "name": "server_playback_sequences_pk",
+      "entityType": "pks",
+      "table": "server_playback_sequences"
+    },
+    {
+      "columns": [
+        "run_id",
+        "source_id"
+      ],
+      "nameExplicit": true,
+      "name": "server_scan_seen_pk",
+      "entityType": "pks",
+      "table": "server_scan_seen"
     },
     {
       "columns": [
@@ -4887,6 +5587,24 @@
     },
     {
       "columns": [
+        "item_id"
+      ],
+      "nameExplicit": false,
+      "name": "catalog_item_metadata_pk",
+      "table": "catalog_item_metadata",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "item_id"
+      ],
+      "nameExplicit": false,
+      "name": "catalog_item_origins_pk",
+      "table": "catalog_item_origins",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
         "event_id"
       ],
       "nameExplicit": false,
@@ -4959,6 +5677,15 @@
     },
     {
       "columns": [
+        "provider"
+      ],
+      "nameExplicit": false,
+      "name": "metadata_provider_settings_pk",
+      "table": "metadata_provider_settings",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
         "id"
       ],
       "nameExplicit": false,
@@ -4973,6 +5700,42 @@
       "nameExplicit": false,
       "name": "server_audit_events_pk",
       "table": "server_audit_events",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "id"
+      ],
+      "nameExplicit": false,
+      "name": "server_event_log_pk",
+      "table": "server_event_log",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "singleton"
+      ],
+      "nameExplicit": false,
+      "name": "server_identity_pk",
+      "table": "server_identity",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "root_id"
+      ],
+      "nameExplicit": false,
+      "name": "server_library_watch_state_pk",
+      "table": "server_library_watch_state",
+      "entityType": "pks"
+    },
+    {
+      "columns": [
+        "name"
+      ],
+      "nameExplicit": false,
+      "name": "server_scheduled_jobs_pk",
+      "table": "server_scheduled_jobs",
       "entityType": "pks"
     },
     {
@@ -5147,10 +5910,10 @@
           "isExpression": false
         }
       ],
-      "isUnique": true,
+      "isUnique": false,
       "where": null,
       "origin": "manual",
-      "name": "artwork_library_hash_kind_uq",
+      "name": "artwork_library_hash_kind_idx",
       "entityType": "indexes",
       "table": "artwork"
     },
@@ -5893,18 +6656,14 @@
           "isExpression": false
         },
         {
-          "value": "kind",
+          "value": "ordinal",
           "isExpression": false
-        },
-        {
-          "value": "coalesce(\"language\", '')",
-          "isExpression": true
         }
       ],
       "isUnique": true,
       "where": null,
       "origin": "manual",
-      "name": "streams_source_kind_language_uq",
+      "name": "streams_source_ordinal_uq",
       "entityType": "indexes",
       "table": "streams"
     },
@@ -5913,10 +6672,14 @@
         {
           "value": "source_id",
           "isExpression": false
+        },
+        {
+          "value": "kind",
+          "isExpression": false
         }
       ],
       "isUnique": true,
-      "where": "\"streams\".\"kind\" = 'audio' and \"streams\".\"is_default\" = 1",
+      "where": "\"streams\".\"is_default\" = 1",
       "origin": "manual",
       "name": "streams_source_default_uq",
       "entityType": "indexes",
@@ -5927,12 +6690,20 @@
         {
           "value": "source_id",
           "isExpression": false
+        },
+        {
+          "value": "kind",
+          "isExpression": false
+        },
+        {
+          "value": "ordinal",
+          "isExpression": false
         }
       ],
       "isUnique": false,
       "where": null,
       "origin": "manual",
-      "name": "streams_source_idx",
+      "name": "streams_source_kind_ordinal_idx",
       "entityType": "indexes",
       "table": "streams"
     },
@@ -6133,6 +6904,42 @@
       "name": "watch_states_user_updated_idx",
       "entityType": "indexes",
       "table": "watch_states"
+    },
+    {
+      "columns": [
+        {
+          "value": "root_id",
+          "isExpression": false
+        },
+        {
+          "value": "relative_path",
+          "isExpression": false
+        },
+        {
+          "value": "kind",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": null,
+      "origin": "manual",
+      "name": "catalog_item_origins_path_uq",
+      "entityType": "indexes",
+      "table": "catalog_item_origins"
+    },
+    {
+      "columns": [
+        {
+          "value": "root_id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "catalog_item_origins_root_idx",
+      "entityType": "indexes",
+      "table": "catalog_item_origins"
     },
     {
       "columns": [
@@ -6453,6 +7260,38 @@
       "name": "server_audit_events_created_idx",
       "entityType": "indexes",
       "table": "server_audit_events"
+    },
+    {
+      "columns": [
+        {
+          "value": "user_id",
+          "isExpression": false
+        },
+        {
+          "value": "id",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "server_event_log_user_id_idx",
+      "entityType": "indexes",
+      "table": "server_event_log"
+    },
+    {
+      "columns": [
+        {
+          "value": "next_run_at_ms",
+          "isExpression": false
+        }
+      ],
+      "isUnique": false,
+      "where": null,
+      "origin": "manual",
+      "name": "server_scheduled_jobs_due_idx",
+      "entityType": "indexes",
+      "table": "server_scheduled_jobs"
     },
     {
       "value": "\"ordinal\" >= 0",
@@ -6899,6 +7738,12 @@
       "table": "streams"
     },
     {
+      "value": "\"ordinal\" is null or \"ordinal\" >= 0",
+      "name": "streams_ordinal_chk",
+      "entityType": "checks",
+      "table": "streams"
+    },
+    {
       "value": "\"bitrate\" is null or \"bitrate\" >= 0",
       "name": "streams_bitrate_chk",
       "entityType": "checks",
@@ -7173,6 +8018,18 @@
       "name": "server_audit_events_json_chk",
       "entityType": "checks",
       "table": "server_audit_events"
+    },
+    {
+      "value": "\"singleton\" = 1",
+      "name": "server_identity_singleton_chk",
+      "entityType": "checks",
+      "table": "server_identity"
+    },
+    {
+      "value": "\"interval_ms\" > 0",
+      "name": "server_scheduled_jobs_interval_chk",
+      "entityType": "checks",
+      "table": "server_scheduled_jobs"
     }
   ],
   "renames": []
