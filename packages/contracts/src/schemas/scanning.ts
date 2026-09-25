@@ -51,6 +51,24 @@ export const ScanJob = Schema.Struct({
 });
 export type ScanJob = Schema.Schema.Type<typeof ScanJob>;
 
+export const JobLogEntry = Schema.Struct({
+  id: Uuid,
+  runId: Uuid,
+  libraryId: Uuid,
+  libraryName: NonEmptyText,
+  mode: Schema.Literals(["full", "incremental", "refresh"]),
+  operation: Schema.Literals(["discover", "probe", "artwork", "metadata", "analyze", "cleanup"]),
+  status: ScanJobStatus,
+  attempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })),
+  availableAtMs: UtcMillis,
+  startedAtMs: Schema.NullOr(UtcMillis),
+  finishedAtMs: Schema.NullOr(UtcMillis),
+  errorCode: Schema.NullOr(NonEmptyText),
+  errorMessage: Schema.NullOr(Schema.String),
+});
+export type JobLogEntry = Schema.Schema.Type<typeof JobLogEntry>;
+
 export const OutboxEvent = Schema.Struct({
   id: Uuid,
   aggregateType: NonEmptyText,

@@ -201,6 +201,22 @@ describe("server authentication and ACL", () => {
     });
     expect(userLogin.status).toBe(200);
     const listener = await userLogin.json() as { accessToken: string };
+    const scanResponse = await request(base, "/api/v1/scans", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${admin.accessToken}` },
+      body: JSON.stringify({ libraryId: library.id, mode: "full" }),
+    });
+    expect(scanResponse.status).toBe(202);
+    const jobLog = await request(base, "/api/v1/admin/jobs?limit=100", {
+      headers: { authorization: `Bearer ${admin.accessToken}` },
+    });
+    expect(jobLog.status).toBe(200);
+    expect((await jobLog.json() as ReadonlyArray<{ libraryId: string; libraryName: string }>).some(
+      (entry) => entry.libraryId === library.id && entry.libraryName === "Music Updated",
+    )).toBe(true);
+    expect((await request(base, "/api/v1/admin/jobs", {
+      headers: { authorization: `Bearer ${listener.accessToken}` },
+    })).status).toBe(403);
     const noGrant = await request(base, `/api/v1/tracks?libraryId=${library.id}`, { headers: { authorization: `Bearer ${listener.accessToken}` } });
     expect(noGrant.status).toBe(403);
     const grant = await request(base, `/api/v1/libraries/${library.id}/grants`, {

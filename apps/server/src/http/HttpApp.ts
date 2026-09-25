@@ -235,6 +235,10 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "users" && parts[3] !== undefined && parts[4] === "sessions") return unknownJson(await call(services.admin.listSessions(principal, parts[3], Date.now())));
     if (method === "DELETE" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "auth" && parts[3] === "sessions" && parts[4] !== undefined) { await call(services.admin.revokeSession(principal, parts[4], Date.now())); return ack(); }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "admin" && parts[3] === "libraries" && parts.length === 4) return unknownJson(await call(services.admin.listAllLibraries(principal)));
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "admin" && parts[3] === "jobs" && parts.length === 4) {
+      await call(services.access.requireAdmin(principal));
+      return unknownJson(await call(services.scans.listRecentJobs(page(url).limit)));
+    }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 3) return unknownJson(await call(services.admin.listLibraries(principal, Date.now())));
     if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 3) { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.create(decode(S.CreateLibraryBody, await body(request, config.maxRequestBodyBytes)), Date.now())), 201); }
     if (method === "PATCH" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts.length === 4) { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.update(parts[3], decode(S.UpdateLibraryBody, await body(request, config.maxRequestBodyBytes)), Date.now()))); }
@@ -245,8 +249,8 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     if (method === "PUT" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "libraries" && parts[3] !== undefined && parts[4] === "grants") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.upsertGrant(decode(S.CreateGrantBody, await body(request, config.maxRequestBodyBytes)), Date.now()))); }
     if (method === "DELETE" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "roots" && parts[3] !== undefined) { await call(services.access.requireAdmin(principal)); await call(services.libraries.deleteRoot(parts[3])); return ack(); }
     if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.libraries.startScan(decode(S.StartScanBody, await body(request, config.maxRequestBodyBytes)), Date.now())), 202); }
-    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans" && parts[3] !== undefined && parts[4] === "jobs") return unknownJson(await call(services.scans.listJobs(parts[3])));
-    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans" && parts[3] !== undefined) return unknownJson(await call(services.scans.getRun(parts[3])));
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans" && parts[3] !== undefined && parts[4] === "jobs") { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.scans.listJobs(parts[3]))); }
+    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "scans" && parts[3] !== undefined) { await call(services.access.requireAdmin(principal)); return unknownJson(await call(services.scans.getRun(parts[3]))); }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "items" && parts.length === 3) {
       const libraryId = url.searchParams.get("libraryId");
       const pagination = page(url);

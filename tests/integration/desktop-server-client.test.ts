@@ -122,7 +122,7 @@ describe("ServerClient discovery", () => {
     expect((await client.discover()).setupRequired).toBe(true);
   });
 
-  test("starts and monitors a library scan", async () => {
+  test("starts and monitors a library scan and reads its job log", async () => {
     const requests: Array<string> = [];
     const client = new ServerClient({
       origin: "https://media.example",
@@ -130,6 +130,22 @@ describe("ServerClient discovery", () => {
         const url = String(input);
         requests.push(`${init?.method ?? "GET"} ${url}`);
         if (url.endsWith("/api/v1/scans") && init?.method === "POST") return new Response(JSON.stringify({ runId: ids.scanRun }), { status: 202 });
+        if (url.endsWith("/api/v1/admin/jobs?limit=100")) return new Response(JSON.stringify([{
+          id: ids.scanJob,
+          runId: ids.scanRun,
+          libraryId: ids.library,
+          libraryName: "Movies",
+          mode: "full",
+          operation: "discover",
+          status: "succeeded",
+          attempts: 1,
+          maxAttempts: 3,
+          availableAtMs: 1,
+          startedAtMs: 1,
+          finishedAtMs: 2,
+          errorCode: null,
+          errorMessage: null,
+        }]), { status: 200 });
         return new Response(JSON.stringify({
           id: ids.scanRun,
           libraryId: ids.library,
@@ -147,12 +163,15 @@ describe("ServerClient discovery", () => {
 
     const started = await client.startScan(ids.library, "full");
     const status = await client.scanStatus(started.runId);
+    const jobs = await client.jobLog();
 
     expect(started.runId).toBe(ids.scanRun);
     expect(status.status).toBe("succeeded");
+    expect(jobs[0]?.operation).toBe("discover");
     expect(requests).toEqual([
       `POST https://media.example/api/v1/scans`,
       `GET https://media.example/api/v1/scans/${ids.scanRun}`,
+      "GET https://media.example/api/v1/admin/jobs?limit=100",
     ]);
   });
 

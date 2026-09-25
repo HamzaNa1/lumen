@@ -5,6 +5,7 @@ import type {
   IpcLibrary,
   IpcPlayerState,
   IpcServerDiscovery,
+  JobLogEntry,
   User,
 } from "@lumen/contracts";
 import {
@@ -24,6 +25,7 @@ import { Link, Outlet, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   AlertCircle,
   ArrowRight,
+  ClipboardList,
   Film,
   Folder,
   Home,
@@ -31,6 +33,7 @@ import {
   MonitorPlay,
   Play,
   Plus,
+  RefreshCw,
   Search as SearchIcon,
   Settings as SettingsIcon,
   Shield,
@@ -329,7 +332,10 @@ const Sidebar = ({
     { to: "/search" as const, label: "Search", icon: SearchIcon },
     { to: "/settings" as const, label: "Settings", icon: SettingsIcon },
     ...(account.role === "admin"
-      ? [{ to: "/admin" as const, label: "Administration", icon: Shield }]
+      ? [
+          { to: "/admin" as const, label: "Administration", icon: Shield, exact: true },
+          { to: "/admin/jobs" as const, label: "Job log", icon: ClipboardList },
+        ]
       : []),
   ];
   return (
@@ -1029,6 +1035,156 @@ export const AdminPage = (): React.ReactElement => {
   );
 };
 
+type JobStatusFilter = "all" | JobLogEntry["status"];
+const jobStatusOptions = [
+  { value: "all", label: "All statuses" },
+  { value: "running", label: "Running" },
+  { value: "queued", label: "Queued" },
+  { value: "failed", label: "Failed" },
+  { value: "succeeded", label: "Succeeded" },
+  { value: "cancelled", label: "Cancelled" },
+] as const;
+
+export const JobLogPage = (): React.ReactElement => {
+  const { account, scope } = useWorkspace();
+  const [status, setStatus] = useState<JobStatusFilter>("all");
+  const jobs = useQuery({
+    queryKey: [...scope, "admin", "jobs"],
+    queryFn: () => bridge.admin.jobLog(),
+    enabled: account.role === "admin",
+    refetchInterval: 5_000,
+  });
+  if (account.role !== "admin")
+    return (
+      <div className="page">
+        <EmptyState
+          icon={Shield}
+          title="Administrator access required"
+          message="The job log is only available to server administrators."
+        />
+      </div>
+    );
+  const entries = jobs.data ?? [];
+  const visible = status === "all" ? entries : entries.filter((job) => job.status === status);
+  const counts = {
+    active: entries.filter((job) => job.status === "queued" || job.status === "running").length,
+    failed: entries.filter((job) => job.status === "failed").length,
+    succeeded: entries.filter((job) => job.status === "succeeded").length,
+  };
+  return (
+    <div className="page job-log-page">
+      <div className="job-log-header">
+        <PageHeader
+          eyebrow={`${account.serverLabel} · Server activity`}
+          title="Job log"
+          description="Monitor recent library scans, metadata work, and background processing."
+        />
+        <Button onClick={() => void jobs.refetch()} disabled={jobs.isFetching}>
+          <RefreshCw aria-hidden="true" className={jobs.isFetching ? "spinning" : undefined} size={16} />
+          Refresh
+        </Button>
+      </div>
+      {jobs.isLoading ? (
+        <StatusState loading title="Loading job log" message="Reading recent background activity." />
+      ) : jobs.isError ? (
+        <StatusState
+          title="Job log unavailable"
+          message="The server's recent jobs could not be loaded."
+          action={<Button onClick={() => void jobs.refetch()}>Try again</Button>}
+        />
+      ) : entries.length === 0 ? (
+        <EmptyState
+          icon={ClipboardList}
+          title="No jobs yet"
+          message="Jobs will appear here after a library scan or metadata refresh starts."
+        />
+      ) : (
+        <>
+          <section className="job-summary" aria-label="Job summary">
+            <JobSummary label="Recent jobs" value={entries.length} />
+            <JobSummary label="Active" value={counts.active} tone="active" />
+            <JobSummary label="Succeeded" value={counts.succeeded} tone="success" />
+            <JobSummary label="Failed" value={counts.failed} tone="danger" />
+          </section>
+          <section className="job-log-panel">
+            <div className="job-log-toolbar">
+              <div>
+                <h2>Recent activity</h2>
+                <p>Showing the latest {entries.length} jobs across all libraries.</p>
+              </div>
+              <SelectField
+                hideLabel
+                label="Filter by status"
+                value={status}
+                options={jobStatusOptions}
+                onValueChange={setStatus}
+              />
+            </div>
+            {visible.length === 0 ? (
+              <div className="job-log-empty">No jobs match this status.</div>
+            ) : (
+              <div className="job-table-wrap">
+                <table className="job-table">
+                  <thead>
+                    <tr>
+                      <th scope="col">Job</th>
+                      <th scope="col">Library</th>
+                      <th scope="col">Status</th>
+                      <th scope="col">Started</th>
+                      <th scope="col">Duration</th>
+                      <th scope="col">Attempts</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {visible.map((job) => <JobLogRow key={job.id} job={job} />)}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        </>
+      )}
+    </div>
+  );
+};
+
+const JobSummary = ({
+  label,
+  value,
+  tone = "neutral",
+}: {
+  readonly label: string;
+  readonly value: number;
+  readonly tone?: "neutral" | "active" | "success" | "danger";
+}): React.ReactElement => (
+  <div className="job-summary-card" data-tone={tone}>
+    <span>{label}</span>
+    <strong>{value}</strong>
+  </div>
+);
+
+const JobLogRow = ({ job }: { readonly job: JobLogEntry }): React.ReactElement => {
+  const timestamp = job.startedAtMs ?? job.availableAtMs;
+  return (
+    <tr>
+      <td>
+        <strong>{titleCase(job.operation)}</strong>
+        <span>{titleCase(job.mode)} scan · {shortId(job.runId)}</span>
+        {job.errorMessage === null ? null : (
+          <small className="job-error" title={job.errorMessage}>
+            {job.errorCode === null ? "Error" : job.errorCode}: {job.errorMessage}
+          </small>
+        )}
+      </td>
+      <td>{job.libraryName}</td>
+      <td><span className="job-status" data-status={job.status}>{titleCase(job.status)}</span></td>
+      <td><time dateTime={new Date(timestamp).toISOString()}>{formatJobDate(timestamp)}</time></td>
+      <td>{formatJobDuration(job)}</td>
+      <td>{job.attempts} / {job.maxAttempts}</td>
+    </tr>
+  );
+};
+
 const AdminMetadataSettings = ({ configured, scope }: { readonly configured: boolean; readonly scope: readonly unknown[] }): React.ReactElement => {
   const queryClient = useQueryClient();
   const [key, setKey] = useState("");
@@ -1673,4 +1829,22 @@ const formatTime = (seconds: number): string =>
 const formatDuration = (milliseconds: number): string => {
   const minutes = Math.round(milliseconds / 60_000);
   return minutes >= 60 ? `${Math.floor(minutes / 60)}h ${minutes % 60}m` : `${minutes} min`;
+};
+
+const jobDateFormatter = new Intl.DateTimeFormat(undefined, {
+  dateStyle: "medium",
+  timeStyle: "short",
+});
+const formatJobDate = (milliseconds: number): string => jobDateFormatter.format(milliseconds);
+const shortId = (id: string): string => id.slice(0, 8);
+const formatJobDuration = (job: JobLogEntry): string => {
+  if (job.startedAtMs === null) return "—";
+  const elapsed = Math.max(0, (job.finishedAtMs ?? Date.now()) - job.startedAtMs);
+  if (elapsed < 1_000) return "<1s";
+  const seconds = Math.floor(elapsed / 1_000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const remainder = seconds % 60;
+  if (minutes < 60) return `${minutes}m ${remainder}s`;
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 };

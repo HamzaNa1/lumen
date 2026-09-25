@@ -9,6 +9,7 @@ import type {
   IpcPlayerState,
   IpcPlayerSurfaceBounds,
   IpcServerDiscovery,
+  JobLogEntry,
   ScanRun,
   User,
 } from "@lumen/contracts";
@@ -83,6 +84,7 @@ export interface LumenBridge {
       readonly mode: "full" | "incremental" | "refresh";
     }) => Promise<{ readonly runId: string }>;
     readonly scanStatus: (runId: string) => Promise<ScanRun>;
+    readonly jobLog: () => Promise<ReadonlyArray<JobLogEntry>>;
   };
   readonly player: {
     readonly start: (itemId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;

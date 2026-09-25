@@ -5,6 +5,7 @@ import { notFound } from "../core/Errors";
 export interface ScanServiceShape {
   readonly getRun: (runId: string) => Effect.Effect<unknown, unknown>;
   readonly listJobs: (runId: string) => Effect.Effect<ReadonlyArray<unknown>, unknown>;
+  readonly listRecentJobs: (limit: number) => Effect.Effect<ReadonlyArray<unknown>, unknown>;
 }
 
 export const makeScanService = Effect.gen(function* () {
@@ -27,7 +28,20 @@ export const makeScanService = Effect.gen(function* () {
       FROM scan_jobs WHERE run_id = ${runId} ORDER BY available_at_ms ASC, id ASC
     `);
   });
-  return { getRun, listJobs };
+  const listRecentJobs: ScanServiceShape["listRecentJobs"] = Effect.fn("Scans.listRecentJobs")(function* (limit) {
+    return yield* database.all(sql`
+      SELECT job.id, job.run_id AS runId, run.library_id AS libraryId, library.name AS libraryName,
+        run.mode, job.operation, job.status, job.attempts, job.max_attempts AS maxAttempts,
+        job.available_at_ms AS availableAtMs, job.started_at_ms AS startedAtMs,
+        job.finished_at_ms AS finishedAtMs, job.error_code AS errorCode, job.error_message AS errorMessage
+      FROM scan_jobs job
+      JOIN scan_runs run ON run.id = job.run_id
+      JOIN libraries library ON library.id = run.library_id
+      ORDER BY COALESCE(job.started_at_ms, job.available_at_ms) DESC, job.id DESC
+      LIMIT ${limit}
+    `);
+  });
+  return { getRun, listJobs, listRecentJobs };
 });
 
 export class ScanService extends Context.Service<ScanService, ScanServiceShape>()("@lumen/server/Scans") {}

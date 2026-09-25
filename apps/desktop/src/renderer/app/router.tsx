@@ -1,6 +1,6 @@
 import { createHashHistory } from "@tanstack/history";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { AdminPage, App, HomePage, LibraryPage, PlayerPage, SearchPage, SettingsPage } from "./App";
+import { AdminPage, App, HomePage, JobLogPage, LibraryPage, PlayerPage, SearchPage, SettingsPage } from "./App";
 
 const rootRoute = createRootRoute({ component: App });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
@@ -29,6 +29,11 @@ const adminRoute = createRoute({
   path: "/admin",
   component: AdminPage,
 });
+const jobLogRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/jobs",
+  component: JobLogPage,
+});
 
 const routeTree = rootRoute.addChildren([
   homeRoute,
@@ -37,6 +42,7 @@ const routeTree = rootRoute.addChildren([
   playerRoute,
   settingsRoute,
   adminRoute,
+  jobLogRoute,
 ]);
 
 export const router = createRouter({

@@ -39,6 +39,7 @@ const api = {
     deleteRoot: (rootId: string) => invoke<unknown>("admin:deleteRoot", rootId),
     startScan: (input: unknown) => invoke<unknown>("admin:startScan", input),
     scanStatus: (runId: string) => invoke<unknown>("admin:scanStatus", runId),
+    jobLog: () => invoke<unknown>("admin:jobLog"),
   },
   player: {
     start: (itemId: string) => invoke<unknown>("player:start", { itemId }),

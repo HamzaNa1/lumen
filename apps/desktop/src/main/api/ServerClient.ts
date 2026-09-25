@@ -1,4 +1,4 @@
-import { IpcItemDetails, IpcPlayableStream } from "@lumen/contracts";
+import { IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
@@ -314,6 +314,11 @@ export class ServerClient {
 
   async scanStatus(runId: string): Promise<ScanRun> {
     return this.request(`/api/v1/scans/${encodeURIComponent(runId)}`, {}, scanRunSchema);
+  }
+
+  async jobLog(limit = 100): Promise<ReadonlyArray<JobLogEntry>> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    return this.request(`/api/v1/admin/jobs?${query}`, {}, Schema.Array(JobLogEntry));
   }
 
   async items(libraryId: string, cursor: string | null = null): Promise<IpcItemPage> {

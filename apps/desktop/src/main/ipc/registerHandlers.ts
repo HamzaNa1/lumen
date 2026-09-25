@@ -289,6 +289,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("admin:scanStatus", async (_event, raw) =>
     activeClient(dependencies).scanStatus(decode(Schema.String, raw)),
   );
+  handle("admin:jobLog", async () => activeClient(dependencies).jobLog());
   handle("player:start", async (_event, raw) => {
     const input = decode(Schema.Struct({ itemId: Schema.String }), raw);
     const result = await dependencies.player.start({
@@ -380,6 +381,7 @@ export const unregisterIpcHandlers = (): void => {
     "admin:deleteRoot",
     "admin:startScan",
     "admin:scanStatus",
+    "admin:jobLog",
     "player:start",
     "player:pause",
     "player:seek",
