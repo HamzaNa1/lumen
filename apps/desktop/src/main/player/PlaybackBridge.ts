@@ -50,7 +50,14 @@ export class PlaybackBridge {
 
   async close(): Promise<void> {
     this.capabilities.clear();
+    this.server.closeAllConnections();
     await new Promise<void>((resolve) => this.server.close(() => resolve()));
+  }
+
+  forceClose(): void {
+    this.capabilities.clear();
+    this.server.closeAllConnections();
+    this.server.close();
   }
 
   private async handle(request: IncomingMessage, response: ServerResponse): Promise<void> {

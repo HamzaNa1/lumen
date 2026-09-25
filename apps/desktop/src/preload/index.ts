@@ -1,10 +1,18 @@
-import type { IpcPlayerDisplay, IpcPlayerSurfaceBounds } from "@lumen/contracts";
+import type { IpcPlayerDisplay, IpcPlayerSurfaceBounds, IpcUpdateState } from "@lumen/contracts";
 import { contextBridge, ipcRenderer } from "electron";
 
 const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T> =>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 const api = {
+  updates: {
+    state: () => invoke<IpcUpdateState>("updates:state"),
+    onState: (callback: (state: IpcUpdateState) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: IpcUpdateState): void => callback(state);
+      ipcRenderer.on("updates:state", listener);
+      return () => ipcRenderer.removeListener("updates:state", listener);
+    },
+  },
   accounts: {
     list: () => invoke<unknown>("accounts:list"),
     setup: (origin: string) => invoke<unknown>("accounts:setup", { origin }),

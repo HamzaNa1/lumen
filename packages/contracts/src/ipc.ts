@@ -1,6 +1,17 @@
 import { Schema } from "effect";
 import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 
+export const IpcUpdateState = Schema.Struct({
+  revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  currentVersion: Schema.String,
+  phase: Schema.Literals(["unsupported", "idle", "checking", "downloading", "ready", "error"]),
+  availableVersion: Schema.NullOr(Schema.String),
+  progressPercent: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
+  lastCheckedAtMs: Schema.NullOr(UtcMillis),
+  message: Schema.NullOr(Schema.String),
+});
+export type IpcUpdateState = Schema.Schema.Type<typeof IpcUpdateState>;
+
 export const IpcLogin = Schema.Struct({
   _tag: Schema.Literal("auth.login"),
   username: Schema.String.check(Schema.isMinLength(1)),

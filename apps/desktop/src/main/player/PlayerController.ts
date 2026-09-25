@@ -85,6 +85,7 @@ export class PlayerController extends EventEmitter {
   private state: IpcPlayerState | null = null;
   private startGeneration = 0;
   private stopping: Promise<void> | null = null;
+  private stoppingProcess: MpvProcess | null = null;
 
   constructor(options: PlayerControllerOptions) {
     super();
@@ -333,6 +334,11 @@ export class PlayerController extends EventEmitter {
     await this.stopActive();
   }
 
+  forceStop(): void {
+    this.active?.process.forceStop();
+    this.stoppingProcess?.forceStop();
+  }
+
   private stopActive(): Promise<void> {
     if (this.stopping !== null) return this.stopping;
     const active = this.active;
@@ -390,12 +396,18 @@ export class PlayerController extends EventEmitter {
   }: PlaybackResources): Promise<void> {
     if (capability !== null) this.bridge.revoke(capability);
     ipc?.close();
+    this.stoppingProcess = process;
     await process?.stop();
+    this.stoppingProcess = null;
+    const abort = new AbortController();
+    let timeout: ReturnType<typeof setTimeout> | null = null;
     try {
-      await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
+      await Promise.race([client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
         method: "DELETE",
-      });
+        signal: abort.signal,
+      }), new Promise<void>((resolve) => { timeout = setTimeout(() => { abort.abort(); resolve(); }, 1_000); })]);
     } catch {}
+    finally { if (timeout !== null) clearTimeout(timeout); }
   }
 
   private assertActive(sessionId: string): void {

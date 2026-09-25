@@ -9,11 +9,16 @@ import type {
   IpcPlayerState,
   IpcPlayerSurfaceBounds,
   IpcServerDiscovery,
+  IpcUpdateState,
   ScanRun,
   User,
 } from "@lumen/contracts";
 
 export interface LumenBridge {
+  readonly updates: {
+    readonly state: () => Promise<IpcUpdateState>;
+    readonly onState: (callback: (state: IpcUpdateState) => void) => () => void;
+  };
   readonly accounts: {
     readonly list: () => Promise<IpcAccounts>;
     readonly discoverServer: (origin: string) => Promise<IpcServerDiscovery>;
