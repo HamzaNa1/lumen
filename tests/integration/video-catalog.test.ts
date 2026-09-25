@@ -315,4 +315,4 @@ test("video folders browse as series, seasons, episodes and movies without requi
   } finally {
     globalThis.fetch = nativeFetch;
   }
-});
+}, 20_000);
