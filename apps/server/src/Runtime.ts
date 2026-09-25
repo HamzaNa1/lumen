@@ -5,6 +5,8 @@ import type { ServerConfig } from "./config/Config";
 import { makeDatabaseLayers } from "./database/DatabaseLayer";
 import { ServerIdentityLive, ServerIdentityService, type ServerIdentity } from "./database/Identity";
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
+import { LibraryWatcherLive } from "./jobs/LibraryWatcher";
+import { ScheduledJobService, ScheduledJobServiceLiveWithConfig, type ScheduledJobServiceShape } from "./jobs/ScheduledJobService";
 import { FfprobeLive } from "./media/Ffprobe";
 import { MediaIngestLive } from "./media/MediaIngest";
 import { TmdbProviderLive } from "./media/Tmdb";
@@ -35,6 +37,7 @@ export interface ServerServices {
   readonly assets: AssetService["Service"];
   readonly playback: PlaybackService["Service"];
   readonly jobs: JobServiceShape;
+  readonly scheduledJobs: ScheduledJobServiceShape;
   readonly database: Database["Service"];
   readonly identity: ServerIdentity;
   readonly metadataSettings: MetadataSettingsShape;
@@ -58,9 +61,11 @@ export const makeLayers = (config: ServerConfig) => {
   const media = MediaIngestLive.pipe(Layer.provide(Layer.mergeAll(dependencies, ffprobe)));
   const tmdb = TmdbProviderLive(config).pipe(Layer.provide(Layer.mergeAll(dependencies, metadataSettings)));
   const jobs = JobServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, media, tmdb, metadataSettings)));
+  const libraryWatcher = LibraryWatcherLive.pipe(Layer.provide(Layer.mergeAll(dependencies, libraries)));
+  const scheduledJobs = ScheduledJobServiceLiveWithConfig(config).pipe(Layer.provide(Layer.mergeAll(dependencies, libraryWatcher)));
   const events = EventServiceLive.pipe(Layer.provide(dependencies));
   const identity = ServerIdentityLive.pipe(Layer.provide(dependencies));
-  return Layer.mergeAll(dependencies, auth, access, assets, admin, catalog, libraries, scans, playback, events, jobs, identity, metadataSettings);
+  return Layer.mergeAll(dependencies, auth, access, assets, admin, catalog, libraries, scans, playback, events, jobs, scheduledJobs, identity, metadataSettings);
 };
 
 const makeServices = Effect.gen(function* () {
@@ -77,6 +82,7 @@ const makeServices = Effect.gen(function* () {
     assets: yield* AssetService,
     playback: yield* PlaybackService,
     jobs: yield* JobService,
+    scheduledJobs: yield* ScheduledJobService,
     database,
     identity,
     metadataSettings: yield* MetadataSettings,
@@ -139,6 +145,7 @@ export const startServer = async (overrides: Partial<ServerConfig> = {}): Promis
   console.log(`Lumen server listening on ${server.url}`);
   const abort = new AbortController();
   const worker = services.jobs.start(abort.signal);
+  const scheduler = services.scheduledJobs.start(abort.signal);
   let stopping: Promise<void> | null = null;
   const stop = async (): Promise<void> => {
     if (stopping !== null) return stopping;
@@ -146,6 +153,7 @@ export const startServer = async (overrides: Partial<ServerConfig> = {}): Promis
       abort.abort();
       await server.stop(true);
       await worker;
+      await scheduler;
       await Effect.runPromise(Fiber.interrupt(serviceFiber));
     })();
     return stopping;

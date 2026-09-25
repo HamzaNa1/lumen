@@ -23,6 +23,7 @@ const Environment = Schema.Struct({
   LUMEN_LOGIN_ATTEMPTS_PER_MINUTE: Schema.optional(Numeric),
   LUMEN_MAX_EVENT_ID: Schema.optional(Numeric),
   LUMEN_SCAN_LEASE_MS: Schema.optional(Numeric),
+  LUMEN_LIBRARY_WATCH_INTERVAL_MS: Schema.optional(Numeric),
   LUMEN_FFPROBE_TIMEOUT_MS: Schema.optional(Numeric),
   LUMEN_FFPROBE_MAX_OUTPUT_BYTES: Schema.optional(Numeric),
   LUMEN_SHUTDOWN_GRACE_MS: Schema.optional(Numeric),
@@ -41,6 +42,7 @@ export interface ServerConfig {
   readonly loginAttemptsPerMinute: number;
   readonly maxEventId: number;
   readonly scanLeaseMs: number;
+  readonly libraryWatchIntervalMs: number;
   readonly ffprobeTimeoutMs: number;
   readonly ffprobeMaxOutputBytes: number;
   readonly shutdownGraceMs: number;
@@ -78,6 +80,7 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     loginAttemptsPerMinute: toBoundedInteger("LUMEN_LOGIN_ATTEMPTS_PER_MINUTE", parsed.LUMEN_LOGIN_ATTEMPTS_PER_MINUTE, 10, 1, 1_000_000),
     maxEventId: toBoundedInteger("LUMEN_MAX_EVENT_ID", parsed.LUMEN_MAX_EVENT_ID, 65_536, 1, 100_000_000),
     scanLeaseMs: toBoundedInteger("LUMEN_SCAN_LEASE_MS", parsed.LUMEN_SCAN_LEASE_MS, 300_000, 1_000, 86_400_000),
+    libraryWatchIntervalMs: toBoundedInteger("LUMEN_LIBRARY_WATCH_INTERVAL_MS", parsed.LUMEN_LIBRARY_WATCH_INTERVAL_MS, 60_000, 1_000, 86_400_000),
     ffprobeTimeoutMs: toBoundedInteger("LUMEN_FFPROBE_TIMEOUT_MS", parsed.LUMEN_FFPROBE_TIMEOUT_MS, 15_000, 100, 600_000),
     ffprobeMaxOutputBytes: toBoundedInteger("LUMEN_FFPROBE_MAX_OUTPUT_BYTES", parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES, 1_048_576, 1_024, 100_000_000),
     shutdownGraceMs: toBoundedInteger("LUMEN_SHUTDOWN_GRACE_MS", parsed.LUMEN_SHUTDOWN_GRACE_MS, 10_000, 100, 600_000),

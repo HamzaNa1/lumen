@@ -16,6 +16,7 @@ type RootInput = Schema.Schema.Type<typeof CreateRootBody>;
 type GrantInput = Schema.Schema.Type<typeof CreateGrantBody>;
 type ScanInput = Schema.Schema.Type<typeof StartScanBody>;
 type RootRow = Omit<LibraryRoot, "isEnabled"> & { isEnabled: number };
+type RootObservation = { readonly id: string; readonly modifiedAtMs: number };
 
 export interface LibraryServiceShape {
   readonly create: (input: LibraryInput, nowMs: number) => Effect.Effect<Library, unknown>;
@@ -27,6 +28,7 @@ export interface LibraryServiceShape {
   readonly deleteRoot: (rootId: string) => Effect.Effect<void, unknown>;
   readonly upsertGrant: (input: GrantInput, nowMs: number) => Effect.Effect<LibraryGrant, unknown>;
   readonly startScan: (input: ScanInput, nowMs: number) => Effect.Effect<{ runId: string }, unknown>;
+  readonly startWatchedScan: (input: ScanInput, roots: ReadonlyArray<RootObservation>, nowMs: number) => Effect.Effect<{ runId: string }, unknown>;
 }
 
 export const makeLibraryService = Effect.gen(function* () {
@@ -135,7 +137,11 @@ export const makeLibraryService = Effect.gen(function* () {
     return yield* repositories.libraries.upsertGrant({ ...input, nowMs }).pipe(Effect.mapError(mapRepositoryError));
   });
 
-  const startScan: LibraryServiceShape["startScan"] = Effect.fn("LibraryService.startScan")(function* (input, nowMs) {
+  const enqueueScan = Effect.fn("LibraryService.enqueueScan")(function* (
+    input: ScanInput,
+    nowMs: number,
+    observations: ReadonlyArray<RootObservation>,
+  ) {
     const library = yield* database.get<{ isEnabled: number }>(sql`
       SELECT is_enabled AS isEnabled FROM libraries WHERE id = ${input.libraryId}
     `);
@@ -148,6 +154,13 @@ export const makeLibraryService = Effect.gen(function* () {
     if (enabledRoots.length === 0) return yield* conflict("Library has no enabled roots");
     const runId = newUuid();
     yield* database.transaction((transaction) => Effect.gen(function* () {
+      const active = yield* transaction.get<{ id: string }>(sql`
+        SELECT id FROM scan_runs
+        WHERE library_id = ${input.libraryId} AND status IN ('queued', 'running')
+        LIMIT 1
+      `);
+      if (active != null) return yield* conflict("Library scan is already running");
+
       for (const root of enabledRoots) {
         yield* transaction.run(sql`
           INSERT INTO server_scan_state(root_id, generation, updated_at_ms)
@@ -159,25 +172,32 @@ export const makeLibraryService = Effect.gen(function* () {
           WHERE root_id = ${root.id}
         `);
       }
+      yield* transaction.run(sql`
+        INSERT INTO scan_runs(id, library_id, mode, status, started_at_ms, created_at_ms)
+        VALUES (${runId}, ${input.libraryId}, ${input.mode}, 'running', ${nowMs}, ${nowMs})
+      `);
+      for (const root of enabledRoots) {
+        yield* transaction.run(sql`
+          INSERT INTO scan_jobs(id, run_id, parent_job_id, source_id, dedupe_key, operation, status, priority, attempts, max_attempts, available_at_ms)
+          VALUES (${newUuid()}, ${runId}, NULL, NULL, ${`discover:${root.id}`}, 'discover', 'queued', 100, 0, 3, ${nowMs})
+        `);
+      }
+      for (const observation of observations) {
+        yield* transaction.run(sql`
+          UPDATE server_library_watch_state
+          SET modified_at_ms = ${observation.modifiedAtMs}, checked_at_ms = ${nowMs}
+          WHERE root_id = ${observation.id}
+        `);
+      }
     }));
-    const run = yield* repositories.scanning.startRun({ runId, libraryId: input.libraryId, mode: input.mode, startedAtMs: nowMs }).pipe(Effect.mapError(mapRepositoryError));
-    for (const root of enabledRoots) {
-      yield* repositories.scanning.createJob({
-        id: newUuid(),
-        runId: run.id,
-        parentJobId: null,
-        sourceId: null,
-        dedupeKey: `discover:${root.id}`,
-        operation: "discover",
-        priority: 100,
-        maxAttempts: 3,
-        availableAtMs: nowMs,
-      }).pipe(Effect.mapError(mapRepositoryError));
-    }
-    return { runId: run.id };
+    return { runId };
   });
 
-  return { create, update, remove, addRoot, listRoots, listGrants, deleteRoot, upsertGrant, startScan };
+  const startScan: LibraryServiceShape["startScan"] = (input, nowMs) => enqueueScan(input, nowMs, []);
+  const startWatchedScan: LibraryServiceShape["startWatchedScan"] = (input, roots, nowMs) =>
+    enqueueScan(input, nowMs, roots);
+
+  return { create, update, remove, addRoot, listRoots, listGrants, deleteRoot, upsertGrant, startScan, startWatchedScan };
 });
 
 export class LibraryService extends Context.Service<LibraryService, LibraryServiceShape>()(

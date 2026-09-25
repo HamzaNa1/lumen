@@ -24,6 +24,22 @@ export const migrateServerDatabase = Effect.fn("database.migrateServer")(functio
       FOREIGN KEY (run_id) REFERENCES scan_runs(id) ON DELETE CASCADE,
       FOREIGN KEY (source_id) REFERENCES media_sources(id) ON DELETE CASCADE
     )`,
+    `CREATE TABLE IF NOT EXISTS server_scheduled_jobs (
+      name TEXT PRIMARY KEY,
+      interval_ms INTEGER NOT NULL CHECK (interval_ms > 0),
+      next_run_at_ms INTEGER NOT NULL,
+      last_started_at_ms INTEGER,
+      last_finished_at_ms INTEGER,
+      last_error TEXT,
+      updated_at_ms INTEGER NOT NULL
+    )`,
+    `CREATE INDEX IF NOT EXISTS server_scheduled_jobs_due_idx ON server_scheduled_jobs(next_run_at_ms)`,
+    `CREATE TABLE IF NOT EXISTS server_library_watch_state (
+      root_id TEXT PRIMARY KEY,
+      modified_at_ms INTEGER NOT NULL,
+      checked_at_ms INTEGER NOT NULL,
+      FOREIGN KEY (root_id) REFERENCES library_roots(id) ON DELETE CASCADE
+    )`,
     `CREATE TABLE IF NOT EXISTS server_playback_sequences (
       session_id TEXT NOT NULL,
       track_id TEXT NOT NULL,
