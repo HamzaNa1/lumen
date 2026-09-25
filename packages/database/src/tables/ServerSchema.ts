@@ -515,8 +515,31 @@ export const serverScanSeen = sqliteTable(
       .notNull()
       .references(() => mediaSources.id, { onDelete: "cascade" }),
     seenAtMs: millis("seen_at_ms"),
+    change: text("change").notNull().default("unchanged"),
   },
-  (table) => [primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] })],
+  (table) => [
+    primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] }),
+    check(
+      "server_scan_seen_change_chk",
+      sql`${table.change} in ('new', 'changed', 'moved', 'unchanged')`,
+    ),
+  ],
+);
+
+export const serverScanMissing = sqliteTable(
+  "server_scan_missing",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => mediaSources.id, { onDelete: "cascade" }),
+    missingAtMs: millis("missing_at_ms"),
+  },
+  (table) => [
+    primaryKey({ name: "server_scan_missing_pk", columns: [table.runId, table.sourceId] }),
+  ],
 );
 
 export const serverScheduledJobs = sqliteTable(

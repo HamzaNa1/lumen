@@ -36,7 +36,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.foreignKeys?.foreign_keys).toBe(1);
-    expect(result.migrations?.count).toBe(1);
+    expect(result.migrations?.count).toBe(2);
     expect(result.fts?.value).toBe(1);
     expect(result.tables.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -66,6 +66,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         "server_identity",
         "server_library_watch_state",
         "server_playback_sequences",
+        "server_scan_missing",
         "server_scan_seen",
         "server_scheduled_jobs",
         "stream_sidecars",

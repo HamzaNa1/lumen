@@ -1,13 +1,17 @@
 import {
+  catalogItemSources,
   Database,
   libraryRoots,
   libraryRootStates,
   mediaSourceAvailability,
   mediaSources,
-  Repositories,
+  scanJobs,
+  scanRuns,
+  serverScanMissing,
   serverScanSeen,
+  streams,
 } from "@lumen/database";
-import { and, eq, notExists } from "drizzle-orm";
+import { and, eq, exists, isNull, notExists, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -90,6 +94,8 @@ export const scanRoot = (
   inode: string;
 }> => walk(rootPath);
 
+type SourceChange = "new" | "changed" | "moved" | "unchanged";
+
 export interface ScannerShape {
   readonly discover: (runId: string, rootId: string) => Effect.Effect<number, unknown>;
   readonly cleanup: (runId: string, rootId: string) => Effect.Effect<number, unknown>;
@@ -97,7 +103,6 @@ export interface ScannerShape {
 
 export const makeScanner = Effect.gen(function* () {
   const database = yield* Database;
-  const repositories = yield* Repositories;
 
   const discover: ScannerShape["discover"] = Effect.fn("Scanner.discover")(
     function* (runId, rootId) {
@@ -113,6 +118,12 @@ export const makeScanner = Effect.gen(function* () {
         .where(eq(libraryRootStates.rootId, rootId))
         .get();
       if (state == null) return 0;
+      const run = yield* database
+        .select({ mode: scanRuns.mode })
+        .from(scanRuns)
+        .where(eq(scanRuns.id, runId))
+        .get();
+      const probeAll = run?.mode !== "incremental";
       let count = 0;
       const files = yield* Effect.promise(() => Array.fromAsync(scanRoot(root.path))).pipe(
         Effect.tapError(() =>
@@ -144,20 +155,24 @@ export const makeScanner = Effect.gen(function* () {
           .get();
         if (current == null || current.generation !== state.generation) return count;
         const target = yield* safePath(root.path, file.relativePath);
-        let sourceId = "";
-        yield* database.transaction((transaction) =>
+        const processed = yield* database.transaction((transaction) =>
           Effect.gen(function* () {
+            const sourceSelection = {
+              id: mediaSources.id,
+              absolutePath: mediaSources.absolutePath,
+              fileSizeBytes: mediaSources.fileSizeBytes,
+              modifiedAtMs: mediaSources.modifiedAtMs,
+              inode: mediaSources.inode,
+            };
             let existing = yield* transaction
-              .select({ id: mediaSources.id })
+              .select(sourceSelection)
               .from(mediaSources)
               .where(eq(mediaSources.absolutePath, target))
               .get();
+            let moved = false;
             if (existing == null) {
               const candidates = yield* transaction
-                .select({
-                  id: mediaSources.id,
-                  absolutePath: mediaSources.absolutePath,
-                })
+                .select(sourceSelection)
                 .from(mediaSources)
                 .where(
                   and(
@@ -180,11 +195,63 @@ export const makeScanner = Effect.gen(function* () {
               for (const candidate of candidates) {
                 if (!(yield* Effect.promise(() => existsFile(candidate.absolutePath)))) {
                   existing = candidate;
+                  moved = true;
                   break;
                 }
               }
+            } else {
+              // A retried discovery must not reclassify a file this run already recorded.
+              const seen = yield* transaction
+                .select({ value: serverScanSeen.sourceId })
+                .from(serverScanSeen)
+                .where(
+                  and(eq(serverScanSeen.runId, runId), eq(serverScanSeen.sourceId, existing.id)),
+                )
+                .get();
+              if (seen != null) return false;
             }
-            sourceId = existing?.id ?? newUuid();
+            const sourceId = existing?.id ?? newUuid();
+            const change: SourceChange =
+              existing == null
+                ? "new"
+                : existing.fileSizeBytes !== file.size ||
+                    existing.modifiedAtMs !== file.modifiedAtMs ||
+                    existing.inode !== file.inode
+                  ? "changed"
+                  : moved
+                    ? "moved"
+                    : "unchanged";
+            // Unchanged media is re-probed only when an earlier ingest never completed.
+            const needsProbe =
+              probeAll ||
+              change === "new" ||
+              change === "changed" ||
+              (yield* transaction
+                .select({ id: mediaSources.id })
+                .from(mediaSources)
+                .where(
+                  and(
+                    eq(mediaSources.id, sourceId),
+                    or(
+                      isNull(mediaSources.contentFingerprint),
+                      notExists(
+                        transaction
+                          .select({ value: catalogItemSources.itemId })
+                          .from(catalogItemSources)
+                          .where(eq(catalogItemSources.sourceId, mediaSources.id)),
+                      ),
+                      exists(
+                        transaction
+                          .select({ value: streams.id })
+                          .from(streams)
+                          .where(
+                            and(eq(streams.sourceId, mediaSources.id), isNull(streams.ordinal)),
+                          ),
+                      ),
+                    ),
+                  ),
+                )
+                .get()) != null;
             if (existing == null) {
               yield* transaction.insert(mediaSources).values({
                 id: sourceId,
@@ -232,28 +299,28 @@ export const makeScanner = Effect.gen(function* () {
                   updatedAtMs: seenAtMs,
                 },
               });
-            yield* transaction
-              .insert(serverScanSeen)
-              .values({ runId, sourceId, seenAtMs })
-              .onConflictDoUpdate({
-                target: [serverScanSeen.runId, serverScanSeen.sourceId],
-                set: { seenAtMs },
-              });
+            yield* transaction.insert(serverScanSeen).values({ runId, sourceId, seenAtMs, change });
+            if (needsProbe)
+              yield* transaction
+                .insert(scanJobs)
+                .values({
+                  id: newUuid(),
+                  runId,
+                  parentJobId: null,
+                  sourceId,
+                  dedupeKey: `probe:${sourceId}`,
+                  operation: "probe",
+                  status: "queued",
+                  priority: 500,
+                  attempts: 0,
+                  maxAttempts: 5,
+                  availableAtMs: seenAtMs,
+                })
+                .onConflictDoNothing();
+            return true;
           }),
         );
-        yield* repositories.scanning
-          .createJob({
-            id: newUuid(),
-            runId,
-            parentJobId: null,
-            sourceId,
-            dedupeKey: `probe:${sourceId}`,
-            operation: "probe",
-            priority: 500,
-            maxAttempts: 5,
-            availableAtMs: Date.now(),
-          })
-          .pipe(Effect.catch(() => Effect.void));
+        if (!processed) continue;
         count += 1;
       }
       return count;
@@ -292,6 +359,10 @@ export const makeScanner = Effect.gen(function* () {
           target: mediaSourceAvailability.sourceId,
           set: { isAvailable: false, missingSinceMs, updatedAtMs: missingSinceMs },
         });
+      yield* database
+        .insert(serverScanMissing)
+        .values({ runId, sourceId: source.id, missingAtMs: missingSinceMs })
+        .onConflictDoNothing();
     }
     return removed.length;
   });

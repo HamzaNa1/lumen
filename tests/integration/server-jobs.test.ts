@@ -190,7 +190,7 @@ describe("durable jobs and scanner reconciliation", () => {
     expect(result.scansStarted).toBe(1);
     expect(result.repeated).toBe(0);
     expect(result.afterIntervalChange).toBe(0);
-    expect(result.runs).toEqual([{ mode: "full", status: "running" }]);
+    expect(result.runs).toEqual([{ mode: "incremental", status: "running" }]);
     expect(result.jobs).toEqual([{ operation: "discover", dedupeKey: `discover:${rootId}` }]);
     expect(result.schedule?.nextRunAtMs).toBe(62_000);
     expect(result.schedule?.lastFinishedAtMs).toBeGreaterThan(1_000);
