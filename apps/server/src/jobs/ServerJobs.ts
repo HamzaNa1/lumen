@@ -9,6 +9,9 @@ export const LIBRARY_WATCHER_JOB = "library-watcher";
 
 const FINISHED_JOB_RETENTION_MS = 7 * 24 * 60 * 60 * 1_000;
 
+export const retryDelayMs = (attempts: number): number =>
+  Math.min(60_000, 2 ** Math.min(10, attempts) * 1_000);
+
 export const enqueueServerJob = Effect.fn("ServerJobs.enqueue")(function* (
   database: DatabaseClient,
   input: { readonly kind: string; readonly nowMs: number; readonly maxAttempts: number },
@@ -112,7 +115,7 @@ export const failServerJob = Effect.fn("ServerJobs.fail")(function* (
   errorMessage: string,
 ) {
   const retry = job.attempts < job.maxAttempts;
-  const delay = Math.min(60_000, 2 ** Math.min(10, job.attempts) * 1_000);
+  const delay = retryDelayMs(job.attempts);
   yield* database
     .update(jobs)
     .set({

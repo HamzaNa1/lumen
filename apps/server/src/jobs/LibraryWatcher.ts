@@ -89,8 +89,9 @@ export const makeLibraryWatcher = Effect.gen(function* () {
 
     let scansStarted = 0;
     for (const [libraryId, library] of changed) {
-      // The scan is only created if the library has no active scan; otherwise the
-      // unrecorded change is picked up by a later check.
+      // A conflict means the library cannot be scanned right now: a scan is already
+      // active, or it was disabled or lost its roots since the roots were loaded.
+      // The change stays unrecorded, so a later check picks it up again.
       const started = yield* libraries
         .startWatchedScan({ libraryId, mode: library.mode }, library.roots, nowMs)
         .pipe(

@@ -24,6 +24,7 @@ import {
   failServerJob,
   LIBRARY_WATCHER_JOB,
   recoverServerJobs,
+  retryDelayMs,
 } from "./ServerJobs";
 
 export interface JobServiceShape {
@@ -189,10 +190,18 @@ export const makeJobService = (config?: ServerConfig) =>
         leaseMs,
       });
       if (job === null) return false;
+      // Stop the job before its lease expires so recovery never hands the same
+      // job to a second worker while this one is still running it.
       const outcome = yield* Effect.exit(
-        job.kind === LIBRARY_WATCHER_JOB
+        (job.kind === LIBRARY_WATCHER_JOB
           ? watcher.check(nowMs)
-          : Effect.fail(new Error(`Unknown job kind: ${job.kind}`)),
+          : Effect.fail(new Error(`Unknown job kind: ${job.kind}`))
+        ).pipe(
+          Effect.timeoutOrElse({
+            duration: leaseMs,
+            orElse: () => Effect.fail(new Error(`Job exceeded its ${leaseMs}ms lease`)),
+          }),
+        ),
       );
       if (Exit.isSuccess(outcome)) yield* completeServerJob(database, job, nowMs);
       else {
@@ -315,7 +324,7 @@ export const makeJobService = (config?: ServerConfig) =>
       } else {
         const cause = outcome.cause;
         const retry = job.attempts < job.maxAttempts;
-        const delay = Math.min(60_000, 2 ** Math.min(10, job.attempts) * 1_000);
+        const delay = retryDelayMs(job.attempts);
         yield* database
           .update(scanJobs)
           .set({

@@ -16,7 +16,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
-import { JobService, JobServiceLive } from "../../apps/server/src/jobs/JobService";
+import type { ServerConfig } from "../../apps/server/src/config/Config";
+import {
+  JobService,
+  JobServiceLive,
+  JobServiceLiveWithConfig,
+} from "../../apps/server/src/jobs/JobService";
 import { LibraryWatcher, LibraryWatcherLive } from "../../apps/server/src/jobs/LibraryWatcher";
 import {
   ScheduledJobService,
@@ -200,7 +205,11 @@ const makeWatcherWorkspace = async () => {
   return { root, databasePath: join(workspace, "server.sqlite") };
 };
 
-const makeWatcherLayer = (databasePath: string, watcherOverride?: Layer.Layer<LibraryWatcher>) => {
+const makeWatcherLayer = (
+  databasePath: string,
+  watcherOverride?: Layer.Layer<LibraryWatcher>,
+  jobsConfig?: Partial<ServerConfig>,
+) => {
   const databaseLayer = makeDatabaseLayers({ databasePath } as never);
   const repositories = RepositoriesLive(databaseLayer);
   const dependencies = Layer.mergeAll(databaseLayer, repositories);
@@ -210,9 +219,9 @@ const makeWatcherLayer = (databasePath: string, watcherOverride?: Layer.Layer<Li
     LibraryWatcherLive.pipe(Layer.provide(Layer.mergeAll(dependencies, libraries)));
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
   const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(databaseLayer));
-  const jobs = JobServiceLive.pipe(
-    Layer.provide(Layer.mergeAll(dependencies, scanner, metadataSettings, watcher)),
-  );
+  const jobs = (
+    jobsConfig === undefined ? JobServiceLive : JobServiceLiveWithConfig(jobsConfig as ServerConfig)
+  ).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, metadataSettings, watcher)));
   const scheduler = ScheduledJobServiceLive.pipe(Layer.provide(dependencies));
   return Layer.mergeAll(dependencies, libraries, watcher, jobs, scheduler);
 };
@@ -499,6 +508,35 @@ describe("library watcher background job", () => {
     ]);
     expect(result.ran).toBe(true);
     expect(result.jobs.map((job) => [job.state, job.attempts])).toEqual([["succeeded", 2]]);
+  });
+
+  test("a watcher that outlives its lease is stopped and retried", async () => {
+    const { root, databasePath } = await makeWatcherWorkspace();
+    const hangingWatcher = Layer.succeed(LibraryWatcher, { check: () => Effect.never });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const scheduledJobs = yield* ScheduledJobService;
+        const jobService = yield* JobService;
+        yield* insertWatchedLibrary(root);
+        yield* scheduledJobs.runDue(1_000);
+        const ran = yield* jobService.runOne(1_000);
+        return { ran, jobs: yield* listWatcherJobs };
+      }).pipe(Effect.provide(makeWatcherLayer(databasePath, hangingWatcher, { scanLeaseMs: 50 }))),
+    );
+
+    expect(result.ran).toBe(true);
+    expect(result.jobs).toEqual([
+      {
+        state: "pending",
+        attempts: 1,
+        maxAttempts: 3,
+        nextRunAtMs: 3_000,
+        completedAtMs: null,
+        lastErrorCode: "JOB_FAILED",
+        lastErrorMessage: "Job exceeded its 50ms lease",
+      },
+    ]);
   });
 
   test("a scan started while the watcher is deciding defers the library instead of failing", async () => {
