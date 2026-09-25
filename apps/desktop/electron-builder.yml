@@ -9,6 +9,9 @@
   "mac": {
     "category": "public.app-category.video",
     "icon": "resources/icons/icon.icns",
+    "extendInfo": {
+      "NSLocalNetworkUsageDescription": "Lumen connects to media servers on your local network."
+    },
     "target": [
       { "target": "dmg", "arch": "arm64" },
       { "target": "zip", "arch": "arm64" }
