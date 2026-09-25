@@ -76,15 +76,15 @@ export const makeLayers = (config: ServerConfig) => {
   const tmdb = TmdbProviderLive(config).pipe(
     Layer.provide(Layer.mergeAll(dependencies, metadataSettings)),
   );
-  const jobs = JobServiceLiveWithConfig(config).pipe(
-    Layer.provide(Layer.mergeAll(dependencies, scanner, media, tmdb, metadataSettings)),
-  );
   const libraryWatcher = LibraryWatcherLive.pipe(
     Layer.provide(Layer.mergeAll(dependencies, libraries)),
   );
-  const scheduledJobs = ScheduledJobServiceLiveWithConfig(config).pipe(
-    Layer.provide(Layer.mergeAll(dependencies, libraryWatcher)),
+  const jobs = JobServiceLiveWithConfig(config).pipe(
+    Layer.provide(
+      Layer.mergeAll(dependencies, scanner, media, tmdb, metadataSettings, libraryWatcher),
+    ),
   );
+  const scheduledJobs = ScheduledJobServiceLiveWithConfig(config).pipe(Layer.provide(dependencies));
   const events = EventServiceLive.pipe(Layer.provide(dependencies));
   const identity = ServerIdentityLive.pipe(Layer.provide(dependencies));
   return Layer.mergeAll(

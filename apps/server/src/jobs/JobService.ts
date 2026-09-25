@@ -11,12 +11,20 @@ import {
 } from "@lumen/database";
 import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
-import { Context, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option } from "effect";
 import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
 import { Scanner } from "../services/Scanner";
 import { MetadataSettings } from "../services/MetadataSettings";
+import { LibraryWatcher } from "./LibraryWatcher";
+import {
+  claimNextServerJob,
+  completeServerJob,
+  failServerJob,
+  LIBRARY_WATCHER_JOB,
+  recoverServerJobs,
+} from "./ServerJobs";
 
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
@@ -34,6 +42,8 @@ export const makeJobService = (config?: ServerConfig) =>
     const ingest = yield* Effect.serviceOption(MediaIngest);
     const tmdb = yield* Effect.serviceOption(TmdbProvider);
     const settings = yield* MetadataSettings;
+    const watcher = yield* LibraryWatcher;
+    const leaseMs = config?.scanLeaseMs ?? 300_000;
 
     const refresh: JobServiceShape["refresh"] = Effect.fn("JobService.refresh")(
       function* (itemId, nowMs) {
@@ -152,7 +162,7 @@ export const makeJobService = (config?: ServerConfig) =>
           and(
             eq(scanJobs.status, "running"),
             isNotNull(scanJobs.lockedAtMs),
-            lt(scanJobs.lockedAtMs, nowMs - (config?.scanLeaseMs ?? 300_000)),
+            lt(scanJobs.lockedAtMs, nowMs - leaseMs),
           ),
         );
       for (const row of rows) {
@@ -169,10 +179,36 @@ export const makeJobService = (config?: ServerConfig) =>
           })
           .where(and(eq(scanJobs.id, row.id), eq(scanJobs.status, "running")));
       }
-      return rows.length;
+      return rows.length + (yield* recoverServerJobs(database, nowMs));
+    });
+
+    const runServerJob = Effect.fn("JobService.runServerJob")(function* (nowMs: number) {
+      const job = yield* claimNextServerJob(database, {
+        workerId: `server-${newUuid()}`,
+        nowMs,
+        leaseMs,
+      });
+      if (job === null) return false;
+      const outcome = yield* Effect.exit(
+        job.kind === LIBRARY_WATCHER_JOB
+          ? watcher.check(nowMs)
+          : Effect.fail(new Error(`Unknown job kind: ${job.kind}`)),
+      );
+      if (Exit.isSuccess(outcome)) yield* completeServerJob(database, job, nowMs);
+      else {
+        const error = Cause.squash(outcome.cause);
+        yield* failServerJob(
+          database,
+          job,
+          nowMs,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      return true;
     });
 
     const runOne: JobServiceShape["runOne"] = Effect.fn("JobService.runOne")(function* (nowMs) {
+      if (yield* runServerJob(nowMs)) return true;
       const job = yield* repositories.scanning.claimNextJob({
         workerId: `server-${newUuid()}`,
         nowMs,
