@@ -23,6 +23,7 @@ export const createMainWindow = (options: DesktopWindowOptions = {}): Electron.B
       preload: options.preloadPath,
     },
   });
+  if (process.platform === "win32") window.removeMenu();
   window.once("ready-to-show", () => window.show());
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {
