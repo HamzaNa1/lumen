@@ -19,23 +19,7 @@ export interface ScanServiceShape {
 
 export const makeScanService = Effect.gen(function* () {
   const database = yield* Database;
-  const getRun: ScanServiceShape["getRun"] = Effect.fn("Scans.getRun")(function* (runId) {
-    const row = yield* database
-      .select({
-        id: scanRuns.id,
-        libraryId: scanRuns.libraryId,
-        mode: scanRuns.mode,
-        status: scanRuns.status,
-        startedAtMs: scanRuns.startedAtMs,
-        finishedAtMs: scanRuns.finishedAtMs,
-        errorCode: scanRuns.errorCode,
-        errorMessage: scanRuns.errorMessage,
-        createdAtMs: scanRuns.createdAtMs,
-      })
-      .from(scanRuns)
-      .where(eq(scanRuns.id, runId))
-      .get();
-    if (row == null) return yield* notFound("Scan run not found");
+  const runStats = Effect.fn("Scans.runStats")(function* (runId: string) {
     const changes = yield* database
       .select({ change: serverScanSeen.change, count: count() })
       .from(serverScanSeen)
@@ -73,7 +57,7 @@ export const makeScanService = Effect.gen(function* () {
       .from(scanJobs)
       .where(and(eq(scanJobs.runId, runId), eq(scanJobs.operation, "probe")))
       .get();
-    const stats: ScanRunStats = {
+    return {
       discovered: changes.reduce((total, entry) => total + entry.count, 0),
       new: byChange.get("new") ?? 0,
       changed: byChange.get("changed") ?? 0,
@@ -82,8 +66,26 @@ export const makeScanService = Effect.gen(function* () {
       skipped: skipped?.count ?? 0,
       missing: missing?.count ?? 0,
       probesEnqueued: probes?.count ?? 0,
-    };
-    return { ...row, stats };
+    } satisfies ScanRunStats;
+  });
+  const getRun: ScanServiceShape["getRun"] = Effect.fn("Scans.getRun")(function* (runId) {
+    const row = yield* database
+      .select({
+        id: scanRuns.id,
+        libraryId: scanRuns.libraryId,
+        mode: scanRuns.mode,
+        status: scanRuns.status,
+        startedAtMs: scanRuns.startedAtMs,
+        finishedAtMs: scanRuns.finishedAtMs,
+        errorCode: scanRuns.errorCode,
+        errorMessage: scanRuns.errorMessage,
+        createdAtMs: scanRuns.createdAtMs,
+      })
+      .from(scanRuns)
+      .where(eq(scanRuns.id, runId))
+      .get();
+    if (row == null) return yield* notFound("Scan run not found");
+    return { ...row, stats: yield* runStats(runId) };
   });
   const listJobs: ScanServiceShape["listJobs"] = Effect.fn("Scans.listJobs")(function* (runId) {
     return yield* database

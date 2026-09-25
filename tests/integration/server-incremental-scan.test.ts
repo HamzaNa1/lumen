@@ -66,7 +66,9 @@ const makeLibrary = async () => {
   const workspace = await mkdtemp(join(tmpdir(), "lumen-incremental-scan-test-"));
   paths.push(workspace);
   const root = join(workspace, "media");
-  await mkdir(root);
+  const extras = join(workspace, "extras");
+  const roots = [root, extras].map((path) => ({ id: newUuid(), path }));
+  for (const { path } of roots) await mkdir(path);
   const databaseLayer = makeDatabaseLayers({
     databasePath: join(workspace, "server.sqlite"),
   } as never);
@@ -79,7 +81,6 @@ const makeLibrary = async () => {
     MediaIngestLive.pipe(Layer.provide(Layer.mergeAll(dependencies, fakeFfprobe))),
   );
   const libraryId = newUuid();
-  const rootId = newUuid();
 
   const run = <A>(effect: Effect.Effect<A, unknown, never>) => Effect.runPromise(effect);
   const provided = <A>(
@@ -99,24 +100,32 @@ const makeLibrary = async () => {
       yield* database.run(
         sql`INSERT INTO library_profiles(library_id, kind, scan_mode) VALUES (${libraryId}, 'movies', 'full')`,
       );
-      yield* database.run(
-        sql`INSERT INTO library_roots(id, library_id, path, is_enabled, priority, created_at_ms, updated_at_ms) VALUES (${rootId}, ${libraryId}, ${root}, 1, 0, 1, 1)`,
-      );
-      yield* database.run(
-        sql`INSERT INTO library_root_states(root_id, library_id, canonical_path, canonical_key, is_available, scan_generation, updated_at_ms) VALUES (${rootId}, ${libraryId}, ${root}, ${root}, 1, 0, 1)`,
-      );
+      for (const [priority, { id, path }] of roots.entries()) {
+        yield* database.run(
+          sql`INSERT INTO library_roots(id, library_id, path, is_enabled, priority, created_at_ms, updated_at_ms) VALUES (${id}, ${libraryId}, ${path}, 1, ${priority}, 1, 1)`,
+        );
+        yield* database.run(
+          sql`INSERT INTO library_root_states(root_id, library_id, canonical_path, canonical_key, is_available, scan_generation, updated_at_ms) VALUES (${id}, ${libraryId}, ${path}, ${path}, 1, 0, 1)`,
+        );
+      }
     }),
   );
 
-  const write = async (relativePath: string, content: string, modifiedAtMs = 1_000_000) => {
-    const path = join(root, relativePath);
+  const write = async (
+    relativePath: string,
+    content: string,
+    modifiedAtMs = 1_000_000,
+    rootPath = root,
+  ) => {
+    const path = join(rootPath, relativePath);
     await mkdir(join(path, ".."), { recursive: true });
     await Bun.write(path, content);
     await utimes(path, new Date(modifiedAtMs), new Date(modifiedAtMs));
   };
 
   /**
-   * Runs discovery and cleanup for the root, then ingests every probe job the run enqueued.
+   * Runs discovery then cleanup for each root in priority order, as the job queue does because
+   * cleanup outranks discovery, then ingests every probe job the run enqueued.
    * Passing `ingest: false` leaves the probes unprocessed, as if they had failed.
    */
   const scan = (mode: Mode, options: { readonly ingest?: boolean } = {}) =>
@@ -133,8 +142,10 @@ const makeLibrary = async () => {
           mode,
           startedAtMs: Date.now(),
         });
-        yield* scanner.discover(started.id, rootId);
-        yield* scanner.cleanup(started.id, rootId);
+        for (const { id } of roots) {
+          yield* scanner.discover(started.id, id);
+          yield* scanner.cleanup(started.id, id);
+        }
         const jobs = (yield* scans.listJobs(started.id)) as ReadonlyArray<{
           operation: string;
           sourceId: string | null;
@@ -153,7 +164,7 @@ const makeLibrary = async () => {
       }),
     );
 
-  return { root, rootId, libraryId, write, scan, provided };
+  return { root, extras, write, scan };
 };
 
 describe("incremental library scans", () => {
@@ -265,6 +276,22 @@ describe("incremental library scans", () => {
     expect(after.stats.missing).toBe(0);
   });
 
+  test("counts a file moved to another root as moved rather than missing", async () => {
+    const library = await makeLibrary();
+    await library.write("Arrival (2016).mkv", "arrival");
+    await library.scan("full");
+    await rename(
+      join(library.root, "Arrival (2016).mkv"),
+      join(library.extras, "Arrival (2016).mkv"),
+    );
+
+    const report = await library.scan("incremental");
+
+    expect(report.probed).toEqual([]);
+    expect(report.stats.moved).toBe(1);
+    expect(report.stats.missing).toBe(0);
+  });
+
   test("still detects removed media during an incremental scan", async () => {
     const library = await makeLibrary();
     await library.write("Arrival (2016).mkv", "arrival");
@@ -285,6 +312,19 @@ describe("incremental library scans", () => {
       missing: 1,
       probesEnqueued: 0,
     });
+  });
+
+  test("reports removed media as missing only in the scan that first loses it", async () => {
+    const library = await makeLibrary();
+    await library.write("Arrival (2016).mkv", "arrival");
+    await library.write("Heat (1995).mkv", "heat");
+    await library.scan("full");
+    await rm(join(library.root, "Heat (1995).mkv"));
+    await library.scan("incremental");
+
+    const report = await library.scan("incremental");
+
+    expect(report.stats.missing).toBe(0);
   });
 
   test("repairs an unchanged source whose earlier probe never completed", async () => {

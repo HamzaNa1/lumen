@@ -73,9 +73,9 @@ export const makeLibraryWatcher = Effect.gen(function* () {
         continue;
       }
 
-      const library = changed.get(root.libraryId) ?? [];
-      library.push({ id: root.id, modifiedAtMs });
-      changed.set(root.libraryId, library);
+      const changedRoots = changed.get(root.libraryId) ?? [];
+      changedRoots.push({ id: root.id, modifiedAtMs });
+      changed.set(root.libraryId, changedRoots);
     }
 
     let scansStarted = 0;
