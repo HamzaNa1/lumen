@@ -1,4 +1,5 @@
-import { Database, sql } from "@lumen/database";
+import { Database, metadataProviderSettings } from "@lumen/database";
+import { eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 
 export interface MetadataSettingsShape {
@@ -8,17 +9,39 @@ export interface MetadataSettingsShape {
 
 export const makeMetadataSettings = Effect.gen(function* () {
   const database = yield* Database;
-  const tmdbKey: MetadataSettingsShape["tmdbKey"] = () => database.get<{ apiKey: string }>(sql`
-    SELECT api_key AS apiKey FROM metadata_provider_settings WHERE provider = 'tmdb'
-  `).pipe(Effect.map((row) => row?.apiKey ?? null));
-  const setTmdbKey: MetadataSettingsShape["setTmdbKey"] = (key, nowMs) => key === null
-    ? database.run(sql`DELETE FROM metadata_provider_settings WHERE provider = 'tmdb'`).pipe(Effect.asVoid, Effect.mapError(() => new Error("Could not clear metadata settings")))
-    : database.run(sql`
-        INSERT INTO metadata_provider_settings(provider, api_key, updated_at_ms) VALUES ('tmdb', ${key}, ${nowMs})
-        ON CONFLICT(provider) DO UPDATE SET api_key = excluded.api_key, updated_at_ms = excluded.updated_at_ms
-      `).pipe(Effect.asVoid, Effect.mapError(() => new Error("Could not save metadata settings")));
+  const tmdbKey: MetadataSettingsShape["tmdbKey"] = () =>
+    database
+      .select({
+        apiKey: metadataProviderSettings.apiKey,
+      })
+      .from(metadataProviderSettings)
+      .where(eq(metadataProviderSettings.provider, "tmdb"))
+      .get()
+      .pipe(Effect.map((row) => row?.apiKey ?? null));
+  const setTmdbKey: MetadataSettingsShape["setTmdbKey"] = (key, nowMs) =>
+    key === null
+      ? database
+          .delete(metadataProviderSettings)
+          .where(eq(metadataProviderSettings.provider, "tmdb"))
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(() => new Error("Could not clear metadata settings")),
+          )
+      : database
+          .insert(metadataProviderSettings)
+          .values({ provider: "tmdb", apiKey: key, updatedAtMs: nowMs })
+          .onConflictDoUpdate({
+            target: metadataProviderSettings.provider,
+            set: { apiKey: key, updatedAtMs: nowMs },
+          })
+          .pipe(
+            Effect.asVoid,
+            Effect.mapError(() => new Error("Could not save metadata settings")),
+          );
   return { tmdbKey, setTmdbKey };
 });
 
-export class MetadataSettings extends Context.Service<MetadataSettings, MetadataSettingsShape>()("@lumen/server/MetadataSettings") {}
+export class MetadataSettings extends Context.Service<MetadataSettings, MetadataSettingsShape>()(
+  "@lumen/server/MetadataSettings",
+) {}
 export const MetadataSettingsLive = Layer.effect(MetadataSettings, makeMetadataSettings);

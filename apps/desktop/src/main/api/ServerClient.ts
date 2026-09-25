@@ -1,4 +1,4 @@
-import { IpcItemDetails, IpcPlayableStream } from "@lumen/contracts";
+import { IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
@@ -43,7 +43,7 @@ const sessionSchema = Schema.Struct({
   accessExpiresAtMs: Schema.Number,
 });
 
-const librarySchema = Schema.Array(Schema.Struct({
+const libraryEntrySchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   slug: Schema.String,
@@ -51,7 +51,8 @@ const librarySchema = Schema.Array(Schema.Struct({
   isEnabled: Schema.Boolean,
   createdAtMs: Schema.Number,
   updatedAtMs: Schema.Number,
-}));
+});
+const librarySchema = Schema.Array(libraryEntrySchema);
 
 const scanRunSchema = Schema.Struct({
   id: Schema.String,
@@ -273,7 +274,7 @@ export class ServerClient {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
-    }, librarySchema);
+    }, libraryEntrySchema);
   }
 
   async updateLibrary(libraryId: string, input: { readonly name?: string; readonly slug?: string; readonly kind?: "movies" | "shows" | "music"; readonly isEnabled?: boolean }): Promise<IpcLibrary> {
@@ -281,7 +282,7 @@ export class ServerClient {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
-    }, librarySchema);
+    }, libraryEntrySchema);
   }
 
   async deleteLibrary(libraryId: string): Promise<void> {
@@ -314,6 +315,11 @@ export class ServerClient {
 
   async scanStatus(runId: string): Promise<ScanRun> {
     return this.request(`/api/v1/scans/${encodeURIComponent(runId)}`, {}, scanRunSchema);
+  }
+
+  async jobLog(limit = 100): Promise<ReadonlyArray<JobLogEntry>> {
+    const query = new URLSearchParams({ limit: String(limit) });
+    return this.request(`/api/v1/admin/jobs?${query}`, {}, Schema.Array(JobLogEntry));
   }
 
   async items(libraryId: string, cursor: string | null = null): Promise<IpcItemPage> {

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, type BrowserWindow } from "electron";
+import { app, type BrowserWindow, nativeTheme } from "electron";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import type { ServerClient } from "./api/ServerClient";
@@ -21,6 +21,8 @@ if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform",
 
 const bootstrap = async (): Promise<void> => {
   await app.whenReady();
+  // The interface is dark-only; keep native chrome (title bar, menus) consistent with it.
+  nativeTheme.themeSource = "dark";
   const registry = await AccountRegistry.open();
   const installationId = await getOrCreateInstallationId(
     join(app.getPath("userData"), "installation.json"),

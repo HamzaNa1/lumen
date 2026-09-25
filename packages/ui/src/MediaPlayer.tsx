@@ -2,24 +2,26 @@ import { Slider } from "@base-ui/react/slider";
 import type { IpcPlayableStream } from "@lumen/contracts";
 import {
   ArrowLeft,
-  FastForward,
+  LoaderCircle,
   Maximize,
   Minimize,
-  MonitorPlay,
   Pause,
   Play,
-  Rewind,
+  RotateCcw,
+  RotateCw,
   Settings2,
+  TriangleAlert,
   Volume2,
   VolumeX,
 } from "lucide-react";
 import { type Ref, useState } from "react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
-import { formatPlayerTime, streamLabel } from "./PlayerFormatting";
+import { formatPlayerTime, streamLabels } from "./PlayerFormatting";
 
 interface MediaPlayerProps {
   readonly title: string;
+  readonly subtitle?: string;
   readonly paused: boolean;
   readonly loading: boolean;
   readonly error: string | null;
@@ -45,6 +47,7 @@ interface MediaPlayerProps {
 
 export const MediaPlayer = ({
   title,
+  subtitle,
   paused,
   loading,
   error,
@@ -72,9 +75,13 @@ export const MediaPlayer = ({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const audioStreams = streams.filter((stream) => stream.kind === "audio");
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
+  const audioLabels = streamLabels(audioStreams);
+  const subtitleLabels = streamLabels(subtitleStreams);
   const seekValue = Math.min(seekPreview ?? position, duration ?? Math.max(position, 1));
   const volumeValue = volumePreview ?? volume;
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
+  // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
+  const inactive = loading || error !== null;
 
   return (
     <section
@@ -83,33 +90,33 @@ export const MediaPlayer = ({
       data-status={error !== null ? "error" : loading ? "loading" : "ready"}
     >
       <header className="media-player-header">
-        <Button variant="icon" onClick={onBack} aria-label="Back to library">
+        <Button variant="icon" onClick={onBack} aria-label="Back">
           <ArrowLeft aria-hidden="true" size={21} />
         </Button>
         <div className="media-player-title">
           <h1>{title}</h1>
+          {subtitle === undefined || subtitle === "" ? null : <p>{subtitle}</p>}
         </div>
       </header>
 
       <div className="media-player-frame">
         <div className="media-player-surface" ref={surfaceRef}>
           <div className="media-player-placeholder">
-            <span className="media-player-mark">
-              <MonitorPlay aria-hidden="true" size={28} />
-            </span>
-            <strong>{error ?? (loading ? "Preparing your movie…" : "MPV playback surface")}</strong>
-            <span>
-              {error === null
-                ? loading
-                  ? "Opening the original file"
-                  : "Original quality · no transcoding"
-                : "Check that embedded MPV is installed, then try again."}
-            </span>
-            {error === null ? null : (
-              <Button variant="primary" onClick={onRetry}>
-                Try again
-              </Button>
-            )}
+            {error !== null ? (
+              <>
+                <TriangleAlert aria-hidden="true" size={24} />
+                <strong>Playback failed</strong>
+                <span>{error}</span>
+                <Button variant="primary" onClick={onRetry}>
+                  Try again
+                </Button>
+              </>
+            ) : loading ? (
+              <>
+                <LoaderCircle className="spinner" aria-hidden="true" size={26} />
+                <span>Starting playback…</span>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -121,7 +128,7 @@ export const MediaPlayer = ({
               min={0}
               max={duration ?? Math.max(position, 1)}
               value={seekValue}
-              disabled={loading || duration === null || duration <= 0}
+              disabled={inactive || duration === null || duration <= 0}
               onValueChange={setSeekPreview}
               onValueCommitted={(value) => {
                 setSeekPreview(null);
@@ -144,40 +151,48 @@ export const MediaPlayer = ({
           <div className="media-player-toolbar">
             <div className="media-player-transport">
               <Button
+                className="media-player-skip"
                 variant="icon"
-                disabled={loading || duration === null}
+                disabled={inactive || duration === null}
                 onClick={() => onSeek(Math.max(0, position - 10))}
-                aria-label="Rewind 10 seconds"
+                aria-label="Back 10 seconds"
               >
-                <Rewind aria-hidden="true" size={19} fill="currentColor" />
+                <RotateCcw aria-hidden="true" size={21} strokeWidth={1.75} />
+                <span className="media-player-skip-label" aria-hidden="true">
+                  10
+                </span>
               </Button>
               <Button
                 className="media-player-play"
                 variant="icon"
-                disabled={loading}
+                disabled={inactive}
                 onClick={onPause}
                 aria-label={paused ? "Resume playback" : "Pause playback"}
               >
                 {paused ? (
-                  <Play aria-hidden="true" size={22} fill="currentColor" />
+                  <Play aria-hidden="true" size={22} fill="currentColor" strokeWidth={0} />
                 ) : (
-                  <Pause aria-hidden="true" size={22} fill="currentColor" />
+                  <Pause aria-hidden="true" size={22} fill="currentColor" strokeWidth={0} />
                 )}
               </Button>
               <Button
+                className="media-player-skip"
                 variant="icon"
-                disabled={loading || duration === null}
+                disabled={inactive || duration === null}
                 onClick={() => onSeek(Math.min(duration ?? position + 10, position + 10))}
                 aria-label="Forward 10 seconds"
               >
-                <FastForward aria-hidden="true" size={19} fill="currentColor" />
+                <RotateCw aria-hidden="true" size={21} strokeWidth={1.75} />
+                <span className="media-player-skip-label" aria-hidden="true">
+                  10
+                </span>
               </Button>
             </div>
             <div className="media-player-actions">
               <div className="media-player-volume">
                 <Button
                   variant="icon"
-                  disabled={loading}
+                  disabled={inactive}
                   onClick={() => onVolume(volume, !muted)}
                   aria-label={muted ? "Unmute" : "Mute"}
                 >
@@ -192,7 +207,7 @@ export const MediaPlayer = ({
                   min={0}
                   max={100}
                   value={volumeValue}
-                  disabled={loading}
+                  disabled={inactive}
                   onValueChange={setVolumePreview}
                   onValueCommitted={(value) => {
                     setVolumePreview(null);
@@ -220,14 +235,14 @@ export const MediaPlayer = ({
                 </Button>
                 {settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
-                    <strong>Playback settings</strong>
+                    <strong>Audio and subtitles</strong>
                     {audioStreams.length > 0 ? (
                       <SelectField
                         label="Audio track"
                         value={selectedAudioStreamId}
                         options={audioStreams.map((stream, index) => ({
                           value: stream.id,
-                          label: streamLabel(stream, index, audioStreams.length),
+                          label: audioLabels[index] ?? "",
                         }))}
                         onValueChange={onSelectAudio}
                       />
@@ -237,17 +252,17 @@ export const MediaPlayer = ({
                         label="Subtitles"
                         value={selectedSubtitleStreamId ?? "off"}
                         options={[
-                          { value: "off", label: "Subtitles off" },
+                          { value: "off", label: "Off" },
                           ...subtitleStreams.map((stream, index) => ({
                             value: stream.id,
-                            label: streamLabel(stream, index, subtitleStreams.length),
+                            label: subtitleLabels[index] ?? "",
                           })),
                         ]}
                         onValueChange={(value) => onSelectSubtitle(value === "off" ? null : value)}
                       />
                     ) : null}
                     {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
-                      <p>No alternate tracks available</p>
+                      <p>This file has no alternate audio or subtitle tracks.</p>
                     ) : null}
                   </div>
                 ) : null}

@@ -4,6 +4,7 @@ import { Field } from "@base-ui/react/field";
 import { Form as BaseForm } from "@base-ui/react/form";
 import { Input } from "@base-ui/react/input";
 import { Select } from "@base-ui/react/select";
+import { Switch } from "@base-ui/react/switch";
 import { Check, ChevronDown, X } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "./Button";
@@ -72,7 +73,7 @@ export const SelectField = <T extends string>({
       <Select.Trigger className="select-trigger">
         <Select.Value placeholder={placeholder} />
         <Select.Icon className="select-icon">
-          <ChevronDown aria-hidden="true" size={16} />
+          <ChevronDown aria-hidden="true" size={15} />
         </Select.Icon>
       </Select.Trigger>
     </div>
@@ -84,7 +85,7 @@ export const SelectField = <T extends string>({
               <Select.Item className="select-item" key={option.value} value={option.value}>
                 <Select.ItemText>{option.label}</Select.ItemText>
                 <Select.ItemIndicator className="select-indicator">
-                  <Check aria-hidden="true" size={15} />
+                  <Check aria-hidden="true" size={14} />
                 </Select.ItemIndicator>
               </Select.Item>
             ))}
@@ -110,10 +111,38 @@ export const CheckboxField = ({
     <Field.Label className="checkbox-label">
       <Checkbox.Root className="checkbox" checked={checked} onCheckedChange={onCheckedChange}>
         <Checkbox.Indicator className="checkbox-indicator">
-          <Check aria-hidden="true" size={13} strokeWidth={3} />
+          <Check aria-hidden="true" size={12} strokeWidth={3} />
         </Checkbox.Indicator>
       </Checkbox.Root>
       <span>{label}</span>
+    </Field.Label>
+  </Field.Root>
+);
+
+export const SwitchField = ({
+  label,
+  description,
+  checked,
+  onCheckedChange,
+  disabled = false,
+}: {
+  readonly label: string;
+  readonly description?: string;
+  readonly checked: boolean;
+  readonly onCheckedChange: (checked: boolean) => void;
+  readonly disabled?: boolean;
+}): React.ReactElement => (
+  <Field.Root className="switch-field" disabled={disabled}>
+    <Field.Label className="switch-field-label">
+      <span className="switch-field-text">
+        <span className="field-label">{label}</span>
+        {description === undefined ? null : (
+          <span className="field-description">{description}</span>
+        )}
+      </span>
+      <Switch.Root className="switch" checked={checked} onCheckedChange={onCheckedChange}>
+        <Switch.Thumb className="switch-thumb" />
+      </Switch.Root>
     </Field.Label>
   </Field.Root>
 );
@@ -125,6 +154,8 @@ interface ModalProps {
   readonly description?: string;
   readonly children: ReactNode;
   readonly className?: string;
+  /** Keeps the title for assistive technology but lets the content draw its own header. */
+  readonly hideHeader?: boolean;
 }
 
 export const Modal = ({
@@ -134,25 +165,42 @@ export const Modal = ({
   description,
   children,
   className,
+  hideHeader = false,
 }: ModalProps): React.ReactElement => (
   <Dialog.Root open={open} onOpenChange={onOpenChange}>
     <Dialog.Portal>
       <Dialog.Backdrop className="dialog-backdrop" />
       <Dialog.Viewport className="dialog-viewport">
         <Dialog.Popup className={`dialog-popup${className === undefined ? "" : ` ${className}`}`}>
-          <div className="dialog-header">
-            <div>
-              <Dialog.Title className="dialog-title">{title}</Dialog.Title>
+          {hideHeader ? (
+            <>
+              <Dialog.Title className="sr-only">{title}</Dialog.Title>
               {description === undefined ? null : (
-                <Dialog.Description className="dialog-description">
-                  {description}
-                </Dialog.Description>
+                <Dialog.Description className="sr-only">{description}</Dialog.Description>
               )}
+              <Dialog.Close
+                render={
+                  <Button variant="icon" className="dialog-close-floating" aria-label="Close" />
+                }
+              >
+                <X aria-hidden="true" size={18} />
+              </Dialog.Close>
+            </>
+          ) : (
+            <div className="dialog-header">
+              <div>
+                <Dialog.Title className="dialog-title">{title}</Dialog.Title>
+                {description === undefined ? null : (
+                  <Dialog.Description className="dialog-description">
+                    {description}
+                  </Dialog.Description>
+                )}
+              </div>
+              <Dialog.Close render={<Button variant="icon" size="sm" aria-label="Close dialog" />}>
+                <X aria-hidden="true" size={16} />
+              </Dialog.Close>
             </div>
-            <Dialog.Close render={<Button variant="icon" aria-label="Close dialog" />}>
-              <X aria-hidden="true" size={19} />
-            </Dialog.Close>
-          </div>
+          )}
           {children}
         </Dialog.Popup>
       </Dialog.Viewport>

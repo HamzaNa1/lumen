@@ -1,34 +1,75 @@
-import { Database, sql } from "@lumen/database";
+import { Database, libraries, scanJobs, scanRuns } from "@lumen/database";
+import { asc, desc, eq, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { notFound } from "../core/Errors";
 
 export interface ScanServiceShape {
   readonly getRun: (runId: string) => Effect.Effect<unknown, unknown>;
   readonly listJobs: (runId: string) => Effect.Effect<ReadonlyArray<unknown>, unknown>;
+  readonly listRecentJobs: (limit: number) => Effect.Effect<ReadonlyArray<unknown>, unknown>;
 }
 
 export const makeScanService = Effect.gen(function* () {
   const database = yield* Database;
   const getRun: ScanServiceShape["getRun"] = Effect.fn("Scans.getRun")(function* (runId) {
-    const row = yield* database.get(sql`
-      SELECT id, library_id AS libraryId, mode, status, started_at_ms AS startedAtMs, finished_at_ms AS finishedAtMs,
-        error_code AS errorCode, error_message AS errorMessage, created_at_ms AS createdAtMs
-      FROM scan_runs WHERE id = ${runId}
-    `);
+    const row = yield* database
+      .select({
+        id: scanRuns.id,
+        libraryId: scanRuns.libraryId,
+        mode: scanRuns.mode,
+        status: scanRuns.status,
+        startedAtMs: scanRuns.startedAtMs,
+        finishedAtMs: scanRuns.finishedAtMs,
+        errorCode: scanRuns.errorCode,
+        errorMessage: scanRuns.errorMessage,
+        createdAtMs: scanRuns.createdAtMs,
+      })
+      .from(scanRuns)
+      .where(eq(scanRuns.id, runId))
+      .get();
     if (row == null) return yield* notFound("Scan run not found");
     return row;
   });
   const listJobs: ScanServiceShape["listJobs"] = Effect.fn("Scans.listJobs")(function* (runId) {
-    return yield* database.all(sql`
-      SELECT id, run_id AS runId, parent_job_id AS parentJobId, source_id AS sourceId, dedupe_key AS dedupeKey,
-        operation, status, priority, attempts, max_attempts AS maxAttempts, available_at_ms AS availableAtMs,
-        locked_at_ms AS lockedAtMs, locked_by AS lockedBy, started_at_ms AS startedAtMs, finished_at_ms AS finishedAtMs,
-        error_code AS errorCode, error_message AS errorMessage
-      FROM scan_jobs WHERE run_id = ${runId} ORDER BY available_at_ms ASC, id ASC
-    `);
+    return yield* database
+      .select()
+      .from(scanJobs)
+      .where(eq(scanJobs.runId, runId))
+      .orderBy(asc(scanJobs.availableAtMs), asc(scanJobs.id));
   });
-  return { getRun, listJobs };
+  const listRecentJobs: ScanServiceShape["listRecentJobs"] = Effect.fn("Scans.listRecentJobs")(
+    function* (limit) {
+      return yield* database
+        .select({
+          id: scanJobs.id,
+          runId: scanJobs.runId,
+          libraryId: scanRuns.libraryId,
+          libraryName: libraries.name,
+          mode: scanRuns.mode,
+          operation: scanJobs.operation,
+          status: scanJobs.status,
+          attempts: scanJobs.attempts,
+          maxAttempts: scanJobs.maxAttempts,
+          availableAtMs: scanJobs.availableAtMs,
+          startedAtMs: scanJobs.startedAtMs,
+          finishedAtMs: scanJobs.finishedAtMs,
+          errorCode: scanJobs.errorCode,
+          errorMessage: scanJobs.errorMessage,
+        })
+        .from(scanJobs)
+        .innerJoin(scanRuns, eq(scanRuns.id, scanJobs.runId))
+        .innerJoin(libraries, eq(libraries.id, scanRuns.libraryId))
+        .orderBy(
+          desc(sql`coalesce(${scanJobs.startedAtMs}, ${scanJobs.availableAtMs})`),
+          desc(scanJobs.id),
+        )
+        .limit(limit);
+    },
+  );
+  return { getRun, listJobs, listRecentJobs };
 });
 
-export class ScanService extends Context.Service<ScanService, ScanServiceShape>()("@lumen/server/Scans") {}
+export class ScanService extends Context.Service<ScanService, ScanServiceShape>()(
+  "@lumen/server/Scans",
+) {}
 export const ScanServiceLive = Layer.effect(ScanService, makeScanService);

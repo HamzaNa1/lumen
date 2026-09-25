@@ -1,7 +1,10 @@
 import { CatalogSearchResult, SearchCatalog } from "@lumen/contracts";
-import { sql } from "drizzle-orm";
+import { and, asc, eq, exists, or, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import type { DatabaseClient } from "../Database";
+import { buildFtsMatch } from "../Fts";
+import { albums, artists, tracks } from "../tables/schema";
+import { catalogFts } from "../tables/SearchSchema";
 import { boundary, guard } from "./Boundary";
 
 interface SearchRow {
@@ -15,42 +18,69 @@ interface SearchRow {
 export const makeSearchRepository = (database: DatabaseClient) => {
   const search = Effect.fn("SearchRepository.search")(function* (input: unknown) {
     const value = yield* boundary(SearchCatalog, input, "search.search");
-    const match = value.query
-      .trim()
-      .split(/\s+/u)
-      .map((term) => `"${term.replaceAll('"', '""')}"*`)
-      .join(" AND ");
+    const match = buildFtsMatch(value.query);
+    const libraryFilter =
+      value.libraryId === null
+        ? undefined
+        : or(
+            and(
+              eq(catalogFts.entityType, "artist"),
+              exists(
+                database
+                  .select({ value: artists.id })
+                  .from(artists)
+                  .where(
+                    and(
+                      eq(artists.id, catalogFts.entityId),
+                      eq(artists.libraryId, value.libraryId),
+                    ),
+                  ),
+              ),
+            ),
+            and(
+              eq(catalogFts.entityType, "album"),
+              exists(
+                database
+                  .select({ value: albums.id })
+                  .from(albums)
+                  .where(
+                    and(eq(albums.id, catalogFts.entityId), eq(albums.libraryId, value.libraryId)),
+                  ),
+              ),
+            ),
+            and(
+              eq(catalogFts.entityType, "track"),
+              exists(
+                database
+                  .select({ value: tracks.id })
+                  .from(tracks)
+                  .where(
+                    and(eq(tracks.id, catalogFts.entityId), eq(tracks.libraryId, value.libraryId)),
+                  ),
+              ),
+            ),
+          );
     const rows = yield* guard(
-      database.all<SearchRow>(sql`
-        SELECT
-          catalog_fts.entity_type AS entityType,
-          catalog_fts.entity_id AS entityId,
-          catalog_fts.title AS title,
-          nullif(catalog_fts.subtitle, '') AS subtitle,
-          bm25(catalog_fts) AS rank
-        FROM catalog_fts
-        WHERE catalog_fts MATCH ${match}
-          AND (
-            ${value.libraryId} IS NULL
-            OR CASE catalog_fts.entity_type
-              WHEN 'artist' THEN EXISTS (
-                SELECT 1 FROM artists WHERE artists.id = catalog_fts.entity_id AND artists.library_id = ${value.libraryId}
-              )
-              WHEN 'album' THEN EXISTS (
-                SELECT 1 FROM albums WHERE albums.id = catalog_fts.entity_id AND albums.library_id = ${value.libraryId}
-              )
-              WHEN 'track' THEN EXISTS (
-                SELECT 1 FROM tracks WHERE tracks.id = catalog_fts.entity_id AND tracks.library_id = ${value.libraryId}
-              )
-              ELSE 0
-            END
-          )
-        ORDER BY bm25(catalog_fts), catalog_fts.entity_type, catalog_fts.entity_id
-        LIMIT ${value.limit} OFFSET ${value.offset}
-      `),
+      database
+        .select({
+          entityType: catalogFts.entityType,
+          entityId: catalogFts.entityId,
+          title: catalogFts.title,
+          subtitle: sql<string | null>`nullif(${catalogFts.subtitle}, '')`,
+          rank: sql<number>`bm25(catalog_fts)`,
+        })
+        .from(catalogFts)
+        .where(and(sql`catalog_fts MATCH ${match}`, libraryFilter))
+        .orderBy(sql`bm25(catalog_fts)`, asc(catalogFts.entityType), asc(catalogFts.entityId))
+        .limit(value.limit)
+        .offset(value.offset),
       "search.search",
     );
-    return yield* boundary(Schema.Array(CatalogSearchResult), rows, "search.search.result");
+    return yield* boundary(
+      Schema.Array(CatalogSearchResult),
+      rows as ReadonlyArray<SearchRow>,
+      "search.search.result",
+    );
   });
 
   return { search };

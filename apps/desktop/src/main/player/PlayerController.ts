@@ -97,6 +97,8 @@ export class PlayerController extends EventEmitter {
     readonly client: ServerClient;
     readonly connectionId: string;
     readonly itemId: string;
+    /** Resume point; playback starts from the beginning when omitted. */
+    readonly startAtSeconds?: number;
   }): Promise<IpcPlayerSession> {
     const generation = ++this.startGeneration;
     await this.stopActive();
@@ -205,6 +207,14 @@ export class PlayerController extends EventEmitter {
         "sid",
         selectedSubtitleStream === null ? "no" : (trackIds.get(selectedSubtitleStream.id) ?? "no"),
       ]);
+      // Seek while still paused so the first frame shown is the resume point.
+      const startAtSeconds =
+        input.startAtSeconds !== undefined &&
+        Number.isFinite(input.startAtSeconds) &&
+        input.startAtSeconds > 0
+          ? input.startAtSeconds
+          : 0;
+      if (startAtSeconds > 0) await ipc.command(["seek", startAtSeconds, "absolute"]);
       await ipc.command(["set_property", "pause", "no"]);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.surface.show();
@@ -212,7 +222,7 @@ export class PlayerController extends EventEmitter {
         sessionId: session.sessionId,
         itemId: session.itemId,
         paused: false,
-        positionSeconds: 0,
+        positionSeconds: startAtSeconds,
         durationSeconds: session.durationSeconds,
         volume: 100,
         muted: false,

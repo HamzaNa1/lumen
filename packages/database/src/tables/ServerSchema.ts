@@ -10,7 +10,17 @@ import {
   text,
   uniqueIndex,
 } from "drizzle-orm/sqlite-core";
-import { artwork, libraryRoots, libraries, mediaSources, outboxEvents, users } from "./schema";
+import {
+  artwork,
+  libraryRoots,
+  libraries,
+  mediaSources,
+  outboxEvents,
+  playbackSessions,
+  scanRuns,
+  tracks,
+  users,
+} from "./schema";
 
 const millis = (name: string) => integer(name).notNull();
 
@@ -101,20 +111,24 @@ export const catalogItems = sqliteTable(
       foreignColumns: [libraries.id],
     }).onDelete("cascade"),
     uniqueIndex("catalog_items_id_library_uq").on(table.id, table.libraryId),
-    index("catalog_items_browse_idx").on(
-      table.libraryId,
-      table.kind,
-      table.sortTitle,
-      table.id,
-    ),
+    index("catalog_items_browse_idx").on(table.libraryId, table.kind, table.sortTitle, table.id),
     index("catalog_items_recent_idx").on(table.libraryId, table.addedAtMs, table.id),
     check(
       "catalog_items_kind_chk",
       sql`${table.kind} in ('movie', 'show', 'season', 'episode', 'artist', 'album', 'track')`,
     ),
-    check("catalog_items_parent_fk", sql`${table.parentId} is null or ${table.parentId} <> ${table.id}`),
-    check("catalog_items_year_chk", sql`${table.year} is null or ${table.year} between 1800 and 9999`),
-    check("catalog_items_index_chk", sql`${table.indexNumber} is null or ${table.indexNumber} >= 0`),
+    check(
+      "catalog_items_parent_fk",
+      sql`${table.parentId} is null or ${table.parentId} <> ${table.id}`,
+    ),
+    check(
+      "catalog_items_year_chk",
+      sql`${table.year} is null or ${table.year} between 1800 and 9999`,
+    ),
+    check(
+      "catalog_items_index_chk",
+      sql`${table.indexNumber} is null or ${table.indexNumber} >= 0`,
+    ),
     check(
       "catalog_items_duration_chk",
       sql`${table.durationSeconds} is null or ${table.durationSeconds} >= 0`,
@@ -177,18 +191,28 @@ export const catalogItemSources = sqliteTable(
 
 // One primary path identity per logical item. A separate roots/path key prevents
 // same-named series in different roots from being merged by their display title.
-export const catalogItemOrigins = sqliteTable("catalog_item_origins", {
-  itemId: text("item_id").primaryKey().references(() => catalogItems.id, { onDelete: "cascade" }),
-  rootId: text("root_id").notNull().references(() => libraryRoots.id, { onDelete: "cascade" }),
-  relativePath: text("relative_path").notNull(),
-  kind: text("kind").notNull(),
-}, (table) => [
-  uniqueIndex("catalog_item_origins_path_uq").on(table.rootId, table.relativePath, table.kind),
-  index("catalog_item_origins_root_idx").on(table.rootId),
-]);
+export const catalogItemOrigins = sqliteTable(
+  "catalog_item_origins",
+  {
+    itemId: text("item_id")
+      .primaryKey()
+      .references(() => catalogItems.id, { onDelete: "cascade" }),
+    rootId: text("root_id")
+      .notNull()
+      .references(() => libraryRoots.id, { onDelete: "cascade" }),
+    relativePath: text("relative_path").notNull(),
+    kind: text("kind").notNull(),
+  },
+  (table) => [
+    uniqueIndex("catalog_item_origins_path_uq").on(table.rootId, table.relativePath, table.kind),
+    index("catalog_item_origins_root_idx").on(table.rootId),
+  ],
+);
 
 export const catalogItemMetadata = sqliteTable("catalog_item_metadata", {
-  itemId: text("item_id").primaryKey().references(() => catalogItems.id, { onDelete: "cascade" }),
+  itemId: text("item_id")
+    .primaryKey()
+    .references(() => catalogItems.id, { onDelete: "cascade" }),
   releaseDate: text("release_date"),
   contentRating: text("content_rating"),
   communityRating: real("community_rating"),
@@ -200,12 +224,20 @@ export const catalogItemMetadata = sqliteTable("catalog_item_metadata", {
   lockedFieldsJson: text("locked_fields_json").notNull().default("[]"),
 });
 
-export const catalogItemArtwork = sqliteTable("catalog_item_artwork", {
-  itemId: text("item_id").notNull().references(() => catalogItems.id, { onDelete: "cascade" }),
-  role: text("role").notNull(),
-  artworkId: text("artwork_id").notNull().references(() => artwork.id, { onDelete: "cascade" }),
-  source: text("source").notNull(),
-}, (table) => [primaryKey({ name: "catalog_item_artwork_pk", columns: [table.itemId, table.role] })]);
+export const catalogItemArtwork = sqliteTable(
+  "catalog_item_artwork",
+  {
+    itemId: text("item_id")
+      .notNull()
+      .references(() => catalogItems.id, { onDelete: "cascade" }),
+    role: text("role").notNull(),
+    artworkId: text("artwork_id")
+      .notNull()
+      .references(() => artwork.id, { onDelete: "cascade" }),
+    source: text("source").notNull(),
+  },
+  (table) => [primaryKey({ name: "catalog_item_artwork_pk", columns: [table.itemId, table.role] })],
+);
 
 export const mediaSourceAvailability = sqliteTable(
   "media_source_availability",
@@ -409,9 +441,15 @@ export const jobs = sqliteTable(
   (table) => [
     uniqueIndex("jobs_idempotency_key_uq").on(table.idempotencyKey),
     index("jobs_claim_idx").on(table.state, table.nextRunAtMs, table.leaseExpiresAtMs),
-    check("jobs_state_chk", sql`${table.state} in ('pending', 'running', 'succeeded', 'failed', 'cancelled')`),
+    check(
+      "jobs_state_chk",
+      sql`${table.state} in ('pending', 'running', 'succeeded', 'failed', 'cancelled')`,
+    ),
     check("jobs_payload_json_chk", sql`json_valid(${table.payloadJson})`),
-    check("jobs_attempts_chk", sql`${table.attempts} >= 0 and ${table.maxAttempts} between 1 and 20`),
+    check(
+      "jobs_attempts_chk",
+      sql`${table.attempts} >= 0 and ${table.maxAttempts} between 1 and 20`,
+    ),
     check(
       "jobs_lease_chk",
       sql`(${table.leaseOwner} is null) = (${table.leaseExpiresAtMs} is null)`,
@@ -454,4 +492,82 @@ export const catalogItemOutbox = sqliteTable(
     }).onDelete("cascade"),
     index("catalog_item_outbox_item_idx").on(table.libraryId, table.itemId, table.createdAtMs),
   ],
+);
+
+export const serverIdentity = sqliteTable(
+  "server_identity",
+  {
+    singleton: integer("singleton").primaryKey(),
+    installationId: text("installation_id").notNull(),
+    createdAtMs: millis("created_at_ms"),
+    updatedAtMs: millis("updated_at_ms"),
+  },
+  (table) => [check("server_identity_singleton_chk", sql`${table.singleton} = 1`)],
+);
+
+export const serverScanSeen = sqliteTable(
+  "server_scan_seen",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => mediaSources.id, { onDelete: "cascade" }),
+    seenAtMs: millis("seen_at_ms"),
+  },
+  (table) => [primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] })],
+);
+
+export const serverScheduledJobs = sqliteTable(
+  "server_scheduled_jobs",
+  {
+    name: text("name").primaryKey(),
+    intervalMs: integer("interval_ms").notNull(),
+    nextRunAtMs: millis("next_run_at_ms"),
+    lastStartedAtMs: integer("last_started_at_ms"),
+    lastFinishedAtMs: integer("last_finished_at_ms"),
+    lastError: text("last_error"),
+    updatedAtMs: millis("updated_at_ms"),
+  },
+  (table) => [
+    index("server_scheduled_jobs_due_idx").on(table.nextRunAtMs),
+    check("server_scheduled_jobs_interval_chk", sql`${table.intervalMs} > 0`),
+  ],
+);
+
+export const serverLibraryWatchState = sqliteTable("server_library_watch_state", {
+  rootId: text("root_id")
+    .primaryKey()
+    .references(() => libraryRoots.id, { onDelete: "cascade" }),
+  modifiedAtMs: millis("modified_at_ms"),
+  checkedAtMs: millis("checked_at_ms"),
+});
+
+export const serverPlaybackSequences = sqliteTable(
+  "server_playback_sequences",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => playbackSessions.id, { onDelete: "cascade" }),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    sequence: integer("sequence").notNull(),
+  },
+  (table) => [
+    primaryKey({ name: "server_playback_sequences_pk", columns: [table.sessionId, table.trackId] }),
+  ],
+);
+
+export const serverEventLog = sqliteTable(
+  "server_event_log",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    createdAtMs: millis("created_at_ms"),
+    topic: text("topic").notNull(),
+    userId: text("user_id"),
+    payloadJson: text("payload_json").notNull(),
+  },
+  (table) => [index("server_event_log_user_id_idx").on(table.userId, table.id)],
 );
