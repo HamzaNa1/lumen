@@ -6,9 +6,14 @@
   "files": ["out/**", "package.json"],
   "extraResources": [{ "from": "resources/native", "to": "resources/native" }],
   "directories": { "output": "release" },
+  "afterPack": "./scripts/after-pack.cjs",
   "mac": {
     "category": "public.app-category.video",
     "icon": "resources/icons/icon.icns",
+    "hardenedRuntime": true,
+    "forceCodeSigning": true,
+    "notarize": true,
+    "signIgnore": ["/resources/native/"],
     "extendInfo": {
       "NSLocalNetworkUsageDescription": "Lumen connects to media servers on your local network."
     },
@@ -19,7 +24,16 @@
   },
   "win": {
     "icon": "resources/icons/icon.ico",
+    "forceCodeSigning": true,
     "target": ["nsis", "portable"]
+  },
+  "nsis": {
+    "perMachine": false,
+    "oneClick": true,
+    "artifactName": "Lumen-Setup-${version}-${arch}.${ext}"
+  },
+  "portable": {
+    "artifactName": "Lumen-Portable-${version}-${arch}.${ext}"
   },
   "linux": {
     "icon": "resources/icons/icon.png",
@@ -27,5 +41,5 @@
     "category": "AudioVideo",
     "maintainer": "Lumen <HamzaNa1@users.noreply.github.com>"
   },
-  "publish": [{ "provider": "generic", "url": "https://updates.lumen.invalid" }]
+  "publish": [{ "provider": "github", "owner": "HamzaNa1", "repo": "lumen" }]
 }

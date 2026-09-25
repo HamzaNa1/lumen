@@ -48,6 +48,7 @@ import {
   useState,
 } from "react";
 import { LumenMark } from "./LumenMark";
+import { UpdateStatusCard } from "./UpdateStatusCard";
 
 const bridge = window.lumen;
 const roleOptions = [
@@ -952,6 +953,7 @@ export const SettingsPage = (): React.ReactElement => {
         description="Your playback and connection details at a glance."
       />
       <div className="settings-grid">
+        <UpdateStatusCard />
         <InfoCard
           icon={MonitorPlay}
           title="Playback"

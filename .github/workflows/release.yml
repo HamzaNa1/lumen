@@ -27,18 +27,23 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
         run: |
           if [[ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]]; then
             echo 'Run releases from the default branch.' >&2
             exit 1
           fi
           bun scripts/version.ts check "$RELEASE_VERSION"
-          if git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" >/dev/null; then
-            echo "v$RELEASE_VERSION already exists." >&2
+          bun scripts/verify-release-order.ts "$RELEASE_VERSION"
+          if gh api "repos/$GH_REPO/releases/tags/v$RELEASE_VERSION" > release.json 2>/dev/null; then
+            jq -e --arg sha "$GITHUB_SHA" '.draft == true and .target_commitish == $sha' release.json >/dev/null || {
+              echo 'Existing release is published or belongs to another commit.' >&2
+              exit 1
+            }
+          elif git ls-remote --exit-code --tags origin "refs/tags/v$RELEASE_VERSION" >/dev/null; then
+            echo 'Release tag exists without a matching draft.' >&2
             exit 1
-          else
-            status=$?
-            if [[ "$status" -ne 2 ]]; then exit "$status"; fi
           fi
           echo "version=$RELEASE_VERSION" >> "$GITHUB_OUTPUT"
       - run: bun install --frozen-lockfile
@@ -59,6 +64,34 @@ jobs:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
       - run: bun run typecheck
+      - name: Require signing credentials
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WIN_PUBLISHER_NAME: ${{ secrets.WIN_PUBLISHER_NAME }}
+        run: |
+          if [[ "$RUNNER_OS" == 'macOS' ]]; then
+            for name in MAC_CSC_LINK MAC_CSC_KEY_PASSWORD MAC_SIGN_IDENTITY APPLE_ID APPLE_APP_SPECIFIC_PASSWORD APPLE_TEAM_ID; do
+              [[ -n "${!name}" ]] || { echo "Missing $name" >&2; exit 1; }
+            done
+          elif [[ "$RUNNER_OS" == 'Windows' ]]; then
+            for name in WIN_CSC_LINK WIN_CSC_KEY_PASSWORD WIN_PUBLISHER_NAME; do
+              [[ -n "${!name}" ]] || { echo "Missing $name" >&2; exit 1; }
+            done
+          fi
+      - name: Import macOS Developer ID certificate
+        if: runner.os == 'macOS'
+        uses: apple-actions/import-codesign-certs@v7
+        with:
+          p12-file-base64: ${{ secrets.MAC_CSC_LINK }}
+          p12-password: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
       - name: Bundle MPV (Linux)
         if: runner.os == 'Linux'
         shell: bash
@@ -114,7 +147,67 @@ jobs:
           bun scripts/verify-native-binaries.ts --write-manifest
           bun scripts/verify-native-binaries.ts
       - run: bun run --cwd apps/desktop build
-      - run: bun run --cwd apps/desktop package
+      - name: Package signed desktop
+        run: bun run --cwd apps/desktop package
+        env:
+          CSC_LINK: ${{ runner.os == 'macOS' && secrets.MAC_CSC_LINK || secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ runner.os == 'macOS' && secrets.MAC_CSC_KEY_PASSWORD || secrets.WIN_CSC_KEY_PASSWORD }}
+          LUMEN_MAC_SIGN_IDENTITY: ${{ secrets.MAC_SIGN_IDENTITY }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          ELECTRON_BUILDER_7Z_FILTER: ${{ runner.os == 'Windows' && 'BCJ' || '' }}
+      - name: Verify packaged app and generated feed
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          WIN_PUBLISHER_NAME: ${{ secrets.WIN_PUBLISHER_NAME }}
+        run: |
+          channel=latest
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            channel="${RELEASE_VERSION#*-}"
+            channel="${channel%%.*}"
+          fi
+          case "$RUNNER_OS" in
+            macOS)
+              app_dir=apps/desktop/release/mac-arm64
+              native_dir="$app_dir/Lumen.app/Contents/Resources/resources/native"
+              feed="$channel-mac.yml"
+              codesign --verify --deep --strict --verbose=2 "$app_dir/Lumen.app"
+              xcrun stapler validate "$app_dir/Lumen.app"
+              find "$native_dir" -name '*.dylib' -exec codesign --verify --strict '{}' ';'
+              find "$app_dir/Lumen.app/Contents/Resources/app.asar.unpacked" -name '*.node' -exec codesign --verify --strict '{}' ';'
+              zip_file="$(find apps/desktop/release -maxdepth 1 -name '*.zip' -type f -print -quit)"
+              test -n "$zip_file"
+              mkdir -p "$RUNNER_TEMP/lumen-zip"
+              unzip -q "$zip_file" -d "$RUNNER_TEMP/lumen-zip"
+              codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/lumen-zip/Lumen.app"
+              xcrun stapler validate "$RUNNER_TEMP/lumen-zip/Lumen.app"
+              bun scripts/verify-native-binaries.ts --native-dir "$RUNNER_TEMP/lumen-zip/Lumen.app/Contents/Resources/resources/native"
+              dmg_file="$(find apps/desktop/release -maxdepth 1 -name '*.dmg' -type f -print -quit)"
+              test -n "$dmg_file"
+              mkdir -p "$RUNNER_TEMP/lumen-dmg"
+              hdiutil attach -readonly -nobrowse -mountpoint "$RUNNER_TEMP/lumen-dmg" "$dmg_file"
+              codesign --verify --deep --strict --verbose=2 "$RUNNER_TEMP/lumen-dmg/Lumen.app"
+              bun scripts/verify-native-binaries.ts --native-dir "$RUNNER_TEMP/lumen-dmg/Lumen.app/Contents/Resources/resources/native"
+              hdiutil detach "$RUNNER_TEMP/lumen-dmg"
+              ;;
+            Windows)
+              app_dir=apps/desktop/release/win-unpacked
+              native_dir="$app_dir/resources/native"
+              feed="$channel.yml"
+              powershell -NoProfile -Command '$s = Get-AuthenticodeSignature "apps/desktop/release/win-unpacked/Lumen.exe"; if ($s.Status -ne "Valid" -or $s.SignerCertificate.Subject -notlike "*$env:WIN_PUBLISHER_NAME*") { throw "Windows app signer mismatch" }; $m = Get-AuthenticodeSignature "apps/desktop/release/win-unpacked/resources/native/mpv.exe"; if ($m.Status -ne "Valid" -or $m.SignerCertificate.Subject -notlike "*$env:WIN_PUBLISHER_NAME*") { throw "Windows MPV signer mismatch" }; $i = Get-ChildItem apps/desktop/release/Lumen-Setup-*.exe | Select-Object -First 1; if ((Get-AuthenticodeSignature $i.FullName).Status -ne "Valid") { throw "NSIS installer signature invalid" }'
+              powershell -NoProfile -File scripts/verify-nsis-payload.ps1
+              ;;
+            Linux)
+              app_dir=apps/desktop/release/linux-unpacked
+              native_dir="$app_dir/resources/native"
+              feed="$channel-linux.yml"
+              ;;
+          esac
+          test -f "apps/desktop/release/$feed"
+          bun scripts/verify-packaged-updater.ts --app-dir "$app_dir"
+          bun scripts/verify-native-binaries.ts --native-dir "$native_dir"
       - uses: actions/upload-artifact@v4
         with:
           name: lumen-${{ needs.preflight.outputs.version }}-${{ matrix.os }}
@@ -124,6 +217,11 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.exe
+            apps/desktop/release/*.blockmap
+            apps/desktop/release/latest*.yml
+            apps/desktop/release/alpha*.yml
+            apps/desktop/release/beta*.yml
+            apps/desktop/release/rc*.yml
           if-no-files-found: error
   server-image:
     needs: [preflight, package]
@@ -162,29 +260,46 @@ jobs:
   publish:
     needs: [preflight, package, server-image]
     runs-on: ubuntu-24.04
+    concurrency:
+      group: lumen-release-publish
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
       - uses: actions/download-artifact@v4
         with:
           pattern: lumen-${{ needs.preflight.outputs.version }}-*
           path: release-assets
-      - name: Create versioned GitHub Release
+      - name: Validate and publish versioned GitHub Release
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
         run: |
-          mapfile -d '' assets < <(find release-assets -mindepth 2 -maxdepth 2 -type f \( -name '*.AppImage' -o -name '*.deb' -o -name '*.dmg' -o -name '*.zip' -o -name '*.exe' \) -print0)
-          if [[ "${#assets[@]}" -ne 6 ]]; then
-            echo "Expected six desktop installers, found ${#assets[@]}." >&2
-            exit 1
+          bun scripts/verify-update-artifacts.ts release-assets --version "$RELEASE_VERSION"
+          bun scripts/verify-release-order.ts "$RELEASE_VERSION"
+          mapfile -t assets < release-assets/files.txt
+          if gh api "repos/$GH_REPO/releases/tags/v$RELEASE_VERSION" > release.json 2>/dev/null; then
+            jq -e --arg sha "$GITHUB_SHA" '.draft == true and .target_commitish == $sha' release.json >/dev/null || {
+              echo 'Existing release is published or belongs to another commit.' >&2
+              exit 1
+            }
+            gh release upload "v$RELEASE_VERSION" "${assets[@]}" --clobber
+          else
+            gh release create "v$RELEASE_VERSION" "${assets[@]}" \
+              --draft --target "$GITHUB_SHA" \
+              --title "Lumen v$RELEASE_VERSION" --generate-notes
           fi
-          flags=()
-          if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease --latest=false); fi
-          gh release create "v$RELEASE_VERSION" "${assets[@]}" \
-            --target "$GITHUB_SHA" \
-            --title "Lumen v$RELEASE_VERSION" \
-            --generate-notes \
-            "${flags[@]}"
+          bun scripts/verify-update-artifacts.ts release-assets --version "$RELEASE_VERSION" --release "v$RELEASE_VERSION"
+          bun scripts/verify-release-order.ts "$RELEASE_VERSION"
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            gh release edit "v$RELEASE_VERSION" --draft=false --prerelease --latest=false
+          else
+            gh release edit "v$RELEASE_VERSION" --draft=false --latest
+          fi

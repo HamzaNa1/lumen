@@ -19,10 +19,12 @@ interface NativeManifest {
 const manifestName = "mpv-manifest.json";
 const platform = process.platform;
 const binary = platform === "darwin" ? "libmpv.dylib" : platform === "win32" ? "mpv.exe" : "mpv";
-const candidates = [
+const explicitDirectoryIndex = process.argv.indexOf("--native-dir");
+const explicitDirectory = explicitDirectoryIndex < 0 ? null : process.argv[explicitDirectoryIndex + 1];
+const candidates = explicitDirectory === null ? [
   join(process.cwd(), "apps", "desktop", "resources", "native", binary),
   join(process.cwd(), "resources", "native", binary),
-];
+] : [join(explicitDirectory, binary)];
 const found = candidates.find(existsSync);
 if (found === undefined) {
   throw new Error(`Packaged MPV binary is missing: ${candidates.join(", ")}`);

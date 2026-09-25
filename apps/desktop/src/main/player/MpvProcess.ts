@@ -15,6 +15,7 @@ export class MpvProcess {
   private readonly native: LibMpv | null;
   private readonly socket: string;
   private exited = false;
+  private stopRequested = false;
 
   private constructor(
     child: ChildProcess | null,
@@ -92,9 +93,13 @@ export class MpvProcess {
   }
 
   async stop(): Promise<void> {
-    if (this.exited) return;
-    this.exited = true;
+    if (this.exited || this.stopRequested) return;
+    this.stopRequested = true;
     if (this.child !== null) this.child.kill("SIGTERM");
     else await this.native?.stop();
+  }
+
+  forceStop(): void {
+    if (this.child !== null && !this.exited) this.child.kill("SIGKILL");
   }
 }

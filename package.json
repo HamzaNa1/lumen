@@ -21,7 +21,10 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",
+    "@electron/asar": "3.4.1",
     "@types/bun": "1.4.2",
-    "typescript": "7.0.2"
+    "effect": "4.0.0-beta.83",
+    "typescript": "7.0.2",
+    "yaml": "2.8.2"
   }
 }

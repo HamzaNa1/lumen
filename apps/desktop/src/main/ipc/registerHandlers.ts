@@ -2,6 +2,7 @@ import {
   IpcPlayerDisplay,
   IpcPlayerSurfaceBounds,
   type IpcServerDiscovery,
+  type IpcUpdateState,
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
@@ -12,6 +13,7 @@ import { ServerClient, ServerHttpError, type AccountSession } from "../api/Serve
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import type { PlayerController } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
+import { isMainWindowFrame } from "../updates/UpdateIpcPolicy";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
   Schema.decodeUnknownSync(schema)(value);
@@ -45,6 +47,7 @@ export interface IpcDependencies {
   readonly installationId: string;
   readonly window: BrowserWindow;
   readonly overlay: PlayerOverlayWindow;
+  readonly updateState: () => IpcUpdateState;
 }
 
 const activeClient = (dependencies: IpcDependencies): ServerClient => {
@@ -104,6 +107,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       return action(event, ...args);
     });
   };
+
+  handle("updates:state", async (event) => {
+    if (!isMainWindowFrame(event.sender, event.senderFrame, dependencies.window)) {
+      throw new Error("Update status is only available to the main window");
+    }
+    return dependencies.updateState();
+  });
 
   handle("accounts:list", async () => dependencies.registry.list());
   handle("accounts:setup", async (_event, raw) => {
@@ -357,6 +367,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
 
 export const unregisterIpcHandlers = (): void => {
   for (const name of [
+    "updates:state",
     "accounts:list",
     "accounts:setup",
     "accounts:discover-server",

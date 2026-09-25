@@ -19,15 +19,24 @@ The server requires no transcoder. Configure a read-only media root and a local 
 
 ## Releases
 
-All workspaces currently use `0.0.1` for the first release. Check it, then commit and push these changes to the default branch:
+All workspaces must have the same version. Choose the next unused SemVer, update the manifests, and push the version commit to the default branch:
 
 ```sh
-bun run version:check 0.0.1
+bun run version:set <next-version>
+bun run version:check <next-version>
 ```
 
-In GitHub Actions, run the `release` workflow from the default branch and enter `0.0.1` as the version. The workflow requires that version to match every workspace and rejects an existing `v0.0.1` tag. After the desktop installers and server image succeed, it creates a GitHub Release and tag named `v0.0.1`, attaches the installers, and publishes a multi-platform server image for AMD64 and ARM64 as `ghcr.io/<owner>/<repository>-server:0.0.1` and `:sha-<commit-sha>`. Stable releases also update `:latest`; prereleases do not. GitHub Container Registry controls whether the image is public or private.
+Run the `release` workflow from the default branch with that version. It builds the desktop packages and server image, validates each package and update feed, uploads desktop assets to a draft GitHub Release, verifies the uploaded inventory, and only then publishes it. Stable publication is serialized and must advance the latest stable version. A failed run leaves its draft unpublished; rerunning the same commit can replace assets in that draft. Published versioned assets must not be overwritten.
 
-For later releases, run `bun run version:set 0.0.2`. The command updates the manifests and `bun.lock`, then creates a `chore: release 0.0.2` commit containing only those files. Push the commit to the default branch and enter `0.0.2` in the workflow. A version such as `0.0.2-rc.1` creates a prerelease.
+The macOS job requires `MAC_CSC_LINK` (base64 Developer ID `.p12`), `MAC_CSC_KEY_PASSWORD`, `MAC_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, and `APPLE_TEAM_ID`. The Windows job requires `WIN_CSC_LINK`, `WIN_CSC_KEY_PASSWORD`, and `WIN_PUBLISHER_NAME` matching the signing certificate. Missing credentials fail release packaging. Keep the same signing identities across updates. Linux AppImage update integrity relies on HTTPS delivery and the release feed's SHA-512 checksum, rather than native OS signing. Never put signing keys or feed tokens into the app.
+
+The Windows release build sets `ELECTRON_BUILDER_7Z_FILTER=BCJ` and inspects the embedded NSIS archive. This avoids a [reported PE extraction failure in electron-builder 26.15.3](https://github.com/electron-userland/electron-builder/issues/9983). A clean installed A-to-B test is still required because archive inspection cannot prove the NSIS installer completes correctly.
+
+Installed stable macOS ARM64 DMG/ZIP, Windows per-user NSIS, and Linux AppImage clients check for updates shortly after launch and about every six hours. They download a newer stable version in the background and install it during a normal application quit. Lumen stays closed; launch it again to use the new version. Settings shows download progress and readiness. Portable Windows, Linux DEB, prerelease, and development builds do not update automatically. The first updater-enabled release must be installed manually by existing clients; only a later release can exercise the automatic path.
+
+If a check or download fails, the current client remains usable and retries later. After a crash, force kill, power loss, or interrupted installer, launch the existing app again to let it rediscover and validate the update. An abnormal exit may leave the old version in place. Keep a signed installer available for recovery; a release withdrawal cannot revoke updates already downloaded. Publish a higher fixed version to repair a bad release. Accounts, installation identity, credentials, preferences, and server media are outside the app bundle and are not cleared by updates.
+
+Before publishing the first updater-enabled stable release, complete the packaged A-to-B upgrade matrix in [the desktop update smoke guide](tests/e2e/desktop-auto-update/README.md) on clean macOS ARM64, Windows NSIS, and Linux AppImage machines. Use a separate test feed and production-equivalent signatures. The normal `bun test` suite cannot prove installer replacement or interrupted-install recovery.
 
 For example, after substituting your image name and media path:
 
