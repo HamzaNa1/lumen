@@ -1,17 +1,29 @@
 import { createHashHistory } from "@tanstack/history";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { AdminPage, App, HomePage, JobLogPage, LibraryPage, PlayerPage, SearchPage, SettingsPage } from "./App";
+import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
+import { App } from "./App";
+import { HomePage, LibraryIndexPage, LibraryPage, SearchPage } from "./BrowsePages";
+import { JobLogPage } from "./JobLogPage";
+import { PlayerPage } from "./PlayerPage";
+import { SettingsPage } from "./SettingsPage";
 
 const rootRoute = createRootRoute({ component: App });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
-const libraryRoute = createRoute({
+const libraryIndexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/library",
+  component: LibraryIndexPage,
+});
+const libraryRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/library/$libraryId",
   component: LibraryPage,
 });
 const searchRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/search",
+  validateSearch: (search: Record<string, unknown>): { q?: string } =>
+    typeof search.q === "string" && search.q !== "" ? { q: search.q } : {},
   component: SearchPage,
 });
 const playerRoute = createRoute({
@@ -27,7 +39,12 @@ const settingsRoute = createRoute({
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin",
-  component: AdminPage,
+  component: AdminLibrariesPage,
+});
+const adminUsersRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/admin/users",
+  component: AdminUsersPage,
 });
 const jobLogRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -37,11 +54,13 @@ const jobLogRoute = createRoute({
 
 const routeTree = rootRoute.addChildren([
   homeRoute,
+  libraryIndexRoute,
   libraryRoute,
   searchRoute,
   playerRoute,
   settingsRoute,
   adminRoute,
+  adminUsersRoute,
   jobLogRoute,
 ]);
 

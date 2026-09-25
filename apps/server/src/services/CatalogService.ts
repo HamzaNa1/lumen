@@ -44,6 +44,11 @@ type ItemMetadataInput = Schema.Schema.Type<typeof ItemMetadataBody>;
 type ItemMatchInput = Schema.Schema.Type<typeof ItemMatchBody>;
 type ItemWatchInput = Schema.Schema.Type<typeof ItemWatchStateBody>;
 
+// Where the viewer left off; finished items have nothing to resume.
+const resumePositionSeconds = sql<
+  number | null
+>`case when ${itemWatchStates.completed} then null else ${itemWatchStates.positionSeconds} end`;
+
 const encodeCursor = (offset: number): string =>
   Buffer.from(String(offset), "utf8").toString("base64url");
 const decodeCursor = (cursor: string | null | undefined): number => {
@@ -156,7 +161,7 @@ export const makeCatalogService = Effect.gen(function* () {
             where ${catalogItemArtwork.itemId} = ${catalogItems.id}
               and ${catalogItemArtwork.role} = 'poster'
           )`,
-          resumePositionSeconds: itemWatchStates.positionSeconds,
+          resumePositionSeconds,
         })
         .from(catalogItems)
         .leftJoin(
@@ -324,7 +329,7 @@ export const makeCatalogService = Effect.gen(function* () {
             and ${catalogItemArtwork.role} in ('poster', 'still')
           order by ${catalogItemArtwork.role} limit 1
         )`,
-        resumePositionSeconds: itemWatchStates.positionSeconds,
+        resumePositionSeconds,
       })
       .from(catalogItems)
       .leftJoin(
@@ -369,7 +374,7 @@ export const makeCatalogService = Effect.gen(function* () {
             where ${catalogItemArtwork.itemId} = ${catalogItems.id}
               and ${catalogItemArtwork.role} = 'still'
           )`,
-          resumePositionSeconds: itemWatchStates.positionSeconds,
+          resumePositionSeconds,
         })
         .from(catalogItems)
         .leftJoin(season, eq(season.id, catalogItems.parentId))
@@ -659,9 +664,22 @@ export const makeCatalogService = Effect.gen(function* () {
           kind: catalogItems.kind,
           durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
           year: catalogItems.year,
+          artworkId: sql<string | null>`(
+            select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
+            where ${catalogItemArtwork.itemId} = ${catalogItems.id}
+              and ${catalogItemArtwork.role} = 'poster'
+          )`,
+          resumePositionSeconds,
         })
         .from(catalogItemFts)
         .innerJoin(catalogItems, eq(catalogItems.id, catalogItemFts.itemId))
+        .leftJoin(
+          itemWatchStates,
+          and(
+            eq(itemWatchStates.itemId, catalogItems.id),
+            eq(itemWatchStates.userId, principal.user.id),
+          ),
+        )
         .where(
           and(sql`catalog_item_fts MATCH ${match}`, inArray(catalogItems.libraryId, libraryIds)),
         )
@@ -670,9 +688,7 @@ export const makeCatalogService = Effect.gen(function* () {
         .offset(offset);
       if (rows.length === 0) return yield* search(principal, input, nowMs);
       return {
-        items: rows
-          .slice(0, input.limit)
-          .map((item) => ({ ...item, artworkId: null, resumePositionSeconds: null })),
+        items: rows.slice(0, input.limit),
         nextCursor: rows.length > input.limit ? encodeCursor(offset + input.limit) : null,
       };
     },

@@ -12,7 +12,7 @@ export const createMainWindow = (options: DesktopWindowOptions = {}): Electron.B
     height: 920,
     minWidth: 1024,
     minHeight: 680,
-    backgroundColor: "#0d1117",
+    backgroundColor: "#0c0c0e",
     show: false,
     parent: options.parent,
     webPreferences: {

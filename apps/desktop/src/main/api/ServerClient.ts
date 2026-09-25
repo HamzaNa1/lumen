@@ -43,7 +43,7 @@ const sessionSchema = Schema.Struct({
   accessExpiresAtMs: Schema.Number,
 });
 
-const librarySchema = Schema.Array(Schema.Struct({
+const libraryEntrySchema = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   slug: Schema.String,
@@ -51,7 +51,8 @@ const librarySchema = Schema.Array(Schema.Struct({
   isEnabled: Schema.Boolean,
   createdAtMs: Schema.Number,
   updatedAtMs: Schema.Number,
-}));
+});
+const librarySchema = Schema.Array(libraryEntrySchema);
 
 const scanRunSchema = Schema.Struct({
   id: Schema.String,
@@ -273,7 +274,7 @@ export class ServerClient {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
-    }, librarySchema);
+    }, libraryEntrySchema);
   }
 
   async updateLibrary(libraryId: string, input: { readonly name?: string; readonly slug?: string; readonly kind?: "movies" | "shows" | "music"; readonly isEnabled?: boolean }): Promise<IpcLibrary> {
@@ -281,7 +282,7 @@ export class ServerClient {
       method: "PATCH",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(input),
-    }, librarySchema);
+    }, libraryEntrySchema);
   }
 
   async deleteLibrary(libraryId: string): Promise<void> {

@@ -794,7 +794,8 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
       parts[0] === "api" &&
       parts[1] === "v1" &&
       parts[2] === "playback" &&
-      parts[3] === "sessions"
+      parts[3] === "sessions" &&
+      parts[4] === undefined
     ) {
       const input = decode(S.StartPlaybackBody, await body(request, config.maxRequestBodyBytes));
       const result = await call(services.playback.start(principal, input, Date.now()));

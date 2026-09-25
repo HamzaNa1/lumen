@@ -87,7 +87,10 @@ export interface LumenBridge {
     readonly jobLog: () => Promise<ReadonlyArray<JobLogEntry>>;
   };
   readonly player: {
-    readonly start: (itemId: string) => Promise<Omit<IpcPlayerSession, "grantToken">>;
+    readonly start: (
+      itemId: string,
+      startAtSeconds?: number,
+    ) => Promise<Omit<IpcPlayerSession, "grantToken">>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<IpcPlayerState>;

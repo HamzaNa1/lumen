@@ -118,6 +118,52 @@ describe("direct-play HTTP delivery", () => {
     expect(denied.status).toBe(404);
   });
 
+  test("accepts heartbeats and stores progress on the existing session", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-playback-progress-test-"));
+    paths.push(root);
+    const databasePath = join(root, "server.sqlite");
+    const seeded = await seed(root, databasePath);
+    const running = await startServer({ databasePath, host: "127.0.0.1", port: 0 });
+    runningServers.push(running);
+    const base = new URL(running.server.url);
+    const deviceId = newUuid();
+    const login = await fetch(new URL("/api/v1/auth/login", base), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ username: "admin", password: "correct horse battery staple", deviceId, deviceName: "Playback test", platform: "desktop", platformDeviceId: deviceId }),
+    });
+    const session = await login.json() as { accessToken: string };
+    const headers = { "content-type": "application/json", authorization: `Bearer ${session.accessToken}` };
+    const started = await fetch(new URL("/api/v1/playback/sessions", base), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ trackId: seeded.itemId }),
+    });
+    expect(started.status).toBe(201);
+    const playback = await started.json() as { sessionId: string };
+    const heartbeat = await fetch(new URL(`/api/v1/playback/sessions/${playback.sessionId}/heartbeat`, base), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ state: "playing", activeTrackId: seeded.itemId, errorCode: null }),
+    });
+    expect(heartbeat.status).toBe(200);
+    const progress = await fetch(new URL(`/api/v1/playback/sessions/${playback.sessionId}/progress`, base), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ trackId: seeded.itemId, positionMs: 4_000, durationMs: 10_000, sequence: 6 }),
+    });
+    expect(progress.status).toBe(200);
+    const sqlite = new SqliteDatabase(databasePath, { readonly: true });
+    try {
+      const sessions = sqlite.query<{ count: number }, []>("SELECT count(*) AS count FROM playback_sessions").get();
+      expect(sessions?.count).toBe(1);
+      const watchState = sqlite.query<{ positionSeconds: number }, [string, string]>("SELECT position_seconds AS positionSeconds FROM item_watch_states WHERE user_id = ? AND item_id = ?").get(seeded.userId, seeded.itemId);
+      expect(watchState?.positionSeconds).toBe(4);
+    } finally {
+      sqlite.close();
+    }
+  });
+
   test("uses the access-token session device when the renderer device is stale", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-playback-device-test-"));
     paths.push(root);
