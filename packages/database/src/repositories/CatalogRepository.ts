@@ -22,7 +22,7 @@ import {
   UpsertTrackMetadata,
   Uuid,
 } from "@lumen/contracts";
-import { and, asc, eq, isNull } from "drizzle-orm";
+import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import type { DatabaseClient } from "../Database";
 import {
@@ -38,6 +38,7 @@ import {
   trackMetadata,
   tracks,
 } from "../tables/schema";
+import { catalogItems } from "../tables/ServerSchema";
 import { boundary, encodeJson, guard } from "./Boundary";
 
 const sourceSelection = {
@@ -518,6 +519,25 @@ export const makeCatalogRepository = (database: DatabaseClient) => {
     return yield* boundary(Schema.Array(TrackMetadata), rows, "catalog.listMetadata.result");
   });
 
+  const descendantItemIds = Effect.fn("CatalogRepository.descendantItemIds")(function* (
+    itemId: string,
+  ) {
+    const descendants = new Set([itemId]);
+    let frontier = [itemId];
+    while (frontier.length > 0) {
+      const children = yield* guard(
+        database
+          .select({ id: catalogItems.id })
+          .from(catalogItems)
+          .where(inArray(catalogItems.parentId, frontier)),
+        "catalog.descendantItemIds",
+      );
+      frontier = children.map((child) => child.id).filter((id) => !descendants.has(id));
+      for (const id of frontier) descendants.add(id);
+    }
+    return [...descendants];
+  });
+
   return {
     createSource,
     createStream,
@@ -533,6 +553,7 @@ export const makeCatalogRepository = (database: DatabaseClient) => {
     getTrack,
     listChapters,
     listMetadata,
+    descendantItemIds,
   };
 };
 

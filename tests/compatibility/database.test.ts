@@ -36,7 +36,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.foreignKeys?.foreign_keys).toBe(1);
-    expect(result.migrations?.count).toBe(7);
+    expect(result.migrations?.count).toBe(8);
     expect(result.fts?.value).toBe(1);
     expect(result.tables.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -45,6 +45,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         "artists",
         "artwork",
         "auth_sessions",
+        "catalog_item_fts",
         "catalog_fts",
         "chapters",
         "devices",
@@ -61,6 +62,12 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         "refresh_tokens",
         "scan_jobs",
         "scan_runs",
+        "server_event_log",
+        "server_identity",
+        "server_library_watch_state",
+        "server_playback_sequences",
+        "server_scan_seen",
+        "server_scheduled_jobs",
         "stream_sidecars",
         "streams",
         "track_artists",

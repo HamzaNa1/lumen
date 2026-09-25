@@ -50,14 +50,18 @@ export const PlaybackPath = Schema.Struct({ sessionId: Identifier });
 
 export const PaginationQuery = Schema.Struct({
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
-  cursor: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)))),
+  cursor: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048))),
+  ),
 });
 
 export const SearchQuery = Schema.Struct({
   q: Schema.String.check(Schema.isMinLength(1), Schema.isPattern(/\S/u), Schema.isMaxLength(500)),
   libraryId: Schema.NullOr(Identifier),
   limit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 100 })),
-  cursor: Schema.optional(Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)))),
+  cursor: Schema.optional(
+    Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048))),
+  ),
 });
 
 export const CreateUserBody = Schema.Struct({
@@ -77,13 +81,18 @@ export const UpdateUserBody = Schema.Struct({
 export const CreateLibraryBody = Schema.Struct({
   id: Identifier,
   name: Text,
-  slug: Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u), Schema.isMaxLength(100)),
+  slug: Schema.String.check(
+    Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u),
+    Schema.isMaxLength(100),
+  ),
   kind: Schema.optional(Schema.Literals(["movies", "shows", "music"])),
 });
 
 export const UpdateLibraryBody = Schema.Struct({
   name: Schema.optional(Text),
-  slug: Schema.optional(Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u), Schema.isMaxLength(100))),
+  slug: Schema.optional(
+    Schema.String.check(Schema.isPattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/u), Schema.isMaxLength(100)),
+  ),
   kind: Schema.optional(Schema.Literals(["movies", "shows", "music"])),
   isEnabled: Schema.optional(Schema.Boolean),
 });
@@ -136,6 +145,24 @@ export const WatchStateBody = Schema.Struct({
 export const ItemWatchStateBody = Schema.Struct({
   positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   completed: Schema.Boolean,
+});
+
+export const ItemMetadataBody = Schema.Struct({
+  title: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+  overview: Schema.optional(Schema.NullOr(Schema.String)),
+  year: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1800, maximum: 9999 }))),
+  ),
+  releaseDate: Schema.optional(Schema.NullOr(Schema.String)),
+  contentRating: Schema.optional(Schema.NullOr(Schema.String)),
+  communityRating: Schema.optional(Schema.NullOr(Schema.Number)),
+  genres: Schema.optional(Schema.Array(Schema.String)),
+  studios: Schema.optional(Schema.Array(Schema.String)),
+  tags: Schema.optional(Schema.Array(Schema.String)),
+});
+
+export const ItemMatchBody = Schema.Struct({
+  tmdbId: Schema.String.check(Schema.isPattern(/^\d+$/u)),
 });
 
 export const EventsQuery = Schema.Struct({

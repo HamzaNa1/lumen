@@ -1,5 +1,6 @@
 export { sql } from "drizzle-orm";
 export * from "./Database";
+export * from "./Fts";
 export * from "./Migrate";
 export * from "./Repositories";
 export * from "./repositories/index";

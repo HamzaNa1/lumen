@@ -1,4 +1,12 @@
-import { Database, sql } from "@lumen/database";
+import {
+  Database,
+  libraries as libraryTable,
+  libraryProfiles,
+  libraryRoots,
+  scanRuns,
+  serverLibraryWatchState,
+} from "@lumen/database";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { stat } from "node:fs/promises";
 import { LibraryService } from "../services/LibraryService";
@@ -27,16 +35,24 @@ export const makeLibraryWatcher = Effect.gen(function* () {
   const libraries = yield* LibraryService;
 
   const check: LibraryWatcherShape["check"] = Effect.fn("LibraryWatcher.check")(function* (nowMs) {
-    const roots = yield* database.all<RootRow>(sql`
-      SELECT r.id, r.library_id AS libraryId, r.path, p.scan_mode AS scanMode,
-        watch.modified_at_ms AS observedModifiedAtMs
-      FROM library_roots r
-      JOIN libraries l ON l.id = r.library_id
-      JOIN library_profiles p ON p.library_id = r.library_id
-      LEFT JOIN server_library_watch_state watch ON watch.root_id = r.id
-      WHERE l.is_enabled = 1 AND r.is_enabled = 1
-      ORDER BY r.library_id, r.priority, r.path
-    `);
+    const roots = (yield* database
+      .select({
+        id: libraryRoots.id,
+        libraryId: libraryRoots.libraryId,
+        path: libraryRoots.path,
+        scanMode: libraryProfiles.scanMode,
+        observedModifiedAtMs: serverLibraryWatchState.modifiedAtMs,
+      })
+      .from(libraryRoots)
+      .innerJoin(libraryTable, eq(libraryTable.id, libraryRoots.libraryId))
+      .innerJoin(libraryProfiles, eq(libraryProfiles.libraryId, libraryRoots.libraryId))
+      .leftJoin(serverLibraryWatchState, eq(serverLibraryWatchState.rootId, libraryRoots.id))
+      .where(and(eq(libraryTable.isEnabled, true), eq(libraryRoots.isEnabled, true)))
+      .orderBy(
+        asc(libraryRoots.libraryId),
+        asc(libraryRoots.priority),
+        asc(libraryRoots.path),
+      )) as ReadonlyArray<RootRow>;
     const changed = new Map<string, ChangedLibrary>();
 
     for (const root of roots) {
@@ -45,17 +61,24 @@ export const makeLibraryWatcher = Effect.gen(function* () {
 
       const modifiedAtMs = Math.trunc(details.value.mtimeMs);
       if (root.observedModifiedAtMs === null) {
-        yield* database.run(sql`
-          INSERT INTO server_library_watch_state(root_id, modified_at_ms, checked_at_ms)
-          VALUES (${root.id}, ${modifiedAtMs}, ${nowMs})
-          ON CONFLICT(root_id) DO UPDATE SET modified_at_ms = excluded.modified_at_ms, checked_at_ms = excluded.checked_at_ms
-        `);
+        yield* database
+          .insert(serverLibraryWatchState)
+          .values({
+            rootId: root.id,
+            modifiedAtMs,
+            checkedAtMs: nowMs,
+          })
+          .onConflictDoUpdate({
+            target: serverLibraryWatchState.rootId,
+            set: { modifiedAtMs, checkedAtMs: nowMs },
+          });
         continue;
       }
       if (root.observedModifiedAtMs === modifiedAtMs) {
-        yield* database.run(sql`
-          UPDATE server_library_watch_state SET checked_at_ms = ${nowMs} WHERE root_id = ${root.id}
-        `);
+        yield* database
+          .update(serverLibraryWatchState)
+          .set({ checkedAtMs: nowMs })
+          .where(eq(serverLibraryWatchState.rootId, root.id));
         continue;
       }
 
@@ -66,11 +89,13 @@ export const makeLibraryWatcher = Effect.gen(function* () {
 
     let scansStarted = 0;
     for (const [libraryId, library] of changed) {
-      const active = yield* database.get<{ id: string }>(sql`
-        SELECT id FROM scan_runs
-        WHERE library_id = ${libraryId} AND status IN ('queued', 'running')
-        LIMIT 1
-      `);
+      const active = yield* database
+        .select({ id: scanRuns.id })
+        .from(scanRuns)
+        .where(
+          and(eq(scanRuns.libraryId, libraryId), inArray(scanRuns.status, ["queued", "running"])),
+        )
+        .get();
       if (active != null) continue;
 
       yield* libraries.startWatchedScan({ libraryId, mode: library.mode }, library.roots, nowMs);

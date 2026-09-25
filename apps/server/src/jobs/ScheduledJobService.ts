@@ -1,4 +1,5 @@
-import { Database, sql } from "@lumen/database";
+import { Database, serverScheduledJobs } from "@lumen/database";
+import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
 import { Context, Effect, Exit, Layer } from "effect";
 import { LibraryWatcher } from "./LibraryWatcher";
@@ -19,83 +20,127 @@ const errorMessage = (cause: unknown): string => {
   return String(cause);
 };
 
-const waitForNextTick = (signal: AbortSignal): Promise<void> => new Promise((resolve) => {
-  const finish = () => {
-    clearTimeout(timeout);
-    signal.removeEventListener("abort", finish);
-    resolve();
-  };
-  const timeout = setTimeout(finish, 1_000);
-  signal.addEventListener("abort", finish, { once: true });
-});
-
-export const makeScheduledJobService = (config?: ServerConfig) => Effect.gen(function* () {
-  const database = yield* Database;
-  const watcher = yield* LibraryWatcher;
-  const definitions: ReadonlyArray<ScheduledJobDefinition> = [{
-    name: "library-watcher",
-    intervalMs: config?.libraryWatchIntervalMs ?? 60_000,
-    run: watcher.check,
-  }];
-
-  const runDue: ScheduledJobServiceShape["runDue"] = Effect.fn("ScheduledJobs.runDue")(function* (nowMs) {
-    for (const definition of definitions) {
-      yield* database.run(sql`
-        INSERT INTO server_scheduled_jobs(name, interval_ms, next_run_at_ms, updated_at_ms)
-        VALUES (${definition.name}, ${definition.intervalMs}, ${nowMs}, ${nowMs})
-        ON CONFLICT(name) DO UPDATE SET interval_ms = excluded.interval_ms,
-          next_run_at_ms = min(server_scheduled_jobs.next_run_at_ms, excluded.next_run_at_ms + excluded.interval_ms),
-          updated_at_ms = excluded.updated_at_ms
-        WHERE server_scheduled_jobs.interval_ms <> excluded.interval_ms
-      `);
-    }
-
-    let executed = 0;
-    for (const definition of definitions) {
-      const claimed = yield* database.get<{ name: string }>(sql`
-        UPDATE server_scheduled_jobs
-        SET next_run_at_ms = ${nowMs + definition.intervalMs}, last_started_at_ms = ${nowMs},
-          last_finished_at_ms = NULL, last_error = NULL, updated_at_ms = ${nowMs}
-        WHERE name = ${definition.name} AND next_run_at_ms <= ${nowMs}
-          AND (last_started_at_ms IS NULL OR last_finished_at_ms IS NOT NULL
-            OR last_started_at_ms < ${nowMs - (config?.scanLeaseMs ?? 300_000)})
-        RETURNING name
-      `);
-      if (claimed == null) continue;
-
-      const outcome = yield* Effect.exit(definition.run(nowMs));
-      const finishedAtMs = Date.now();
-      if (Exit.isSuccess(outcome)) {
-        yield* database.run(sql`
-          UPDATE server_scheduled_jobs
-          SET last_finished_at_ms = ${finishedAtMs}, last_error = NULL, updated_at_ms = ${finishedAtMs}
-          WHERE name = ${definition.name} AND last_started_at_ms = ${nowMs}
-        `);
-      } else {
-        yield* database.run(sql`
-          UPDATE server_scheduled_jobs
-          SET last_finished_at_ms = ${finishedAtMs}, last_error = ${errorMessage(outcome.cause)}, updated_at_ms = ${finishedAtMs}
-          WHERE name = ${definition.name} AND last_started_at_ms = ${nowMs}
-        `);
-      }
-      executed += 1;
-    }
-    return executed;
+const waitForNextTick = (signal: AbortSignal): Promise<void> =>
+  new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timeout);
+      signal.removeEventListener("abort", finish);
+      resolve();
+    };
+    const timeout = setTimeout(finish, 1_000);
+    signal.addEventListener("abort", finish, { once: true });
   });
 
-  const start = async (signal: AbortSignal): Promise<void> => {
-    while (!signal.aborted) {
-      await Effect.runPromise(runDue(Date.now()).pipe(Effect.catch(() => Effect.succeed(0))));
-      if (!signal.aborted) await waitForNextTick(signal);
-    }
-  };
+export const makeScheduledJobService = (config?: ServerConfig) =>
+  Effect.gen(function* () {
+    const database = yield* Database;
+    const watcher = yield* LibraryWatcher;
+    const definitions: ReadonlyArray<ScheduledJobDefinition> = [
+      {
+        name: "library-watcher",
+        intervalMs: config?.libraryWatchIntervalMs ?? 60_000,
+        run: watcher.check,
+      },
+    ];
 
-  return { runDue, start };
-});
+    const runDue: ScheduledJobServiceShape["runDue"] = Effect.fn("ScheduledJobs.runDue")(
+      function* (nowMs) {
+        for (const definition of definitions) {
+          yield* database
+            .insert(serverScheduledJobs)
+            .values({
+              name: definition.name,
+              intervalMs: definition.intervalMs,
+              nextRunAtMs: nowMs,
+              updatedAtMs: nowMs,
+            })
+            .onConflictDoUpdate({
+              target: serverScheduledJobs.name,
+              set: {
+                intervalMs: definition.intervalMs,
+                nextRunAtMs: sql`min(${serverScheduledJobs.nextRunAtMs}, ${nowMs + definition.intervalMs})`,
+                updatedAtMs: nowMs,
+              },
+              setWhere: ne(serverScheduledJobs.intervalMs, definition.intervalMs),
+            });
+        }
 
-export class ScheduledJobService extends Context.Service<ScheduledJobService, ScheduledJobServiceShape>()(
-  "@lumen/server/ScheduledJobs",
-) {}
+        let executed = 0;
+        for (const definition of definitions) {
+          const [claimed] = yield* database
+            .update(serverScheduledJobs)
+            .set({
+              nextRunAtMs: nowMs + definition.intervalMs,
+              lastStartedAtMs: nowMs,
+              lastFinishedAtMs: null,
+              lastError: null,
+              updatedAtMs: nowMs,
+            })
+            .where(
+              and(
+                eq(serverScheduledJobs.name, definition.name),
+                lte(serverScheduledJobs.nextRunAtMs, nowMs),
+                or(
+                  isNull(serverScheduledJobs.lastStartedAtMs),
+                  isNotNull(serverScheduledJobs.lastFinishedAtMs),
+                  lt(serverScheduledJobs.lastStartedAtMs, nowMs - (config?.scanLeaseMs ?? 300_000)),
+                ),
+              ),
+            )
+            .returning({ name: serverScheduledJobs.name });
+          if (claimed == null) continue;
+
+          const outcome = yield* Effect.exit(definition.run(nowMs));
+          const finishedAtMs = Date.now();
+          if (Exit.isSuccess(outcome)) {
+            yield* database
+              .update(serverScheduledJobs)
+              .set({
+                lastFinishedAtMs: finishedAtMs,
+                lastError: null,
+                updatedAtMs: finishedAtMs,
+              })
+              .where(
+                and(
+                  eq(serverScheduledJobs.name, definition.name),
+                  eq(serverScheduledJobs.lastStartedAtMs, nowMs),
+                ),
+              );
+          } else {
+            yield* database
+              .update(serverScheduledJobs)
+              .set({
+                lastFinishedAtMs: finishedAtMs,
+                lastError: errorMessage(outcome.cause),
+                updatedAtMs: finishedAtMs,
+              })
+              .where(
+                and(
+                  eq(serverScheduledJobs.name, definition.name),
+                  eq(serverScheduledJobs.lastStartedAtMs, nowMs),
+                ),
+              );
+          }
+          executed += 1;
+        }
+        return executed;
+      },
+    );
+
+    const start = async (signal: AbortSignal): Promise<void> => {
+      while (!signal.aborted) {
+        await Effect.runPromise(runDue(Date.now()).pipe(Effect.catch(() => Effect.succeed(0))));
+        if (!signal.aborted) await waitForNextTick(signal);
+      }
+    };
+
+    return { runDue, start };
+  });
+
+export class ScheduledJobService extends Context.Service<
+  ScheduledJobService,
+  ScheduledJobServiceShape
+>()("@lumen/server/ScheduledJobs") {}
 
 export const ScheduledJobServiceLive = Layer.effect(ScheduledJobService, makeScheduledJobService());
 export const ScheduledJobServiceLiveWithConfig = (config: ServerConfig) =>
