@@ -1,4 +1,5 @@
 import type {
+  HomeContent,
   IpcAccounts,
   IpcItemPage,
   IpcItem,
@@ -31,6 +32,7 @@ export interface LumenBridge {
     readonly remove: (connectionId: string) => Promise<IpcAccounts>;
   };
   readonly library: {
+    readonly home: () => Promise<HomeContent>;
     readonly list: () => Promise<ReadonlyArray<IpcLibrary>>;
     readonly items: (libraryId: string, cursor?: string | null) => Promise<IpcItemPage>;
     readonly itemDetails: (itemId: string) => Promise<IpcItemDetails>;

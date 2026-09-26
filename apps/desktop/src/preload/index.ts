@@ -14,6 +14,7 @@ const api = {
     remove: (connectionId: string) => invoke<unknown>("accounts:remove", connectionId),
   },
   library: {
+    home: () => invoke<unknown>("library:home"),
     list: () => invoke<unknown>("library:list"),
     items: (libraryId: string, cursor: string | null = null) =>
       invoke<unknown>("library:items", { libraryId, cursor }),

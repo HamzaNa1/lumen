@@ -114,8 +114,18 @@ export const App = (): React.ReactElement => {
     setPlayingItem(null);
     setPlaybackLoading(false);
     setPlaybackError(null);
-    void bridge.player.stop().catch(() => undefined);
-  }, [onPlayerRoute, updatePlayer]);
+    // Home can mount while the playback session is still stopping.
+    // Refresh once the stop request has finished.
+    void bridge.player
+      .stop()
+      .catch(() => undefined)
+      .then(() => {
+        if (active !== null)
+          return queryClient.invalidateQueries({
+            queryKey: [active.connectionId, active.serverId, active.userId, "home"],
+          });
+      });
+  }, [active, onPlayerRoute, queryClient, updatePlayer]);
   useEffect(() => {
     if (!onPlayerRoute) return;
     void bridge.player.display({

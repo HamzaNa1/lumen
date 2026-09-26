@@ -1,4 +1,4 @@
-import { User } from "@lumen/contracts";
+import { HomeContent, User } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
@@ -12,6 +12,7 @@ import type { AccessControlShape } from "../services/AccessControl";
 import type { AuthPrincipal, AuthServiceShape } from "../services/AuthService";
 import type { AdminServiceShape } from "../services/AdminService";
 import type { CatalogServiceShape } from "../services/CatalogService";
+import type { HomeServiceShape } from "../services/HomeService";
 import type { EventServiceShape } from "../services/EventService";
 import type { LibraryServiceShape } from "../services/LibraryService";
 import type { ScanServiceShape } from "../services/ScanService";
@@ -25,6 +26,7 @@ export interface HttpServices {
   readonly access: AccessControlShape;
   readonly admin: AdminServiceShape;
   readonly catalog: CatalogServiceShape;
+  readonly home: HomeServiceShape;
   readonly events: EventServiceShape;
   readonly libraries: LibraryServiceShape;
   readonly scans: ScanServiceShape;
@@ -579,6 +581,9 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     ) {
       await call(services.access.requireAdmin(principal));
       return unknownJson(await call(services.scans.getRun(parts[3])));
+    }
+    if (method === "GET" && url.pathname === "/api/v1/home") {
+      return json(HomeContent, await call(services.home.content(principal, Date.now())));
     }
     if (
       method === "GET" &&

@@ -23,6 +23,7 @@ import { AssetService, AssetServiceLiveWithConfig } from "./services/AssetServic
 import { AdminService, AdminServiceLive } from "./services/AdminService";
 import { AuthService, AuthServiceLive } from "./services/AuthService";
 import { CatalogService, CatalogServiceLive } from "./services/CatalogService";
+import { HomeService, HomeServiceLive } from "./services/HomeService";
 import { EventService, EventServiceLive } from "./services/EventService";
 import { LibraryService, LibraryServiceLive } from "./services/LibraryService";
 import { ScanService, ScanServiceLive } from "./services/ScanService";
@@ -43,6 +44,7 @@ export interface ServerServices {
   readonly access: AccessControl["Service"];
   readonly admin: AdminService["Service"];
   readonly catalog: CatalogService["Service"];
+  readonly home: HomeService["Service"];
   readonly events: EventService["Service"];
   readonly libraries: LibraryService["Service"];
   readonly scans: ScanService["Service"];
@@ -68,6 +70,7 @@ export const makeLayers = (config: ServerConfig) => {
   );
   const admin = AdminServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const catalog = CatalogServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
+  const home = HomeServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const playback = PlaybackServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
   const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(dependencies));
@@ -94,6 +97,7 @@ export const makeLayers = (config: ServerConfig) => {
     assets,
     admin,
     catalog,
+    home,
     libraries,
     scans,
     playback,
@@ -113,6 +117,7 @@ const makeServices = Effect.gen(function* () {
     access: yield* AccessControl,
     admin: yield* AdminService,
     catalog: yield* CatalogService,
+    home: yield* HomeService,
     events: yield* EventService,
     libraries: yield* LibraryService,
     scans: yield* ScanService,
@@ -171,6 +176,7 @@ export const startServer = async (
     access: services.access,
     admin: services.admin,
     catalog: services.catalog,
+    home: services.home,
     events: services.events,
     libraries: services.libraries,
     scans: services.scans,

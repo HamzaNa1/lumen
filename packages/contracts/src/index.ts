@@ -1,5 +1,6 @@
 export * from "./api.ts";
 export * from "./ipc.ts";
+export * from "./home.ts";
 export * from "./schemas/activity.ts";
 export * from "./schemas/auth.ts";
 export * from "./schemas/catalog.ts";
