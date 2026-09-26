@@ -1,6 +1,12 @@
 import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
-import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  type QueryClient,
+  useIsMutating,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { Check, CircleCheck, LoaderCircle } from "lucide-react";
 import { createContext, type ReactNode, useContext } from "react";
 import { errorMessage } from "./format";
@@ -29,6 +35,21 @@ export const useWorkspace = (): WorkspaceValue => {
   return value;
 };
 
+/** The page for an item. Movies and other standalone titles share one. */
+export const itemPage = (item: Pick<IpcItem, "id" | "kind">) => {
+  const params = { itemId: item.id };
+  switch (item.kind) {
+    case "show":
+      return { to: "/show/$itemId", params } as const;
+    case "season":
+      return { to: "/season/$itemId", params } as const;
+    case "episode":
+      return { to: "/episode/$itemId", params } as const;
+    default:
+      return { to: "/item/$itemId", params } as const;
+  }
+};
+
 export const useLibraries = (scope: readonly unknown[]) =>
   useQuery({ queryKey: [...scope, "libraries"], queryFn: () => bridge.library.list() });
 
@@ -38,6 +59,16 @@ export const useArtwork = (artworkId: string | null | undefined, scope: readonly
     queryFn: () => bridge.library.artwork(artworkId ?? ""),
     enabled: artworkId != null,
     staleTime: Number.POSITIVE_INFINITY,
+  });
+
+/** Refetches everything that shows watch progress, after it changes. */
+export const refreshWatchProgress = (client: QueryClient, scope: readonly unknown[]) =>
+  client.invalidateQueries({
+    queryKey: scope,
+    predicate: (query) =>
+      ["home", "items", "item", "children", "next-up", "search"].includes(
+        String(query.queryKey[scope.length]),
+      ),
   });
 
 export const WatchedButton = ({
@@ -54,14 +85,7 @@ export const WatchedButton = ({
   const update = useMutation({
     mutationKey,
     mutationFn: (completed: boolean) => bridge.library.setWatched(item.id, completed),
-    onSuccess: () =>
-      queryClient.invalidateQueries({
-        queryKey: scope,
-        predicate: (query) =>
-          ["home", "items", "item", "children", "next-up", "search"].includes(
-            String(query.queryKey[scope.length]),
-          ),
-      }),
+    onSuccess: () => refreshWatchProgress(queryClient, scope),
   });
   const completed = item.completed === true;
   const label = `Mark ${item.title} as ${completed ? "unwatched" : "watched"}`;
@@ -94,9 +118,12 @@ export const WatchedButton = ({
 export const CatalogCard = ({
   item,
   subtitle,
+  landscape = false,
 }: {
   readonly item: IpcItem;
   readonly subtitle?: string | null;
+  /** Wide artwork, for episode stills. */
+  readonly landscape?: boolean;
 }): React.ReactElement => {
   const { scope, openItem, playItem } = useWorkspace();
   const artwork = useArtwork(item.artworkId, scope);
@@ -105,6 +132,7 @@ export const CatalogCard = ({
       title={item.title}
       subtitle={subtitle}
       kind={item.kind}
+      landscape={landscape}
       imageUrl={artwork.data ?? null}
       progress={
         item.durationMs !== null && item.durationMs > 0 && item.resumePositionSeconds
@@ -145,13 +173,18 @@ const skeletonKeys = Array.from({ length: 12 }, (_, index) => `skeleton-${index}
 export const PosterGridSkeleton = ({
   count = 12,
   layout = "grid",
+  landscape = false,
 }: {
   readonly count?: number;
   readonly layout?: "grid" | "row";
+  readonly landscape?: boolean;
 }): React.ReactElement => (
-  <div className={layout === "grid" ? "media-grid" : "shelf-row"} aria-hidden="true">
+  <div
+    className={layout === "row" ? "shelf-row" : landscape ? "episode-grid" : "media-grid"}
+    aria-hidden="true"
+  >
     {skeletonKeys.slice(0, count).map((key) => (
-      <div className="media-card-skeleton" key={key}>
+      <div className={`media-card-skeleton${landscape ? " is-landscape" : ""}`} key={key}>
         <span />
         <span />
         <span />

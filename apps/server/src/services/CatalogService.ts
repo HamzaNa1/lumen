@@ -448,10 +448,12 @@ export const makeCatalogService = Effect.gen(function* () {
           studiosJson: sql<string>`coalesce(${catalogItemMetadata.studiosJson}, '[]')`,
           tagsJson: sql<string>`coalesce(${catalogItemMetadata.tagsJson}, '[]')`,
           externalIdsJson: sql<string>`coalesce(${catalogItemMetadata.externalIdsJson}, '{}')`,
+          // Episodes have a still instead of a poster.
           artworkId: sql<string | null>`(
             select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
             where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-              and ${catalogItemArtwork.role} = 'poster'
+              and ${catalogItemArtwork.role} in ('poster', 'still')
+            order by ${catalogItemArtwork.role} limit 1
           )`,
           backdropId: sql<string | null>`(
             select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}

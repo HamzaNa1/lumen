@@ -3,6 +3,7 @@ import { createRootRoute, createRoute, createRouter } from "@tanstack/react-rout
 import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
 import { App } from "./App";
 import { HomePage, LibraryIndexPage, LibraryPage, SearchPage } from "./BrowsePages";
+import { EpisodePage, ItemPage, SeasonPage, ShowPage } from "./ItemPages";
 import { JobLogPage } from "./JobLogPage";
 import { PlayerPage } from "./PlayerPage";
 import { SettingsPage } from "./SettingsPage";
@@ -25,6 +26,27 @@ const searchRoute = createRoute({
   validateSearch: (search: Record<string, unknown>): { q?: string } =>
     typeof search.q === "string" && search.q !== "" ? { q: search.q } : {},
   component: SearchPage,
+});
+// Movies and other standalone titles share one page; each level of a series has its own.
+const itemRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/item/$itemId",
+  component: ItemPage,
+});
+const showRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/show/$itemId",
+  component: ShowPage,
+});
+const seasonRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/season/$itemId",
+  component: SeasonPage,
+});
+const episodeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/episode/$itemId",
+  component: EpisodePage,
 });
 const playerRoute = createRoute({
   getParentRoute: () => rootRoute,
@@ -57,6 +79,10 @@ const routeTree = rootRoute.addChildren([
   libraryIndexRoute,
   libraryRoute,
   searchRoute,
+  itemRoute,
+  showRoute,
+  seasonRoute,
+  episodeRoute,
   playerRoute,
   settingsRoute,
   adminRoute,
@@ -69,6 +95,9 @@ export const router = createRouter({
   history: createHashHistory(),
   defaultPreload: "intent",
   scrollRestoration: true,
+  // Pages scroll inside the shell, not the window: start new pages at the top and let
+  // Back restore where the viewer was.
+  scrollToTopSelectors: [".main-content"],
 });
 
 declare module "@tanstack/react-router" {

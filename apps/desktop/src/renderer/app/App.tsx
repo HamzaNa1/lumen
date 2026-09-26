@@ -6,9 +6,14 @@ import { CircleAlert, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
 import { errorMessage } from "./format";
-import { ItemDetails } from "./ItemDetails";
 import { Sidebar } from "./Sidebar";
-import { bridge, WorkspaceContext, type WorkspaceValue } from "./Workspace";
+import {
+  bridge,
+  itemPage,
+  refreshWatchProgress,
+  WorkspaceContext,
+  type WorkspaceValue,
+} from "./Workspace";
 
 const useAccounts = () =>
   useQuery({ queryKey: ["accounts"], queryFn: () => bridge.accounts.list() });
@@ -23,7 +28,6 @@ export const App = (): React.ReactElement => {
   const onPlayerRoute = useMatches({
     select: (matches) => matches.some((match) => match.routeId === "/player"),
   });
-  const [selectedItem, setSelectedItem] = useState<IpcItem | null>(null);
   const [playingItem, setPlayingItem] = useState<IpcItem | null>(null);
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
@@ -90,14 +94,16 @@ export const App = (): React.ReactElement => {
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
+  const openItem = (item: IpcItem): void => {
+    void navigate(itemPage(item));
+  };
   const queuePlayback = (item: IpcItem): void => {
     if (item.kind === "show" || item.kind === "season") {
-      setSelectedItem(item);
+      openItem(item);
       return;
     }
     setPlaybackError(null);
     setPlayingItem(item);
-    setSelectedItem(null);
     if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
     void navigate({ to: "/player" });
   };
@@ -114,16 +120,18 @@ export const App = (): React.ReactElement => {
     setPlayingItem(null);
     setPlaybackLoading(false);
     setPlaybackError(null);
-    // Home can mount while the playback session is still stopping.
-    // Refresh once the stop request has finished.
+    // The page playback started from can mount while the session is still stopping.
+    // Refresh progress and next up once the stop request has finished.
     void bridge.player
       .stop()
       .catch(() => undefined)
       .then(() => {
         if (active !== null)
-          return queryClient.invalidateQueries({
-            queryKey: [active.connectionId, active.serverId, active.userId, "home"],
-          });
+          return refreshWatchProgress(queryClient, [
+            active.connectionId,
+            active.serverId,
+            active.userId,
+          ]);
       });
   }, [active, onPlayerRoute, queryClient, updatePlayer]);
   useEffect(() => {
@@ -206,7 +214,7 @@ export const App = (): React.ReactElement => {
   const workspace = {
     account: active,
     scope,
-    openItem: setSelectedItem,
+    openItem,
     playItem: queuePlayback,
     openConnections: (view) => {
       setSignInAccount(null);
@@ -256,11 +264,6 @@ export const App = (): React.ReactElement => {
           }
         >
           <Outlet />
-          <ItemDetails
-            item={selectedItem}
-            onClose={() => setSelectedItem(null)}
-            onPlay={queuePlayback}
-          />
           {playbackError === null ? null : (
             <div className="toast" role="alert">
               <CircleAlert aria-hidden="true" size={17} />

@@ -43,6 +43,7 @@ export const MediaCard = ({
   subtitle,
   imageUrl,
   kind,
+  landscape = false,
   progress,
   onPlay,
   onOpen,
@@ -53,6 +54,8 @@ export const MediaCard = ({
   readonly subtitle?: string | null;
   readonly imageUrl?: string | null;
   readonly kind?: string;
+  /** 16:9 artwork, such as an episode still, instead of a 2:3 poster. */
+  readonly landscape?: boolean;
   /** Watched fraction between 0 and 1. */
   readonly progress?: number | null;
   readonly onPlay: () => void;
@@ -61,7 +64,7 @@ export const MediaCard = ({
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const showImage = imageUrl !== undefined && imageUrl !== null && failedImage !== imageUrl;
   return (
-    <article className="media-card">
+    <article className={`media-card${landscape ? " is-landscape" : ""}`}>
       <button className="media-card-open" type="button" onClick={onOpen}>
         <span className="media-card-art">
           {showImage ? (

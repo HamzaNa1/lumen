@@ -197,13 +197,12 @@ test("video folders browse as series, seasons, episodes and movies without requi
     join(showsRoot, "House", "tvshow.nfo"),
     "<tvshow><title>House</title><plot>A local synopsis.</plot><genre>Drama</genre><rating>8.5</rating></tvshow>",
   );
-  await writeFile(
-    join(showsRoot, "House", "poster.png"),
-    Buffer.from(
-      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9t8ncAAAAASUVORK5CYII=",
-      "base64",
-    ),
+  const png = Buffer.from(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9t8ncAAAAASUVORK5CYII=",
+    "base64",
   );
+  await writeFile(join(showsRoot, "House", "poster.png"), png);
+  await writeFile(join(showsRoot, "House", "Season 1", "House S01E01-thumb.png"), png);
   await Effect.runPromise(
     Effect.gen(function* () {
       const ingest = yield* makeMediaIngest;
@@ -220,6 +219,12 @@ test("video folders browse as series, seasons, episodes and movies without requi
   expect(showDetails.item.communityRating).toBe(8.5);
   expect((await get(`/api/v1/artwork/${showDetails.item.artworkId}`, admin)).status).toBe(200);
   expect((await get(`/api/v1/artwork/${showDetails.item.artworkId}`, viewer)).status).toBe(403);
+  // Episodes have a still instead of a poster.
+  const episodeDetails = (await (
+    await get(`/api/v1/items/${must(firstSeason.items[0]).id}`, admin)
+  ).json()) as { item: { artworkId: string | null } };
+  expect(episodeDetails.item.artworkId).toBeString();
+  expect((await get(`/api/v1/artwork/${episodeDetails.item.artworkId}`, admin)).status).toBe(200);
   const replacementPoster = Buffer.from(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8AABQMBgJ5Smn8AAAAASUVORK5CYII=",
     "base64",
