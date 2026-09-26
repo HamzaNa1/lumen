@@ -115,7 +115,7 @@ async function run(): Promise<void> {
     controller.setAudioOutput(input.sessionId, input.output),
   );
   ipcMain.handle("player:copy-audio-diagnostics", async (_event, sessionId) => {
-    clipboard.writeText(await controller.audioDiagnostics(sessionId));
+    await clipboard.writeText(await controller.audioDiagnostics(sessionId));
   });
   await overlay.load(undefined, join(root, "out/renderer/index.html"));
   overlay.setVisible(true);
@@ -327,12 +327,20 @@ async function run(): Promise<void> {
   await overlay.window.webContents.executeJavaScript(
     `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Copy audio diagnostics').click()`,
   );
-  await delay(250);
-  const copied = JSON.parse(clipboard.readText());
+  let copyStatus = "";
+  for (let attempt = 0; attempt < 40 && copyStatus !== "Audio diagnostics copied."; attempt++) {
+    await delay(50);
+    copyStatus = await overlay.window.webContents.executeJavaScript(
+      `document.querySelector('#media-player-settings-panel [role="status"]')?.textContent ?? ''`,
+    );
+  }
+  assert.equal(copyStatus, "Audio diagnostics copied.");
+  const copiedText = await clipboard.readText();
+  const copied = JSON.parse(copiedText);
   assert.equal(copied.audioOutput, "stereo");
   assert.equal(copied.properties["audio-out-params"]["channel-count"], 2);
   assert.equal(copied.expectedAudioTrack, copied.properties.aid);
-  assert(!clipboard.readText().includes("127.0.0.1"), "Diagnostics leaked the stream URL");
+  assert(!copiedText.includes("127.0.0.1"), "Diagnostics leaked the stream URL");
   visible.push(await inspect("audio-settings"));
   await controller.stop();
   assert(

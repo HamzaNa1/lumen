@@ -346,7 +346,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:copy-audio-diagnostics", async (_event, raw) => {
     const sessionId = decode(Schema.String, raw);
-    clipboard.writeText(await dependencies.player.audioDiagnostics(sessionId));
+    await clipboard.writeText(await dependencies.player.audioDiagnostics(sessionId));
   });
   handle("player:state", async () => dependencies.player.getState());
   handle("player:display", async (_event, raw) => {
