@@ -4,7 +4,7 @@ import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Play, Star } from "lucide-react";
 import { useRef, useState } from "react";
 import { formatClock, formatReleaseDate, formatRuntime, kindLabel, metadataList } from "./format";
-import { bridge, useArtwork, useWorkspace } from "./Workspace";
+import { bridge, useArtwork, useWorkspace, WatchedButton } from "./Workspace";
 import { EpisodeOrderEditor } from "./EpisodeOrderEditor";
 
 const playableKinds = new Set(["movie", "episode", "track"]);
@@ -57,6 +57,7 @@ const DetailsContent = ({
       (seasonList.some((season) => season.id === nextUpSeasonId) ? nextUpSeasonId : null) ??
       seasonList[0]?.id ??
       null);
+  const activeSeason = seasonList.find((season) => season.id === activeSeasonId);
   const episodes = useChildren(scope, isShow || isSeason ? activeSeasonId : null);
   const episodeList = episodes.data?.pages.flatMap((page) => page.items) ?? [];
   const metadata = details.data?.item;
@@ -99,7 +100,17 @@ const DetailsContent = ({
       : null,
     tags.length > 0 ? (["Tags", tags.join(", ")] as const) : null,
   ].filter((fact) => fact !== null);
-  const resume = item.resumePositionSeconds ?? 0;
+  const currentItem: IpcItem = {
+    ...item,
+    completed: metadata?.completed ?? details.data?.watchState?.completed ?? item.completed,
+    resumePositionSeconds:
+      details.data === undefined
+        ? item.resumePositionSeconds
+        : details.data.watchState?.completed
+          ? null
+          : (details.data.watchState?.positionSeconds ?? null),
+  };
+  const resume = currentItem.resumePositionSeconds ?? 0;
   const next = nextUp.data ?? null;
 
   return (
@@ -153,7 +164,7 @@ const DetailsContent = ({
           )}
           <div className="details-actions">
             {playable ? (
-              <Button variant="primary" size="lg" onClick={() => onPlay(item)}>
+              <Button variant="primary" size="lg" onClick={() => onPlay(currentItem)}>
                 <Play aria-hidden="true" size={16} fill="currentColor" strokeWidth={0} />
                 {resume > 0 ? `Resume from ${formatClock(resume)}` : "Play"}
               </Button>
@@ -169,6 +180,9 @@ const DetailsContent = ({
                   <strong>{next.title}</strong>
                 </span>
               </>
+            ) : null}
+            {isSeason || item.kind === "movie" || item.kind === "episode" ? (
+              <WatchedButton item={currentItem} />
             ) : null}
           </div>
         </div>
@@ -207,6 +221,9 @@ const DetailsContent = ({
           ) : null}
           <header className="details-episodes-header">
             <h3>Episodes</h3>
+            {isShow && activeSeason !== undefined ? (
+              <WatchedButton key={activeSeasonId} item={activeSeason} />
+            ) : null}
             {isShow && seasonList.length > 1 && activeSeasonId !== null ? (
               <SegmentedControl
                 label="Season"
@@ -229,7 +246,7 @@ const DetailsContent = ({
           ) : (
             <ol className="episode-list">
               {episodeList.map((episode) => (
-                <li key={episode.id}>
+                <li className="episode-list-item" key={episode.id}>
                   <button
                     className="episode-row"
                     type="button"
@@ -249,6 +266,7 @@ const DetailsContent = ({
                       <Play size={14} fill="currentColor" strokeWidth={0} />
                     </span>
                   </button>
+                  <WatchedButton item={episode} compact />
                 </li>
               ))}
             </ol>

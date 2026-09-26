@@ -1,5 +1,5 @@
 import { Film, Music, Play, Tv } from "lucide-react";
-import { useState } from "react";
+import { type ReactNode, useState } from "react";
 import { Button } from "./Button";
 
 /** Stable hue for a title, so artwork stand-ins keep their colour between renders. */
@@ -46,7 +46,9 @@ export const MediaCard = ({
   progress,
   onPlay,
   onOpen,
+  action,
 }: {
+  readonly action?: ReactNode;
   readonly title: string;
   readonly subtitle?: string | null;
   readonly imageUrl?: string | null;
@@ -85,6 +87,7 @@ export const MediaCard = ({
           <span className="media-card-subtitle">{subtitle}</span>
         )}
       </button>
+      {action == null ? null : <div className="media-card-action">{action}</div>}
       <Button
         className="media-card-play"
         variant="icon"

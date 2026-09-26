@@ -50,6 +50,20 @@ const resumePositionSeconds = sql<
   number | null
 >`case when ${itemWatchStates.completed} then null else ${itemWatchStates.positionSeconds} end`;
 
+// A season is watched only when it has episodes and every episode is watched.
+// Derive it from children so new episodes and individual undo actions stay accurate.
+const completedFor = (userId: string) => sql<boolean>`case
+  when ${catalogItems.kind} = 'season' then
+    exists (select 1 from catalog_items e where e.parent_id = ${catalogItems.id}
+      and e.library_id = ${catalogItems.libraryId} and e.kind = 'episode')
+    and not exists (select 1 from catalog_items e
+      left join item_watch_states w on w.item_id = e.id and w.user_id = ${userId}
+      where e.parent_id = ${catalogItems.id} and e.library_id = ${catalogItems.libraryId}
+        and e.kind = 'episode' and coalesce(w.completed, 0) = 0)
+  else coalesce((select w.completed from item_watch_states w
+    where w.item_id = ${catalogItems.id} and w.user_id = ${userId}), 0)
+  end`.mapWith(Boolean);
+
 const encodeCursor = (offset: number): string =>
   Buffer.from(String(offset), "utf8").toString("base64url");
 const decodeCursor = (cursor: string | null | undefined): number => {
@@ -162,6 +176,7 @@ export const makeCatalogService = Effect.gen(function* () {
             where ${catalogItemArtwork.itemId} = ${catalogItems.id}
               and ${catalogItemArtwork.role} = 'poster'
           )`,
+          completed: completedFor(principal.user.id),
           resumePositionSeconds,
         })
         .from(catalogItems)
@@ -335,6 +350,7 @@ export const makeCatalogService = Effect.gen(function* () {
             and ${catalogItemArtwork.role} in ('poster', 'still')
           order by ${catalogItemArtwork.role} limit 1
         )`,
+        completed: completedFor(principal.user.id),
         resumePositionSeconds,
       })
       .from(catalogItems)
@@ -380,6 +396,7 @@ export const makeCatalogService = Effect.gen(function* () {
             where ${catalogItemArtwork.itemId} = ${catalogItems.id}
               and ${catalogItemArtwork.role} = 'still'
           )`,
+          completed: completedFor(principal.user.id),
           resumePositionSeconds,
         })
         .from(catalogItems)
@@ -422,6 +439,7 @@ export const makeCatalogService = Effect.gen(function* () {
           year: catalogItems.year,
           indexNumber: catalogItems.indexNumber,
           overview: catalogItems.overview,
+          completed: completedFor(principal.user.id),
           durationSeconds: catalogItems.durationSeconds,
           releaseDate: catalogItemMetadata.releaseDate,
           contentRating: catalogItemMetadata.contentRating,
@@ -520,26 +538,23 @@ export const makeCatalogService = Effect.gen(function* () {
       .get();
     if (item == null) return yield* notFound("Item not found");
     yield* access.requireLibrary(principal, item.libraryId, "library:read", nowMs);
-    yield* database
-      .insert(itemWatchStates)
-      .values({
-        userId: principal.user.id,
-        itemId,
-        positionSeconds: input.positionSeconds,
-        completed: input.completed,
-        ownershipGeneration: 1,
-        manualVersion: 1,
-        updatedAtMs: nowMs,
-      })
-      .onConflictDoUpdate({
-        target: [itemWatchStates.userId, itemWatchStates.itemId],
-        set: {
-          positionSeconds: input.positionSeconds,
-          completed: input.completed,
-          manualVersion: sql`${itemWatchStates.manualVersion} + 1`,
-          updatedAtMs: nowMs,
-        },
-      });
+    // One statement updates the season and all its episodes, including those beyond
+    // a desktop page, while advancing each manual version to fence old playback writes.
+    yield* database.run(sql`
+      INSERT INTO item_watch_states
+        (user_id, item_id, position_seconds, completed, ownership_generation, manual_version, updated_at_ms)
+      SELECT ${principal.user.id}, i.id, ${input.positionSeconds}, ${input.completed ? 1 : 0}, 1, 1, ${nowMs}
+      FROM catalog_items i
+      WHERE i.library_id = ${item.libraryId} AND (i.id = ${itemId} OR
+        (i.parent_id = ${itemId} AND i.kind = 'episode' AND EXISTS (
+          SELECT 1 FROM catalog_items p WHERE p.id = ${itemId} AND p.kind = 'season'
+        )))
+      ON CONFLICT (user_id, item_id) DO UPDATE SET
+        position_seconds = excluded.position_seconds,
+        completed = excluded.completed,
+        manual_version = item_watch_states.manual_version + 1,
+        updated_at_ms = excluded.updated_at_ms
+    `);
   });
   const listTracks: CatalogServiceShape["listTracks"] = Effect.fn("Catalog.listTracks")(
     function* (principal, libraryId, input, nowMs) {
@@ -675,6 +690,7 @@ export const makeCatalogService = Effect.gen(function* () {
             where ${catalogItemArtwork.itemId} = ${catalogItems.id}
               and ${catalogItemArtwork.role} = 'poster'
           )`,
+          completed: completedFor(principal.user.id),
           resumePositionSeconds,
         })
         .from(catalogItemFts)

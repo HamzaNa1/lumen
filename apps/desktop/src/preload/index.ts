@@ -28,6 +28,8 @@ const api = {
       invoke<unknown>("library:set-episode-order", { itemId, selection }),
     itemChildren: (itemId: string, cursor: string | null = null) =>
       invoke<unknown>("library:item-children", { itemId, cursor }),
+    setWatched: (itemId: string, completed: boolean) =>
+      invoke<void>("library:set-watched", { itemId, completed }),
     nextUp: (itemId: string) => invoke<unknown>("library:next-up", itemId),
     artwork: (artworkId: string) => invoke<unknown>("library:artwork", artworkId),
     search: (query: string, libraryId: string | null = null) =>
