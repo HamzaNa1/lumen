@@ -5,6 +5,7 @@ import { Play, Star } from "lucide-react";
 import { useRef, useState } from "react";
 import { formatClock, formatReleaseDate, formatRuntime, kindLabel, metadataList } from "./format";
 import { bridge, useArtwork, useWorkspace, WatchedButton } from "./Workspace";
+import { EpisodeOrderEditor } from "./EpisodeOrderEditor";
 
 const playableKinds = new Set(["movie", "episode", "track"]);
 
@@ -215,6 +216,9 @@ const DetailsContent = ({
       </div>
       {isShow || isSeason ? (
         <section className="details-episodes" aria-label="Episodes">
+          {isShow && account.role === "admin" && details.data?.metadataProviderConfigured ? (
+            <EpisodeOrderEditor key={item.id} itemId={item.id} />
+          ) : null}
           <header className="details-episodes-header">
             <h3>Episodes</h3>
             {isShow && activeSeason !== undefined ? (

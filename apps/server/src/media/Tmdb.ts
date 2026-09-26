@@ -7,8 +7,12 @@ import {
   catalogItemSources,
   Database,
   providerRecords,
+  Repositories,
+  seriesEpisodeOrders,
 } from "@lumen/database";
-import { and, eq, or } from "drizzle-orm";
+import type { EpisodeOrderOptions, EpisodeOrderSelection } from "@lumen/contracts";
+import { badRequest, ServerError } from "../core/Errors";
+import { and, eq, inArray, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { createHash } from "node:crypto";
 import { mkdir, utimes, writeFile } from "node:fs/promises";
@@ -20,8 +24,9 @@ import { generatedArtworkDir } from "./GeneratedArtwork";
 import { imageInfo } from "./ImageInfo";
 import { MetadataSettings } from "../services/MetadataSettings";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
+import { fetchTmdb, TmdbHttpError, type TmdbObject } from "./TmdbClient";
+import { tmdbEpisodeCoordinates, tmdbEpisodeOrders } from "./TmdbEpisodeOrder";
 
-type TmdbObject = Record<string, unknown>;
 type Item = {
   id: string;
   libraryId: string;
@@ -34,6 +39,11 @@ type Item = {
 };
 
 export interface MetadataProvider {
+  readonly episodeOrder: (itemId: string) => Effect.Effect<EpisodeOrderOptions, unknown>;
+  readonly setEpisodeOrder: (
+    itemId: string,
+    selection: EpisodeOrderSelection,
+  ) => Effect.Effect<void, unknown>;
   readonly enrichSource: (sourceId: string) => Effect.Effect<void, unknown>;
 }
 
@@ -75,29 +85,18 @@ const remoteContentRating = (payload: TmdbObject): string | null => {
     return str(tv.map(object).find((entry) => entry.iso_3166_1 === "US")?.rating);
   return null;
 };
-const fetchTmdb = async (path: string, key: string): Promise<TmdbObject> => {
-  const url = new URL(`https://api.themoviedb.org/3${path}`);
-  url.searchParams.set("api_key", key);
-  const response = await fetch(url, {
-    signal: AbortSignal.timeout(10_000),
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) throw new Error(`TMDb returned ${response.status}`);
-  const result: unknown = JSON.parse(
-    new TextDecoder().decode(await readResponseBytes(response, 2_000_000)),
-  );
-  if (result === null || typeof result !== "object" || Array.isArray(result))
-    throw new Error("TMDb returned invalid metadata");
-  return result as TmdbObject;
-};
-
+const providerIds = (externalIds: Record<string, string>, origin: string | null) => ({
+  tmdbId: externalIds.tmdb ?? /\[(?:tmdbid|tmdb)-(\d+)\]/iu.exec(origin ?? "")?.[1] ?? null,
+  imdbId: externalIds.imdb ?? /\[(?:imdbid|imdb)-(tt\d+)\]/iu.exec(origin ?? "")?.[1] ?? null,
+});
 const lookup = async (
   item: Item,
   parentProviderId: string | null,
   key: string,
   explicit: string | null,
   imdbId: string | null,
-): Promise<{ id: string; payload: TmdbObject; confidence: number } | null> => {
+  episodeGroupId: string | null = null,
+): Promise<{ id: string; payload: TmdbObject | null; confidence: number } | null> => {
   if (item.kind === "movie" || item.kind === "show") {
     const kind = item.kind === "movie" ? "movie" : "tv";
     let id = explicit;
@@ -143,16 +142,35 @@ const lookup = async (
     };
   }
   if (parentProviderId === null || item.indexNumber === null) return null;
-  const seasonId =
-    item.kind === "season" ? item.indexNumber : Number(parentProviderId.split(":")[1]);
+  let seasonId = item.kind === "season" ? item.indexNumber : Number(parentProviderId.split(":")[1]);
   if (!Number.isInteger(seasonId)) return null;
+  let episodeNumber = item.indexNumber;
+  if (item.kind === "season" && episodeGroupId !== null)
+    return { id: `${parentProviderId}:${seasonId}`, payload: null, confidence: 95 };
+  if (item.kind === "episode" && episodeGroupId !== null) {
+    const coordinates = await tmdbEpisodeCoordinates(episodeGroupId, seasonId, episodeNumber, key);
+    seasonId = coordinates.seasonNumber;
+    episodeNumber = coordinates.episodeNumber;
+  }
   const path =
     item.kind === "season"
       ? `/tv/${parentProviderId}/season/${seasonId}`
-      : `/tv/${parentProviderId.split(":")[0]}/season/${seasonId}/episode/${item.indexNumber}`;
+      : `/tv/${parentProviderId.split(":")[0]}/season/${seasonId}/episode/${episodeNumber}`;
+  let payload: TmdbObject | null;
+  try {
+    payload = await fetchTmdb(path, key);
+  } catch (cause) {
+    if (item.kind !== "season" || !(cause instanceof TmdbHttpError) || cause.status !== 404)
+      throw cause;
+    // The local season remains usable even when TMDb has no season metadata.
+    payload = null;
+  }
   return {
-    id: `${parentProviderId}:${item.indexNumber}`,
-    payload: await fetchTmdb(path, key),
+    id:
+      item.kind === "season"
+        ? `${parentProviderId}:${seasonId}`
+        : `${parentProviderId.split(":")[0]}:${seasonId}:${episodeNumber}`,
+    payload,
     confidence: 95,
   };
 };
@@ -161,6 +179,115 @@ export const makeTmdbProvider = (config: ServerConfig) =>
   Effect.gen(function* () {
     const database = yield* Database;
     const settings = yield* MetadataSettings;
+    const repositories = yield* Repositories;
+    const episodeOrder: MetadataProvider["episodeOrder"] = Effect.fn("Tmdb.episodeOrder")(
+      function* (itemId) {
+        const item = yield* database
+          .select({
+            id: catalogItems.id,
+            libraryId: catalogItems.libraryId,
+            kind: catalogItems.kind,
+            parentId: catalogItems.parentId,
+            title: catalogItems.title,
+            year: catalogItems.year,
+            indexNumber: catalogItems.indexNumber,
+            origin: catalogItemOrigins.relativePath,
+            externalIdsJson: catalogItemMetadata.externalIdsJson,
+          })
+          .from(catalogItems)
+          .leftJoin(catalogItemOrigins, eq(catalogItemOrigins.itemId, catalogItems.id))
+          .leftJoin(catalogItemMetadata, eq(catalogItemMetadata.itemId, catalogItems.id))
+          .where(eq(catalogItems.id, itemId))
+          .get();
+        if (item === undefined || item.kind !== "show") return yield* badRequest("Choose a series");
+        const key = yield* settings.tmdbKey();
+        if (key === null)
+          return yield* badRequest("Configure TMDb before choosing an episode order");
+        const { tmdbId, imdbId } = providerIds(
+          decodeMetadataMap(item.externalIdsJson),
+          item.origin,
+        );
+        const saved = yield* database
+          .select()
+          .from(seriesEpisodeOrders)
+          .where(eq(seriesEpisodeOrders.itemId, itemId))
+          .get();
+        return yield* Effect.tryPromise({
+          try: async () => {
+            const result = await lookup(item, null, key, tmdbId, imdbId);
+            if (result === null)
+              throw badRequest("Match this series before choosing an episode order");
+            return tmdbEpisodeOrders(
+              result.id,
+              saved?.tmdbSeriesId === result.id ? saved.groupId : null,
+              key,
+            );
+          },
+          catch: (cause) =>
+            cause instanceof ServerError
+              ? cause
+              : new ServerError({
+                  status: 503,
+                  code: "service_unavailable",
+                  message: "Could not load episode orders from TMDb. Try again.",
+                  cause,
+                }),
+        });
+      },
+    );
+    const setEpisodeOrder: MetadataProvider["setEpisodeOrder"] = Effect.fn("Tmdb.setEpisodeOrder")(
+      function* (itemId, selection) {
+        const options = yield* episodeOrder(itemId);
+        if (selection.tmdbSeriesId !== options.tmdbSeriesId)
+          return yield* badRequest("The series match changed. Reload its episode orders.");
+        if (
+          selection.groupId !== null &&
+          !options.groups.some((group) => group.id === selection.groupId)
+        )
+          return yield* badRequest("Choose an episode order belonging to this series");
+        const descendants = yield* repositories.catalog.descendantItemIds(itemId);
+        yield* database.transaction((transaction) =>
+          Effect.gen(function* () {
+            const metadata = yield* transaction
+              .select()
+              .from(catalogItemMetadata)
+              .where(eq(catalogItemMetadata.itemId, itemId))
+              .get();
+            const ids = decodeMetadataMap(metadata?.externalIdsJson ?? null);
+            if (ids.tmdb !== undefined && ids.tmdb !== selection.tmdbSeriesId)
+              return yield* badRequest("The series match changed. Reload its episode orders.");
+            const values = {
+              itemId,
+              externalIdsJson: JSON.stringify({ ...ids, tmdb: selection.tmdbSeriesId }),
+            };
+            yield* transaction.insert(catalogItemMetadata).values(values).onConflictDoUpdate({
+              target: catalogItemMetadata.itemId,
+              set: values,
+            });
+            if (selection.groupId === null)
+              yield* transaction
+                .delete(seriesEpisodeOrders)
+                .where(eq(seriesEpisodeOrders.itemId, itemId));
+            else
+              yield* transaction
+                .insert(seriesEpisodeOrders)
+                .values({ itemId, ...selection, groupId: selection.groupId })
+                .onConflictDoUpdate({
+                  target: seriesEpisodeOrders.itemId,
+                  set: { tmdbSeriesId: selection.tmdbSeriesId, groupId: selection.groupId },
+                });
+            yield* transaction
+              .delete(providerRecords)
+              .where(
+                and(
+                  inArray(providerRecords.itemId, descendants),
+                  eq(providerRecords.provider, "tmdb"),
+                ),
+              );
+          }),
+        );
+      },
+    );
     const enrichSource: MetadataProvider["enrichSource"] = Effect.fn("Tmdb.enrichSource")(
       function* (sourceId) {
         const apiKey = yield* settings.tmdbKey();
@@ -185,6 +312,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
               .get())?.parentId ?? null;
         }
         let parentProviderId: string | null = null;
+        let episodeGroupId: string | null = null;
         for (const itemId of ids) {
           const item = (yield* database
             .select({
@@ -222,19 +350,25 @@ export const makeTmdbProvider = (config: ServerConfig) =>
             .where(eq(catalogItems.id, itemId))
             .get();
           const externalIds = decodeMetadataMap(old?.externalIdsJson ?? null);
-          const explicit =
-            externalIds.tmdb ?? /\[(?:tmdbid|tmdb)-(\d+)\]/iu.exec(item.origin ?? "")?.[1] ?? null;
-          const imdbId =
-            externalIds.imdb ??
-            /\[(?:imdbid|imdb)-(tt\d+)\]/iu.exec(item.origin ?? "")?.[1] ??
-            null;
+          const { tmdbId, imdbId } = providerIds(externalIds, item.origin);
           const result = yield* Effect.tryPromise({
-            try: () => lookup(item, parentProviderId, apiKey, explicit, imdbId),
+            try: () => lookup(item, parentProviderId, apiKey, tmdbId, imdbId, episodeGroupId),
             catch: (cause) => cause,
           });
           if (result === null) return;
           parentProviderId = result.id;
+          if (item.kind === "show") {
+            const order = yield* database
+              .select()
+              .from(seriesEpisodeOrders)
+              .where(eq(seriesEpisodeOrders.itemId, item.id))
+              .get();
+            if (order !== undefined && order.tmdbSeriesId !== result.id)
+              throw new Error("The series match changed. Choose its episode order again.");
+            episodeGroupId = order?.groupId ?? null;
+          }
           const payload = result.payload;
+          if (payload === null) continue;
           const locks = new Set(decodeMetadataList(old?.lockedFieldsJson ?? null));
           const sources = decodeMetadataMap(old?.fieldSourcesJson ?? null);
           const take = <T>(field: string, remote: T | null, existing: T | null): T | null => {
@@ -447,7 +581,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
         }
       },
     );
-    return { enrichSource };
+    return { enrichSource, episodeOrder, setEpisodeOrder };
   });
 
 export class TmdbProvider extends Context.Service<TmdbProvider, MetadataProvider>()(

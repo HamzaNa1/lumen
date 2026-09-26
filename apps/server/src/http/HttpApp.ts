@@ -1,4 +1,4 @@
-import { HomeContent, User } from "@lumen/contracts";
+import { EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, User } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
@@ -19,6 +19,7 @@ import type { ScanServiceShape } from "../services/ScanService";
 import type { PlaybackServiceShape } from "../services/PlaybackService";
 import type { JobServiceShape } from "../jobs/JobService";
 import type { MetadataSettingsShape } from "../services/MetadataSettings";
+import type { MetadataProvider } from "../media/Tmdb";
 import * as S from "../http/Schemas";
 
 export interface HttpServices {
@@ -32,6 +33,7 @@ export interface HttpServices {
   readonly scans: ScanServiceShape;
   readonly assets: AssetServiceShape;
   readonly playback: PlaybackServiceShape;
+  readonly tmdb?: MetadataProvider;
   readonly jobs?: JobServiceShape;
   readonly metadataSettings: MetadataSettingsShape;
   readonly databaseReady: () => Promise<boolean>;
@@ -602,6 +604,28 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
           ),
         ),
       );
+    }
+    if (
+      (method === "GET" || method === "PUT") &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "items" &&
+      parts[3] !== undefined &&
+      parts[4] === "episode-order" &&
+      parts.length === 5
+    ) {
+      await call(services.access.requireAdmin(principal));
+      if (services.tmdb === undefined) throw badRequest("Episode orders are unavailable");
+      if (method === "GET")
+        return json(EpisodeOrderOptions, await call(services.tmdb.episodeOrder(parts[3])));
+      if (services.jobs === undefined) throw badRequest("Metadata refresh is unavailable");
+      await call(
+        services.tmdb.setEpisodeOrder(
+          parts[3],
+          decode(EpisodeOrderSelection, await body(request, config.maxRequestBodyBytes)),
+        ),
+      );
+      return unknownJson({ runId: await call(services.jobs.refresh(parts[3], Date.now())) });
     }
     if (
       method === "POST" &&

@@ -1,4 +1,8 @@
-import type { IpcPlayerDisplay, IpcPlayerSurfaceBounds } from "@lumen/contracts";
+import type {
+  EpisodeOrderSelection,
+  IpcPlayerDisplay,
+  IpcPlayerSurfaceBounds,
+} from "@lumen/contracts";
 import { contextBridge, ipcRenderer } from "electron";
 
 const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T> =>
@@ -19,7 +23,11 @@ const api = {
     items: (libraryId: string, cursor: string | null = null) =>
       invoke<unknown>("library:items", { libraryId, cursor }),
     itemDetails: (itemId: string) => invoke<unknown>("library:item-details", itemId),
-    itemChildren: (itemId: string, cursor: string | null = null) => invoke<unknown>("library:item-children", { itemId, cursor }),
+    episodeOrder: (itemId: string) => invoke<unknown>("library:episode-order", itemId),
+    setEpisodeOrder: (itemId: string, selection: EpisodeOrderSelection) =>
+      invoke<unknown>("library:set-episode-order", { itemId, selection }),
+    itemChildren: (itemId: string, cursor: string | null = null) =>
+      invoke<unknown>("library:item-children", { itemId, cursor }),
     setWatched: (itemId: string, completed: boolean) =>
       invoke<void>("library:set-watched", { itemId, completed }),
     nextUp: (itemId: string) => invoke<unknown>("library:next-up", itemId),

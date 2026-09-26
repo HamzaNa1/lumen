@@ -16,6 +16,7 @@ import {
   mediaSourceAvailability,
   mediaSources,
   providerRecords,
+  seriesEpisodeOrders,
   Repositories,
   tracks,
 } from "@lumen/database";
@@ -283,6 +284,11 @@ export const makeCatalogService = Effect.gen(function* () {
             .from(catalogItemMetadata)
             .where(eq(catalogItemMetadata.itemId, itemId))
             .get();
+          const previousTmdb = decodeMetadataMap(existing?.externalIdsJson ?? null).tmdb;
+          if (previousTmdb !== input.tmdbId)
+            yield* transaction
+              .delete(seriesEpisodeOrders)
+              .where(eq(seriesEpisodeOrders.itemId, itemId));
           const externalIds = {
             ...decodeMetadataMap(existing?.externalIdsJson ?? null),
             tmdb: input.tmdbId,

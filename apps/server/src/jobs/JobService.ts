@@ -8,6 +8,7 @@ import {
   providerRecords,
   Repositories,
   scanJobs,
+  scanRuns,
 } from "@lumen/database";
 import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
@@ -33,7 +34,7 @@ const cleanupParkedAtMs = Number.MAX_SAFE_INTEGER;
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
   readonly runOne: (nowMs: number) => Effect.Effect<boolean, unknown>;
-  readonly refresh: (itemId: string, nowMs: number) => Effect.Effect<void, unknown>;
+  readonly refresh: (itemId: string, nowMs: number) => Effect.Effect<string, unknown>;
   readonly queueMissingMetadata: (nowMs: number) => Effect.Effect<number, unknown>;
   readonly start: (signal: AbortSignal) => Promise<void>;
 }
@@ -64,24 +65,31 @@ export const makeJobService = (config?: ServerConfig) =>
           .from(catalogItemSources)
           .where(inArray(catalogItemSources.itemId, descendantIds));
         if (sources.length === 0) throw new Error("Item has no source");
-        const run = yield* repositories.scanning.startRun({
-          runId: newUuid(),
-          libraryId: item.libraryId,
-          mode: "refresh",
-          startedAtMs: nowMs,
-        });
-        for (const source of sources)
-          yield* repositories.scanning.createJob({
-            id: newUuid(),
-            runId: run.id,
-            parentJobId: null,
-            sourceId: source.sourceId,
-            dedupeKey: `metadata:refresh:${source.sourceId}:${nowMs}`,
-            operation: "metadata",
-            priority: 300,
-            maxAttempts: 3,
-            availableAtMs: nowMs,
-          });
+        const runId = newUuid();
+        yield* database.transaction((transaction) =>
+          Effect.gen(function* () {
+            yield* transaction.insert(scanRuns).values({
+              id: runId,
+              libraryId: item.libraryId,
+              mode: "refresh",
+              status: "running",
+              startedAtMs: nowMs,
+              createdAtMs: nowMs,
+            });
+            for (const source of sources)
+              yield* transaction.insert(scanJobs).values({
+                id: newUuid(),
+                runId,
+                sourceId: source.sourceId,
+                dedupeKey: `metadata:refresh:${source.sourceId}:${runId}`,
+                operation: "metadata",
+                priority: 300,
+                maxAttempts: 3,
+                availableAtMs: nowMs,
+              });
+          }),
+        );
+        return runId;
       },
     );
 
@@ -265,6 +273,31 @@ export const makeJobService = (config?: ServerConfig) =>
       return true;
     });
 
+    const finishRunIfDone = Effect.fn("JobService.finishRunIfDone")(function* (
+      runId: string,
+      nowMs: number,
+    ) {
+      const remaining = yield* database
+        .select({ count: count() })
+        .from(scanJobs)
+        .where(and(eq(scanJobs.runId, runId), inArray(scanJobs.status, ["queued", "running"])))
+        .get();
+      if ((remaining?.count ?? 0) === 0) {
+        const failure = yield* database
+          .select({ errorMessage: scanJobs.errorMessage })
+          .from(scanJobs)
+          .where(and(eq(scanJobs.runId, runId), eq(scanJobs.status, "failed")))
+          .get();
+        yield* repositories.scanning.finishRun({
+          runId: runId,
+          status: failure === undefined ? "succeeded" : "failed",
+          nowMs,
+          errorCode: failure === undefined ? null : "JOB_FAILED",
+          errorMessage: failure?.errorMessage ?? null,
+        });
+      }
+    });
+
     const runOne: JobServiceShape["runOne"] = Effect.fn("JobService.runOne")(function* (nowMs) {
       if (yield* runServerJob(nowMs)) return true;
       const job = yield* repositories.scanning.claimNextJob({
@@ -351,6 +384,8 @@ export const makeJobService = (config?: ServerConfig) =>
           .update(scanJobs)
           .set({
             status: "succeeded",
+            errorCode: null,
+            errorMessage: null,
             finishedAtMs: nowMs,
             lockedAtMs: null,
             lockedBy: null,
@@ -363,24 +398,10 @@ export const makeJobService = (config?: ServerConfig) =>
             ),
           );
         if (job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
-        const remaining = yield* database
-          .select({ count: count() })
-          .from(scanJobs)
-          .where(
-            and(eq(scanJobs.runId, job.runId), inArray(scanJobs.status, ["queued", "running"])),
-          )
-          .get();
-        if ((remaining?.count ?? 0) === 0)
-          yield* repositories.scanning.finishRun({
-            runId: job.runId,
-            status: "succeeded",
-            nowMs,
-            errorCode: null,
-            errorMessage: null,
-          });
+        yield* finishRunIfDone(job.runId, nowMs);
         return true;
       } else {
-        const cause = outcome.cause;
+        const cause = Cause.squash(outcome.cause);
         const retry = job.attempts < job.maxAttempts;
         const delay = retryDelayMs(job.attempts);
         yield* database
@@ -403,16 +424,7 @@ export const makeJobService = (config?: ServerConfig) =>
             ),
           );
         if (!retry && job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
-        if (!retry)
-          yield* repositories.scanning
-            .finishRun({
-              runId: job.runId,
-              status: "failed",
-              nowMs,
-              errorCode: "JOB_FAILED",
-              errorMessage: "A scan job exhausted its retries",
-            })
-            .pipe(Effect.catch(() => Effect.void));
+        if (!retry) yield* finishRunIfDone(job.runId, nowMs);
         return true;
       }
     });
