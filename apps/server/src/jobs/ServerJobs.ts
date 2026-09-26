@@ -51,6 +51,7 @@ export interface ClaimedServerJob {
   readonly attempts: number;
   readonly maxAttempts: number;
   readonly leaseOwner: string;
+  readonly leaseExpiresAtMs: number;
 }
 
 export const claimNextServerJob = Effect.fn("ServerJobs.claimNext")(function* (
@@ -82,6 +83,7 @@ export const claimNextServerJob = Effect.fn("ServerJobs.claimNext")(function* (
           attempts: jobs.attempts,
           maxAttempts: jobs.maxAttempts,
           leaseOwner: jobs.leaseOwner,
+          leaseExpiresAtMs: jobs.leaseExpiresAtMs,
         });
       return (claimed ?? null) as ClaimedServerJob | null;
     }),

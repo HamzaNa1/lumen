@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   Database,
+  type DatabaseClient,
   Repositories,
   RepositoriesLive,
   sql,
@@ -209,6 +210,7 @@ const makeWatcherLayer = (
   databasePath: string,
   watcherOverride?: Layer.Layer<LibraryWatcher>,
   jobsConfig?: Partial<ServerConfig>,
+  jobsDatabase?: (database: DatabaseClient) => DatabaseClient,
 ) => {
   const databaseLayer = makeDatabaseLayers({ databasePath } as never);
   const repositories = RepositoriesLive(databaseLayer);
@@ -221,7 +223,14 @@ const makeWatcherLayer = (
   const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(databaseLayer));
   const jobs = (
     jobsConfig === undefined ? JobServiceLive : JobServiceLiveWithConfig(jobsConfig as ServerConfig)
-  ).pipe(Layer.provide(Layer.mergeAll(dependencies, scanner, metadataSettings, watcher)));
+  ).pipe(
+    Layer.provide(
+      jobsDatabase === undefined
+        ? Layer.empty
+        : Layer.effect(Database, Effect.map(Database, jobsDatabase)),
+    ),
+    Layer.provide(Layer.mergeAll(dependencies, scanner, metadataSettings, watcher)),
+  );
   const scheduler = ScheduledJobServiceLive.pipe(Layer.provide(dependencies));
   return Layer.mergeAll(dependencies, libraries, watcher, jobs, scheduler);
 };
@@ -252,6 +261,7 @@ interface WatcherJobRow {
   readonly maxAttempts: number;
   readonly nextRunAtMs: number;
   readonly completedAtMs: number | null;
+  readonly updatedAtMs: number;
   readonly lastErrorCode: string | null;
   readonly lastErrorMessage: string | null;
 }
@@ -260,7 +270,8 @@ const listWatcherJobs = Effect.gen(function* () {
   const database = yield* Database;
   return yield* database.all<WatcherJobRow>(sql`
     SELECT state, attempts, max_attempts AS maxAttempts, next_run_at_ms AS nextRunAtMs,
-      completed_at_ms AS completedAtMs, last_error_code AS lastErrorCode,
+      completed_at_ms AS completedAtMs, updated_at_ms AS updatedAtMs,
+      last_error_code AS lastErrorCode,
       last_error_message AS lastErrorMessage
     FROM jobs WHERE kind = 'library-watcher' ORDER BY created_at_ms, id
   `);
@@ -296,6 +307,7 @@ describe("library watcher background job", () => {
         maxAttempts: 3,
         nextRunAtMs: 1_000,
         completedAtMs: null,
+        updatedAtMs: 1_000,
         lastErrorCode: null,
         lastErrorMessage: null,
       },
@@ -367,10 +379,14 @@ describe("library watcher background job", () => {
       { operation: "discover", dedupeKey: `discover:${result.rootId}` },
     ]);
     expect(result.schedule).toEqual({ nextRunAtMs: 122_000, lastError: null });
-    expect(result.watcherJobs.map((job) => [job.state, job.attempts, job.completedAtMs])).toEqual([
-      ["succeeded", 1, 1_002],
-      ["succeeded", 1, 61_001],
+    expect(result.watcherJobs.map((job) => [job.state, job.attempts])).toEqual([
+      ["succeeded", 1],
+      ["succeeded", 1],
     ]);
+    const [baseline, change] = result.watcherJobs.map((job) => job.completedAtMs ?? 0);
+    expect(baseline).toBeGreaterThanOrEqual(1_002);
+    expect(baseline).toBeLessThan(61_000);
+    expect(change).toBeGreaterThanOrEqual(61_001);
   });
   test("an unfinished watcher absorbs later ticks from every server process", async () => {
     const { root, databasePath } = await makeWatcherWorkspace();
@@ -410,10 +426,13 @@ describe("library watcher background job", () => {
     ]);
   });
 
-  test("a failing watcher is retried with backoff and then recorded as failed", async () => {
+  test("a failing watcher is retried with backoff from its failure time and then recorded as failed", async () => {
     const { root, databasePath } = await makeWatcherWorkspace();
-    const failingWatcher = Layer.succeed(LibraryWatcher, {
-      check: () => Effect.fail(new Error("Media share is offline")),
+    // Each attempt takes real time, so backoff measured from the claim time would
+    // make the retry due before its delay has passed.
+    const slowFailingWatcher = Layer.succeed(LibraryWatcher, {
+      check: () =>
+        Effect.sleep(20).pipe(Effect.andThen(Effect.fail(new Error("Media share is offline")))),
     });
 
     const result = await Effect.runPromise(
@@ -423,33 +442,38 @@ describe("library watcher background job", () => {
         yield* insertWatchedLibrary(root);
         yield* scheduledJobs.runDue(1_000);
         const attempts = [];
-        for (const nowMs of [1_000, 2_000, 3_000, 6_000, 7_000]) {
-          const ran = yield* jobService.runOne(nowMs);
-          attempts.push({ nowMs, ran, jobs: yield* listWatcherJobs });
+        let dueAtMs = 1_000;
+        for (let attempt = 1; attempt <= 3; attempt += 1) {
+          const early = yield* jobService.runOne(dueAtMs - 1);
+          const ran = yield* jobService.runOne(dueAtMs);
+          const [job] = yield* listWatcherJobs;
+          if (job === undefined) throw new Error("Missing watcher job");
+          attempts.push({ dueAtMs, early, ran, job });
+          dueAtMs = job.nextRunAtMs;
         }
         yield* scheduledJobs.runDue(61_000);
         return { attempts, afterNextTick: yield* listWatcherJobs };
-      }).pipe(Effect.provide(makeWatcherLayer(databasePath, failingWatcher))),
+      }).pipe(Effect.provide(makeWatcherLayer(databasePath, slowFailingWatcher))),
     );
 
-    const failure = {
-      maxAttempts: 3,
-      lastErrorCode: "JOB_FAILED",
-      lastErrorMessage: "Media share is offline",
-    };
-    const retrying = { ...failure, state: "pending", completedAtMs: null };
-    expect(result.attempts).toEqual([
-      { nowMs: 1_000, ran: true, jobs: [{ ...retrying, attempts: 1, nextRunAtMs: 3_000 }] },
-      { nowMs: 2_000, ran: false, jobs: [{ ...retrying, attempts: 1, nextRunAtMs: 3_000 }] },
-      { nowMs: 3_000, ran: true, jobs: [{ ...retrying, attempts: 2, nextRunAtMs: 7_000 }] },
-      { nowMs: 6_000, ran: false, jobs: [{ ...retrying, attempts: 2, nextRunAtMs: 7_000 }] },
-      {
-        nowMs: 7_000,
-        ran: true,
-        jobs: [
-          { ...failure, state: "failed", attempts: 3, nextRunAtMs: 7_000, completedAtMs: 7_000 },
-        ],
-      },
+    for (const { dueAtMs, early, ran, job } of result.attempts) {
+      expect(early).toBe(false);
+      expect(ran).toBe(true);
+      expect(job.updatedAtMs - dueAtMs).toBeGreaterThanOrEqual(20);
+      expect(job.lastErrorCode).toBe("JOB_FAILED");
+      expect(job.lastErrorMessage).toBe("Media share is offline");
+    }
+    expect(
+      result.attempts.map(({ job }) => [
+        job.state,
+        job.attempts,
+        job.nextRunAtMs - job.updatedAtMs,
+        job.completedAtMs === null ? null : job.completedAtMs - job.updatedAtMs,
+      ]),
+    ).toEqual([
+      ["pending", 1, 2_000, null],
+      ["pending", 2, 4_000, null],
+      ["failed", 3, 0, 0],
     ]);
     expect(result.afterNextTick.map((job) => job.state)).toEqual(["failed", "pending"]);
   });
@@ -502,6 +526,7 @@ describe("library watcher background job", () => {
         maxAttempts: 3,
         nextRunAtMs: 301_001,
         completedAtMs: null,
+        updatedAtMs: 301_001,
         lastErrorCode: "LEASE_EXPIRED",
         lastErrorMessage: null,
       },
@@ -522,21 +547,83 @@ describe("library watcher background job", () => {
         yield* scheduledJobs.runDue(1_000);
         const ran = yield* jobService.runOne(1_000);
         return { ran, jobs: yield* listWatcherJobs };
-      }).pipe(Effect.provide(makeWatcherLayer(databasePath, hangingWatcher, { scanLeaseMs: 50 }))),
+      }).pipe(Effect.provide(makeWatcherLayer(databasePath, hangingWatcher, { scanLeaseMs: 200 }))),
     );
 
     expect(result.ran).toBe(true);
-    expect(result.jobs).toEqual([
+    expect(
+      result.jobs.map(({ nextRunAtMs, updatedAtMs, ...job }) => ({
+        ...job,
+        // The failure is recorded before the lease expires at 1_200.
+        failedBeforeLeaseExpiry: updatedAtMs > 1_000 && updatedAtMs < 1_200,
+        retryDelayMs: nextRunAtMs - updatedAtMs,
+      })),
+    ).toEqual([
       {
         state: "pending",
         attempts: 1,
         maxAttempts: 3,
-        nextRunAtMs: 3_000,
         completedAtMs: null,
         lastErrorCode: "JOB_FAILED",
-        lastErrorMessage: "Job exceeded its 50ms lease",
+        lastErrorMessage: "Job exceeded its 200ms lease",
+        failedBeforeLeaseExpiry: true,
+        retryDelayMs: 2_000,
       },
     ]);
+  });
+
+  test("a watcher claimed slowly still stops before its persisted lease expires", async () => {
+    const { root, databasePath } = await makeWatcherWorkspace();
+    const hangingWatcher = Layer.succeed(LibraryWatcher, { check: () => Effect.never });
+    const leaseMs = 400;
+    const claimDelayMs = 200;
+    // Stands in for connection contention: the claim transaction starts late, after
+    // the lease clock has already started.
+    const slowTransactions = (database: DatabaseClient) =>
+      new Proxy(database, {
+        get: (target, key, receiver) =>
+          key === "transaction"
+            ? (...args: Parameters<DatabaseClient["transaction"]>) =>
+                Effect.sleep(claimDelayMs).pipe(Effect.andThen(target.transaction(...args)))
+            : Reflect.get(target, key, receiver),
+      });
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const scheduledJobs = yield* ScheduledJobService;
+        const jobService = yield* JobService;
+        yield* insertWatchedLibrary(root);
+        yield* scheduledJobs.runDue(1_000);
+        const startedAt = performance.now();
+        const ran = yield* jobService.runOne(1_000);
+        const elapsedMs = performance.now() - startedAt;
+        const recovered = yield* jobService.recover(1_000 + leaseMs + 1);
+        return { ran, elapsedMs, recovered, jobs: yield* listWatcherJobs };
+      }).pipe(
+        Effect.provide(
+          makeWatcherLayer(
+            databasePath,
+            hangingWatcher,
+            { scanLeaseMs: leaseMs },
+            slowTransactions,
+          ),
+        ),
+      ),
+    );
+
+    expect(result.ran).toBe(true);
+    // The claim really waited, and the run still ended within the lease that
+    // started before the claim.
+    expect(result.elapsedMs).toBeGreaterThanOrEqual(claimDelayMs);
+    expect(result.elapsedMs).toBeLessThan(leaseMs);
+    expect(result.recovered).toBe(0);
+    expect(
+      result.jobs.map((job) => [
+        job.state,
+        job.lastErrorMessage,
+        job.updatedAtMs < 1_000 + leaseMs,
+      ]),
+    ).toEqual([["pending", `Job exceeded its ${leaseMs}ms lease`, true]]);
   });
 
   test("a scan started while the watcher is deciding defers the library instead of failing", async () => {
