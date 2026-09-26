@@ -1,4 +1,4 @@
-import { HomeContent, HomePreferences, User } from "@lumen/contracts";
+import { HomeContent, User } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
@@ -584,12 +584,6 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     }
     if (method === "GET" && url.pathname === "/api/v1/home") {
       return json(HomeContent, await call(services.home.content(principal, Date.now())));
-    }
-    if (url.pathname === "/api/v1/home/preferences") {
-      if (method === "GET") return json(HomePreferences, await call(services.home.preferences(principal.user.id)));
-      if (method === "PUT") return json(HomePreferences, await call(services.home.savePreferences(
-        principal.user.id, decode(HomePreferences, await body(request, config.maxRequestBodyBytes)), Date.now(),
-      )));
     }
     if (
       method === "GET" &&

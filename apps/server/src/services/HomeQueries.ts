@@ -65,10 +65,10 @@ export const nextUpQuery = (
   ORDER BY lastWatched DESC, id DESC LIMIT 24
 `;
 
-export const latestEpisodesQuery = (userId: string, libraryId: string, hideWatched: boolean) => sql`
+export const latestEpisodesQuery = (userId: string, libraryId: string) => sql`
   WITH items AS (${homeItems(userId, [libraryId])}),
   eligible AS (SELECT * FROM items
-    WHERE kind = 'episode' AND available = 1 AND (completed = 0 OR ${!hideWatched})),
+    WHERE kind = 'episode' AND available = 1 AND completed = 0),
   ranked AS (
     SELECT *, row_number() OVER (PARTITION BY coalesce(showId, id) ORDER BY addedAtMs DESC, id DESC) AS latestRank
     FROM eligible

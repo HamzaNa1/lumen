@@ -1768,58 +1768,6 @@ body:has(.app-shell) {
   gap: 8px;
 }
 
-.home-settings-fields {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
-}
-.settings-description {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 12.5px;
-}
-.home-settings-fields h3 {
-  margin: 8px 0 -8px;
-  font-size: 13px;
-  font-weight: 600;
-}
-.home-order-buttons, .home-library-setting-title, .home-settings-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-.home-order-buttons {
-  flex: none;
-  gap: 2px;
-}
-.home-library-setting {
-  padding: 12px 16px;
-}
-.home-library-setting + .home-library-setting {
-  border-top: 1px solid var(--border);
-}
-.home-library-setting-title {
-  justify-content: space-between;
-  margin-bottom: 8px;
-}
-.home-library-toggles {
-  display: grid;
-  gap: 8px;
-}
-.home-settings-actions {
-  flex-wrap: wrap;
-  margin-top: 20px;
-}
-.home-settings-actions [role="status"] {
-  color: var(--positive);
-}
-.home-settings-error {
-  color: var(--danger-text);
-}
-
 /* Administration */
 
 .panel {

@@ -170,37 +170,44 @@ export const HomePage = (): React.ReactElement => {
         ))}
       </Shelf>
     );
-  const sections = data?.preferences.sections
-    .flatMap((section) => {
-      switch (section) {
-        case "libraries":
-          return data.libraries.length === 0 ? null : (
-            <Shelf key={section} title="My Media">
-              {data.libraries.map((library) => {
-                const Icon =
-                  library.kind === "shows" ? Tv : library.kind === "music" ? Music : Clapperboard;
-                return (
-                  <Link
-                    className="library-tile"
-                    key={library.id}
-                    to="/library/$libraryId"
-                    params={{ libraryId: library.id }}
-                  >
-                    <Icon aria-hidden="true" size={30} strokeWidth={1.5} />
-                    <span>{library.name}</span>
-                  </Link>
-                );
-              })}
-            </Shelf>
-          );
-        case "resume-video":
-          return contentRows(data.continueWatching, "Continue watching", true);
-        case "resume-audio":
-          return contentRows(data.continueListening, "Continue listening", true);
-        case "next-up":
-          return contentRows(data.nextUp, "Next up");
-        case "latest":
-          return data.latest.map((row) => (
+  return (
+    <div className="page">
+      <PageHeader title="Home" />
+      {home.isLoading ? (
+        <section className="shelf">
+          <PosterGridSkeleton layout="row" count={8} />
+        </section>
+      ) : home.isError ? (
+        <StatusState
+          title="Couldn’t load Home"
+          message="Check that the server is running and reachable."
+          action={<Button onClick={() => void home.refetch()}>Try again</Button>}
+        />
+      ) : data?.libraryCount === 0 ? (
+        <NoLibraries />
+      ) : data ? (
+        <>
+          <Shelf title="My Media">
+            {data.libraries.map((library) => {
+              const Icon =
+                library.kind === "shows" ? Tv : library.kind === "music" ? Music : Clapperboard;
+              return (
+                <Link
+                  className="library-tile"
+                  key={library.id}
+                  to="/library/$libraryId"
+                  params={{ libraryId: library.id }}
+                >
+                  <Icon aria-hidden="true" size={30} strokeWidth={1.5} />
+                  <span>{library.name}</span>
+                </Link>
+              );
+            })}
+          </Shelf>
+          {contentRows(data.continueWatching, "Continue watching", true)}
+          {contentRows(data.continueListening, "Continue listening", true)}
+          {contentRows(data.nextUp, "Next up")}
+          {data.latest.map((row) => (
             <Shelf
               key={row.libraryId}
               title={`Latest ${row.libraryName}`}
@@ -218,48 +225,9 @@ export const HomePage = (): React.ReactElement => {
                 <CatalogCard key={item.id} item={item} subtitle={homeSubtitle(item)} />
               ))}
             </Shelf>
-          ));
-        default:
-          return null;
-      }
-    })
-    .filter(Boolean);
-  return (
-    <div className="page">
-      <PageHeader
-        title="Home"
-        actions={
-          <Link className="shelf-link" to="/settings">
-            Customize home
-          </Link>
-        }
-      />
-      {home.isLoading ? (
-        <section className="shelf">
-          <PosterGridSkeleton layout="row" count={8} />
-        </section>
-      ) : home.isError ? (
-        <StatusState
-          title="Couldn’t load Home"
-          message="Check that the server is running and reachable."
-          action={<Button onClick={() => void home.refetch()}>Try again</Button>}
-        />
-      ) : data?.libraryCount === 0 ? (
-        <NoLibraries />
-      ) : sections?.length ? (
-        sections
-      ) : (
-        <EmptyState
-          icon={LibraryBig}
-          title="Nothing to show yet"
-          message="Home shows your libraries, recent additions, and viewing activity. You can choose which sections appear in Settings."
-          action={
-            <Link className="shelf-link" to="/settings">
-              Customize home
-            </Link>
-          }
-        />
-      )}
+          ))}
+        </>
+      ) : null}
     </div>
   );
 };

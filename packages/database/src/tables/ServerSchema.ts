@@ -24,12 +24,6 @@ import {
 
 const millis = (name: string) => integer(name).notNull();
 
-export const userHomePreferences = sqliteTable("user_home_preferences", {
-  userId: text("user_id").primaryKey().references(() => users.id, { onDelete: "cascade" }),
-  preferencesJson: text("preferences_json").notNull(),
-  updatedAtMs: millis("updated_at_ms"),
-}, (table) => [check("user_home_preferences_json_chk", sql`json_valid(${table.preferencesJson})`)]);
-
 export const serverSettings = sqliteTable("server_settings", {
   id: integer("id").primaryKey(),
   serverId: text("server_id").notNull(),

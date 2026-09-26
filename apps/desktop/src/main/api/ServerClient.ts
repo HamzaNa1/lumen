@@ -1,4 +1,4 @@
-import { HomeContent, HomePreferences, IpcAudioOutput, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
+import { HomeContent, IpcAudioOutput, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
@@ -331,17 +331,6 @@ export class ServerClient {
 
   async home(): Promise<HomeContent> {
     return this.request("/api/v1/home", {}, HomeContent);
-  }
-
-  async homePreferences(): Promise<HomePreferences> {
-    return this.request("/api/v1/home/preferences", {}, HomePreferences);
-  }
-
-  async saveHomePreferences(preferences: HomePreferences): Promise<HomePreferences> {
-    return this.request("/api/v1/home/preferences", {
-      method: "PUT", headers: { "content-type": "application/json" },
-      body: JSON.stringify(decode(HomePreferences, preferences)),
-    }, HomePreferences);
   }
 
   async itemDetails(itemId: string): Promise<IpcItemDetails> {

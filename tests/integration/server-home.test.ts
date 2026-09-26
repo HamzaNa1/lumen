@@ -7,7 +7,6 @@ import { join } from "node:path";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
-import { defaultHomePreferences } from "../../packages/contracts/src/home";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 
 const paths: string[] = [];
@@ -302,68 +301,45 @@ test("Next Up follows the furthest watched episode and moves in-progress episode
   expect((await getHome()).nextUp.map((item: { id: string }) => item.id)).toEqual([later]);
 });
 
-test("Home preferences persist and control ordering, exclusions, watched filtering, and disabled sections", async () => {
+test("Home always uses default library ordering and filtering without preference endpoints", async () => {
   const first = newUuid();
   const second = newUuid();
-  const watched = newUuid();
+  const music = newUuid();
   const home = await fixture(
     [
       { id: newUuid(), libraryId: first, title: "First resume", position: 200 },
       { id: newUuid(), libraryId: second, title: "Second resume", position: 200 },
-      { id: watched, libraryId: second, title: "Watched movie", completed: true, added: 5 },
+      { id: newUuid(), libraryId: second, title: "Watched movie", completed: true, added: 5 },
+      { id: newUuid(), libraryId: music, title: "Music resume", kind: "track", position: 200 },
     ],
-    [first, second],
+    [music, second, first],
   );
-  const preferences = {
-    ...defaultHomePreferences,
-    libraryOrder: [second, first],
-    hideWatched: false,
-    excludedLibraries: [first],
-  };
-  const saved = await home.request("/api/v1/home/preferences", {
-    method: "PUT",
-    body: JSON.stringify(preferences),
-  });
-  expect(saved.status).toBe(200);
-  expect(await (await home.request("/api/v1/home/preferences")).json()).toEqual(preferences);
-  let content = await (await home.request("/api/v1/home")).json();
-  expect(content.libraries.map((library: { id: string }) => library.id)).toEqual([second, first]);
-  expect(content.continueWatching).toHaveLength(1);
-  expect(content.continueWatching[0].libraryId).toBe(second);
-  expect(content.latest.map((row: { libraryId: string }) => row.libraryId)).toEqual([second]);
-  expect(content.latest[0].items[0].id).toBe(watched);
-  await home.request("/api/v1/home/preferences", {
-    method: "PUT",
-    body: JSON.stringify({ ...preferences, hiddenLibraries: [second] }),
-  });
-  content = await (await home.request("/api/v1/home")).json();
-  expect(content.libraries.map((library: { id: string }) => library.id)).toEqual([first]);
-  expect(content.latest).toEqual([]);
-  expect(content.continueWatching).toHaveLength(1);
-  await home.request("/api/v1/home/preferences", {
-    method: "PUT",
-    body: JSON.stringify({ ...preferences, sections: [] }),
-  });
-  content = await (await home.request("/api/v1/home")).json();
-  expect(content.preferences.sections).toEqual([]);
-  expect(content.latest).toEqual([]);
-  expect(content.continueWatching).toEqual([]);
+  const content = await (await home.request("/api/v1/home")).json();
+  const orderedIds = [...[first, second].sort(), music];
+  expect(content.libraryCount).toBe(3);
+  expect(content.libraries.map((library: { id: string }) => library.id)).toEqual(orderedIds);
+  expect(content.latest.map((row: { libraryId: string }) => row.libraryId)).toEqual(orderedIds);
+  expect(content.latest.every((row: { items: unknown[] }) => row.items.length === 1)).toBe(true);
+  expect(content.continueWatching).toHaveLength(2);
+  expect(content.continueListening).toHaveLength(1);
+  expect(content).not.toHaveProperty("preferences");
+  expect((await home.request("/api/v1/home/preferences")).status).toBe(404);
   expect(
     (
       await home.request("/api/v1/home/preferences", {
         method: "PUT",
-        body: JSON.stringify({ ...preferences, nextUpDays: -1 }),
+        body: JSON.stringify({
+          sections: [],
+          libraryOrder: [music, second, first],
+          hiddenLibraries: [first],
+          excludedLibraries: [second],
+          hideWatched: false,
+          nextUpDays: 1,
+        }),
       })
     ).status,
-  ).toBe(400);
-  expect(
-    (
-      await home.request("/api/v1/home/preferences", {
-        method: "PUT",
-        body: JSON.stringify({ ...preferences, sections: ["latest", "latest"] }),
-      })
-    ).status,
-  ).toBe(400);
+  ).toBe(404);
+  expect(await (await home.request("/api/v1/home")).json()).toEqual(content);
 });
 
 test("Latest TV groups episode batches into seasons or shows and ranks by episode additions", async () => {
@@ -420,7 +396,7 @@ test("Latest TV groups episode batches into seasons or shows and ranks by episod
   expect(data.latest[0].items[1]).toMatchObject({ kind: "season", seriesTitle: "New season" });
 });
 
-test("The desktop client reads Home and saves account-specific home preferences", async () => {
+test("The desktop client reads default Home with account-specific content and handles no library access", async () => {
   const libraryId = newUuid();
   const home = await fixture([{ id: newUuid(), libraryId, title: "A movie" }], [libraryId]);
   const client = new ServerClient({ origin: String(home.base) });
@@ -434,20 +410,6 @@ test("The desktop client reads Home and saves account-specific home preferences"
     newUuid(),
   );
   expect((await client.home()).latest[0]?.items[0]?.title).toBe("A movie");
-  const preferences = await client.homePreferences();
-  expect(preferences.sections).toEqual([
-    "libraries",
-    "resume-video",
-    "resume-audio",
-    "next-up",
-    "latest",
-  ]);
-  await client.saveHomePreferences({
-    ...preferences,
-    sections: ["latest", "libraries"],
-    hideWatched: false,
-  });
-  expect((await client.home()).preferences.sections).toEqual(["latest", "libraries"]);
   const other = new ServerClient({ origin: String(home.base) });
   await other.register(
     {
@@ -459,11 +421,17 @@ test("The desktop client reads Home and saves account-specific home preferences"
     },
     newUuid(),
   );
-  expect((await other.homePreferences()).hideWatched).toBe(true);
-  expect((await other.home()).libraryCount).toBe(0);
+  expect(await other.home()).toEqual({
+    libraryCount: 0,
+    libraries: [],
+    continueWatching: [],
+    continueListening: [],
+    nextUp: [],
+    latest: [],
+  });
 });
 
-test("Home applies row limits after filtering and handles every library being excluded", async () => {
+test("Home applies default row limits after filtering and includes watched music in Latest", async () => {
   const moviesId = newUuid();
   const musicId = newUuid();
   const showsId = newUuid();
@@ -530,16 +498,4 @@ test("Home applies row limits after filtering and handles every library being ex
   expect(movies.items[0].title).toBe("Movie 35");
   expect(music.items).toHaveLength(30);
   expect(music.items[0].title).toBe("Track 35");
-  await home.request("/api/v1/home/preferences", {
-    method: "PUT",
-    body: JSON.stringify({
-      ...defaultHomePreferences,
-      excludedLibraries: [moviesId, musicId, showsId],
-    }),
-  });
-  const empty = await (await home.request("/api/v1/home")).json();
-  expect(empty.latest).toEqual([]);
-  expect(empty.continueWatching).toEqual([]);
-  expect(empty.nextUp).toEqual([]);
-  expect(empty.libraries).toHaveLength(3);
 });
