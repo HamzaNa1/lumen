@@ -1,0 +1,55 @@
+name: windows-playback
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/windows-video-playback]
+  pull_request:
+    paths:
+      - 'apps/desktop/**'
+      - 'tests/native/**'
+      - 'tests/fixtures/playback.mp4'
+      - '.github/workflows/windows-playback.yml'
+permissions:
+  contents: read
+jobs:
+  playback:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Bundle MPV
+        shell: pwsh
+        run: |
+          choco install mpvio.portable --version 0.41.0 --yes --no-progress
+          "LUMEN_MPV_VERSION=0.41.0" >> $env:GITHUB_ENV
+          $source = Get-ChildItem "$env:ChocolateyInstall\lib\mpvio.portable\tools" -Filter mpv.exe -Recurse | Select-Object -First 1
+          if ($null -eq $source) { throw "Chocolatey did not install mpv.exe" }
+          $native = "apps/desktop/resources/native"
+          New-Item -ItemType Directory -Force -Path $native | Out-Null
+          Copy-Item "$($source.DirectoryName)\*" $native -Recurse -Force
+      - run: bun scripts/verify-native-binaries.ts --write-manifest
+      - run: bun scripts/verify-native-binaries.ts
+      - run: bun run --cwd apps/desktop build
+      - name: Test native playback
+        shell: pwsh
+        run: |
+          bun build tests/native/windows-playback.ts --target=node --format=cjs --external=electron --external=koffi --outfile=apps/desktop/out/windows-playback.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & apps/desktop/node_modules/electron/dist/electron.exe apps/desktop/out/windows-playback.cjs
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-playback-evidence
+          path: apps/desktop/out/playback-evidence
+      - name: Build Windows test installers
+        run: bun run --cwd apps/desktop package --win --x64
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-windows-test
+          path: apps/desktop/release/*.exe
+          if-no-files-found: error
