@@ -350,7 +350,39 @@ export class PlayerController extends EventEmitter {
     this.assertActive(sessionId);
     const active = this.active;
     if (active === null) throw new Error("Playback session is not active");
+    const position = await active.ipc.command(["get_property", "time-pos"]);
+    this.assertActive(sessionId);
     await active.ipc.command(["set_property", "audio-channels", output]);
+    this.assertActive(sessionId);
+    // MPV rebuilds the audio filter/output asynchronously. A second change
+    // during an outstanding seek can leave it without output. Explicitly
+    // restart at the current position, preserving pause and track selection,
+    // and wait for the restart before accepting another change from the UI.
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        active.ipc.off("playback-restart", onRestart);
+      };
+      const onRestart = (): void => {
+        cleanup();
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timed out restarting audio output"));
+      }, FILE_LOADED_TIMEOUT_MS);
+      active.ipc.on("playback-restart", onRestart);
+      void active.ipc
+        .command([
+          "seek",
+          typeof position === "number" ? position : this.requireState().positionSeconds,
+          "absolute+exact",
+        ])
+        .catch((cause: unknown) => {
+          cleanup();
+          reject(cause);
+        });
+    });
     this.assertActive(sessionId);
     this.audioOutput = output;
     this.state = { ...this.requireState(), audioOutput: output };

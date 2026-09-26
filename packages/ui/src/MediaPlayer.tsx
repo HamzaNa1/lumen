@@ -80,6 +80,7 @@ export const MediaPlayer = ({
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [audioActionStatus, setAudioActionStatus] = useState<string | null>(null);
+  const [changingAudioOutput, setChangingAudioOutput] = useState(false);
   const audioStreams = streams.filter((stream) => stream.kind === "audio");
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
   const audioLabels = streamLabels(audioStreams);
@@ -245,7 +246,7 @@ export const MediaPlayer = ({
                     <strong>Audio and subtitles</strong>
                     <SelectField
                       label="Audio output"
-                      disabled={inactive}
+                      disabled={inactive || changingAudioOutput}
                       value={audioOutput}
                       options={[
                         { value: "stereo", label: "Stereo (speakers / headphones)" },
@@ -254,9 +255,10 @@ export const MediaPlayer = ({
                       onValueChange={(value) => {
                         if (value !== "stereo" && value !== "auto-safe") return;
                         setAudioActionStatus(null);
-                        void onAudioOutput(value).catch(() =>
-                          setAudioActionStatus("Could not change audio output."),
-                        );
+                        setChangingAudioOutput(true);
+                        void onAudioOutput(value)
+                          .catch(() => setAudioActionStatus("Could not change audio output."))
+                          .finally(() => setChangingAudioOutput(false));
                       }}
                     />
                     {audioStreams.length > 0 ? (
