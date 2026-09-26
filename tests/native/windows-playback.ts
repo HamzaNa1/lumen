@@ -154,7 +154,7 @@ async function run(): Promise<void> {
     progress: async () => undefined,
   } as unknown as ServerClient;
 
-  async function inspect(label: string): Promise<boolean> {
+  async function inspect(label: string, sampleX = 0.5): Promise<boolean> {
     await delay(750);
     const active = Reflect.get(controller, "active") as { ipc: MpvIpc };
     await active.ipc
@@ -197,7 +197,7 @@ async function run(): Promise<void> {
     const scaleX = imageSize.width / screenPixels.width;
     const scaleY = imageSize.height / screenPixels.height;
     const image = thumbnail.crop({
-      x: Math.round((bounds.x + bounds.width / 2) * scaleX - 20),
+      x: Math.round((bounds.x + bounds.width * sampleX) * scaleX - 20),
       y: Math.round((bounds.y + bounds.height / 2) * scaleY - 20),
       width: 40,
       height: 40,
@@ -211,7 +211,7 @@ async function run(): Promise<void> {
       label,
       properties,
       redPixels,
-      capture: { imageSize, screenPixels, bounds, scaleX, scaleY },
+      capture: { imageSize, screenPixels, bounds, scaleX, scaleY, sampleX },
       windows: BaseWindow.getAllWindows().map((window) => ({
         id: window.id,
         visible: window.isVisible(),
@@ -341,7 +341,9 @@ async function run(): Promise<void> {
   assert.equal(copied.properties["audio-out-params"]["channel-count"], 2);
   assert.equal(copied.expectedAudioTrack, copied.properties.aid);
   assert(!copiedText.includes("127.0.0.1"), "Diagnostics leaked the stream URL");
-  visible.push(await inspect("audio-settings"));
+  // The settings panel covers the center at 150% scaling. Sample the visible
+  // video to its left while retaining a full desktop screenshot for UI review.
+  visible.push(await inspect("audio-settings", 0.25));
   await controller.stop();
   assert(
     visible.every(Boolean),
