@@ -37,6 +37,7 @@ export interface LumenBridge {
     readonly items: (libraryId: string, cursor?: string | null) => Promise<IpcItemPage>;
     readonly itemDetails: (itemId: string) => Promise<IpcItemDetails>;
     readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<IpcItemPage>;
+    readonly setWatched: (itemId: string, completed: boolean) => Promise<void>;
     readonly nextUp: (itemId: string) => Promise<IpcItem | null>;
     readonly artwork: (artworkId: string) => Promise<string | null>;
     readonly search: (query: string, libraryId?: string | null) => Promise<unknown>;

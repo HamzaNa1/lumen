@@ -1,7 +1,9 @@
 import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
-import { MediaCard } from "@lumen/ui";
-import { useQuery } from "@tanstack/react-query";
+import { Button, MediaCard } from "@lumen/ui";
+import { useIsMutating, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, CircleCheck, LoaderCircle } from "lucide-react";
 import { createContext, type ReactNode, useContext } from "react";
+import { errorMessage } from "./format";
 
 export const bridge = window.lumen;
 
@@ -38,6 +40,57 @@ export const useArtwork = (artworkId: string | null | undefined, scope: readonly
     staleTime: Number.POSITIVE_INFINITY,
   });
 
+export const WatchedButton = ({
+  item,
+  compact = false,
+}: {
+  readonly item: IpcItem;
+  readonly compact?: boolean;
+}): React.ReactElement => {
+  const { scope } = useWorkspace();
+  const queryClient = useQueryClient();
+  const mutationKey = [...scope, "watch-state"];
+  const pending = useIsMutating({ mutationKey }) > 0;
+  const update = useMutation({
+    mutationKey,
+    mutationFn: (completed: boolean) => bridge.library.setWatched(item.id, completed),
+    onSuccess: () =>
+      queryClient.invalidateQueries({
+        queryKey: scope,
+        predicate: (query) =>
+          ["home", "items", "item", "children", "next-up", "search"].includes(
+            String(query.queryKey[scope.length]),
+          ),
+      }),
+  });
+  const completed = item.completed === true;
+  const label = `Mark ${item.title} as ${completed ? "unwatched" : "watched"}`;
+  const Icon = update.isPending ? LoaderCircle : completed ? CircleCheck : Check;
+  return (
+    <div className={`watch-control${compact ? " is-compact" : ""}`}>
+      <Button
+        className={`watch-button${completed ? " is-watched" : ""}`}
+        variant={compact ? "icon" : "secondary"}
+        size={compact ? "sm" : "lg"}
+        aria-label={label}
+        aria-pressed={completed}
+        aria-busy={update.isPending}
+        title={label}
+        disabled={pending}
+        onClick={() => update.mutate(!completed)}
+      >
+        <Icon aria-hidden="true" size={16} className={update.isPending ? "spinner" : undefined} />
+        {compact ? null : update.isPending ? "Saving…" : completed ? "Watched" : "Mark as watched"}
+      </Button>
+      {update.isError ? (
+        <span className="watch-error" role="alert">
+          {errorMessage(update.error, "Couldn’t update watched status. Try again.")}
+        </span>
+      ) : null}
+    </div>
+  );
+};
+
 export const CatalogCard = ({
   item,
   subtitle,
@@ -57,6 +110,11 @@ export const CatalogCard = ({
         item.durationMs !== null && item.durationMs > 0 && item.resumePositionSeconds
           ? (item.resumePositionSeconds * 1_000) / item.durationMs
           : null
+      }
+      action={
+        ["movie", "season", "episode"].includes(item.kind) ? (
+          <WatchedButton item={item} compact />
+        ) : null
       }
       onOpen={() => openItem(item)}
       onPlay={() => playItem(item)}
