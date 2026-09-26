@@ -6,7 +6,6 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { app, BaseWindow, desktopCapturer, ipcMain, screen } from "electron";
-import { load } from "koffi";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -25,14 +24,21 @@ const clip = readFileSync("tests/fixtures/playback.mp4");
 process.chdir(root);
 const startMpv = MpvProcess.start;
 let processNumber = 0;
-MpvProcess.start = (options) =>
-  startMpv({
+MpvProcess.start = (options) => {
+  const index = processNumber++;
+  return startMpv({
     ...options,
     videoOutputArguments: [
       ...(options.videoOutputArguments ?? []),
-      `--log-file=${join(evidence, `mpv-${processNumber++}.log`)}`,
+      `--log-file=${join(evidence, `mpv-${index}.log`)}`,
+      // Hosted runners have no speakers. Verify decoded samples through PCM;
+      // real WASAPI/speaker output still needs testing on a Windows PC.
+      "--ao=pcm",
+      "--ao-pcm-waveheader=no",
+      `--ao-pcm-file=${join(evidence, `audio-${index}.pcm`)}`,
     ],
   });
+};
 const upstream = createServer((request, response) => {
   const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
   const start = match ? Number(match[1]) : 0;
@@ -165,6 +171,7 @@ async function run(): Promise<void> {
       })),
     });
     console.log(label, JSON.stringify(observations.at(-1)));
+    assert.equal(properties["current-ao"], "pcm", "The audio output failed to initialize");
     return redPixels > 1400;
   }
 
@@ -172,32 +179,6 @@ async function run(): Promise<void> {
   for (let iteration = 0; iteration < 3; iteration++) {
     await controller.start({ client, connectionId: "test", itemId: "test-item" });
     visible.push(await inspect(`play-${iteration}`));
-    if (iteration === 0 && !visible.at(-1)) {
-      overlay.setVisible(false);
-      await inspect("diagnostic-no-overlay");
-      const host = Reflect.get(surface, "host") as BaseWindow;
-      host.showInactive();
-      host.moveTop();
-      await inspect("diagnostic-host-top");
-      const user32 = load("user32.dll");
-      const getWindow = user32.func("uintptr_t __stdcall GetWindow(uintptr_t, unsigned int)");
-      const getStyle = user32.func("long __stdcall GetWindowLongW(uintptr_t, int)");
-      const isVisible = user32.func("int __stdcall IsWindowVisible(uintptr_t)");
-      const showWindow = user32.func("int __stdcall ShowWindow(uintptr_t, int)");
-      let child = getWindow(host.getNativeWindowHandle().readUInt32LE(), 5);
-      while (child) {
-        observations.push({
-          child: String(child),
-          style: getStyle(child, -16),
-          visible: isVisible(child),
-        });
-        showWindow(child, 4);
-        child = getWindow(child, 2);
-      }
-      await inspect("diagnostic-show-children");
-      user32.unload();
-      overlay.setVisible(true);
-    }
     await controller.tick();
     const state = controller.getState();
     assert(state && state.positionSeconds > 0, "Playback clock did not advance");
@@ -206,8 +187,14 @@ async function run(): Promise<void> {
     controller.seek(state.sessionId, 5);
     visible.push(await inspect(`seek-${iteration}`));
     controller.pause(state.sessionId, false);
+    visible.push(await inspect(`resume-${iteration}`));
     await controller.stop();
     assert.equal(controller.getState(), null);
+    const audio = readFileSync(join(evidence, `audio-${iteration}.pcm`));
+    assert(
+      audio.length > 4_800 && audio.some((value) => value !== 0),
+      "Decoded audio is missing or silent",
+    );
   }
   assert(
     visible.every(Boolean),

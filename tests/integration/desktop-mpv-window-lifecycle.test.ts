@@ -36,7 +36,7 @@ class FakeBaseWindow {
   }
 }
 
-mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {} }));
+mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {}, screen: {} }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
 const { PlayerController } = await import("../../apps/desktop/src/main/player/PlayerController");
 const { MpvIpc } = await import("../../apps/desktop/src/main/player/MpvIpc");

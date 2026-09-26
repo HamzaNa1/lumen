@@ -49,7 +49,11 @@ jobs:
           name: windows-playback-evidence
           path: apps/desktop/out/playback-evidence
       - name: Build Windows test installers
-        run: bun run --cwd apps/desktop package --win --x64
+        shell: pwsh
+        run: |
+          Remove-Item apps/desktop/out/windows-playback.cjs
+          Remove-Item apps/desktop/out/playback-evidence -Recurse -Force
+          bun run --cwd apps/desktop package --win --x64
       - uses: actions/upload-artifact@v4
         with:
           name: lumen-windows-test

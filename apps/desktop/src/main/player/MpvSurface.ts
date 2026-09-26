@@ -2,9 +2,14 @@ import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { BaseWindow, type BrowserWindow } from "electron";
 import { MacMpvWindow } from "./MacMpvWindow";
 import type { PlayerOverlayWindow } from "./PlayerOverlayWindow";
+import { WindowsMpvHost } from "./WindowsMpvHost";
 
 type NativeVideoWindow = Pick<MacMpvWindow, "sync" | "show" | "dispose">;
 type CreateNativeVideoWindow = (hostView: bigint, windowId: bigint) => NativeVideoWindow;
+type VideoHost = Pick<
+  BaseWindow,
+  "getNativeWindowHandle" | "setBounds" | "showInactive" | "hide" | "isDestroyed" | "destroy"
+>;
 
 const nativeWindowId = (handle: Buffer): string => {
   if (process.platform === "win32") return String(handle.readUInt32LE(0));
@@ -14,7 +19,7 @@ const nativeWindowId = (handle: Buffer): string => {
 
 export class MpvSurface {
   private readonly parent: BrowserWindow;
-  private host: BaseWindow | null = null;
+  private host: VideoHost | null = null;
   private macWindow: NativeVideoWindow | null = null;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private playbackVisible = false;
@@ -111,8 +116,12 @@ export class MpvSurface {
     window?.dispose();
   }
 
-  private ensureHost(): BaseWindow {
+  private ensureHost(): VideoHost {
     if (this.host !== null && !this.host.isDestroyed()) return this.host;
+    if (process.platform === "win32") {
+      this.host = new WindowsMpvHost(this.parent);
+      return this.host;
+    }
     const host = new BaseWindow({
       parent: this.parent,
       frame: false,
