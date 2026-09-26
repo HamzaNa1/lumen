@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { app, BaseWindow, desktopCapturer, ipcMain, nativeImage, screen } from "electron";
+import { load } from "koffi";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -59,6 +60,8 @@ let player: PlayerController | null = null;
 async function run(): Promise<void> {
   assert.equal(process.platform, "win32");
   await app.whenReady();
+  const user32 = load("user32.dll");
+  const getSystemMetrics = user32.func("int __stdcall GetSystemMetrics(int)");
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   const address = upstream.address();
   assert(address && typeof address !== "string");
@@ -150,9 +153,10 @@ async function run(): Promise<void> {
       properties[name] = await active.ipc.command(["get_property", name]).catch(String);
     }
     const display = screen.getPrimaryDisplay();
+    const screenPixels = { width: getSystemMetrics(0), height: getSystemMetrics(1) };
     const sources = await desktopCapturer.getSources({
       types: ["screen"],
-      thumbnailSize: { width: display.size.width, height: display.size.height },
+      thumbnailSize: screenPixels,
     });
     const source =
       sources.find((candidate) => candidate.display_id === String(display.id)) ?? sources[0];
@@ -162,15 +166,15 @@ async function run(): Promise<void> {
     // Normalize the representation to 1x: nativeImage crop coordinates and
     // thumbnail bitmap pixels otherwise disagree under forced fractional DPI.
     const thumbnail = nativeImage.createFromBuffer(png, { scaleFactor: 1 });
-    const bounds = parent.getContentBounds();
+    const bounds = screen.dipToScreenRect(parent, parent.getContentBounds());
     // Capturer thumbnails can be smaller than requested at fractional DPI.
     // Map screen coordinates to the actual image before sampling its center.
     const imageSize = thumbnail.getSize();
-    const scaleX = imageSize.width / display.bounds.width;
-    const scaleY = imageSize.height / display.bounds.height;
+    const scaleX = imageSize.width / screenPixels.width;
+    const scaleY = imageSize.height / screenPixels.height;
     const image = thumbnail.crop({
-      x: Math.round((bounds.x - display.bounds.x + bounds.width / 2) * scaleX - 20),
-      y: Math.round((bounds.y - display.bounds.y + bounds.height / 2) * scaleY - 20),
+      x: Math.round((bounds.x + bounds.width / 2) * scaleX - 20),
+      y: Math.round((bounds.y + bounds.height / 2) * scaleY - 20),
       width: 40,
       height: 40,
     });
@@ -183,7 +187,7 @@ async function run(): Promise<void> {
       label,
       properties,
       redPixels,
-      capture: { imageSize, screenBounds: display.bounds, scaleX, scaleY },
+      capture: { imageSize, screenPixels, bounds, scaleX, scaleY },
       windows: BaseWindow.getAllWindows().map((window) => ({
         id: window.id,
         visible: window.isVisible(),
@@ -249,6 +253,7 @@ async function run(): Promise<void> {
   );
   surface.dispose();
   surface.dispose(); // Native destruction must be idempotent.
+  user32.unload();
   console.log("Native Windows playback passed");
 }
 
