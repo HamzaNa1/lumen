@@ -1,5 +1,6 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import type { IpcPlayerState } from "@lumen/contracts";
 import type { BrowserWindow } from "electron";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 
@@ -39,9 +40,162 @@ class FakeBaseWindow {
 
 mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {}, screen: {} }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
-const { PlayerController } = await import("../../apps/desktop/src/main/player/PlayerController");
+const { PlayerController, startNativePlayer } = await import("../../apps/desktop/src/main/player/PlayerController");
 const { MpvIpc } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
+
+const withPlayback = async (
+  run: (playback: {
+    controller: InstanceType<typeof PlayerController>;
+    states: IpcPlayerState[];
+    properties: Map<string, unknown>;
+    heartbeat: ReturnType<typeof mock>;
+    progress: ReturnType<typeof mock>;
+  }) => Promise<void>,
+): Promise<void> => {
+  const startProcess = spyOn(MpvProcess, "start").mockReturnValue({
+    stop: async () => undefined,
+  } as unknown as MpvProcess);
+  const connect = spyOn(MpvIpc.prototype, "connect").mockResolvedValue(undefined);
+  const properties = new Map<string, unknown>([
+    ["window-id", 1],
+    ["time-pos", 12.25],
+    ["duration", 60],
+    ["pause", false],
+    ["eof-reached", false],
+  ]);
+  const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
+    this: InstanceType<typeof MpvIpc>,
+    args: ReadonlyArray<string | number>,
+  ): Promise<unknown> {
+    if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
+    return Promise.resolve(args[0] === "get_property" ? properties.get(String(args[1])) : null);
+  });
+  const states: IpcPlayerState[] = [];
+  const heartbeat = mock(async () => undefined);
+  const progress = mock(async () => undefined);
+  let sessionNumber = 0;
+  const client = {
+    serverOrigin: "http://localhost:3000",
+    startPlayback: async () => ({
+      sessionId: `session-${++sessionNumber}`,
+      itemId: "item-1",
+      streamUrl: "/stream",
+      grantToken: "grant",
+      durationSeconds: 60,
+      streams: [],
+    }),
+    request: async () => undefined,
+    heartbeat,
+    progress,
+  };
+  const controller = new PlayerController({
+    bridge: {
+      register: () => ({ capability: "test", url: "http://127.0.0.1/video" }),
+      revoke: () => undefined,
+    },
+    surface: {
+      prepare: () => [],
+      attachNativeWindow: () => undefined,
+      show: () => undefined,
+      hide: () => undefined,
+    },
+    onState: (state: IpcPlayerState) => states.push(state),
+  } as unknown as ConstructorParameters<typeof PlayerController>[0]);
+  try {
+    await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
+    states.length = 0;
+    await run({ controller, states, properties, heartbeat, progress });
+  } finally {
+    await controller.stop();
+    startProcess.mockRestore();
+    connect.mockRestore();
+    command.mockRestore();
+  }
+};
+
+describe("playback progress updates", () => {
+  test("publishes multiple position samples within one second without server requests", async () => {
+    await withPlayback(async ({ controller, states, heartbeat, progress }) => {
+      const stopUpdates = startNativePlayer(controller);
+      try {
+        await Bun.sleep(950);
+        expect(states.length).toBeGreaterThanOrEqual(3);
+        expect(states.at(-1)?.positionSeconds).toBe(12.25);
+        expect(heartbeat).not.toHaveBeenCalled();
+        expect(progress).not.toHaveBeenCalled();
+      } finally {
+        stopUpdates();
+      }
+    });
+  });
+
+  test("frequent sampling preserves the heartbeat and saved-progress cadence", async () => {
+    await withPlayback(async ({ controller, heartbeat, progress }) => {
+      for (let tick = 1; tick <= 6; tick++) {
+        for (let sample = 0; sample < 12; sample++) await controller.refreshState();
+        await controller.tick();
+        expect(heartbeat).toHaveBeenCalledTimes(Math.floor(tick / 3));
+        expect(progress).toHaveBeenCalledTimes(tick === 6 ? 1 : 0);
+      }
+      expect(progress).toHaveBeenLastCalledWith(
+        "session-1",
+        expect.objectContaining({ positionSeconds: 12.25 }),
+        6,
+      );
+    });
+  });
+
+  test("a slow server heartbeat does not block position updates", async () => {
+    await withPlayback(async ({ controller, heartbeat, properties }) => {
+      const pending = Promise.withResolvers<void>();
+      heartbeat.mockImplementation(() => pending.promise);
+      await controller.tick();
+      await controller.tick();
+      const reporting = controller.tick();
+      try {
+        properties.set("time-pos", 24.5);
+        await controller.refreshState();
+        expect(controller.getState()?.positionSeconds).toBe(24.5);
+        await controller.tick();
+        expect(heartbeat).toHaveBeenCalledTimes(1);
+      } finally {
+        pending.resolve();
+        await reporting;
+      }
+    });
+  });
+
+  test("a pending sample cannot overwrite a seek or resurrect a stopped session", async () => {
+    await withPlayback(async ({ controller, states }) => {
+      const sampling = controller.refreshState();
+      controller.seek("session-1", 40);
+      await sampling;
+      expect(controller.getState()?.positionSeconds).toBe(40);
+      expect(states).toHaveLength(1);
+
+      const stoppingSample = controller.refreshState();
+      await controller.stop();
+      await stoppingSample;
+      expect(controller.getState()).toBeNull();
+      expect(states).toHaveLength(1);
+    });
+  });
+
+  test("overlapping polls publish once and report pause and end-of-file accurately", async () => {
+    await withPlayback(async ({ controller, states, properties }) => {
+      properties.set("pause", true);
+      await Promise.all([controller.refreshState(), controller.refreshState()]);
+      expect(states).toHaveLength(1);
+      expect(controller.getState()?.paused).toBe(true);
+
+      properties.set("time-pos", 60);
+      properties.set("eof-reached", true);
+      await controller.refreshState();
+      expect(controller.getState()).toMatchObject({ positionSeconds: 60, ended: true });
+    });
+  });
+});
 
 describe("player surface shutdown", () => {
   for (const stopped of [false, true]) {

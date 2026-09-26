@@ -90,6 +90,8 @@ export class PlayerController extends EventEmitter {
   private readonly onState: (state: IpcPlayerState) => void;
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
+  private refreshing: ActiveSession | null = null;
+  private reporting: ActiveSession | null = null;
   private startGeneration = 0;
   private stopping: Promise<void> | null = null;
   // Avoid relying on a Windows driver to downmix center/surround channels.
@@ -440,35 +442,55 @@ export class PlayerController extends EventEmitter {
     return stopping;
   }
 
-  async tick(): Promise<void> {
+  async refreshState(): Promise<void> {
     const active = this.active;
-    if (active === null || this.state === null) return;
+    const state = this.state;
+    if (active === null || state === null || this.refreshing === active) return;
+    this.refreshing = active;
     try {
       const value = await active.ipc.command(["get_property", "time-pos"]);
       const duration = await active.ipc.command(["get_property", "duration"]);
       const paused = await active.ipc.command(["get_property", "pause"]);
       const ended = await active.ipc.command(["get_property", "eof-reached"]);
+      // A stop, replacement session, or user action makes this sample stale.
+      if (this.active !== active || this.state !== state) return;
       const next: IpcPlayerState = {
-        ...this.state,
+        ...state,
         positionSeconds:
-          typeof value === "number" && value >= 0 ? value : this.state.positionSeconds,
+          typeof value === "number" && value >= 0 ? value : state.positionSeconds,
         durationSeconds:
-          typeof duration === "number" && duration >= 0 ? duration : this.state.durationSeconds,
+          typeof duration === "number" && duration >= 0 ? duration : state.durationSeconds,
         paused: paused === true,
         ended: ended === true,
       };
       this.state = next;
       this.publish();
-      active.sequence += 1;
-      if (active.sequence % 3 === 0) await active.client.heartbeat(next.sessionId, next);
-      if (active.sequence % 6 === 0)
-        await active.client.progress(next.sessionId, next, active.sequence);
     } catch (cause) {
       // `property unavailable` is expected while no file is loaded (e.g. in
       // the window between spawn and file-loaded); keep the last state and
       // wait for the next tick instead of spamming error listeners.
-      if (isPropertyUnavailable(cause)) return;
+      if (this.active !== active || isPropertyUnavailable(cause)) return;
       this.emitError(cause);
+    } finally {
+      if (this.refreshing === active) this.refreshing = null;
+    }
+  }
+
+  async tick(): Promise<void> {
+    const active = this.active;
+    const state = this.state;
+    if (active === null || state === null || this.reporting === active) return;
+    this.reporting = active;
+    try {
+      active.sequence += 1;
+      if (active.sequence % 3 === 0) await active.client.heartbeat(state.sessionId, state);
+      if (this.active !== active) return;
+      if (active.sequence % 6 === 0)
+        await active.client.progress(state.sessionId, state, active.sequence);
+    } catch (cause) {
+      if (this.active === active) this.emitError(cause);
+    } finally {
+      if (this.reporting === active) this.reporting = null;
     }
   }
 
@@ -517,7 +539,14 @@ export class PlayerController extends EventEmitter {
   }
 }
 
-export const startNativePlayer = (controller: PlayerController): void => {
-  void app.whenReady();
-  setInterval(() => void controller.tick(), 3_000).unref();
+export const startNativePlayer = (controller: PlayerController): (() => void) => {
+  // UI sampling is independent of the slower heartbeat / saved-progress cadence.
+  const refreshTimer = setInterval(() => void controller.refreshState(), 250);
+  const reportTimer = setInterval(() => void controller.tick(), 3_000);
+  refreshTimer.unref();
+  reportTimer.unref();
+  return () => {
+    clearInterval(refreshTimer);
+    clearInterval(reportTimer);
+  };
 };

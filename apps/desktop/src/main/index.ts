@@ -6,7 +6,7 @@ import type { ServerClient } from "./api/ServerClient";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
 import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
-import { PlayerController } from "./player/PlayerController";
+import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
 import { createMainWindow } from "./windows";
 
@@ -61,7 +61,8 @@ const bootstrap = async (): Promise<void> => {
   if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
   else await mainWindow.loadFile(rendererPath);
   await overlay.load(rendererUrl, rendererPath);
-  setInterval(() => void player?.tick(), 3_000);
+  const stopUpdates = startNativePlayer(player);
+  mainWindow.once("closed", stopUpdates);
 };
 
 app.on("before-quit", () => {

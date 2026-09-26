@@ -243,7 +243,7 @@ async function run(): Promise<void> {
   for (let iteration = 0; iteration < 3; iteration++) {
     await controller.start({ client, connectionId: "test", itemId: "test-item" });
     visible.push(await inspect(`play-${iteration}`));
-    await controller.tick();
+    await controller.refreshState();
     const state = controller.getState();
     assert(state && state.positionSeconds > 0, "Playback clock did not advance");
     assert.equal(state.selectedAudioStreamId, "audio-1");
