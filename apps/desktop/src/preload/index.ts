@@ -55,6 +55,9 @@ const api = {
       invoke<unknown>("player:select-audio", { sessionId, streamId }),
     selectSubtitle: (sessionId: string, streamId: string | null) =>
       invoke<unknown>("player:select-subtitle", { sessionId, streamId }),
+    audioOutput: (sessionId: string, output: "stereo" | "auto-safe") =>
+      invoke<unknown>("player:audio-output", { sessionId, output }),
+    copyAudioDiagnostics: (sessionId: string) => invoke<void>("player:copy-audio-diagnostics", sessionId),
     state: () => invoke<unknown>("player:state"),
     display: (display: IpcPlayerDisplay) => invoke<unknown>("player:display", display),
     displayState: () => invoke<unknown>("player:display-state"),

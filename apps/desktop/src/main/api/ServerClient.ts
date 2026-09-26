@@ -1,4 +1,4 @@
-import { IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
+import { IpcAudioOutput, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
@@ -106,6 +106,7 @@ const playerStateSchema = Schema.Struct({
   streams: Schema.Array(IpcPlayableStream),
   selectedAudioStreamId: Schema.NullOr(Schema.String),
   selectedSubtitleStreamId: Schema.NullOr(Schema.String),
+  audioOutput: IpcAudioOutput,
 });
 
 const normalizeOrigin = (value: string): string => {
