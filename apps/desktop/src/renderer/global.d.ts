@@ -100,6 +100,8 @@ export interface LumenBridge {
       sessionId: string,
       streamId: string | null,
     ) => Promise<IpcPlayerState>;
+    readonly audioOutput: (sessionId: string, output: "stereo" | "auto-safe") => Promise<IpcPlayerState>;
+    readonly copyAudioDiagnostics: (sessionId: string) => Promise<void>;
     readonly state: () => Promise<IpcPlayerState | null>;
     readonly display: (display: IpcPlayerDisplay) => Promise<void>;
     readonly displayState: () => Promise<IpcPlayerDisplay | null>;

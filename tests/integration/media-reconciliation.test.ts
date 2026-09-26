@@ -77,12 +77,12 @@ const makeHarness = async () => {
   const settings = MetadataSettingsLive.pipe(Layer.provide(dependencies));
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
   const ingest = MediaIngestLive.pipe(Layer.provide(Layer.mergeAll(dependencies, fakeFfprobe)));
-  const jobs = JobServiceLive.pipe(
-    Layer.provide(Layer.mergeAll(dependencies, scanner, ingest, settings)),
-  );
   const libraries = LibraryServiceLive.pipe(Layer.provide(dependencies));
   const catalog = CatalogServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const watcher = LibraryWatcherLive.pipe(Layer.provide(Layer.mergeAll(dependencies, libraries)));
+  const jobs = JobServiceLive.pipe(
+    Layer.provide(Layer.mergeAll(dependencies, scanner, ingest, settings, watcher)),
+  );
   const dataDir = join(workspace, "data");
   const scheduler = ScheduledJobServiceLiveWithConfig({ dataDir } as never).pipe(
     Layer.provide(Layer.mergeAll(dependencies, watcher)),
@@ -643,6 +643,11 @@ describe("media reconciliation", () => {
     );
 
     expect(repeated).toMatchObject({ skipped: null, sourcesDeleted: 0, itemsDeleted: 0 });
+    expect(
+      await harness.query<{ count: number }>(
+        sql`SELECT count(*) AS count FROM server_scan_missing WHERE run_id = ${runId}`,
+      ),
+    ).toEqual([{ count: 1 }]);
     expect((await harness.browse(movies.libraryId)).map((item) => item.title)).toEqual(["Kept"]);
   });
 });

@@ -14,7 +14,10 @@ export class MpvProcess {
   private readonly child: ChildProcess | null;
   private readonly native: LibMpv | null;
   private readonly socket: string;
+  private readonly childExit: Promise<void> | null;
   private exited = false;
+  private stopping: Promise<void> | null = null;
+  private startupError: Error | null = null;
 
   private constructor(
     child: ChildProcess | null,
@@ -25,10 +28,21 @@ export class MpvProcess {
     this.child = child;
     this.native = native;
     this.socket = socket;
-    child?.once("exit", (code) => {
-      this.exited = true;
-      onExit(code);
-    });
+    this.childExit =
+      child === null
+        ? null
+        : new Promise((resolve) => {
+            child.once("exit", (code) => {
+              this.exited = true;
+              resolve();
+              onExit(code);
+            });
+            child.once("error", (cause) => {
+              this.startupError = cause;
+              this.exited = true;
+              resolve();
+            });
+          });
   }
 
   static start(options: MpvProcessOptions): MpvProcess {
@@ -91,10 +105,24 @@ export class MpvProcess {
     return this.child;
   }
 
-  async stop(): Promise<void> {
-    if (this.exited) return;
+  get error(): Error | null {
+    return this.startupError;
+  }
+
+  stop(): Promise<void> {
+    if (this.stopping !== null) return this.stopping;
+    if (this.exited) return Promise.resolve();
     this.exited = true;
-    if (this.child !== null) this.child.kill("SIGTERM");
-    else await this.native?.stop();
+    if (this.child !== null) {
+      // A replacement must not share the host window/audio device with the
+      // dying process. kill() only sends a signal; it does not wait for exit.
+      const forceKill = setTimeout(() => this.child?.kill("SIGKILL"), 2_000);
+      forceKill.unref();
+      this.stopping = (this.childExit ?? Promise.resolve()).finally(() => clearTimeout(forceKill));
+      this.child.kill("SIGTERM");
+    } else {
+      this.stopping = this.native?.stop() ?? Promise.resolve();
+    }
+    return this.stopping;
   }
 }

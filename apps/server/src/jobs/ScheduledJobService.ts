@@ -7,8 +7,10 @@ import {
   artworkSweepJobName,
   sweepGeneratedArtwork,
 } from "../media/GeneratedArtwork";
-import { LibraryWatcher } from "./LibraryWatcher";
+import { enqueueServerJob, LIBRARY_WATCHER_JOB } from "./ServerJobs";
 
+// The library watcher tick enqueues durable work for the job worker.
+// Artwork sweeps retain their scheduled callback.
 interface ScheduledJobDefinition {
   readonly name: string;
   readonly intervalMs: number;
@@ -39,12 +41,12 @@ const waitForNextTick = (signal: AbortSignal): Promise<void> =>
 export const makeScheduledJobService = (config?: ServerConfig) =>
   Effect.gen(function* () {
     const database = yield* Database;
-    const watcher = yield* LibraryWatcher;
     const definitions: ReadonlyArray<ScheduledJobDefinition> = [
       {
-        name: "library-watcher",
+        name: LIBRARY_WATCHER_JOB,
         intervalMs: config?.libraryWatchIntervalMs ?? 60_000,
-        run: watcher.check,
+        run: (nowMs) =>
+          enqueueServerJob(database, { kind: LIBRARY_WATCHER_JOB, nowMs, maxAttempts: 3 }),
       },
       ...(config === undefined
         ? []

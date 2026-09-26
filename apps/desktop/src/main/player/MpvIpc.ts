@@ -20,7 +20,7 @@ export class MpvIpc extends EventEmitter {
 
   async connect(process: MpvProcess): Promise<void> {
     const socketPath = process.socketPath;
-    if (socketPath === null) throw new Error("MPV has exited");
+    if (socketPath === null) throw process.error ?? new Error("MPV has exited");
     this.socket = await this.connectWithRetry(process, socketPath);
     this.socket.setEncoding("utf8");
     this.socket.on("data", (chunk: string) => this.consume(chunk));
@@ -57,7 +57,8 @@ export class MpvIpc extends EventEmitter {
     const deadline = Date.now() + CONNECTION_TIMEOUT_MS;
 
     const attempt = (): Promise<Socket> => {
-      if (process.socketPath === null) return Promise.reject(new Error("MPV has exited"));
+      if (process.socketPath === null)
+        return Promise.reject(process.error ?? new Error("MPV has exited"));
       return new Promise<Socket>((resolve, reject) => {
         const socket = createConnection(socketPath);
         const cleanup = (): void => {
@@ -124,7 +125,8 @@ export class MpvIpc extends EventEmitter {
         if (pending === undefined) return;
         this.pending.delete(message.request_id);
         clearTimeout(pending.timer);
-        if (message.error !== undefined && message.error !== "success") pending.reject(new Error(message.error));
+        if (message.error !== undefined && message.error !== "success")
+          pending.reject(new Error(message.error));
         else pending.resolve(message.data ?? null);
       }
     } catch {

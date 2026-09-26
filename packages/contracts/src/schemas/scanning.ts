@@ -30,6 +30,21 @@ export const ScanRun = Schema.Struct({
 });
 export type ScanRun = Schema.Schema.Type<typeof ScanRun>;
 
+const FileCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+/** Per-run discovery counts, separating files seen on disk from files actually probed. */
+export const ScanRunStats = Schema.Struct({
+  discovered: FileCount,
+  new: FileCount,
+  changed: FileCount,
+  moved: FileCount,
+  unchanged: FileCount,
+  skipped: FileCount,
+  missing: FileCount,
+  probesEnqueued: FileCount,
+});
+export type ScanRunStats = Schema.Schema.Type<typeof ScanRunStats>;
+
 export const ScanJob = Schema.Struct({
   id: Uuid,
   runId: Uuid,

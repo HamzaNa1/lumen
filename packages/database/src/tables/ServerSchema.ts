@@ -441,6 +441,10 @@ export const jobs = sqliteTable(
   (table) => [
     uniqueIndex("jobs_idempotency_key_uq").on(table.idempotencyKey),
     index("jobs_claim_idx").on(table.state, table.nextRunAtMs, table.leaseExpiresAtMs),
+    // The library watcher is a global singleton: every process shares one active job.
+    uniqueIndex("jobs_library_watcher_active_uq")
+      .on(table.kind)
+      .where(sql`${table.kind} = 'library-watcher' and ${table.state} in ('pending', 'running')`),
     check(
       "jobs_state_chk",
       sql`${table.state} in ('pending', 'running', 'succeeded', 'failed', 'cancelled')`,
@@ -515,8 +519,30 @@ export const serverScanSeen = sqliteTable(
       .notNull()
       .references(() => mediaSources.id, { onDelete: "cascade" }),
     seenAtMs: millis("seen_at_ms"),
+    change: text("change").notNull().default("unchanged"),
   },
-  (table) => [primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] })],
+  (table) => [
+    primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] }),
+    check(
+      "server_scan_seen_change_chk",
+      sql`${table.change} in ('new', 'changed', 'moved', 'unchanged')`,
+    ),
+  ],
+);
+
+export const serverScanMissing = sqliteTable(
+  "server_scan_missing",
+  {
+    runId: text("run_id")
+      .notNull()
+      .references(() => scanRuns.id, { onDelete: "cascade" }),
+    // Historical scan statistics survive deletion of the missing source.
+    sourceId: text("source_id").notNull(),
+    missingAtMs: millis("missing_at_ms"),
+  },
+  (table) => [
+    primaryKey({ name: "server_scan_missing_pk", columns: [table.runId, table.sourceId] }),
+  ],
 );
 
 export const serverScheduledJobs = sqliteTable(
