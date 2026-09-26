@@ -1,13 +1,18 @@
 name: windows-playback
 on:
   workflow_dispatch:
-  push:
-    branches: [fix/windows-video-playback, fix/windows-player-shutdown]
   pull_request:
     paths:
       - 'apps/desktop/**'
+      - 'packages/ui/**'
+      - 'packages/contracts/**'
+      - 'scripts/verify-native-binaries.ts'
+      - 'tests/integration/desktop-*.test.ts'
       - 'tests/native/**'
       - 'tests/fixtures/**'
+      - 'package.json'
+      - 'bun.lock'
+      - 'tsconfig.base.json'
       - '.github/workflows/windows-playback.yml'
 permissions:
   contents: read
