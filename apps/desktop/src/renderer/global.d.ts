@@ -1,4 +1,6 @@
 import type {
+  EpisodeOrderOptions,
+  EpisodeOrderSelection,
   HomeContent,
   IpcAccounts,
   IpcItemPage,
@@ -36,6 +38,11 @@ export interface LumenBridge {
     readonly list: () => Promise<ReadonlyArray<IpcLibrary>>;
     readonly items: (libraryId: string, cursor?: string | null) => Promise<IpcItemPage>;
     readonly itemDetails: (itemId: string) => Promise<IpcItemDetails>;
+    readonly episodeOrder: (itemId: string) => Promise<EpisodeOrderOptions>;
+    readonly setEpisodeOrder: (
+      itemId: string,
+      selection: EpisodeOrderSelection,
+    ) => Promise<{ readonly runId: string }>;
     readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<IpcItemPage>;
     readonly nextUp: (itemId: string) => Promise<IpcItem | null>;
     readonly artwork: (artworkId: string) => Promise<string | null>;
@@ -58,7 +65,9 @@ export interface LumenBridge {
     }) => Promise<User>;
     readonly listLibraries: () => Promise<ReadonlyArray<IpcLibrary>>;
     readonly metadataSettings: () => Promise<{ readonly tmdbConfigured: boolean }>;
-    readonly updateMetadataSettings: (input: { readonly tmdbApiKey: string | null }) => Promise<{ readonly tmdbConfigured: boolean }>;
+    readonly updateMetadataSettings: (input: {
+      readonly tmdbApiKey: string | null;
+    }) => Promise<{ readonly tmdbConfigured: boolean }>;
     readonly createLibrary: (input: {
       readonly id: string;
       readonly name: string;
@@ -102,7 +111,10 @@ export interface LumenBridge {
       sessionId: string,
       streamId: string | null,
     ) => Promise<IpcPlayerState>;
-    readonly audioOutput: (sessionId: string, output: "stereo" | "auto-safe") => Promise<IpcPlayerState>;
+    readonly audioOutput: (
+      sessionId: string,
+      output: "stereo" | "auto-safe",
+    ) => Promise<IpcPlayerState>;
     readonly copyAudioDiagnostics: (sessionId: string) => Promise<void>;
     readonly state: () => Promise<IpcPlayerState | null>;
     readonly display: (display: IpcPlayerDisplay) => Promise<void>;

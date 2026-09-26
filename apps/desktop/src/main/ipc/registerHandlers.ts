@@ -1,4 +1,5 @@
 import {
+  EpisodeOrderSelection,
   IpcAudioOutput,
   IpcPlayerDisplay,
   IpcPlayerSurfaceBounds,
@@ -184,6 +185,16 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return activeClient(dependencies).items(input.libraryId, input.cursor);
   });
   handle("library:item-details", async (_event, raw) => activeClient(dependencies).itemDetails(decode(Schema.String, raw)));
+  handle("library:episode-order", async (_event, raw) =>
+    activeClient(dependencies).episodeOrder(decode(Schema.String, raw)),
+  );
+  handle("library:set-episode-order", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({ itemId: Schema.String, selection: EpisodeOrderSelection }),
+      raw,
+    );
+    return activeClient(dependencies).setEpisodeOrder(input.itemId, input.selection);
+  });
   handle("library:item-children", async (_event, raw) => {
     const input = decode(Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }), raw);
     return activeClient(dependencies).itemChildren(input.itemId, input.cursor);

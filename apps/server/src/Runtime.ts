@@ -17,7 +17,7 @@ import {
 } from "./jobs/ScheduledJobService";
 import { FfprobeLive } from "./media/Ffprobe";
 import { MediaIngestLive } from "./media/MediaIngest";
-import { TmdbProviderLive } from "./media/Tmdb";
+import { TmdbProvider, TmdbProviderLive } from "./media/Tmdb";
 import { AccessControl, AccessControlLive } from "./services/AccessControl";
 import { AssetService, AssetServiceLiveWithConfig } from "./services/AssetService";
 import { AdminService, AdminServiceLive } from "./services/AdminService";
@@ -54,6 +54,7 @@ export interface ServerServices {
   readonly scheduledJobs: ScheduledJobServiceShape;
   readonly database: Database["Service"];
   readonly identity: ServerIdentity;
+  readonly tmdb: TmdbProvider["Service"];
   readonly metadataSettings: MetadataSettingsShape;
 }
 
@@ -106,6 +107,7 @@ export const makeLayers = (config: ServerConfig) => {
     scheduledJobs,
     identity,
     metadataSettings,
+    tmdb,
   );
 };
 
@@ -128,6 +130,7 @@ const makeServices = Effect.gen(function* () {
     database,
     identity,
     metadataSettings: yield* MetadataSettings,
+    tmdb: yield* TmdbProvider,
   };
 });
 
@@ -185,6 +188,7 @@ export const startServer = async (
     jobs: services.jobs,
     identity: services.identity,
     metadataSettings: services.metadataSettings,
+    tmdb: services.tmdb,
     startedAtMs: Date.now(),
     databaseReady: async () => {
       try {

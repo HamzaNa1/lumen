@@ -224,6 +224,14 @@ export const catalogItemMetadata = sqliteTable("catalog_item_metadata", {
   lockedFieldsJson: text("locked_fields_json").notNull().default("[]"),
 });
 
+export const seriesEpisodeOrders = sqliteTable("series_episode_orders", {
+  itemId: text("item_id")
+    .primaryKey()
+    .references(() => catalogItems.id, { onDelete: "cascade" }),
+  tmdbSeriesId: text("tmdb_series_id").notNull(),
+  groupId: text("group_id").notNull(),
+});
+
 export const catalogItemArtwork = sqliteTable(
   "catalog_item_artwork",
   {

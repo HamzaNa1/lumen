@@ -1647,6 +1647,30 @@ body:has(.app-shell) {
   font-variant-numeric: tabular-nums;
   text-align: right;
 }
+.episode-order {
+  margin-bottom: 16px;
+}
+
+.episode-order-panel {
+  display: grid;
+  gap: 14px;
+  margin-top: 12px;
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg-panel);
+}
+
+.episode-order-panel h3 {
+  margin: 0 0 6px;
+}
+
+.episode-order-panel p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
 .episode-title {
   overflow: hidden;
   text-overflow: ellipsis;
