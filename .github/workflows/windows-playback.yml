@@ -41,9 +41,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           bun build tests/native/windows-playback.ts --target=node --format=cjs --external=electron --external=koffi --outfile=apps/desktop/out/windows-playback.cjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $electron = node -e "console.log(require(require.resolve('electron', { paths: ['./apps/desktop'] })))"
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $electron apps/desktop/out/windows-playback.cjs
+          node -e "const exe = require(require.resolve('electron', { paths: ['./apps/desktop'] })); const result = require('node:child_process').spawnSync(exe, ['apps/desktop/out/windows-playback.cjs'], { stdio: 'inherit' }); if (result.error) throw result.error; process.exit(result.status ?? 1);"
           exit $LASTEXITCODE
       - uses: actions/upload-artifact@v4
         if: always()

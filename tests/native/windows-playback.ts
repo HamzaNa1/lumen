@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { app, BaseWindow, desktopCapturer, ipcMain, screen } from "electron";
+import { load } from "koffi";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -114,6 +115,9 @@ async function run(): Promise<void> {
   async function inspect(label: string): Promise<boolean> {
     await delay(750);
     const active = Reflect.get(controller, "active") as { ipc: MpvIpc };
+    await active.ipc
+      .command(["screenshot-to-file", join(evidence, `${label}-decoded.png`), "video"])
+      .catch((error: unknown) => observations.push({ screenshotError: String(error) }));
     const properties: Record<string, unknown> = {};
     for (const name of [
       "time-pos",
@@ -168,6 +172,32 @@ async function run(): Promise<void> {
   for (let iteration = 0; iteration < 3; iteration++) {
     await controller.start({ client, connectionId: "test", itemId: "test-item" });
     visible.push(await inspect(`play-${iteration}`));
+    if (iteration === 0 && !visible.at(-1)) {
+      overlay.setVisible(false);
+      await inspect("diagnostic-no-overlay");
+      const host = Reflect.get(surface, "host") as BaseWindow;
+      host.showInactive();
+      host.moveTop();
+      await inspect("diagnostic-host-top");
+      const user32 = load("user32.dll");
+      const getWindow = user32.func("uintptr_t __stdcall GetWindow(uintptr_t, unsigned int)");
+      const getStyle = user32.func("long __stdcall GetWindowLongW(uintptr_t, int)");
+      const isVisible = user32.func("int __stdcall IsWindowVisible(uintptr_t)");
+      const showWindow = user32.func("int __stdcall ShowWindow(uintptr_t, int)");
+      let child = getWindow(host.getNativeWindowHandle().readUInt32LE(), 5);
+      while (child) {
+        observations.push({
+          child: String(child),
+          style: getStyle(child, -16),
+          visible: isVisible(child),
+        });
+        showWindow(child, 4);
+        child = getWindow(child, 2);
+      }
+      await inspect("diagnostic-show-children");
+      user32.unload();
+      overlay.setVisible(true);
+    }
     await controller.tick();
     const state = controller.getState();
     assert(state && state.positionSeconds > 0, "Playback clock did not advance");
