@@ -296,7 +296,7 @@ export const LibraryIndexPage = (): React.ReactElement => {
   );
 };
 
-const LoadMore = ({
+export const LoadMore = ({
   query,
 }: {
   readonly query: UseInfiniteQueryResult<InfiniteData<IpcItemPage>>;
