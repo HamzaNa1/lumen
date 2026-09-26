@@ -159,9 +159,14 @@ async function run(): Promise<void> {
     assert(source, "No Windows desktop capture");
     writeFileSync(join(evidence, `${label}.png`), source.thumbnail.toPNG());
     const bounds = parent.getContentBounds();
+    // Capturer thumbnails can be smaller than requested at fractional DPI.
+    // Map screen coordinates to the actual image before sampling its center.
+    const imageSize = source.thumbnail.getSize();
+    const scaleX = imageSize.width / display.bounds.width;
+    const scaleY = imageSize.height / display.bounds.height;
     const image = source.thumbnail.crop({
-      x: Math.round(bounds.x + bounds.width / 2 - 20),
-      y: Math.round(bounds.y + bounds.height / 2 - 20),
+      x: Math.round((bounds.x - display.bounds.x + bounds.width / 2) * scaleX - 20),
+      y: Math.round((bounds.y - display.bounds.y + bounds.height / 2) * scaleY - 20),
       width: 40,
       height: 40,
     });
