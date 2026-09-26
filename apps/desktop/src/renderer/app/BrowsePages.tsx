@@ -1,5 +1,5 @@
 import type { IpcItem, IpcItemPage, IpcLibrary } from "@lumen/contracts";
-import { Button, EmptyState, Form, StatusState } from "@lumen/ui";
+import { Button, EmptyState, Form, PosterFallback, StatusState } from "@lumen/ui";
 import {
   type InfiniteData,
   keepPreviousData,
@@ -11,9 +11,6 @@ import { Link, Navigate, useNavigate, useParams, useSearch } from "@tanstack/rea
 import {
   ChevronLeft,
   ChevronRight,
-  Clapperboard,
-  Music,
-  Tv,
   LibraryBig,
   LoaderCircle,
   Search as SearchIcon,
@@ -34,6 +31,7 @@ import {
   CatalogCard,
   PageHeader,
   PosterGridSkeleton,
+  useArtwork,
   useLibraries,
   useWorkspace,
 } from "./Workspace";
@@ -151,6 +149,55 @@ const homeSubtitle = (item: IpcItem, resume = false): string | null => {
   );
 };
 
+const LibraryTile = ({
+  library,
+  artworkId,
+}: {
+  readonly library: IpcLibrary;
+  readonly artworkId?: string | null;
+}): React.ReactElement => {
+  const { scope } = useWorkspace();
+  const items = useQuery({
+    queryKey: [...scope, "items", library.id, "thumbnail"],
+    queryFn: () => bridge.library.items(library.id),
+    enabled: artworkId == null,
+  });
+  const artwork = useArtwork(
+    artworkId ?? items.data?.items.find((item) => item.artworkId != null)?.artworkId,
+    scope,
+  );
+  const imageUrl = artwork.data;
+  const [failedImage, setFailedImage] = useState<string | null>(null);
+  return (
+    <article className="media-card">
+      <Link
+        className="media-card-open library-tile"
+        to="/library/$libraryId"
+        params={{ libraryId: library.id }}
+      >
+        <span className="media-card-art">
+          {imageUrl != null && failedImage !== imageUrl ? (
+            <img
+              className="poster"
+              src={imageUrl}
+              alt=""
+              loading="lazy"
+              draggable={false}
+              onError={() => setFailedImage(imageUrl)}
+            />
+          ) : (
+            <PosterFallback
+              title={library.name}
+              kind={library.kind === "shows" ? "show" : library.kind === "music" ? "album" : "movie"}
+            />
+          )}
+        </span>
+        <span className="media-card-title">{library.name}</span>
+      </Link>
+    </article>
+  );
+};
+
 export const HomePage = (): React.ReactElement => {
   const { scope } = useWorkspace();
   const home = useQuery({
@@ -189,18 +236,15 @@ export const HomePage = (): React.ReactElement => {
         <>
           <Shelf title="My Media">
             {data.libraries.map((library) => {
-              const Icon =
-                library.kind === "shows" ? Tv : library.kind === "music" ? Music : Clapperboard;
+              const artworkId = data.latest
+                .find((row) => row.libraryId === library.id)
+                ?.items.find((item) => item.artworkId != null)?.artworkId;
               return (
-                <Link
-                  className="library-tile"
+                <LibraryTile
                   key={library.id}
-                  to="/library/$libraryId"
-                  params={{ libraryId: library.id }}
-                >
-                  <Icon aria-hidden="true" size={30} strokeWidth={1.5} />
-                  <span>{library.name}</span>
-                </Link>
+                  library={library}
+                  artworkId={artworkId}
+                />
               );
             })}
           </Shelf>
