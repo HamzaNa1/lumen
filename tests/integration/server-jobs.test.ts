@@ -106,8 +106,8 @@ describe("durable jobs and scanner reconciliation", () => {
     expect(result.claimed?.status).toBe("running");
     expect(result.recoveredJob?.status).toBe("queued");
     expect(result.recoveredJob?.lockedAtMs).toBeNull();
-    expect(result.firstCount).toBe(0);
-    expect(result.secondCount).toBe(0);
+    expect(result.firstCount.discovered).toBe(0);
+    expect(result.secondCount.discovered).toBe(0);
   });
 
   test("schedules the library watcher and scans a library when a root modification time changes", async () => {

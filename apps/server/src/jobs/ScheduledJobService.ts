@@ -2,6 +2,11 @@ import { Database, serverScheduledJobs } from "@lumen/database";
 import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
 import { Context, Effect, Exit, Layer } from "effect";
+import {
+  artworkSweepIntervalMs,
+  artworkSweepJobName,
+  sweepGeneratedArtwork,
+} from "../media/GeneratedArtwork";
 import { LibraryWatcher } from "./LibraryWatcher";
 
 interface ScheduledJobDefinition {
@@ -41,6 +46,15 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
         intervalMs: config?.libraryWatchIntervalMs ?? 60_000,
         run: watcher.check,
       },
+      ...(config === undefined
+        ? []
+        : [
+            {
+              name: artworkSweepJobName,
+              intervalMs: artworkSweepIntervalMs,
+              run: (nowMs: number) => sweepGeneratedArtwork(database, config.dataDir, nowMs),
+            },
+          ]),
     ];
 
     const runDue: ScheduledJobServiceShape["runDue"] = Effect.fn("ScheduledJobs.runDue")(

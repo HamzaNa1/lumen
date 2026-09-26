@@ -15,7 +15,7 @@ import { Context, Effect, Exit, Layer, Option } from "effect";
 import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
-import { Scanner } from "../services/Scanner";
+import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner";
 import { MetadataSettings } from "../services/MetadataSettings";
 
 export interface JobServiceShape {
@@ -183,14 +183,22 @@ export const makeJobService = (config?: ServerConfig) =>
         Effect.gen(function* () {
           if (job.operation === "discover") {
             const rootId = job.dedupeKey.slice("discover:".length);
-            yield* scanner.discover(job.runId, rootId);
+            const discovery = yield* scanner.discover(job.runId, rootId);
+            if (!discovery.complete || discovery.generation === null) {
+              console.warn("scan_cleanup_skipped", {
+                runId: job.runId,
+                rootId,
+                reason: "discovery_incomplete",
+              });
+              return;
+            }
             yield* repositories.scanning
               .createJob({
                 id: newUuid(),
                 runId: job.runId,
                 parentJobId: job.id,
                 sourceId: null,
-                dedupeKey: `cleanup:${rootId}`,
+                dedupeKey: cleanupJobKey(rootId, discovery.generation),
                 operation: "cleanup",
                 priority: 200,
                 maxAttempts: 3,
@@ -236,8 +244,8 @@ export const makeJobService = (config?: ServerConfig) =>
             if (job.sourceId === null) throw new Error("Job has no source");
             if (Option.isSome(tmdb)) yield* tmdb.value.enrichSource(job.sourceId);
           } else if (job.operation === "cleanup") {
-            const rootId = job.dedupeKey.slice("cleanup:".length);
-            yield* scanner.cleanup(job.runId, rootId);
+            const { rootId, generation } = parseCleanupJobKey(job.dedupeKey);
+            yield* scanner.cleanup(job.runId, rootId, generation);
           } else if (job.operation === "artwork" || job.operation === "analyze") {
             if (job.sourceId !== null && Option.isSome(ingest))
               yield* ingest.value.ingest(job.sourceId);
@@ -284,7 +292,8 @@ export const makeJobService = (config?: ServerConfig) =>
           .update(scanJobs)
           .set({
             status: retry ? "queued" : "failed",
-            availableAtMs: nowMs + delay,
+            availableAtMs: retry ? nowMs + delay : job.availableAtMs,
+            startedAtMs: retry ? null : job.startedAtMs,
             finishedAtMs: retry ? null : nowMs,
             lockedAtMs: null,
             lockedBy: null,

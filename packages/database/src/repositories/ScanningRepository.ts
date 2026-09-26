@@ -187,7 +187,7 @@ export const makeScanningRepository = (database: DatabaseClient) => {
             .orderBy(desc(scanJobs.priority), asc(scanJobs.availableAtMs), asc(scanJobs.id))
             .limit(1);
           const candidate = candidates[0];
-          if (candidate === undefined) return undefined;
+          if (candidate === undefined) return null;
           const [claimed] = yield* transaction
             .update(scanJobs)
             .set({
@@ -199,7 +199,7 @@ export const makeScanningRepository = (database: DatabaseClient) => {
             })
             .where(and(eq(scanJobs.id, candidate.id), eq(scanJobs.status, "queued")))
             .returning(jobSelection);
-          return claimed;
+          return claimed ?? null;
         }),
       ),
       "scanning.claimNextJob",

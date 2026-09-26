@@ -11,11 +11,12 @@ import {
 import { and, eq, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { createHash } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServerConfig } from "../config/Config";
 import { newUuid } from "../core/Security";
 import { readResponseBytes } from "./BoundedInput";
+import { generatedArtworkDir } from "./GeneratedArtwork";
 import { imageInfo } from "./ImageInfo";
 import { MetadataSettings } from "../services/MetadataSettings";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
@@ -378,12 +379,11 @@ export const makeTmdbProvider = (config: ServerConfig) =>
             const mime = image.mimeType;
             const hash = createHash("sha256").update(bytes).digest("hex");
             const path = join(
-              config.dataDir,
-              "artwork",
+              generatedArtworkDir(config.dataDir),
               `${hash}.${mime === "image/jpeg" ? "jpg" : mime === "image/png" ? "png" : "webp"}`,
             );
             yield* Effect.promise(() =>
-              mkdir(join(config.dataDir, "artwork"), { recursive: true }),
+              mkdir(generatedArtworkDir(config.dataDir), { recursive: true }),
             );
             yield* Effect.tryPromise({
               try: async () => {
@@ -391,6 +391,10 @@ export const makeTmdbProvider = (config: ServerConfig) =>
                   await writeFile(path, bytes, { flag: "wx" });
                 } catch (cause) {
                   if ((cause as NodeJS.ErrnoException).code !== "EEXIST") throw cause;
+                  // Reusing a stored file: mark it fresh so an artwork sweep
+                  // cannot remove it before this artwork row is written.
+                  const now = new Date();
+                  await utimes(path, now, now);
                 }
               },
               catch: (cause) => cause,
