@@ -2,12 +2,14 @@ import { Database, serverScheduledJobs } from "@lumen/database";
 import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
 import { Context, Effect, Exit, Layer } from "effect";
-import { LibraryWatcher } from "./LibraryWatcher";
+import { enqueueServerJob, LIBRARY_WATCHER_JOB } from "./ServerJobs";
 
+// A schedule only decides when work is due. Its tick enqueues a durable job for
+// the job worker and never performs the work inline.
 interface ScheduledJobDefinition {
   readonly name: string;
   readonly intervalMs: number;
-  readonly run: (nowMs: number) => Effect.Effect<unknown, unknown>;
+  readonly enqueue: (nowMs: number) => Effect.Effect<unknown, unknown>;
 }
 
 export interface ScheduledJobServiceShape {
@@ -34,12 +36,12 @@ const waitForNextTick = (signal: AbortSignal): Promise<void> =>
 export const makeScheduledJobService = (config?: ServerConfig) =>
   Effect.gen(function* () {
     const database = yield* Database;
-    const watcher = yield* LibraryWatcher;
     const definitions: ReadonlyArray<ScheduledJobDefinition> = [
       {
-        name: "library-watcher",
+        name: LIBRARY_WATCHER_JOB,
         intervalMs: config?.libraryWatchIntervalMs ?? 60_000,
-        run: watcher.check,
+        enqueue: (nowMs) =>
+          enqueueServerJob(database, { kind: LIBRARY_WATCHER_JOB, nowMs, maxAttempts: 3 }),
       },
     ];
 
@@ -90,7 +92,7 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
             .returning({ name: serverScheduledJobs.name });
           if (claimed == null) continue;
 
-          const outcome = yield* Effect.exit(definition.run(nowMs));
+          const outcome = yield* Effect.exit(definition.enqueue(nowMs));
           const finishedAtMs = Date.now();
           if (Exit.isSuccess(outcome)) {
             yield* database

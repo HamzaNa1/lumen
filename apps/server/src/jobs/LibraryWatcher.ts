@@ -3,12 +3,12 @@ import {
   libraries as libraryTable,
   libraryProfiles,
   libraryRoots,
-  scanRuns,
   serverLibraryWatchState,
 } from "@lumen/database";
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { stat } from "node:fs/promises";
+import { ServerError } from "../core/Errors";
 import { LibraryService } from "../services/LibraryService";
 
 type ScanMode = "full" | "incremental" | "refresh";
@@ -89,17 +89,19 @@ export const makeLibraryWatcher = Effect.gen(function* () {
 
     let scansStarted = 0;
     for (const [libraryId, library] of changed) {
-      const active = yield* database
-        .select({ id: scanRuns.id })
-        .from(scanRuns)
-        .where(
-          and(eq(scanRuns.libraryId, libraryId), inArray(scanRuns.status, ["queued", "running"])),
-        )
-        .get();
-      if (active != null) continue;
-
-      yield* libraries.startWatchedScan({ libraryId, mode: library.mode }, library.roots, nowMs);
-      scansStarted += 1;
+      // A conflict means the library cannot be scanned right now: a scan is already
+      // active, or it was disabled or lost its roots since the roots were loaded.
+      // The change stays unrecorded, so a later check picks it up again.
+      const started = yield* libraries
+        .startWatchedScan({ libraryId, mode: library.mode }, library.roots, nowMs)
+        .pipe(
+          Effect.as(true),
+          Effect.catchIf(
+            (error) => error instanceof ServerError && error.code === "conflict",
+            () => Effect.succeed(false),
+          ),
+        );
+      if (started) scansStarted += 1;
     }
 
     return scansStarted;
