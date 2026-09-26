@@ -499,3 +499,95 @@ test("Home applies default row limits after filtering and includes watched music
   expect(music.items).toHaveLength(30);
   expect(music.items[0].title).toBe("Track 35");
 });
+
+test("desktop watched actions update whole seasons, clear resume, and preserve library access", async () => {
+  const libraryId = newUuid();
+  const show = newUuid();
+  const season = newUuid();
+  const otherSeason = newUuid();
+  const nextEpisode = newUuid();
+  const movie = newUuid();
+  const privateMovie = newUuid();
+  const episodes = Array.from({ length: 105 }, (_, index) => ({
+    id: newUuid(),
+    libraryId,
+    title: `Episode ${index + 1}`,
+    kind: "episode" as const,
+    parentId: season,
+    number: index + 1,
+    position: 60,
+  }));
+  const home = await fixture(
+    [
+      { id: show, libraryId, title: "Show", kind: "show" },
+      { id: season, libraryId, title: "Season 1", kind: "season", parentId: show, number: 1 },
+      { id: otherSeason, libraryId, title: "Season 2", kind: "season", parentId: show, number: 2 },
+      ...episodes,
+      {
+        id: nextEpisode,
+        libraryId,
+        title: "Next season",
+        kind: "episode",
+        parentId: otherSeason,
+        number: 1,
+      },
+      { id: movie, libraryId, title: "Movie", position: 120 },
+      { id: privateMovie, libraryId: newUuid(), title: "Private movie" },
+    ],
+    [libraryId],
+  );
+  const client = new ServerClient({ origin: String(home.base) });
+  await client.login(
+    {
+      origin: String(home.base),
+      username: "viewer",
+      password: "correct horse battery staple",
+      serverLabel: "Test server",
+    },
+    newUuid(),
+  );
+
+  await client.setWatched(season, true);
+  expect((await client.itemDetails(season)).item.completed).toBe(true);
+  const firstPage = await client.itemChildren(season);
+  expect(firstPage.items).toHaveLength(100);
+  expect(
+    firstPage.items.every((item) => item.completed && item.resumePositionSeconds === null),
+  ).toBe(true);
+  const lastPage = await client.itemChildren(season, firstPage.nextCursor);
+  expect(lastPage.items).toHaveLength(5);
+  expect(
+    lastPage.items.every((item) => item.completed && item.resumePositionSeconds === null),
+  ).toBe(true);
+  expect((await client.nextUp(show))?.id).toBe(nextEpisode);
+  expect((await client.home()).continueWatching.map((item) => item.id)).toEqual([movie]);
+
+  const episodeId = episodes[0]?.id ?? "";
+  await client.setWatched(episodeId, false);
+  expect((await client.itemDetails(season)).item.completed).toBe(false);
+  expect(
+    (await client.itemChildren(show)).items.find((item) => item.id === season)?.completed,
+  ).toBe(false);
+  await client.setWatched(episodeId, true);
+  expect((await client.itemDetails(season)).item.completed).toBe(true);
+  await client.setWatched(season, false);
+  expect((await client.itemChildren(season)).items.every((item) => item.completed === false)).toBe(
+    true,
+  );
+  expect((await client.nextUp(show))?.id).toBe(episodeId);
+
+  await client.setWatched(movie, true);
+  expect((await client.items(libraryId)).items.find((item) => item.id === movie)).toMatchObject({
+    completed: true,
+    resumePositionSeconds: null,
+  });
+  expect((await client.itemDetails(movie)).watchState).toEqual({
+    completed: true,
+    positionSeconds: 0,
+  });
+  expect((await client.home()).continueWatching).toEqual([]);
+  await client.setWatched(movie, false);
+  expect((await client.itemDetails(movie)).item.completed).toBe(false);
+  await expect(client.setWatched(privateMovie, true)).rejects.toThrow();
+  await expect(client.setWatched(newUuid(), true)).rejects.toThrow();
+});

@@ -20,6 +20,8 @@ const api = {
       invoke<unknown>("library:items", { libraryId, cursor }),
     itemDetails: (itemId: string) => invoke<unknown>("library:item-details", itemId),
     itemChildren: (itemId: string, cursor: string | null = null) => invoke<unknown>("library:item-children", { itemId, cursor }),
+    setWatched: (itemId: string, completed: boolean) =>
+      invoke<void>("library:set-watched", { itemId, completed }),
     nextUp: (itemId: string) => invoke<unknown>("library:next-up", itemId),
     artwork: (artworkId: string) => invoke<unknown>("library:artwork", artworkId),
     search: (query: string, libraryId: string | null = null) =>

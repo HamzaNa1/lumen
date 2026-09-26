@@ -103,6 +103,7 @@ export const IpcItem = Schema.Struct({
   durationMs: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   year: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   artworkId: Schema.NullOr(Uuid),
+  completed: Schema.optional(Schema.Boolean),
   resumePositionSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   parentId: Schema.optional(Schema.NullOr(Uuid)),
   seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
@@ -120,6 +121,7 @@ export const IpcItemDetails = Schema.Struct({
     title: Schema.String,
     kind: Schema.String,
     year: Schema.NullOr(Schema.Number),
+    completed: Schema.optional(Schema.Boolean),
     durationSeconds: Schema.NullOr(Schema.Number),
     artworkId: Schema.NullOr(Uuid),
     overview: Schema.NullOr(Schema.String),
@@ -133,7 +135,12 @@ export const IpcItemDetails = Schema.Struct({
     backdropId: Schema.NullOr(Uuid),
   }),
   sources: Schema.Array(Schema.Unknown),
-  watchState: Schema.NullOr(Schema.Unknown),
+  watchState: Schema.NullOr(
+    Schema.Struct({
+      positionSeconds: Schema.Number,
+      completed: Schema.Boolean,
+    }),
+  ),
   isFavorite: Schema.Boolean,
   metadataProviderConfigured: Schema.Boolean,
 });

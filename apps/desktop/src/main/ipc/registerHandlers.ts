@@ -188,6 +188,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }), raw);
     return activeClient(dependencies).itemChildren(input.itemId, input.cursor);
   });
+  handle("library:set-watched", async (_event, raw) => {
+    const input = decode(Schema.Struct({ itemId: Schema.String, completed: Schema.Boolean }), raw);
+    return activeClient(dependencies).setWatched(input.itemId, input.completed);
+  });
   handle("library:next-up", async (_event, raw) => activeClient(dependencies).nextUp(decode(Schema.String, raw)));
   handle("library:artwork", async (_event, raw) => activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)));
   handle("library:search", async (_event, raw) => {
@@ -382,6 +386,7 @@ export const unregisterIpcHandlers = (): void => {
     "library:home",
     "library:items",
     "library:search",
+    "library:set-watched",
     "admin:listUsers",
     "admin:createUser",
     "admin:updateUser",

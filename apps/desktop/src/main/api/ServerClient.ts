@@ -75,6 +75,7 @@ const itemPageSchema = Schema.Struct({
     durationMs: Schema.NullOr(Schema.Number),
     year: Schema.NullOr(Schema.Number),
     artworkId: Schema.NullOr(Schema.String),
+    completed: Schema.optional(Schema.Boolean),
     resumePositionSeconds: Schema.NullOr(Schema.Number),
     parentId: Schema.optional(Schema.NullOr(Schema.String)),
     indexNumber: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -335,6 +336,14 @@ export class ServerClient {
 
   async itemDetails(itemId: string): Promise<IpcItemDetails> {
     return this.request(`/api/v1/items/${encodeURIComponent(itemId)}`, {}, IpcItemDetails);
+  }
+
+  async setWatched(itemId: string, completed: boolean): Promise<void> {
+    await this.request(`/api/v1/items/${encodeURIComponent(itemId)}/watch-state`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ positionSeconds: 0, completed }),
+    });
   }
 
   async itemChildren(itemId: string, cursor: string | null = null): Promise<IpcItemPage> {
