@@ -167,6 +167,9 @@ export const IpcPlayerSession = Schema.Struct({
 });
 export type IpcPlayerSession = Schema.Schema.Type<typeof IpcPlayerSession>;
 
+export const IpcAudioOutput = Schema.Literals(["stereo", "auto-safe"]);
+export type IpcAudioOutput = Schema.Schema.Type<typeof IpcAudioOutput>;
+
 export const IpcPlayerState = Schema.Struct({
   sessionId: Uuid,
   itemId: Uuid,
@@ -179,6 +182,7 @@ export const IpcPlayerState = Schema.Struct({
   streams: Schema.Array(IpcPlayableStream),
   selectedAudioStreamId: Schema.NullOr(Uuid),
   selectedSubtitleStreamId: Schema.NullOr(Uuid),
+  audioOutput: IpcAudioOutput,
 });
 export type IpcPlayerState = Schema.Schema.Type<typeof IpcPlayerState>;
 

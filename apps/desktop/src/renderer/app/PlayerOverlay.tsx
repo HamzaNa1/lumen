@@ -101,6 +101,15 @@ export const PlayerOverlay = (): React.ReactElement => {
         streams={player?.streams ?? []}
         selectedAudioStreamId={player?.selectedAudioStreamId ?? null}
         selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
+        audioOutput={player?.audioOutput ?? "stereo"}
+        onAudioOutput={async (output) => {
+          if (player === null) throw new Error("Playback is not active");
+          setPlayer(await bridge.player.audioOutput(player.sessionId, output));
+        }}
+        onCopyAudioDiagnostics={async () => {
+          if (player === null) throw new Error("Playback is not active");
+          await bridge.player.copyAudioDiagnostics(player.sessionId);
+        }}
         surfaceRef={surfaceRef}
         controlsVisible={controlsVisible || display.loading || display.error !== null}
         fullscreen={fullscreen}

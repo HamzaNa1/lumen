@@ -5,7 +5,15 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { app, BaseWindow, desktopCapturer, ipcMain, nativeImage, screen } from "electron";
+import {
+  app,
+  BaseWindow,
+  clipboard,
+  desktopCapturer,
+  ipcMain,
+  nativeImage,
+  screen,
+} from "electron";
 import { load } from "koffi";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
@@ -27,8 +35,8 @@ const fixtures = [
   { name: "dts", data: readFileSync("tests/fixtures/playback-dts.mkv") },
   { name: "ac3", data: readFileSync("tests/fixtures/playback-ac3.mkv") },
   { name: "eac3", data: readFileSync("tests/fixtures/playback-eac3.mkv") },
-];
-let fixture = fixtures[0]!;
+] as const;
+let fixture: (typeof fixtures)[number] = fixtures[0];
 // Use the same bundled executable as the installed app, not a PATH shim.
 process.chdir(root);
 const startMpv = MpvProcess.start;
@@ -43,6 +51,7 @@ MpvProcess.start = (options) => {
       // Hosted runners have no speakers. Verify decoded samples through PCM;
       // real WASAPI/speaker output still needs testing on a Windows PC.
       "--ao=pcm",
+      "--audio-format=float",
       "--ao-pcm-waveheader=no",
       `--ao-pcm-file=${join(evidence, `audio-${index}.pcm`)}`,
     ],
@@ -102,6 +111,12 @@ async function run(): Promise<void> {
   ipcMain.handle("player:state", () => controller.getState());
   ipcMain.handle("player:display-state", () => display);
   ipcMain.handle("player:fullscreen-state", () => false);
+  ipcMain.handle("player:audio-output", (_event, input) =>
+    controller.setAudioOutput(input.sessionId, input.output),
+  );
+  ipcMain.handle("player:copy-audio-diagnostics", async (_event, sessionId) => {
+    clipboard.writeText(await controller.audioDiagnostics(sessionId));
+  });
   await overlay.load(undefined, join(root, "out/renderer/index.html"));
   overlay.setVisible(true);
   parent.show();
@@ -264,10 +279,62 @@ async function run(): Promise<void> {
     const state = controller.getState();
     assert(state);
     assert.equal(state.selectedAudioStreamId, "audio-1");
+    assert.equal(state.audioOutput, "stereo");
+    const diagnostics = JSON.parse(await controller.audioDiagnostics(state.sessionId));
+    observations.push({ label: `diagnostics-${fixture.name}`, diagnostics });
+    assert.equal(diagnostics.properties["audio-out-params"]["channel-count"], 2);
+    assert.equal(diagnostics.properties["audio-out-params"].format, "float");
+    assert.equal(diagnostics.properties.aid, diagnostics.expectedAudioTrack);
     await controller.stop();
     const audio = readFileSync(join(evidence, `audio-${index}.pcm`));
     assert(audio.length > 4_800 && audio.some((value) => value !== 0), `${fixture.name} is silent`);
+    // DTS/AC-3 contain sound ONLY in the center channel. Verify that dialogue
+    // reaches both stereo speakers, not just that some surround sample exists.
+    const peaks = [0, 0];
+    for (let offset = 0; offset + 8 <= audio.length; offset += 8) {
+      peaks[0] = Math.max(peaks[0] ?? 0, Math.abs(audio.readFloatLE(offset)));
+      peaks[1] = Math.max(peaks[1] ?? 0, Math.abs(audio.readFloatLE(offset + 4)));
+    }
+    observations.push({ label: `stereo-peaks-${fixture.name}`, peaks });
+    assert(
+      peaks.every((peak) => Number.isFinite(peak) && peak > 0.05),
+      `${fixture.name}: center dialogue was lost`,
+    );
   }
+  // Changing the output mode must reconfigure the current file, including
+  // while paused, without resetting playback or the chosen audio track.
+  fixture = fixtures[1];
+  await controller.start({ client, connectionId: "test", itemId: "test-item", startAtSeconds: 5 });
+  const state = controller.getState();
+  assert(state);
+  controller.pause(state.sessionId, true);
+  for (const output of ["auto-safe", "stereo"]) {
+    const result = await overlay.window.webContents.executeJavaScript(
+      `window.lumen.player.audioOutput(${JSON.stringify(state.sessionId)}, ${JSON.stringify(output)})`,
+    );
+    assert.equal(result.audioOutput, output);
+  }
+  const diagnostics = JSON.parse(await controller.audioDiagnostics(state.sessionId));
+  assert.equal(diagnostics.properties["audio-channels"], "stereo");
+  assert.equal(diagnostics.properties.pause, true);
+  assert.equal(controller.getState()?.selectedAudioStreamId, "audio-1");
+  controller.pause(state.sessionId, false);
+  visible.push(await inspect("audio-output-changed"));
+  await overlay.window.webContents.executeJavaScript(
+    `document.querySelector('[aria-label="Playback settings"]').click()`,
+  );
+  await delay(100);
+  await overlay.window.webContents.executeJavaScript(
+    `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Copy audio diagnostics').click()`,
+  );
+  await delay(250);
+  const copied = JSON.parse(clipboard.readText());
+  assert.equal(copied.audioOutput, "stereo");
+  assert.equal(copied.properties["audio-out-params"]["channel-count"], 2);
+  assert.equal(copied.expectedAudioTrack, copied.properties.aid);
+  assert(!clipboard.readText().includes("127.0.0.1"), "Diagnostics leaked the stream URL");
+  visible.push(await inspect("audio-settings"));
+  await controller.stop();
   assert(
     visible.every(Boolean),
     "Video is black: expected a red frame in every desktop screenshot",

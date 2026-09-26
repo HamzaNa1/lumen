@@ -1,5 +1,5 @@
 import { Slider } from "@base-ui/react/slider";
-import type { IpcPlayableStream } from "@lumen/contracts";
+import type { IpcAudioOutput, IpcPlayableStream } from "@lumen/contracts";
 import {
   ArrowLeft,
   LoaderCircle,
@@ -32,6 +32,9 @@ interface MediaPlayerProps {
   readonly streams: ReadonlyArray<IpcPlayableStream>;
   readonly selectedAudioStreamId: string | null;
   readonly selectedSubtitleStreamId: string | null;
+  readonly audioOutput: IpcAudioOutput;
+  readonly onAudioOutput: (output: IpcAudioOutput) => Promise<void>;
+  readonly onCopyAudioDiagnostics: () => Promise<void>;
   readonly surfaceRef: Ref<HTMLDivElement>;
   readonly controlsVisible: boolean;
   readonly fullscreen: boolean;
@@ -58,6 +61,9 @@ export const MediaPlayer = ({
   streams,
   selectedAudioStreamId,
   selectedSubtitleStreamId,
+  audioOutput,
+  onAudioOutput,
+  onCopyAudioDiagnostics,
   surfaceRef,
   controlsVisible,
   fullscreen,
@@ -73,6 +79,7 @@ export const MediaPlayer = ({
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [audioActionStatus, setAudioActionStatus] = useState<string | null>(null);
   const audioStreams = streams.filter((stream) => stream.kind === "audio");
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
   const audioLabels = streamLabels(audioStreams);
@@ -236,6 +243,22 @@ export const MediaPlayer = ({
                 {settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
                     <strong>Audio and subtitles</strong>
+                    <SelectField
+                      label="Audio output"
+                      disabled={inactive}
+                      value={audioOutput}
+                      options={[
+                        { value: "stereo", label: "Stereo (speakers / headphones)" },
+                        { value: "auto-safe", label: "Automatic (system layout)" },
+                      ]}
+                      onValueChange={(value) => {
+                        if (value !== "stereo" && value !== "auto-safe") return;
+                        setAudioActionStatus(null);
+                        void onAudioOutput(value).catch(() =>
+                          setAudioActionStatus("Could not change audio output."),
+                        );
+                      }}
+                    />
                     {audioStreams.length > 0 ? (
                       <SelectField
                         label="Audio track"
@@ -264,6 +287,19 @@ export const MediaPlayer = ({
                     {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
                       <p>This file has no alternate audio or subtitle tracks.</p>
                     ) : null}
+                    <Button
+                      disabled={inactive}
+                      onClick={() => {
+                        setAudioActionStatus(null);
+                        void onCopyAudioDiagnostics().then(
+                          () => setAudioActionStatus("Audio diagnostics copied."),
+                          () => setAudioActionStatus("Could not copy audio diagnostics."),
+                        );
+                      }}
+                    >
+                      Copy audio diagnostics
+                    </Button>
+                    {audioActionStatus === null ? null : <p role="status">{audioActionStatus}</p>}
                   </div>
                 ) : null}
               </div>
