@@ -385,6 +385,176 @@ describe("media reconciliation", () => {
     expect(state).toEqual([{ isAvailable: 0, reason: "EMPTY" }]);
   });
 
+  test("a reachable root reconciles after its last media file is removed", async () => {
+    const harness = await makeHarness();
+    const movies = await harness.createLibrary("movies");
+    const film = await movies.file("Film (2020)/Film (2020).mkv");
+    await writeFile(join(dirname(film), "movie.nfo"), "<movie />");
+    await harness.scan(movies.libraryId);
+
+    await rm(film);
+    await harness.scan(movies.libraryId);
+
+    expect(await harness.browse(movies.libraryId)).toEqual([]);
+    expect(await harness.search("Film")).toEqual([]);
+    const state = await harness.query<{ isAvailable: number; reason: string | null }>(sql`
+      SELECT is_available AS isAvailable, unavailable_reason AS reason
+      FROM library_root_states WHERE root_id = ${movies.rootId}
+    `);
+    expect(state).toEqual([{ isAvailable: 1, reason: null }]);
+    expect(await harness.foreignKeyViolations()).toEqual([]);
+  });
+
+  const withSecondRoot = async (
+    harness: Awaited<ReturnType<typeof makeHarness>>,
+    libraryId: string,
+    rootPath: string,
+  ) => {
+    const rootId = newUuid();
+    const path = `${rootPath}-second`;
+    await mkdir(path, { recursive: true });
+    await harness.run(
+      Effect.gen(function* () {
+        const libraries = yield* LibraryService;
+        yield* libraries.addRoot({ id: rootId, libraryId, path, priority: 1 }, Date.now());
+      }),
+    );
+    return { rootId, path };
+  };
+
+  const favorite = (harness: Awaited<ReturnType<typeof makeHarness>>, itemId: string) =>
+    harness.run(
+      Effect.gen(function* () {
+        const catalog = yield* CatalogService;
+        yield* catalog.setItemFavorite(admin, itemId, { isFavorite: true }, Date.now());
+      }),
+    );
+
+  // Scans with the second root discovered last, after the first root's cleanup would
+  // otherwise have run. Failed jobs are retried without waiting for their backoff.
+  const scanSecondRootLast = (
+    harness: Awaited<ReturnType<typeof makeHarness>>,
+    libraryId: string,
+    secondRootId: string,
+    beforeJob: (next: { dedupeKey: string; attempts: number }) => Promise<void> = async () => {},
+  ) =>
+    harness.run(
+      Effect.gen(function* () {
+        const libraries = yield* LibraryService;
+        const worker = yield* JobService;
+        const db = yield* Database;
+        const { runId } = yield* libraries.startScan({ libraryId, mode: "full" }, Date.now());
+        yield* db.run(sql`
+          UPDATE scan_jobs SET priority = 1
+          WHERE run_id = ${runId} AND dedupe_key = ${`discover:${secondRootId}`}
+        `);
+        let nowMs = Date.now();
+        for (;;) {
+          nowMs += 10 * 60_000;
+          const next = yield* db.get<{ dedupeKey: string; attempts: number }>(sql`
+            SELECT dedupe_key AS dedupeKey, attempts FROM scan_jobs
+            WHERE status = 'queued' AND available_at_ms <= ${nowMs}
+            ORDER BY priority DESC, available_at_ms, id LIMIT 1
+          `);
+          if (next != null) yield* Effect.promise(() => beforeJob(next));
+          if (!(yield* worker.runOne(nowMs))) break;
+        }
+        return runId;
+      }),
+    );
+
+  const cleanupStatuses = (harness: Awaited<ReturnType<typeof makeHarness>>, runId: string) =>
+    harness
+      .query<{ status: string }>(
+        sql`SELECT status FROM scan_jobs WHERE run_id = ${runId} AND operation = 'cleanup'`,
+      )
+      .then((rows) => rows.map((row) => row.status));
+
+  test("a file moved to a later-discovered root keeps its identity and user state", async () => {
+    const harness = await makeHarness();
+    const movies = await harness.createLibrary("movies");
+    const second = await withSecondRoot(harness, movies.libraryId, movies.rootPath);
+    const film = await movies.file("Film (2020)/Film (2020).mkv");
+    await movies.file("Kept (2021)/Kept (2021).mkv");
+    await harness.scan(movies.libraryId);
+    const before = await harness.browse(movies.libraryId);
+    const filmItem = before.find((item) => item.title === "Film");
+    if (filmItem === undefined) throw new Error("Expected Film to be indexed");
+    await favorite(harness, filmItem.id);
+    const [source] = await harness.query<{ id: string }>(
+      sql`SELECT id FROM media_sources WHERE relative_path = 'Film (2020)/Film (2020).mkv'`,
+    );
+
+    await rename(dirname(film), join(second.path, "Film (2020)"));
+    const runId = await scanSecondRootLast(harness, movies.libraryId, second.rootId);
+
+    expect(await cleanupStatuses(harness, runId)).toEqual(["succeeded", "succeeded"]);
+    const moved = await harness.query<{ id: string; rootId: string }>(
+      sql`SELECT id, root_id AS rootId FROM media_sources WHERE relative_path = 'Film (2020)/Film (2020).mkv'`,
+    );
+    expect(moved).toEqual([{ id: source?.id ?? "", rootId: second.rootId }]);
+    expect((await harness.browse(movies.libraryId)).map((item) => item.id).sort()).toEqual(
+      before.map((item) => item.id).sort(),
+    );
+    const favorites = await harness.query<{ itemId: string }>(
+      sql`SELECT item_id AS itemId FROM item_favorites`,
+    );
+    expect(favorites).toEqual([{ itemId: filmItem.id }]);
+    expect(await harness.foreignKeyViolations()).toEqual([]);
+  });
+
+  test("cleanup waits for a root whose discovery is being retried", async () => {
+    const harness = await makeHarness();
+    const movies = await harness.createLibrary("movies");
+    const second = await withSecondRoot(harness, movies.libraryId, movies.rootPath);
+    const film = await movies.file("Film (2020)/Film (2020).mkv");
+    await movies.file("Kept (2021)/Kept (2021).mkv");
+    await harness.scan(movies.libraryId);
+    const filmItem = (await harness.browse(movies.libraryId)).find((item) => item.title === "Film");
+    if (filmItem === undefined) throw new Error("Expected Film to be indexed");
+    await favorite(harness, filmItem.id);
+
+    // The second root is offline for its first discovery attempt only.
+    const offline = `${second.path}-offline`;
+    await rename(second.path, offline);
+    await rename(dirname(film), join(offline, "Film (2020)"));
+    const runId = await scanSecondRootLast(
+      harness,
+      movies.libraryId,
+      second.rootId,
+      async (next) => {
+        if (next.dedupeKey === `discover:${second.rootId}` && next.attempts === 1)
+          await rename(offline, second.path);
+      },
+    );
+
+    const discovery = await harness.query<{ attempts: number; status: string }>(sql`
+      SELECT attempts, status FROM scan_jobs
+      WHERE run_id = ${runId} AND dedupe_key = ${`discover:${second.rootId}`}
+    `);
+    expect(discovery).toEqual([{ attempts: 2, status: "succeeded" }]);
+    expect((await harness.browse(movies.libraryId)).map((item) => item.id)).toContain(filmItem.id);
+    const favorites = await harness.query<{ itemId: string }>(
+      sql`SELECT item_id AS itemId FROM item_favorites`,
+    );
+    expect(favorites).toEqual([{ itemId: filmItem.id }]);
+  });
+
+  test("a discovery that fails for good cancels cleanup for every root in the run", async () => {
+    const harness = await makeHarness();
+    const movies = await harness.createLibrary("movies");
+    const second = await withSecondRoot(harness, movies.libraryId, movies.rootPath);
+    const removed = await movies.file("Film (2020)/Film (2020).mkv");
+    await harness.scan(movies.libraryId);
+
+    await rm(removed);
+    await rm(second.path, { recursive: true });
+    const runId = await scanSecondRootLast(harness, movies.libraryId, second.rootId);
+
+    expect(await cleanupStatuses(harness, runId)).toEqual(["cancelled"]);
+    expect((await harness.browse(movies.libraryId)).map((item) => item.title)).toEqual(["Film"]);
+  });
+
   test.skipIf(process.getuid?.() === 0)(
     "a root that can only be partially read deletes nothing",
     async () => {

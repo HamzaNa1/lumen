@@ -18,6 +18,9 @@ import { TmdbProvider } from "../media/Tmdb";
 import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner";
 import { MetadataSettings } from "../services/MetadataSettings";
 
+// Cleanup jobs wait at this availability until settleCleanups releases them.
+const cleanupParkedAtMs = Number.MAX_SAFE_INTEGER;
+
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
   readonly runOne: (nowMs: number) => Effect.Effect<boolean, unknown>;
@@ -144,9 +147,46 @@ export const makeJobService = (config?: ServerConfig) =>
       return sources.length;
     });
 
+    // A source moved between roots is only matched once the destination root is
+    // discovered, so cleanups stay parked until every discovery in the run ends.
+    // If any discovery failed, a moved source may be unmatched: delete nothing.
+    const settleCleanups = Effect.fn("JobService.settleCleanups")(function* (
+      runId: string,
+      nowMs: number,
+    ) {
+      const discoveries = yield* database
+        .select({ status: scanJobs.status })
+        .from(scanJobs)
+        .where(and(eq(scanJobs.runId, runId), eq(scanJobs.operation, "discover")));
+      if (discoveries.some((job) => job.status === "queued" || job.status === "running")) return;
+      const failed = discoveries.some((job) => job.status !== "succeeded");
+      const parked = and(
+        eq(scanJobs.runId, runId),
+        eq(scanJobs.operation, "cleanup"),
+        eq(scanJobs.status, "queued"),
+        eq(scanJobs.availableAtMs, cleanupParkedAtMs),
+      );
+      if (failed) {
+        const cancelled = yield* database
+          .update(scanJobs)
+          .set({
+            status: "cancelled",
+            availableAtMs: nowMs,
+            startedAtMs: nowMs,
+            finishedAtMs: nowMs,
+          })
+          .where(parked)
+          .returning({ id: scanJobs.id });
+        if (cancelled.length > 0)
+          console.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
+      } else {
+        yield* database.update(scanJobs).set({ availableAtMs: nowMs }).where(parked);
+      }
+    });
+
     const recover: JobServiceShape["recover"] = Effect.fn("JobService.recover")(function* (nowMs) {
       const rows = yield* database
-        .select({ id: scanJobs.id })
+        .select({ id: scanJobs.id, runId: scanJobs.runId, operation: scanJobs.operation })
         .from(scanJobs)
         .where(
           and(
@@ -168,6 +208,7 @@ export const makeJobService = (config?: ServerConfig) =>
             errorCode: "LEASE_EXPIRED",
           })
           .where(and(eq(scanJobs.id, row.id), eq(scanJobs.status, "running")));
+        if (row.operation === "discover") yield* settleCleanups(row.runId, nowMs);
       }
       return rows.length;
     });
@@ -202,7 +243,7 @@ export const makeJobService = (config?: ServerConfig) =>
                 operation: "cleanup",
                 priority: 200,
                 maxAttempts: 3,
-                availableAtMs: nowMs,
+                availableAtMs: cleanupParkedAtMs,
               })
               .pipe(Effect.catch(() => Effect.void));
           } else if (job.operation === "probe") {
@@ -268,6 +309,7 @@ export const makeJobService = (config?: ServerConfig) =>
               eq(scanJobs.lockedBy, job.lockedBy ?? ""),
             ),
           );
+        if (job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
         const remaining = yield* database
           .select({ count: count() })
           .from(scanJobs)
@@ -307,6 +349,7 @@ export const makeJobService = (config?: ServerConfig) =>
               eq(scanJobs.lockedBy, job.lockedBy ?? ""),
             ),
           );
+        if (!retry && job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
         if (!retry)
           yield* repositories.scanning
             .finishRun({

@@ -163,13 +163,15 @@ export const makeScanner = Effect.gen(function* () {
       if (files.length === 0) {
         // An unmounted volume usually reads as an empty directory. Absence is
         // not confirmed, so keep the catalog rather than purging the root.
+        // Any remaining entry (folders, sidecars) shows the root is mounted.
         const indexed = yield* database
           .select({ id: mediaSources.id })
           .from(mediaSources)
           .where(eq(mediaSources.rootId, rootId))
           .limit(1)
           .get();
-        if (indexed != null) {
+        const entries = indexed == null ? [] : yield* Effect.tryPromise(() => readdir(root.path));
+        if (indexed != null && entries.length === 0) {
           yield* database
             .update(libraryRootStates)
             .set({ isAvailable: false, unavailableReason: "EMPTY", updatedAtMs: Date.now() })
