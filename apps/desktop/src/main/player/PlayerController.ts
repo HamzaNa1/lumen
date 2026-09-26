@@ -1,7 +1,14 @@
 import { EventEmitter } from "node:events";
-import type { IpcPlayerSession, IpcPlayerState, IpcPlayerSurfaceBounds } from "@lumen/contracts";
+import { release } from "node:os";
+import type {
+  IpcAudioOutput,
+  IpcPlayerSession,
+  IpcPlayerState,
+  IpcPlayerSurfaceBounds,
+} from "@lumen/contracts";
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
+import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { MpvIpc } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
@@ -85,6 +92,9 @@ export class PlayerController extends EventEmitter {
   private state: IpcPlayerState | null = null;
   private startGeneration = 0;
   private stopping: Promise<void> | null = null;
+  // Avoid relying on a Windows driver to downmix center/surround channels.
+  // Automatic output remains available for a correctly configured surround system.
+  private audioOutput: IpcAudioOutput = process.platform === "win32" ? "stereo" : "auto-safe";
 
   constructor(options: PlayerControllerOptions) {
     super();
@@ -176,6 +186,7 @@ export class PlayerController extends EventEmitter {
         mpv.on("end-file", onEndFile);
       });
       try {
+        await ipc.command(["set_property", "audio-channels", this.audioOutput]);
         await ipc.command(["set_property", "pause", "yes"]);
         await ipc.command(["loadfile", streamUrl, "replace"]);
         await loaded;
@@ -230,6 +241,7 @@ export class PlayerController extends EventEmitter {
         streams,
         selectedAudioStreamId: selectedAudioStream?.id ?? null,
         selectedSubtitleStreamId: selectedSubtitleStream?.id ?? null,
+        audioOutput: this.audioOutput,
       };
       this.publish();
       return this.sanitized(session);
@@ -332,6 +344,75 @@ export class PlayerController extends EventEmitter {
     this.state = { ...currentState, selectedSubtitleStreamId: stream?.id ?? null };
     this.publish();
     return this.requireState();
+  }
+
+  async setAudioOutput(sessionId: string, output: IpcAudioOutput): Promise<IpcPlayerState> {
+    this.assertActive(sessionId);
+    const active = this.active;
+    if (active === null) throw new Error("Playback session is not active");
+    const position = await active.ipc.command(["get_property", "time-pos"]);
+    this.assertActive(sessionId);
+    await active.ipc.command(["set_property", "audio-channels", output]);
+    this.assertActive(sessionId);
+    // MPV rebuilds the audio filter/output asynchronously. A second change
+    // during an outstanding seek can leave it without output. Explicitly
+    // restart at the current position, preserving pause and track selection,
+    // and wait for the restart before accepting another change from the UI.
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => {
+        clearTimeout(timer);
+        active.ipc.off("playback-restart", onRestart);
+      };
+      const onRestart = (): void => {
+        cleanup();
+        resolve();
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timed out restarting audio output"));
+      }, FILE_LOADED_TIMEOUT_MS);
+      active.ipc.on("playback-restart", onRestart);
+      void active.ipc
+        .command([
+          "seek",
+          typeof position === "number" ? position : this.requireState().positionSeconds,
+          "absolute+exact",
+        ])
+        .catch((cause: unknown) => {
+          cleanup();
+          reject(cause);
+        });
+    });
+    this.assertActive(sessionId);
+    this.audioOutput = output;
+    this.state = { ...this.requireState(), audioOutput: output };
+    this.publish();
+    return this.requireState();
+  }
+
+  async audioDiagnostics(sessionId: string): Promise<string> {
+    this.assertActive(sessionId);
+    const active = this.active;
+    if (active === null) throw new Error("Playback session is not active");
+    const state = this.requireState();
+    const trackId =
+      state.selectedAudioStreamId === null
+        ? null
+        : active.trackIds.get(state.selectedAudioStreamId);
+    const properties = await collectAudioDiagnostics(active.ipc);
+    this.assertActive(sessionId);
+    return JSON.stringify(
+      {
+        lumenVersion: app.getVersion(),
+        platform: process.platform,
+        osRelease: release(),
+        audioOutput: state.audioOutput,
+        expectedAudioTrack: trackId,
+        properties,
+      },
+      null,
+      2,
+    );
   }
 
   getState(): IpcPlayerState | null {

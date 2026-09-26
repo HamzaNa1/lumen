@@ -1,9 +1,9 @@
 {
   "version": "7",
   "dialect": "sqlite",
-  "id": "b02791c6-05a1-4fe1-96f5-180b7024cddd",
+  "id": "02d71db3-5e81-4f60-a7a6-ea54d1caab58",
   "prevIds": [
-    "02d71db3-5e81-4f60-a7a6-ea54d1caab58"
+    "853912e7-fbb5-410d-a1dd-2ae4f18d9a2a"
   ],
   "ddl": [
     {
@@ -200,10 +200,6 @@
     },
     {
       "name": "server_playback_sequences",
-      "entityType": "tables"
-    },
-    {
-      "name": "server_scan_missing",
       "entityType": "tables"
     },
     {
@@ -3956,36 +3952,6 @@
       "generated": null,
       "name": "run_id",
       "entityType": "columns",
-      "table": "server_scan_missing"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "source_id",
-      "entityType": "columns",
-      "table": "server_scan_missing"
-    },
-    {
-      "type": "integer",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "missing_at_ms",
-      "entityType": "columns",
-      "table": "server_scan_missing"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": null,
-      "generated": null,
-      "name": "run_id",
-      "entityType": "columns",
       "table": "server_scan_seen"
     },
     {
@@ -4005,16 +3971,6 @@
       "default": null,
       "generated": null,
       "name": "seen_at_ms",
-      "entityType": "columns",
-      "table": "server_scan_seen"
-    },
-    {
-      "type": "text",
-      "notNull": true,
-      "autoincrement": false,
-      "default": "'unchanged'",
-      "generated": null,
-      "name": "change",
       "entityType": "columns",
       "table": "server_scan_seen"
     },
@@ -5297,36 +5253,6 @@
       "onUpdate": "NO ACTION",
       "onDelete": "CASCADE",
       "nameExplicit": false,
-      "name": "fk_server_scan_missing_run_id_scan_runs_id_fk",
-      "entityType": "fks",
-      "table": "server_scan_missing"
-    },
-    {
-      "columns": [
-        "source_id"
-      ],
-      "tableTo": "media_sources",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "nameExplicit": false,
-      "name": "fk_server_scan_missing_source_id_media_sources_id_fk",
-      "entityType": "fks",
-      "table": "server_scan_missing"
-    },
-    {
-      "columns": [
-        "run_id"
-      ],
-      "tableTo": "scan_runs",
-      "columnsTo": [
-        "id"
-      ],
-      "onUpdate": "NO ACTION",
-      "onDelete": "CASCADE",
-      "nameExplicit": false,
       "name": "fk_server_scan_seen_run_id_scan_runs_id_fk",
       "entityType": "fks",
       "table": "server_scan_seen"
@@ -5459,16 +5385,6 @@
       "name": "server_playback_sequences_pk",
       "entityType": "pks",
       "table": "server_playback_sequences"
-    },
-    {
-      "columns": [
-        "run_id",
-        "source_id"
-      ],
-      "nameExplicit": true,
-      "name": "server_scan_missing_pk",
-      "entityType": "pks",
-      "table": "server_scan_missing"
     },
     {
       "columns": [
@@ -7244,20 +7160,6 @@
     {
       "columns": [
         {
-          "value": "kind",
-          "isExpression": false
-        }
-      ],
-      "isUnique": true,
-      "where": "\"jobs\".\"kind\" = 'library-watcher' and \"jobs\".\"state\" in ('pending', 'running')",
-      "origin": "manual",
-      "name": "jobs_library_watcher_active_uq",
-      "entityType": "indexes",
-      "table": "jobs"
-    },
-    {
-      "columns": [
-        {
           "value": "state",
           "isExpression": false
         },
@@ -7274,6 +7176,20 @@
       "where": null,
       "origin": "manual",
       "name": "jobs_claim_idx",
+      "entityType": "indexes",
+      "table": "jobs"
+    },
+    {
+      "columns": [
+        {
+          "value": "kind",
+          "isExpression": false
+        }
+      ],
+      "isUnique": true,
+      "where": "\"jobs\".\"kind\" = 'library-watcher' and \"jobs\".\"state\" in ('pending', 'running')",
+      "origin": "manual",
+      "name": "jobs_library_watcher_active_uq",
       "entityType": "indexes",
       "table": "jobs"
     },
@@ -8122,12 +8038,6 @@
       "name": "server_identity_singleton_chk",
       "entityType": "checks",
       "table": "server_identity"
-    },
-    {
-      "value": "\"change\" in ('new', 'changed', 'moved', 'unchanged')",
-      "name": "server_scan_seen_change_chk",
-      "entityType": "checks",
-      "table": "server_scan_seen"
     },
     {
       "value": "\"interval_ms\" > 0",

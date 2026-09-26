@@ -441,6 +441,10 @@ export const jobs = sqliteTable(
   (table) => [
     uniqueIndex("jobs_idempotency_key_uq").on(table.idempotencyKey),
     index("jobs_claim_idx").on(table.state, table.nextRunAtMs, table.leaseExpiresAtMs),
+    // The library watcher is a global singleton: every process shares one active job.
+    uniqueIndex("jobs_library_watcher_active_uq")
+      .on(table.kind)
+      .where(sql`${table.kind} = 'library-watcher' and ${table.state} in ('pending', 'running')`),
     check(
       "jobs_state_chk",
       sql`${table.state} in ('pending', 'running', 'succeeded', 'failed', 'cancelled')`,

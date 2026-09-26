@@ -1,0 +1,1 @@
+CREATE UNIQUE INDEX `jobs_library_watcher_active_uq` ON `jobs` (`kind`) WHERE "jobs"."kind" = 'library-watcher' and "jobs"."state" in ('pending', 'running');

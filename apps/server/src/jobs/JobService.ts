@@ -11,12 +11,21 @@ import {
 } from "@lumen/database";
 import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
-import { Context, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Context, Effect, Exit, Layer, Option } from "effect";
 import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
 import { Scanner } from "../services/Scanner";
 import { MetadataSettings } from "../services/MetadataSettings";
+import { LibraryWatcher } from "./LibraryWatcher";
+import {
+  claimNextServerJob,
+  completeServerJob,
+  failServerJob,
+  LIBRARY_WATCHER_JOB,
+  recoverServerJobs,
+  retryDelayMs,
+} from "./ServerJobs";
 
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
@@ -34,6 +43,8 @@ export const makeJobService = (config?: ServerConfig) =>
     const ingest = yield* Effect.serviceOption(MediaIngest);
     const tmdb = yield* Effect.serviceOption(TmdbProvider);
     const settings = yield* MetadataSettings;
+    const watcher = yield* LibraryWatcher;
+    const leaseMs = config?.scanLeaseMs ?? 300_000;
 
     const refresh: JobServiceShape["refresh"] = Effect.fn("JobService.refresh")(
       function* (itemId, nowMs) {
@@ -152,7 +163,7 @@ export const makeJobService = (config?: ServerConfig) =>
           and(
             eq(scanJobs.status, "running"),
             isNotNull(scanJobs.lockedAtMs),
-            lt(scanJobs.lockedAtMs, nowMs - (config?.scanLeaseMs ?? 300_000)),
+            lt(scanJobs.lockedAtMs, nowMs - leaseMs),
           ),
         );
       for (const row of rows) {
@@ -169,10 +180,52 @@ export const makeJobService = (config?: ServerConfig) =>
           })
           .where(and(eq(scanJobs.id, row.id), eq(scanJobs.status, "running")));
       }
-      return rows.length;
+      return rows.length + (yield* recoverServerJobs(database, nowMs));
+    });
+
+    // Time left at the end of a lease to stop the job and record the outcome.
+    const leaseStopMarginMs = Math.min(5_000, Math.floor(leaseMs / 10));
+
+    const runServerJob = Effect.fn("JobService.runServerJob")(function* (nowMs: number) {
+      // `nowMs` is the caller's clock when this attempt began. Advancing it by the
+      // real time elapsed keeps claim latency and run time in the lease deadline
+      // and in the recorded completion, failure, and retry times.
+      const startedAt = performance.now();
+      const currentMs = () => nowMs + Math.ceil(performance.now() - startedAt);
+      const job = yield* claimNextServerJob(database, {
+        workerId: `server-${newUuid()}`,
+        nowMs,
+        leaseMs,
+      });
+      if (job === null) return false;
+      // Stop the job before its persisted lease expires so recovery never hands the
+      // same job to a second worker while this one is still running it.
+      const budgetMs = job.leaseExpiresAtMs - leaseStopMarginMs - currentMs();
+      const leaseExceeded = Effect.fail(new Error(`Job exceeded its ${leaseMs}ms lease`));
+      const work =
+        job.kind === LIBRARY_WATCHER_JOB
+          ? watcher.check(nowMs)
+          : Effect.fail(new Error(`Unknown job kind: ${job.kind}`));
+      const outcome = yield* Effect.exit(
+        budgetMs > 0
+          ? work.pipe(Effect.timeoutOrElse({ duration: budgetMs, orElse: () => leaseExceeded }))
+          : leaseExceeded,
+      );
+      if (Exit.isSuccess(outcome)) yield* completeServerJob(database, job, currentMs());
+      else {
+        const error = Cause.squash(outcome.cause);
+        yield* failServerJob(
+          database,
+          job,
+          currentMs(),
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+      return true;
     });
 
     const runOne: JobServiceShape["runOne"] = Effect.fn("JobService.runOne")(function* (nowMs) {
+      if (yield* runServerJob(nowMs)) return true;
       const job = yield* repositories.scanning.claimNextJob({
         workerId: `server-${newUuid()}`,
         nowMs,
@@ -279,7 +332,7 @@ export const makeJobService = (config?: ServerConfig) =>
       } else {
         const cause = outcome.cause;
         const retry = job.attempts < job.maxAttempts;
-        const delay = Math.min(60_000, 2 ** Math.min(10, job.attempts) * 1_000);
+        const delay = retryDelayMs(job.attempts);
         yield* database
           .update(scanJobs)
           .set({
