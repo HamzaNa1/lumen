@@ -16,7 +16,9 @@ import { PlayerOverlayWindow } from "../../apps/desktop/src/main/player/PlayerOv
 import { createMainWindow } from "../../apps/desktop/src/main/windows";
 
 const root = resolve("apps/desktop");
-const evidence = join(root, "out/playback-evidence");
+const scale = process.env.LUMEN_SMOKE_SCALE ?? "1";
+app.commandLine.appendSwitch("force-device-scale-factor", scale);
+const evidence = join(root, `out/playback-evidence/scale-${scale}`);
 mkdirSync(evidence, { recursive: true });
 const observations: unknown[] = [];
 const clip = readFileSync("tests/fixtures/playback.mp4");
@@ -62,8 +64,14 @@ async function run(): Promise<void> {
   assert(address && typeof address !== "string");
   await bridge.listen();
   const parent = createMainWindow();
-  parent.setMinimumSize(640, 480);
-  parent.setBounds({ x: 40, y: 40, width: 900, height: 600 });
+  const area = screen.getPrimaryDisplay().workArea;
+  parent.setMinimumSize(400, 300);
+  parent.setBounds({
+    x: area.x + 20,
+    y: area.y + 20,
+    width: Math.min(900, area.width - 40),
+    height: Math.min(600, area.height - 40),
+  });
   await parent.loadURL('data:text/html,<body style="background:black">');
   const overlay = new PlayerOverlayWindow(parent, join(root, "out/preload/index.cjs"));
   const surface = new MpvSurface(parent, overlay);
@@ -88,8 +96,11 @@ async function run(): Promise<void> {
   overlay.setVisible(true);
   parent.show();
   parent.focus();
-  const [width, height] = parent.getContentSize();
-  surface.setBounds({ x: 0, y: 0, width, height });
+  const syncSurface = (): void => {
+    const [width, height] = parent.getContentSize();
+    surface.setBounds({ x: 0, y: 0, width, height });
+  };
+  syncSurface();
   const client = {
     serverOrigin: `http://127.0.0.1:${address.port}`,
     startPlayback: async () => ({
@@ -183,9 +194,35 @@ async function run(): Promise<void> {
     const state = controller.getState();
     assert(state && state.positionSeconds > 0, "Playback clock did not advance");
     assert.equal(state.selectedAudioStreamId, "audio-1");
+    if (iteration === 1) {
+      const bounds = parent.getBounds();
+      parent.setSize(bounds.width - 50, bounds.height - 30);
+      syncSurface();
+      visible.push(await inspect("resized"));
+      parent.minimize();
+      await delay(250);
+      parent.restore();
+      parent.focus();
+      visible.push(await inspect("restored"));
+      parent.setFullScreen(true);
+      await delay(250);
+      syncSurface();
+      visible.push(await inspect("fullscreen"));
+      parent.setFullScreen(false);
+      await delay(250);
+      syncSurface();
+      visible.push(await inspect("windowed"));
+    }
     controller.pause(state.sessionId, true);
     controller.seek(state.sessionId, 5);
     visible.push(await inspect(`seek-${iteration}`));
+    const { ipc } = Reflect.get(controller, "active") as { ipc: MpvIpc };
+    assert.equal(await ipc.command(["get_property", "pause"]), true);
+    assert(Math.abs(Number(await ipc.command(["get_property", "time-pos"])) - 5) < 0.1);
+    controller.volume(state.sessionId, 35, true);
+    assert.equal(await ipc.command(["get_property", "mute"]), true);
+    assert.equal(await ipc.command(["get_property", "volume"]), 35);
+    controller.volume(state.sessionId, 100, false);
     controller.pause(state.sessionId, false);
     visible.push(await inspect(`resume-${iteration}`));
     await controller.stop();
@@ -200,6 +237,8 @@ async function run(): Promise<void> {
     visible.every(Boolean),
     "Video is black: expected a red frame in every desktop screenshot",
   );
+  surface.dispose();
+  surface.dispose(); // Native destruction must be idempotent.
   console.log("Native Windows playback passed");
 }
 
