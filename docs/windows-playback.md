@@ -37,6 +37,21 @@ the cause of every hardware-specific audio failure.
   and checks for non-silent decoded audio. Actual WASAPI output through speakers
   or headphones must still be checked on a Windows PC.
 
+## Switching focus during playback
+
+The original embedding code hid the video host whenever neither the main window
+nor its controls had focus. On Windows this called `ShowWindow(SW_HIDE)` on the
+MPV host, leaving the app's black background visible when using another window.
+
+Windows now leaves the video visible on focus loss and lets the OS manage its
+stacking with the owning app window. Minimizing or hiding the app still hides the
+host; late focus and bounds updates cannot reveal it while the app is hidden.
+Stopping playback and closing the player retain their existing cleanup.
+
+Integration tests cover focus transfer, minimize/hide and restore, late updates,
+and stopping playback. The native Windows test also captures the exposed video
+with an independent window focused, both during playback and while paused.
+
 ## Closing the player window
 
 The follow-up `Object has been destroyed` exception came from a deferred focus

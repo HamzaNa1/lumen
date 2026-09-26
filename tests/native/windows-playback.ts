@@ -8,7 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   app,
   BaseWindow,
-  type BrowserWindow,
+  BrowserWindow,
   clipboard,
   desktopCapturer,
   ipcMain,
@@ -240,6 +240,34 @@ async function run(): Promise<void> {
   }
 
   const visible: boolean[] = [];
+  async function inspectUnfocused(label: string): Promise<void> {
+    const bounds = parent.getContentBounds();
+    // An independent foreground window exercises real focus events while
+    // leaving the center of the video exposed for the desktop pixel check.
+    const otherWindow = new BrowserWindow({
+      x: bounds.x,
+      y: bounds.y,
+      width: 160,
+      height: 100,
+      frame: false,
+      show: false,
+      backgroundColor: "#0000ff",
+    });
+    try {
+      await otherWindow.loadURL('data:text/html,<body style="background:blue">');
+      otherWindow.show();
+      otherWindow.focus();
+      for (let attempt = 0; attempt < 20 && !otherWindow.isFocused(); attempt++) await delay(50);
+      assert(otherWindow.isFocused(), "The independent window did not acquire focus");
+      assert(!parent.isFocused() && !overlay.window.isFocused());
+      visible.push(await inspect(label));
+      assert(otherWindow.isFocused(), "The video stole focus from the independent window");
+    } finally {
+      otherWindow.destroy();
+      parent.focus();
+    }
+  }
+
   for (let iteration = 0; iteration < 3; iteration++) {
     await controller.start({ client, connectionId: "test", itemId: "test-item" });
     visible.push(await inspect(`play-${iteration}`));
@@ -247,6 +275,7 @@ async function run(): Promise<void> {
     const state = controller.getState();
     assert(state && state.positionSeconds > 0, "Playback clock did not advance");
     assert.equal(state.selectedAudioStreamId, "audio-1");
+    if (iteration === 0) await inspectUnfocused("unfocused-playing");
     if (iteration === 1) {
       const bounds = parent.getBounds();
       parent.setSize(bounds.width - 50, bounds.height - 30);
@@ -272,6 +301,7 @@ async function run(): Promise<void> {
     const { ipc } = Reflect.get(controller, "active") as { ipc: MpvIpc };
     assert.equal(await ipc.command(["get_property", "pause"]), true);
     assert(Math.abs(Number(await ipc.command(["get_property", "time-pos"])) - 5) < 0.1);
+    if (iteration === 0) await inspectUnfocused("unfocused-paused");
     controller.volume(state.sessionId, 35, true);
     assert.equal(await ipc.command(["get_property", "mute"]), true);
     assert.equal(await ipc.command(["get_property", "volume"]), 35);

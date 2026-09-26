@@ -30,6 +30,9 @@ class FakeBaseWindow {
     if (this.visible) events.push("host:hide");
     this.visible = false;
   }
+  isVisible(): boolean {
+    return this.visible;
+  }
   isDestroyed(): boolean {
     return this.destroyed;
   }
@@ -193,6 +196,122 @@ describe("playback progress updates", () => {
       properties.set("eof-reached", true);
       await controller.refreshState();
       expect(controller.getState()).toMatchObject({ positionSeconds: 60, ended: true });
+    });
+  });
+});
+
+describe("Windows player surface visibility", () => {
+  const withSurface = async (
+    run: (fixture: {
+      surface: InstanceType<typeof MpvSurface>;
+      host: FakeBaseWindow;
+      parent: EventEmitter;
+      overlayWindow: EventEmitter;
+      state: { focused: boolean; overlayFocused: boolean; minimized: boolean; visible: boolean };
+    }) => Promise<void>,
+  ): Promise<void> => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    const state = { focused: true, overlayFocused: false, minimized: false, visible: true };
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isFocused: () => state.focused,
+      isMinimized: () => state.minimized,
+      isVisible: () => state.visible,
+      getContentSize: () => [800, 600],
+      getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+    });
+    const overlayWindow = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isFocused: () => state.overlayFocused,
+    });
+    const surface = new MpvSurface(parent as unknown as BrowserWindow, {
+      window: overlayWindow,
+      moveAboveVideo: () => undefined,
+    } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
+    const host = new FakeBaseWindow();
+    // Exercise the Windows surface policy on any OS without loading user32.dll.
+    Reflect.set(surface, "host", host);
+    Object.defineProperty(process, "platform", { value: "win32" });
+    try {
+      surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+      surface.prepare();
+      expect(host.isVisible()).toBe(true);
+      await run({ surface, host, parent, overlayWindow, state });
+    } finally {
+      surface.dispose();
+      if (platform) Object.defineProperty(process, "platform", platform);
+    }
+  };
+
+  test("keeps video visible when focus moves through controls to another app", async () => {
+    await withSurface(async ({ host, parent, overlayWindow, state }) => {
+      state.focused = false;
+      state.overlayFocused = true;
+      parent.emit("blur");
+      overlayWindow.emit("focus");
+      await Bun.sleep(10);
+      expect(host.isVisible()).toBe(true);
+
+      const show = spyOn(host, "showInactive");
+      const hide = spyOn(host, "hide");
+      try {
+        state.overlayFocused = false;
+        overlayWindow.emit("blur");
+        await Bun.sleep(10);
+        expect(host.isVisible()).toBe(true);
+        expect(hide).not.toHaveBeenCalled();
+        // Do not raise the video over the newly focused app either.
+        expect(show).not.toHaveBeenCalled();
+
+        state.focused = true;
+        parent.emit("focus");
+        expect(host.isVisible()).toBe(true);
+        expect(show).toHaveBeenCalledTimes(1);
+      } finally {
+        show.mockRestore();
+        hide.mockRestore();
+      }
+    });
+  });
+
+  for (const event of ["minimize", "hide"] as const) {
+    test(`hides video on ${event} and keeps late updates from revealing it`, async () => {
+      await withSurface(async ({ surface, host, parent, overlayWindow, state }) => {
+        state.minimized = event === "minimize";
+        state.visible = event !== "hide";
+        parent.emit(event);
+        expect(host.isVisible()).toBe(false);
+        surface.show();
+        surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+        overlayWindow.emit("focus");
+        await Bun.sleep(10);
+        expect(host.isVisible()).toBe(false);
+        surface.hide();
+        surface.prepare();
+        expect(host.isVisible()).toBe(false);
+
+        state.minimized = false;
+        state.visible = true;
+        parent.emit(event === "minimize" ? "restore" : "show");
+        expect(host.isVisible()).toBe(true);
+      });
+    });
+  }
+
+  test("focus cannot reveal video after leaving the player or stopping playback", async () => {
+    await withSurface(async ({ surface, host, parent }) => {
+      surface.setBounds(null);
+      parent.emit("focus");
+      expect(host.isVisible()).toBe(false);
+      surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+      expect(host.isVisible()).toBe(true);
+      surface.hide();
+      parent.emit("focus");
+      expect(host.isVisible()).toBe(false);
+      surface.dispose();
+      expect(host.isDestroyed()).toBe(true);
+      expect(parent.listenerCount("hide")).toBe(0);
+      expect(parent.listenerCount("minimize")).toBe(0);
     });
   });
 });

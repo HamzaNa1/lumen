@@ -29,7 +29,7 @@ export class MpvSurface {
   private focusTimer: ReturnType<typeof setTimeout> | null = null;
   private readonly onBoundsChanged = (): void => this.syncHostBounds();
   private readonly onShow = (): void => this.show();
-  private readonly onMinimize = (): void => this.hideHost();
+  private readonly onHide = (): void => this.hideHost();
   private readonly onClosed = (): void => this.dispose();
   private readonly onFocusChanged = (): void => {
     if (this.disposed) return;
@@ -45,7 +45,9 @@ export class MpvSurface {
         (overlay !== undefined && !overlay.isDestroyed() && overlay.isFocused())
       )
         this.show();
-      else this.hideHost();
+      // Windows owns the video HWND and keeps it stacked with the app. Losing
+      // focus must leave its video visible when another app is used alongside it.
+      else if (process.platform !== "win32") this.hideHost();
     }, 0);
   };
 
@@ -62,7 +64,8 @@ export class MpvSurface {
     parent.on("resize", this.onBoundsChanged);
     parent.on("restore", this.onShow);
     parent.on("focus", this.onShow);
-    parent.on("minimize", this.onMinimize);
+    parent.on("minimize", this.onHide);
+    parent.on("hide", this.onHide);
     parent.on("blur", this.onFocusChanged);
     overlay?.window.on("focus", this.onFocusChanged);
     overlay?.window.on("blur", this.onFocusChanged);
@@ -93,7 +96,8 @@ export class MpvSurface {
     const host = this.ensureHost();
     this.playbackVisible = true;
     this.syncHostBounds();
-    host.showInactive();
+    if (process.platform === "win32") this.show();
+    else host.showInactive();
     if (process.platform === "darwin") return [];
     return [`--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
   }
@@ -111,6 +115,11 @@ export class MpvSurface {
 
   show(): void {
     if (this.disposed || this.parent.isDestroyed() || this.bounds === null || !this.playbackVisible)
+      return;
+    if (
+      process.platform === "win32" &&
+      (this.parent.isMinimized() || !this.parent.isVisible())
+    )
       return;
     this.syncHostBounds();
     if (this.host !== null && !this.host.isDestroyed()) this.host.showInactive();
@@ -133,7 +142,8 @@ export class MpvSurface {
     this.parent.off("resize", this.onBoundsChanged);
     this.parent.off("restore", this.onShow);
     this.parent.off("focus", this.onShow);
-    this.parent.off("minimize", this.onMinimize);
+    this.parent.off("minimize", this.onHide);
+    this.parent.off("hide", this.onHide);
     this.parent.off("blur", this.onFocusChanged);
     this.parent.off("show", this.onShow);
     this.parent.off("closed", this.onClosed);
