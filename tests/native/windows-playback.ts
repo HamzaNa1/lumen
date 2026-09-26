@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { app, BaseWindow, desktopCapturer, ipcMain, screen } from "electron";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
+import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
 import { MpvSurface } from "../../apps/desktop/src/main/player/MpvSurface";
 import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
 import { PlayerController } from "../../apps/desktop/src/main/player/PlayerController";
@@ -19,6 +20,18 @@ const evidence = join(root, "out/playback-evidence");
 mkdirSync(evidence, { recursive: true });
 const observations: unknown[] = [];
 const clip = readFileSync("tests/fixtures/playback.mp4");
+// Use the same bundled executable as the installed app, not a PATH shim.
+process.chdir(root);
+const startMpv = MpvProcess.start;
+let processNumber = 0;
+MpvProcess.start = (options) =>
+  startMpv({
+    ...options,
+    videoOutputArguments: [
+      ...(options.videoOutputArguments ?? []),
+      `--log-file=${join(evidence, `mpv-${processNumber++}.log`)}`,
+    ],
+  });
 const upstream = createServer((request, response) => {
   const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
   const start = match ? Number(match[1]) : 0;
