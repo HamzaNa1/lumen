@@ -27,6 +27,8 @@ the cause of every hardware-specific audio failure.
 - `bun run check`: lint, all workspace typechecks, Bun tests, and builds.
 - `.github/workflows/windows-playback.yml`: real Electron and bundled MPV on a
   Windows runner, using the production surface, controller, IPC, and HTTP bridge.
+  Runs on relevant pull requests (including shared UI/contracts and dependency
+  changes) and manual dispatch, without temporary development-branch triggers.
 - The native test checks desktop pixels as well as playback state, repeated
   start/stop, pause/seek/resume, mute/volume, resizing, minimize/restore, fullscreen,
   and 100%/150% scaling. Decoded-frame screenshots and MPV logs are retained in
@@ -58,8 +60,9 @@ surround systems; the selection lasts until the app closes. Other platforms keep
 their previous automatic default. MPV documents these options in its
 [audio-channels reference](https://mpv.io/manual/stable/#options-audio-channels).
 
-The device-layout explanation remains a hypothesis until the affected headset
-is retested. The runner has no WASAPI device. Copy audio diagnostics in playback
+Retesting on the affected Windows 11 USB headset confirmed that stereo output
+restores sound. The exact driver routing was not captured, and the automated
+runner has no WASAPI device. Copy audio diagnostics in playback
 settings captures the selected MPV track, codec, input/output channel layouts,
 device list, mute, volume, and software versions. It excludes stream URLs, media
 paths, library metadata, and authentication tokens.
