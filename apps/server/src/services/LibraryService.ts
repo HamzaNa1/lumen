@@ -6,6 +6,7 @@ import {
   libraryProfiles,
   libraryRoots,
   libraryRootStates,
+  mediaSources,
   Repositories,
   scanJobs,
   scanRuns,
@@ -18,6 +19,7 @@ import { mapRepositoryError } from "../core/Cause";
 import { conflict, notFound } from "../core/Errors";
 import { assertNoRootOverlap, canonicalPath } from "../core/Paths";
 import { newUuid } from "../core/Security";
+import { purgeLibrary, purgeSources } from "./CatalogPurge";
 import type { CreateLibraryBody, CreateRootBody, UpdateLibraryBody } from "../http/Schemas";
 import type { Schema } from "effect";
 import type { CreateGrantBody, StartScanBody } from "../http/Schemas";
@@ -150,7 +152,18 @@ export const makeLibraryService = Effect.gen(function* () {
 
   const remove: LibraryServiceShape["remove"] = Effect.fn("LibraryService.remove")(
     function* (libraryId) {
-      yield* database.delete(libraries).where(eq(libraries.id, libraryId));
+      const counts = yield* database
+        .transaction((transaction) => purgeLibrary(transaction, libraryId))
+        .pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => console.error("library_deleted", { libraryId, result: "failed" })),
+          ),
+        );
+      console.info("library_deleted", {
+        libraryId,
+        result: counts === null ? "not_found" : "succeeded",
+        ...counts,
+      });
     },
   );
 
@@ -234,7 +247,27 @@ export const makeLibraryService = Effect.gen(function* () {
 
   const deleteRoot: LibraryServiceShape["deleteRoot"] = Effect.fn("LibraryService.deleteRoot")(
     function* (rootId) {
-      yield* database.delete(libraryRoots).where(eq(libraryRoots.id, rootId));
+      const counts = yield* database
+        .transaction((transaction) =>
+          Effect.gen(function* () {
+            const sources = yield* transaction
+              .select({ id: mediaSources.id })
+              .from(mediaSources)
+              .where(eq(mediaSources.rootId, rootId));
+            const counts = yield* purgeSources(
+              transaction,
+              sources.map((source) => source.id),
+            );
+            yield* transaction.delete(libraryRoots).where(eq(libraryRoots.id, rootId));
+            return counts;
+          }),
+        )
+        .pipe(
+          Effect.tapError(() =>
+            Effect.sync(() => console.error("library_root_deleted", { rootId, result: "failed" })),
+          ),
+        );
+      console.info("library_root_deleted", { rootId, result: "succeeded", ...counts });
     },
   );
 

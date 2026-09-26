@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { Database as SqliteDatabase } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
 import {
   Database,
@@ -36,7 +38,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.foreignKeys?.foreign_keys).toBe(1);
-    expect(result.migrations?.count).toBe(3);
+    expect(result.migrations?.count).toBe(4);
     expect(result.fts?.value).toBe(1);
     expect(result.tables.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -78,6 +80,50 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         "watch_states",
       ]),
     );
+  });
+
+  test("upgrades existing missing statistics and retains them until their library is deleted", () => {
+    const database = new SqliteDatabase(":memory:");
+    const applyMigration = (name: string) =>
+      database.exec(
+        readFileSync(
+          new URL(`../../packages/database/drizzle/${name}/migration.sql`, import.meta.url),
+          "utf8",
+        ),
+      );
+    try {
+      database.exec("PRAGMA foreign_keys = ON");
+      for (const name of [
+        "20260925092802_shiny_killmonger",
+        "20260925210556_library_watcher_job",
+        "20260925210740_incremental_scan_stats",
+      ])
+        applyMigration(name);
+      database.exec(`
+        INSERT INTO libraries(id, name, slug, created_at_ms, updated_at_ms)
+        VALUES ('library', 'Movies', 'movies', 1, 1);
+        INSERT INTO library_roots(id, library_id, path, created_at_ms, updated_at_ms)
+        VALUES ('root', 'library', '/media', 1, 1);
+        INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, scanned_at_ms)
+        VALUES ('source', 'library', 'root', 'gone.mkv', '/media/gone.mkv', 1);
+        INSERT INTO scan_runs(id, library_id, mode, created_at_ms)
+        VALUES ('run', 'library', 'incremental', 1);
+        INSERT INTO server_scan_missing(run_id, source_id, missing_at_ms)
+        VALUES ('run', 'source', 2);
+      `);
+      applyMigration("20260926085654_preserve_missing_scan_stats");
+      database.exec("DELETE FROM media_sources WHERE id = 'source'");
+      expect(database.query("SELECT * FROM server_scan_missing").all()).toEqual([
+        { run_id: "run", source_id: "source", missing_at_ms: 2 },
+      ]);
+      expect(database.query("PRAGMA foreign_keys").get()).toEqual({ foreign_keys: 1 });
+      expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      database.exec("DELETE FROM libraries WHERE id = 'library'");
+      expect(database.query("SELECT * FROM server_scan_missing").all()).toEqual([]);
+      expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
+    } finally {
+      database.close();
+    }
   });
 
   test("persists deterministic repository fixtures and searches FTS5", async () => {

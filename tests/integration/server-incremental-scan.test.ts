@@ -124,8 +124,8 @@ const makeLibrary = async () => {
   };
 
   /**
-   * Runs discovery then cleanup for each root in priority order, as the job queue does because
-   * cleanup outranks discovery, then ingests every probe job the run enqueued.
+   * Discovers every root before cleanup, matching the worker's parked cleanup jobs,
+   * then ingests every probe job the run enqueued.
    * Passing `ingest: false` leaves the probes unprocessed, as if they had failed.
    */
   const scan = (mode: Mode, options: { readonly ingest?: boolean } = {}) =>
@@ -142,9 +142,12 @@ const makeLibrary = async () => {
           mode,
           startedAtMs: Date.now(),
         });
+        const discoveries = [];
         for (const { id } of roots) {
-          yield* scanner.discover(started.id, id);
-          yield* scanner.cleanup(started.id, id);
+          discoveries.push({ id, result: yield* scanner.discover(started.id, id) });
+        }
+        for (const { id, result } of discoveries) {
+          if (result.complete) yield* scanner.cleanup(started.id, id, result.generation);
         }
         const jobs = (yield* scans.listJobs(started.id)) as ReadonlyArray<{
           operation: string;

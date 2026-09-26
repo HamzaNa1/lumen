@@ -1,4 +1,6 @@
 import {
+  albums,
+  artists,
   artwork as artworkTable,
   catalogItemArtwork,
   catalogItemMetadata,
@@ -358,13 +360,10 @@ export const makeMediaIngest = Effect.gen(function* () {
       .values({
         itemId,
         sourceId,
-        isPrimary: true,
+        isPrimary: existingItem == null,
         sourceGeneration: 1,
       })
-      .onConflictDoUpdate({
-        target: [catalogItemSources.itemId, catalogItemSources.sourceId],
-        set: { isPrimary: true },
-      });
+      .onConflictDoNothing();
     const details = yield* Effect.tryPromise({
       try: () => lstat(source.absolutePath),
       catch: () => new Error("Media file is unavailable"),
@@ -512,9 +511,19 @@ export const makeMediaIngest = Effect.gen(function* () {
         libraryKind === "music" && parts.length > 2 ? (parts.at(-3) ?? null) : null;
       let albumId: string | null = null;
       if (artistName !== null) {
+        const existingArtist = yield* database
+          .select({ id: artists.id })
+          .from(artists)
+          .where(
+            and(
+              eq(artists.libraryId, source.libraryId),
+              eq(artists.normalizedName, normalize(artistName)),
+            ),
+          )
+          .get();
         const artist = yield* repositories.catalog
           .upsertArtist({
-            id: newUuid(),
+            id: existingArtist?.id ?? newUuid(),
             libraryId: source.libraryId,
             name: artistName,
             normalizedName: normalize(artistName),
@@ -524,9 +533,20 @@ export const makeMediaIngest = Effect.gen(function* () {
           })
           .pipe(Effect.mapError(mapRepositoryError));
         if (albumTitle !== null) {
+          const existingAlbum = yield* database
+            .select({ id: albums.id })
+            .from(albums)
+            .where(
+              and(
+                eq(albums.libraryId, source.libraryId),
+                eq(albums.normalizedTitle, normalize(albumTitle)),
+                eq(albums.albumArtistId, artist.id),
+              ),
+            )
+            .get();
           const album = yield* repositories.catalog
             .upsertAlbum({
-              id: newUuid(),
+              id: existingAlbum?.id ?? newUuid(),
               libraryId: source.libraryId,
               title: albumTitle,
               normalizedTitle: normalize(albumTitle),

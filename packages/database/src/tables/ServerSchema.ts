@@ -536,9 +536,8 @@ export const serverScanMissing = sqliteTable(
     runId: text("run_id")
       .notNull()
       .references(() => scanRuns.id, { onDelete: "cascade" }),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => mediaSources.id, { onDelete: "cascade" }),
+    // Historical scan statistics survive deletion of the missing source.
+    sourceId: text("source_id").notNull(),
     missingAtMs: millis("missing_at_ms"),
   },
   (table) => [

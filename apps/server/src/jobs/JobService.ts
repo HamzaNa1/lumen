@@ -15,7 +15,7 @@ import { Cause, Context, Effect, Exit, Layer, Option } from "effect";
 import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
-import { Scanner } from "../services/Scanner";
+import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner";
 import { MetadataSettings } from "../services/MetadataSettings";
 import { LibraryWatcher } from "./LibraryWatcher";
 import {
@@ -26,6 +26,9 @@ import {
   recoverServerJobs,
   retryDelayMs,
 } from "./ServerJobs";
+
+// Cleanup jobs wait at this availability until settleCleanups releases them.
+const cleanupParkedAtMs = Number.MAX_SAFE_INTEGER;
 
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
@@ -155,9 +158,46 @@ export const makeJobService = (config?: ServerConfig) =>
       return sources.length;
     });
 
+    // A source moved between roots is only matched once the destination root is
+    // discovered, so cleanups stay parked until every discovery in the run ends.
+    // If any discovery failed, a moved source may be unmatched: delete nothing.
+    const settleCleanups = Effect.fn("JobService.settleCleanups")(function* (
+      runId: string,
+      nowMs: number,
+    ) {
+      const discoveries = yield* database
+        .select({ status: scanJobs.status })
+        .from(scanJobs)
+        .where(and(eq(scanJobs.runId, runId), eq(scanJobs.operation, "discover")));
+      if (discoveries.some((job) => job.status === "queued" || job.status === "running")) return;
+      const failed = discoveries.some((job) => job.status !== "succeeded");
+      const parked = and(
+        eq(scanJobs.runId, runId),
+        eq(scanJobs.operation, "cleanup"),
+        eq(scanJobs.status, "queued"),
+        eq(scanJobs.availableAtMs, cleanupParkedAtMs),
+      );
+      if (failed) {
+        const cancelled = yield* database
+          .update(scanJobs)
+          .set({
+            status: "cancelled",
+            availableAtMs: nowMs,
+            startedAtMs: nowMs,
+            finishedAtMs: nowMs,
+          })
+          .where(parked)
+          .returning({ id: scanJobs.id });
+        if (cancelled.length > 0)
+          console.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
+      } else {
+        yield* database.update(scanJobs).set({ availableAtMs: nowMs }).where(parked);
+      }
+    });
+
     const recover: JobServiceShape["recover"] = Effect.fn("JobService.recover")(function* (nowMs) {
       const rows = yield* database
-        .select({ id: scanJobs.id })
+        .select({ id: scanJobs.id, runId: scanJobs.runId, operation: scanJobs.operation })
         .from(scanJobs)
         .where(
           and(
@@ -179,6 +219,7 @@ export const makeJobService = (config?: ServerConfig) =>
             errorCode: "LEASE_EXPIRED",
           })
           .where(and(eq(scanJobs.id, row.id), eq(scanJobs.status, "running")));
+        if (row.operation === "discover") yield* settleCleanups(row.runId, nowMs);
       }
       return rows.length + (yield* recoverServerJobs(database, nowMs));
     });
@@ -236,18 +277,26 @@ export const makeJobService = (config?: ServerConfig) =>
         Effect.gen(function* () {
           if (job.operation === "discover") {
             const rootId = job.dedupeKey.slice("discover:".length);
-            yield* scanner.discover(job.runId, rootId);
+            const discovery = yield* scanner.discover(job.runId, rootId);
+            if (!discovery.complete || discovery.generation === null) {
+              console.warn("scan_cleanup_skipped", {
+                runId: job.runId,
+                rootId,
+                reason: "discovery_incomplete",
+              });
+              return;
+            }
             yield* repositories.scanning
               .createJob({
                 id: newUuid(),
                 runId: job.runId,
                 parentJobId: job.id,
                 sourceId: null,
-                dedupeKey: `cleanup:${rootId}`,
+                dedupeKey: cleanupJobKey(rootId, discovery.generation),
                 operation: "cleanup",
                 priority: 200,
                 maxAttempts: 3,
-                availableAtMs: nowMs,
+                availableAtMs: cleanupParkedAtMs,
               })
               .pipe(Effect.catch(() => Effect.void));
           } else if (job.operation === "probe") {
@@ -289,8 +338,8 @@ export const makeJobService = (config?: ServerConfig) =>
             if (job.sourceId === null) throw new Error("Job has no source");
             if (Option.isSome(tmdb)) yield* tmdb.value.enrichSource(job.sourceId);
           } else if (job.operation === "cleanup") {
-            const rootId = job.dedupeKey.slice("cleanup:".length);
-            yield* scanner.cleanup(job.runId, rootId);
+            const { rootId, generation } = parseCleanupJobKey(job.dedupeKey);
+            yield* scanner.cleanup(job.runId, rootId, generation);
           } else if (job.operation === "artwork" || job.operation === "analyze") {
             if (job.sourceId !== null && Option.isSome(ingest))
               yield* ingest.value.ingest(job.sourceId);
@@ -313,6 +362,7 @@ export const makeJobService = (config?: ServerConfig) =>
               eq(scanJobs.lockedBy, job.lockedBy ?? ""),
             ),
           );
+        if (job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
         const remaining = yield* database
           .select({ count: count() })
           .from(scanJobs)
@@ -337,7 +387,8 @@ export const makeJobService = (config?: ServerConfig) =>
           .update(scanJobs)
           .set({
             status: retry ? "queued" : "failed",
-            availableAtMs: nowMs + delay,
+            availableAtMs: retry ? nowMs + delay : job.availableAtMs,
+            startedAtMs: retry ? null : job.startedAtMs,
             finishedAtMs: retry ? null : nowMs,
             lockedAtMs: null,
             lockedBy: null,
@@ -351,6 +402,7 @@ export const makeJobService = (config?: ServerConfig) =>
               eq(scanJobs.lockedBy, job.lockedBy ?? ""),
             ),
           );
+        if (!retry && job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
         if (!retry)
           yield* repositories.scanning
             .finishRun({

@@ -12,12 +12,13 @@ import {
   serverScanSeen,
   streams,
 } from "@lumen/database";
-import { and, eq, exists, inArray, isNull, notExists, or, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, notExists, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { newUuid } from "../core/Security";
 import { safePath } from "../core/Paths";
+import { purgeSources, type SourcePurgeCounts } from "./CatalogPurge";
 
 const mediaExtensions = new Set([
   ".aac",
@@ -95,6 +96,33 @@ export const scanRoot = (
   inode: string;
 }> => walk(rootPath);
 
+export interface DiscoveryResult {
+  readonly discovered: number;
+  // True only when every file under the root was enumerated for this generation.
+  readonly complete: boolean;
+  readonly generation: number | null;
+}
+
+export type CleanupSkipReason = "discovery_incomplete" | "root_unavailable" | "superseded";
+
+export type CleanupResult =
+  | ({ readonly skipped: null } & SourcePurgeCounts)
+  | { readonly skipped: CleanupSkipReason };
+
+const cleanupKeyPrefix = "cleanup:";
+export const cleanupJobKey = (rootId: string, generation: number): string =>
+  `${cleanupKeyPrefix}${rootId}:${generation}`;
+export const parseCleanupJobKey = (
+  key: string,
+): { readonly rootId: string; readonly generation: number | null } => {
+  const [rootId = "", generation] = key.slice(cleanupKeyPrefix.length).split(":");
+  const parsed = Number(generation);
+  return {
+    rootId,
+    generation: generation !== undefined && Number.isSafeInteger(parsed) ? parsed : null,
+  };
+};
+
 type SourceChange = "new" | "changed" | "moved" | "unchanged";
 
 interface FileState {
@@ -120,8 +148,13 @@ const classifyChange = (
 };
 
 export interface ScannerShape {
-  readonly discover: (runId: string, rootId: string) => Effect.Effect<number, unknown>;
-  readonly cleanup: (runId: string, rootId: string) => Effect.Effect<number, unknown>;
+  readonly discover: (runId: string, rootId: string) => Effect.Effect<DiscoveryResult, unknown>;
+  // Deletes sources that a complete discovery of `generation` did not see.
+  readonly cleanup: (
+    runId: string,
+    rootId: string,
+    generation: number | null,
+  ) => Effect.Effect<CleanupResult, unknown>;
 }
 
 export const makeScanner = Effect.gen(function* () {
@@ -150,13 +183,14 @@ export const makeScanner = Effect.gen(function* () {
         .from(libraryRoots)
         .where(and(eq(libraryRoots.id, rootId), eq(libraryRoots.isEnabled, true)))
         .get();
-      if (root == null) return 0;
+      const incomplete = { discovered: 0, complete: false, generation: null };
+      if (root == null) return incomplete;
       const state = yield* database
         .select({ generation: libraryRootStates.scanGeneration })
         .from(libraryRootStates)
         .where(eq(libraryRootStates.rootId, rootId))
         .get();
-      if (state == null) return 0;
+      if (state == null) return incomplete;
       const run = yield* database
         .select({ mode: scanRuns.mode })
         .from(scanRuns)
@@ -164,7 +198,7 @@ export const makeScanner = Effect.gen(function* () {
         .get();
       const probeAll = run?.mode !== "incremental";
       let count = 0;
-      const files = yield* Effect.promise(() => Array.fromAsync(scanRoot(root.path))).pipe(
+      const files = yield* Effect.tryPromise(() => Array.fromAsync(scanRoot(root.path))).pipe(
         Effect.tapError(() =>
           database
             .update(libraryRootStates)
@@ -176,6 +210,25 @@ export const makeScanner = Effect.gen(function* () {
             .where(eq(libraryRootStates.rootId, rootId)),
         ),
       );
+      if (files.length === 0) {
+        // An unmounted volume usually reads as an empty directory. Absence is
+        // not confirmed, so keep the catalog rather than purging the root.
+        // Any remaining entry (folders, sidecars) shows the root is mounted.
+        const indexed = yield* database
+          .select({ id: mediaSources.id })
+          .from(mediaSources)
+          .where(eq(mediaSources.rootId, rootId))
+          .limit(1)
+          .get();
+        const entries = indexed == null ? [] : yield* Effect.tryPromise(() => readdir(root.path));
+        if (indexed != null && entries.length === 0) {
+          yield* database
+            .update(libraryRootStates)
+            .set({ isAvailable: false, unavailableReason: "EMPTY", updatedAtMs: Date.now() })
+            .where(eq(libraryRootStates.rootId, rootId));
+          return { discovered: 0, complete: false, generation: state.generation };
+        }
+      }
       const availableAtMs = Date.now();
       yield* database
         .update(libraryRootStates)
@@ -192,7 +245,8 @@ export const makeScanner = Effect.gen(function* () {
           .from(libraryRootStates)
           .where(eq(libraryRootStates.rootId, rootId))
           .get();
-        if (current == null || current.generation !== state.generation) return count;
+        if (current == null || current.generation !== state.generation)
+          return { discovered: count, complete: false, generation: state.generation };
         const target = yield* safePath(root.path, file.relativePath);
         const recorded = yield* database.transaction((transaction) =>
           Effect.gen(function* () {
@@ -359,56 +413,80 @@ export const makeScanner = Effect.gen(function* () {
         if (!recorded) continue;
         count += 1;
       }
-      return count;
+      return { discovered: count, complete: true, generation: state.generation };
     },
   );
 
-  const cleanup: ScannerShape["cleanup"] = Effect.fn("Scanner.cleanup")(function* (runId, rootId) {
-    // Sources already marked missing by an earlier run keep their original missing time.
-    const removed = yield* database
-      .select({ id: mediaSources.id })
-      .from(mediaSources)
-      .leftJoin(mediaSourceAvailability, eq(mediaSourceAvailability.sourceId, mediaSources.id))
-      .where(
-        and(
-          eq(mediaSources.rootId, rootId),
-          sql`coalesce(${mediaSourceAvailability.isAvailable}, 1) = 1`,
-          notExists(
-            database
-              .select({ value: serverScanSeen.sourceId })
-              .from(serverScanSeen)
-              .where(
-                and(eq(serverScanSeen.runId, runId), eq(serverScanSeen.sourceId, mediaSources.id)),
-              ),
-          ),
-        ),
-      );
-    for (const source of removed) {
-      const missingSinceMs = Date.now();
-      yield* database.transaction((transaction) =>
+  const cleanup: ScannerShape["cleanup"] = Effect.fn("Scanner.cleanup")(
+    function* (runId, rootId, generation) {
+      const result: CleanupResult = yield* database.transaction((transaction) =>
         Effect.gen(function* () {
-          yield* transaction
-            .insert(mediaSourceAvailability)
-            .values({
-              sourceId: source.id,
-              isAvailable: false,
-              lastSeenAtMs: null,
-              missingSinceMs,
-              updatedAtMs: missingSinceMs,
+          if (generation === null) return { skipped: "discovery_incomplete" } as const;
+          const root = yield* transaction
+            .select({
+              isEnabled: libraryRoots.isEnabled,
+              isAvailable: libraryRootStates.isAvailable,
+              generation: libraryRootStates.scanGeneration,
             })
-            .onConflictDoUpdate({
-              target: mediaSourceAvailability.sourceId,
-              set: { isAvailable: false, missingSinceMs, updatedAtMs: missingSinceMs },
-            });
-          yield* transaction
-            .insert(serverScanMissing)
-            .values({ runId, sourceId: source.id, missingAtMs: missingSinceMs })
-            .onConflictDoNothing();
+            .from(libraryRoots)
+            .innerJoin(libraryRootStates, eq(libraryRootStates.rootId, libraryRoots.id))
+            .where(eq(libraryRoots.id, rootId))
+            .get();
+          if (root == null || !root.isEnabled || !root.isAvailable)
+            return { skipped: "root_unavailable" } as const;
+          if (root.generation !== generation) return { skipped: "superseded" } as const;
+          const removed = yield* transaction
+            .select({ id: mediaSources.id, isAvailable: mediaSourceAvailability.isAvailable })
+            .from(mediaSources)
+            .leftJoin(
+              mediaSourceAvailability,
+              eq(mediaSourceAvailability.sourceId, mediaSources.id),
+            )
+            .where(
+              and(
+                eq(mediaSources.rootId, rootId),
+                notExists(
+                  transaction
+                    .select({ value: serverScanSeen.sourceId })
+                    .from(serverScanSeen)
+                    .where(
+                      and(
+                        eq(serverScanSeen.runId, runId),
+                        eq(serverScanSeen.sourceId, mediaSources.id),
+                      ),
+                    ),
+                ),
+              ),
+            );
+          // Keep per-run missing statistics after the sources themselves are deleted.
+          // Older scans already counted unavailable tombstones as missing.
+          const missing = removed.filter((source) => source.isAvailable !== false);
+          const missingAtMs = Date.now();
+          for (let offset = 0; offset < missing.length; offset += 500) {
+            yield* transaction
+              .insert(serverScanMissing)
+              .values(
+                missing.slice(offset, offset + 500).map((source) => ({
+                  runId,
+                  sourceId: source.id,
+                  missingAtMs,
+                })),
+              )
+              .onConflictDoNothing();
+          }
+          const counts = yield* purgeSources(
+            transaction,
+            removed.map((source) => source.id),
+          );
+          return { skipped: null, ...counts };
         }),
       );
-    }
-    return removed.length;
-  });
+      if (result.skipped === null)
+        console.info("scan_cleanup_completed", { runId, rootId, ...result });
+      else console.warn("scan_cleanup_skipped", { runId, rootId, reason: result.skipped });
+      return result;
+    },
+  );
 
   return { discover, cleanup };
 });
