@@ -1,4 +1,5 @@
 import {
+  HomePreferences,
   IpcAudioOutput,
   IpcPlayerDisplay,
   IpcPlayerSurfaceBounds,
@@ -175,6 +176,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return dependencies.registry.list();
   });
   handle("library:list", async () => activeClient(dependencies).libraries());
+  handle("library:home", async () => activeClient(dependencies).home());
+  handle("library:home-preferences", async () => activeClient(dependencies).homePreferences());
+  handle("library:save-home-preferences", async (_event, raw) =>
+    activeClient(dependencies).saveHomePreferences(decode(HomePreferences, raw)),
+  );
   handle("library:items", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ libraryId: Schema.String, cursor: Schema.NullOr(Schema.String) }),
@@ -378,6 +384,9 @@ export const unregisterIpcHandlers = (): void => {
     "accounts:activate",
     "accounts:remove",
     "library:list",
+    "library:home",
+    "library:home-preferences",
+    "library:save-home-preferences",
     "library:items",
     "library:search",
     "admin:listUsers",

@@ -14,6 +14,9 @@ const api = {
     remove: (connectionId: string) => invoke<unknown>("accounts:remove", connectionId),
   },
   library: {
+    home: () => invoke<unknown>("library:home"),
+    homePreferences: () => invoke<unknown>("library:home-preferences"),
+    saveHomePreferences: (preferences: unknown) => invoke<unknown>("library:save-home-preferences", preferences),
     list: () => invoke<unknown>("library:list"),
     items: (libraryId: string, cursor: string | null = null) =>
       invoke<unknown>("library:items", { libraryId, cursor }),

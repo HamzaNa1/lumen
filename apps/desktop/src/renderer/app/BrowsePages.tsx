@@ -5,13 +5,15 @@ import {
   keepPreviousData,
   type UseInfiniteQueryResult,
   useInfiniteQuery,
-  useQueries,
   useQuery,
 } from "@tanstack/react-query";
 import { Link, Navigate, useNavigate, useParams, useSearch } from "@tanstack/react-router";
 import {
   ChevronLeft,
   ChevronRight,
+  Clapperboard,
+  Music,
+  Tv,
   LibraryBig,
   LoaderCircle,
   Search as SearchIcon,
@@ -35,11 +37,6 @@ import {
   useLibraries,
   useWorkspace,
 } from "./Workspace";
-
-const shelfQuery = (scope: readonly unknown[], libraryId: string) => ({
-  queryKey: [...scope, "items", libraryId, "shelf"],
-  queryFn: () => bridge.library.items(libraryId),
-});
 
 const yearOf = (item: IpcItem): string | null => (item.year === null ? null : String(item.year));
 
@@ -137,94 +134,132 @@ const Shelf = ({
   );
 };
 
+const homeSubtitle = (item: IpcItem, resume = false): string | null => {
+  const context =
+    item.seriesTitle == null
+      ? null
+      : [
+          item.seriesTitle,
+          item.kind === "episode" && item.indexNumber != null
+            ? `S${item.seasonNumber ?? 1} E${item.indexNumber}`
+            : null,
+        ]
+          .filter(Boolean)
+          .join(" · ");
+  return (
+    context ?? (resume ? `Resume at ${formatClock(item.resumePositionSeconds ?? 0)}` : yearOf(item))
+  );
+};
+
 export const HomePage = (): React.ReactElement => {
   const { scope } = useWorkspace();
-  const libraries = useLibraries(scope);
-  const list = libraries.data ?? [];
-  const shelves = useQueries({ queries: list.map((library) => shelfQuery(scope, library.id)) });
-  const continueWatching = shelves
-    .flatMap((shelf) => shelf.data?.items ?? [])
-    .filter((item) => (item.resumePositionSeconds ?? 0) > 0);
-  const everyShelfEmpty =
-    shelves.length > 0 && shelves.every((shelf) => shelf.data?.items.length === 0);
-
-  if (libraries.isError)
-    return (
-      <div className="page">
-        <StatusState
-          title="Couldn’t load your libraries"
-          message="Check that the server is running and reachable."
-          action={<Button onClick={() => void libraries.refetch()}>Try again</Button>}
-        />
-      </div>
+  const home = useQuery({
+    queryKey: [...scope, "home"],
+    queryFn: () => bridge.library.home(),
+    staleTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: true,
+    refetchInterval: 30_000,
+  });
+  const data = home.data;
+  const contentRows = (items: ReadonlyArray<IpcItem>, title: string, resume = false) =>
+    items.length === 0 ? null : (
+      <Shelf key={title} title={title}>
+        {items.map((item) => (
+          <CatalogCard key={item.id} item={item} subtitle={homeSubtitle(item, resume)} />
+        ))}
+      </Shelf>
     );
-  if (!libraries.isLoading && list.length === 0)
-    return (
-      <div className="page">
-        <PageHeader title="Home" />
-        <NoLibraries />
-      </div>
-    );
+  const sections = data?.preferences.sections
+    .flatMap((section) => {
+      switch (section) {
+        case "libraries":
+          return data.libraries.length === 0 ? null : (
+            <Shelf key={section} title="My Media">
+              {data.libraries.map((library) => {
+                const Icon =
+                  library.kind === "shows" ? Tv : library.kind === "music" ? Music : Clapperboard;
+                return (
+                  <Link
+                    className="library-tile"
+                    key={library.id}
+                    to="/library/$libraryId"
+                    params={{ libraryId: library.id }}
+                  >
+                    <Icon aria-hidden="true" size={30} strokeWidth={1.5} />
+                    <span>{library.name}</span>
+                  </Link>
+                );
+              })}
+            </Shelf>
+          );
+        case "resume-video":
+          return contentRows(data.continueWatching, "Continue watching", true);
+        case "resume-audio":
+          return contentRows(data.continueListening, "Continue listening", true);
+        case "next-up":
+          return contentRows(data.nextUp, "Next up");
+        case "latest":
+          return data.latest.map((row) => (
+            <Shelf
+              key={row.libraryId}
+              title={`Latest ${row.libraryName}`}
+              action={
+                <Link
+                  className="shelf-link"
+                  to="/library/$libraryId"
+                  params={{ libraryId: row.libraryId }}
+                >
+                  See all
+                </Link>
+              }
+            >
+              {row.items.map((item) => (
+                <CatalogCard key={item.id} item={item} subtitle={homeSubtitle(item)} />
+              ))}
+            </Shelf>
+          ));
+        default:
+          return null;
+      }
+    })
+    .filter(Boolean);
   return (
     <div className="page">
-      <PageHeader title="Home" />
-      {libraries.isLoading ? (
+      <PageHeader
+        title="Home"
+        actions={
+          <Link className="shelf-link" to="/settings">
+            Customize home
+          </Link>
+        }
+      />
+      {home.isLoading ? (
         <section className="shelf">
           <PosterGridSkeleton layout="row" count={8} />
         </section>
-      ) : null}
-      {continueWatching.length > 0 ? (
-        <Shelf title="Continue watching">
-          {continueWatching.map((item) => (
-            <CatalogCard
-              key={item.id}
-              item={item}
-              subtitle={`Resume at ${formatClock(item.resumePositionSeconds ?? 0)}`}
-            />
-          ))}
-        </Shelf>
-      ) : null}
-      {everyShelfEmpty ? (
+      ) : home.isError ? (
+        <StatusState
+          title="Couldn’t load Home"
+          message="Check that the server is running and reachable."
+          action={<Button onClick={() => void home.refetch()}>Try again</Button>}
+        />
+      ) : data?.libraryCount === 0 ? (
+        <NoLibraries />
+      ) : sections?.length ? (
+        sections
+      ) : (
         <EmptyState
           icon={LibraryBig}
-          title="Your libraries are empty"
-          message="Once the server finishes scanning your folders, titles will show up here."
+          title="Nothing to show yet"
+          message="Home shows your libraries, recent additions, and viewing activity. You can choose which sections appear in Settings."
+          action={
+            <Link className="shelf-link" to="/settings">
+              Customize home
+            </Link>
+          }
         />
-      ) : null}
-      {list.map((library, index) => {
-        const shelf = shelves[index];
-        if (shelf === undefined) return null;
-        if (shelf.isLoading)
-          return (
-            <section className="shelf" key={library.id}>
-              <header className="shelf-header">
-                <h2>{library.name}</h2>
-              </header>
-              <PosterGridSkeleton layout="row" count={8} />
-            </section>
-          );
-        const items = shelf.data?.items ?? [];
-        if (items.length === 0) return null;
-        return (
-          <Shelf
-            key={library.id}
-            title={library.name}
-            action={
-              <Link
-                className="shelf-link"
-                to="/library/$libraryId"
-                params={{ libraryId: library.id }}
-              >
-                See all
-              </Link>
-            }
-          >
-            {items.slice(0, 24).map((item) => (
-              <CatalogCard key={item.id} item={item} subtitle={yearOf(item)} />
-            ))}
-          </Shelf>
-        );
-      })}
+      )}
     </div>
   );
 };

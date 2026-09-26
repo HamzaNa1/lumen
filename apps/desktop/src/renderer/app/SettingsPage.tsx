@@ -2,6 +2,7 @@ import { Button } from "@lumen/ui";
 import type { ReactNode } from "react";
 import { hostOf, roleLabels } from "./format";
 import { PageHeader, useWorkspace } from "./Workspace";
+import { HomeSettings } from "./HomeSettings";
 
 const SettingsRow = ({
   label,
@@ -26,6 +27,7 @@ export const SettingsPage = (): React.ReactElement => {
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" />
+      <HomeSettings />
       <section className="settings-group" aria-labelledby="settings-playback">
         <h2 id="settings-playback">Playback</h2>
         <div className="settings-card">

@@ -105,6 +105,8 @@ export const IpcItem = Schema.Struct({
   artworkId: Schema.NullOr(Uuid),
   resumePositionSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   parentId: Schema.optional(Schema.NullOr(Uuid)),
+  seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
+  seasonNumber: Schema.optional(Schema.NullOr(Schema.Int)),
   indexNumber: Schema.optional(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
 });
 export type IpcItem = Schema.Schema.Type<typeof IpcItem>;
