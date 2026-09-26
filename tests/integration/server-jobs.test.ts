@@ -374,7 +374,7 @@ describe("library watcher background job", () => {
     expect(result.secondSchedule).toBe(1);
     expect(result.changeRan).toBe(true);
     expect(result.afterIntervalChange).toBe(0);
-    expect(result.runs).toEqual([{ mode: "full", status: "running" }]);
+    expect(result.runs).toEqual([{ mode: "incremental", status: "running" }]);
     expect(result.jobs).toEqual([
       { operation: "discover", dedupeKey: `discover:${result.rootId}` },
     ]);

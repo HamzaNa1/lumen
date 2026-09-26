@@ -1,7 +1,6 @@
 import {
   Database,
   libraries as libraryTable,
-  libraryProfiles,
   libraryRoots,
   serverLibraryWatchState,
 } from "@lumen/database";
@@ -11,20 +10,14 @@ import { stat } from "node:fs/promises";
 import { ServerError } from "../core/Errors";
 import { LibraryService } from "../services/LibraryService";
 
-type ScanMode = "full" | "incremental" | "refresh";
-
 interface RootRow {
   readonly id: string;
   readonly libraryId: string;
   readonly path: string;
-  readonly scanMode: ScanMode;
   readonly observedModifiedAtMs: number | null;
 }
 
-interface ChangedLibrary {
-  readonly mode: ScanMode;
-  readonly roots: Array<{ readonly id: string; readonly modifiedAtMs: number }>;
-}
+type ChangedRoots = Array<{ readonly id: string; readonly modifiedAtMs: number }>;
 
 export interface LibraryWatcherShape {
   readonly check: (nowMs: number) => Effect.Effect<number, unknown>;
@@ -40,12 +33,10 @@ export const makeLibraryWatcher = Effect.gen(function* () {
         id: libraryRoots.id,
         libraryId: libraryRoots.libraryId,
         path: libraryRoots.path,
-        scanMode: libraryProfiles.scanMode,
         observedModifiedAtMs: serverLibraryWatchState.modifiedAtMs,
       })
       .from(libraryRoots)
       .innerJoin(libraryTable, eq(libraryTable.id, libraryRoots.libraryId))
-      .innerJoin(libraryProfiles, eq(libraryProfiles.libraryId, libraryRoots.libraryId))
       .leftJoin(serverLibraryWatchState, eq(serverLibraryWatchState.rootId, libraryRoots.id))
       .where(and(eq(libraryTable.isEnabled, true), eq(libraryRoots.isEnabled, true)))
       .orderBy(
@@ -53,7 +44,7 @@ export const makeLibraryWatcher = Effect.gen(function* () {
         asc(libraryRoots.priority),
         asc(libraryRoots.path),
       )) as ReadonlyArray<RootRow>;
-    const changed = new Map<string, ChangedLibrary>();
+    const changed = new Map<string, ChangedRoots>();
 
     for (const root of roots) {
       const details = yield* Effect.tryPromise(() => stat(root.path)).pipe(Effect.option);
@@ -82,18 +73,19 @@ export const makeLibraryWatcher = Effect.gen(function* () {
         continue;
       }
 
-      const library = changed.get(root.libraryId) ?? { mode: root.scanMode, roots: [] };
-      library.roots.push({ id: root.id, modifiedAtMs });
-      changed.set(root.libraryId, library);
+      const changedRoots = changed.get(root.libraryId) ?? [];
+      changedRoots.push({ id: root.id, modifiedAtMs });
+      changed.set(root.libraryId, changedRoots);
     }
 
     let scansStarted = 0;
-    for (const [libraryId, library] of changed) {
+    for (const [libraryId, changedRoots] of changed) {
       // A conflict means the library cannot be scanned right now: a scan is already
       // active, or it was disabled or lost its roots since the roots were loaded.
       // The change stays unrecorded, so a later check picks it up again.
+      // Watcher scans reconcile changes only; unchanged media is not re-probed.
       const started = yield* libraries
-        .startWatchedScan({ libraryId, mode: library.mode }, library.roots, nowMs)
+        .startWatchedScan({ libraryId, mode: "incremental" }, changedRoots, nowMs)
         .pipe(
           Effect.as(true),
           Effect.catchIf(
