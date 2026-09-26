@@ -5,7 +5,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { app, BaseWindow, desktopCapturer, ipcMain, screen } from "electron";
+import { app, BaseWindow, desktopCapturer, ipcMain, nativeImage, screen } from "electron";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -157,14 +157,18 @@ async function run(): Promise<void> {
     const source =
       sources.find((candidate) => candidate.display_id === String(display.id)) ?? sources[0];
     assert(source, "No Windows desktop capture");
-    writeFileSync(join(evidence, `${label}.png`), source.thumbnail.toPNG());
+    const png = source.thumbnail.toPNG();
+    writeFileSync(join(evidence, `${label}.png`), png);
+    // Normalize the representation to 1x: nativeImage crop coordinates and
+    // thumbnail bitmap pixels otherwise disagree under forced fractional DPI.
+    const thumbnail = nativeImage.createFromBuffer(png, { scaleFactor: 1 });
     const bounds = parent.getContentBounds();
     // Capturer thumbnails can be smaller than requested at fractional DPI.
     // Map screen coordinates to the actual image before sampling its center.
-    const imageSize = source.thumbnail.getSize();
+    const imageSize = thumbnail.getSize();
     const scaleX = imageSize.width / display.bounds.width;
     const scaleY = imageSize.height / display.bounds.height;
-    const image = source.thumbnail.crop({
+    const image = thumbnail.crop({
       x: Math.round((bounds.x - display.bounds.x + bounds.width / 2) * scaleX - 20),
       y: Math.round((bounds.y - display.bounds.y + bounds.height / 2) * scaleY - 20),
       width: 40,
@@ -179,6 +183,7 @@ async function run(): Promise<void> {
       label,
       properties,
       redPixels,
+      capture: { imageSize, screenBounds: display.bounds, scaleX, scaleY },
       windows: BaseWindow.getAllWindows().map((window) => ({
         id: window.id,
         visible: window.isVisible(),
