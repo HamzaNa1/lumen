@@ -1,4 +1,5 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import type { BrowserWindow } from "electron";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 
@@ -42,12 +43,65 @@ const { PlayerController } = await import("../../apps/desktop/src/main/player/Pl
 const { MpvIpc } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
 
+describe("player surface shutdown", () => {
+  for (const stopped of [false, true]) {
+    test(`queued focus work cannot access a closed window (${stopped ? "after Back" : "during playback"})`, () => {
+      const callbacks: Array<() => void> = [];
+      const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
+        callbacks.push(callback);
+        return 123;
+      }) as unknown as typeof setTimeout);
+      const cancel = spyOn(globalThis, "clearTimeout").mockImplementation(() => undefined);
+      const parent = new EventEmitter();
+      let destroyed = false;
+      Object.assign(parent, {
+        isDestroyed: () => destroyed,
+        isFocused: () => {
+          if (destroyed) throw new TypeError("Object has been destroyed");
+          return false;
+        },
+      });
+      const overlayWindow = new EventEmitter();
+      Object.assign(overlayWindow, { isDestroyed: () => true, isFocused: () => {
+        throw new TypeError("Object has been destroyed");
+      } });
+      try {
+        const surface = new MpvSurface(parent as BrowserWindow, { window: overlayWindow } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
+        Reflect.set(surface, "playbackVisible", true);
+        if (stopped) surface.hide();
+        parent.emit("blur");
+        overlayWindow.emit("blur");
+        destroyed = true;
+        parent.emit("closed");
+
+        // Exercise even a callback already handed to the event loop. Cleanup
+        // should cancel it, and its own guard must still make it harmless.
+        for (const callback of callbacks) expect(callback).not.toThrow();
+        expect(cancel).toHaveBeenCalled();
+        expect(parent.listenerCount("blur")).toBe(0);
+        expect(parent.listenerCount("focus")).toBe(0);
+        expect(overlayWindow.listenerCount("blur")).toBe(0);
+        const scheduled = callbacks.length;
+        parent.emit("blur");
+        overlayWindow.emit("focus");
+        expect(callbacks).toHaveLength(scheduled);
+        surface.dispose();
+      } finally {
+        schedule.mockRestore();
+        cancel.mockRestore();
+      }
+    });
+  }
+});
+
 describe("macOS MPV window lifecycle", () => {
   test.skipIf(process.platform !== "darwin")("play, Back, and immediate replay attach and detach once per session", () => {
     events.length = 0;
     const parent = {
       on: () => undefined,
       once: () => undefined,
+      off: () => undefined,
+      isDestroyed: () => false,
       getContentSize: () => [800, 600],
       getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
     } as unknown as BrowserWindow;

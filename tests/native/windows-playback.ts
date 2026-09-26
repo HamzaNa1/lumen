@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import {
   app,
   BaseWindow,
+  type BrowserWindow,
   clipboard,
   desktopCapturer,
   ipcMain,
@@ -30,6 +31,16 @@ app.commandLine.appendSwitch("force-device-scale-factor", scale);
 const evidence = join(root, `out/playback-evidence/scale-${scale}`);
 mkdirSync(evidence, { recursive: true });
 const observations: unknown[] = [];
+const asynchronousErrors: string[] = [];
+// Fail instead of displaying Electron's modal exception dialog, which would
+// otherwise hang CI. These handlers are test-only; production fixes the cause.
+for (const event of ["uncaughtException", "unhandledRejection"] as const) {
+  process.on(event, (error) => {
+    asynchronousErrors.push(String(error));
+    observations.push({ error: String(error), event });
+  });
+}
+app.on("window-all-closed", () => undefined);
 const fixtures = [
   { name: "aac", data: readFileSync("tests/fixtures/playback.mp4") },
   { name: "dts", data: readFileSync("tests/fixtures/playback-dts.mkv") },
@@ -40,10 +51,11 @@ let fixture: (typeof fixtures)[number] = fixtures[0];
 // Use the same bundled executable as the installed app, not a PATH shim.
 process.chdir(root);
 const startMpv = MpvProcess.start;
+const spawnedMpv: MpvProcess[] = [];
 let processNumber = 0;
 MpvProcess.start = (options) => {
   const index = processNumber++;
-  return startMpv({
+  const playerProcess = startMpv({
     ...options,
     videoOutputArguments: [
       ...(options.videoOutputArguments ?? []),
@@ -56,6 +68,8 @@ MpvProcess.start = (options) => {
       `--ao-pcm-file=${join(evidence, `audio-${index}.pcm`)}`,
     ],
   });
+  spawnedMpv.push(playerProcess);
+  return playerProcess;
 };
 const upstream = createServer((request, response) => {
   const clip = fixture.data;
@@ -78,6 +92,7 @@ async function run(): Promise<void> {
   await app.whenReady();
   const user32 = load("user32.dll");
   const getSystemMetrics = user32.func("int __stdcall GetSystemMetrics(int)");
+  const isWindow = user32.func("int __stdcall IsWindow(uintptr_t)");
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   const address = upstream.address();
   assert(address && typeof address !== "string");
@@ -349,8 +364,85 @@ async function run(): Promise<void> {
     visible.every(Boolean),
     "Video is black: expected a red frame in every desktop screenshot",
   );
-  surface.dispose();
-  surface.dispose(); // Native destruction must be idempotent.
+  async function closePlayerWindow(
+    label: string,
+    window: BrowserWindow,
+    controls: PlayerOverlayWindow,
+    video: MpvSurface,
+    closingPlayer: PlayerController,
+  ): Promise<void> {
+    const host = Reflect.get(video, "host") as { getNativeWindowHandle(): Buffer };
+    const handle = host.getNativeWindowHandle().readBigUInt64LE();
+    assert.equal(isWindow(handle), 1);
+    let stopped = Promise.resolve();
+    const closed = new Promise<void>((resolve) =>
+      window.once("closed", () => {
+        stopped = closingPlayer.stop();
+        resolve();
+      }),
+    );
+    // Close in the same event-loop turn as blur: the original zero-delay
+    // callback called isFocused() after its Electron window was destroyed.
+    window.emit("blur");
+    controls.window.emit("blur");
+    window.close();
+    await closed;
+    await stopped;
+    await delay(100); // Let queued focus work and native close events run.
+    assert(window.isDestroyed());
+    assert(controls.window.isDestroyed());
+    assert.equal(isWindow(handle), 0, "The native video host survived its owner");
+    assert.equal(closingPlayer.getState(), null);
+    video.show();
+    video.setBounds(null);
+    controls.setVisible(false);
+    controls.moveAboveVideo();
+    video.dispose(); // Repeated cleanup and late IPC callbacks must be harmless.
+    assert.deepEqual(asynchronousErrors, [], "Closing the player raised an asynchronous exception");
+    observations.push({ label, closed: true, videoHostDestroyed: true, asynchronousErrors: [] });
+  }
+
+  overlay.setVisible(false); // Back: playback and its overlay have already stopped.
+  await closePlayerWindow("close-after-stopping", parent, overlay, surface, controller);
+  for (const paused of [false, true]) {
+    const closingWindow = createMainWindow();
+    await closingWindow.loadURL('data:text/html,<body style="background:black">');
+    const closingOverlay = new PlayerOverlayWindow(
+      closingWindow,
+      join(root, "out/preload/index.cjs"),
+    );
+    const closingSurface = new MpvSurface(closingWindow, closingOverlay);
+    const closingPlayer = new PlayerController({
+      bridge,
+      surface: closingSurface,
+      onState: () => undefined,
+    });
+    player = closingPlayer;
+    closingWindow.show();
+    const [width, height] = closingWindow.getContentSize();
+    closingSurface.setBounds({ x: 0, y: 0, width, height });
+    closingOverlay.setVisible(true);
+    await closingPlayer.start({ client, connectionId: "test", itemId: "test-item" });
+    const closingState = closingPlayer.getState();
+    assert(closingState);
+    if (paused) closingPlayer.pause(closingState.sessionId, true);
+    await delay(100);
+    await closePlayerWindow(
+      paused ? "close-while-paused" : "close-while-playing",
+      closingWindow,
+      closingOverlay,
+      closingSurface,
+      closingPlayer,
+    );
+  }
+  for (const mpv of spawnedMpv) {
+    const child = mpv.process;
+    assert(
+      child !== null && (child.exitCode !== null || child.signalCode !== null),
+      "MPV survived window shutdown",
+    );
+  }
+  assert.equal(BaseWindow.getAllWindows().length, 0, "A player window was left open");
   user32.unload();
   console.log("Native Windows playback passed");
 }
@@ -375,5 +467,6 @@ async function finish(code: number): Promise<void> {
   upstream.closeAllConnections();
   upstream.close();
   await bridge.close();
-  app.exit(code);
+  if (code === 0 && asynchronousErrors.length === 0) app.quit();
+  else app.exit(1);
 }

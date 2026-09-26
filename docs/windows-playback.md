@@ -35,6 +35,22 @@ the cause of every hardware-specific audio failure.
   and checks for non-silent decoded audio. Actual WASAPI output through speakers
   or headphones must still be checked on a Windows PC.
 
+## Closing the player window
+
+The follow-up `Object has been destroyed` exception came from a deferred focus
+callback in `MpvSurface`. A blur event queued a timer, closing the app destroyed
+the parent/overlay windows, and the timer then called `isFocused()` on a destroyed
+Electron object. Stopping media first did not remove these listeners, so closing
+the app after Back could still trigger the same exception.
+
+Surface disposal now cancels pending focus work, removes its event listeners,
+and guards callbacks against either window being destroyed. Overlay operations
+also tolerate the child already being destroyed by its parent. Two regression
+tests reproduced the original exception before the fix. The native Windows test
+closes the actual windows after stopping media, during playback, and while paused;
+it drains queued callbacks and checks for asynchronous exceptions, remaining
+native windows, and surviving MPV processes before quitting normally.
+
 The workflow builds the normal x64 portable executable and installer only after
 the native test passes. Download the `lumen-windows-portable` artifact, close an
 existing Lumen instance, and run the portable executable. Test the videos that

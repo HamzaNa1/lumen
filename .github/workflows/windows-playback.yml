@@ -2,7 +2,7 @@ name: windows-playback
 on:
   workflow_dispatch:
   push:
-    branches: [fix/windows-video-playback]
+    branches: [fix/windows-video-playback, fix/windows-player-shutdown]
   pull_request:
     paths:
       - 'apps/desktop/**'

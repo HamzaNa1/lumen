@@ -44,10 +44,14 @@ export class PlayerOverlayWindow {
     parent.on("resize", () => this.sync());
     parent.on("enter-full-screen", () => this.sync());
     parent.on("leave-full-screen", () => this.sync());
-    parent.on("minimize", () => this.window.hide());
+    parent.on("minimize", () => {
+      if (!this.window.isDestroyed()) this.window.hide();
+    });
     parent.on("restore", () => this.show());
     parent.on("focus", () => this.show());
-    parent.once("closed", () => this.window.destroy());
+    parent.once("closed", () => {
+      if (!this.window.isDestroyed()) this.window.destroy();
+    });
     this.window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
     this.window.webContents.on("will-navigate", (event, url) => {
       if (url !== this.window.webContents.getURL()) event.preventDefault();
@@ -66,23 +70,31 @@ export class PlayerOverlayWindow {
 
   setVisible(visible: boolean): void {
     this.visible = visible;
+    if (this.window.isDestroyed()) return;
     if (visible) this.show();
     else this.window.hide();
   }
 
   moveAboveVideo(): void {
-    if (this.window.isVisible()) this.window.moveTop();
+    if (!this.window.isDestroyed() && this.window.isVisible()) this.window.moveTop();
   }
 
   private show(): void {
-    if (!this.visible || this.parent.isMinimized() || !this.parent.isVisible()) return;
+    if (
+      this.window.isDestroyed() ||
+      this.parent.isDestroyed() ||
+      !this.visible ||
+      this.parent.isMinimized() ||
+      !this.parent.isVisible()
+    )
+      return;
     this.sync();
     this.window.showInactive();
     this.moveAboveVideo();
   }
 
   private sync(): void {
-    if (this.window.isDestroyed()) return;
+    if (this.window.isDestroyed() || this.parent.isDestroyed()) return;
     this.window.setBounds(this.parent.getContentBounds());
     if (this.visible) this.moveAboveVideo();
   }

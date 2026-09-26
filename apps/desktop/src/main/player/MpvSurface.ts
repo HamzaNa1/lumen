@@ -25,6 +25,29 @@ export class MpvSurface {
   private playbackVisible = false;
   private readonly overlay?: PlayerOverlayWindow;
   private readonly createNativeVideoWindow: CreateNativeVideoWindow;
+  private disposed = false;
+  private focusTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly onBoundsChanged = (): void => this.syncHostBounds();
+  private readonly onShow = (): void => this.show();
+  private readonly onMinimize = (): void => this.hideHost();
+  private readonly onClosed = (): void => this.dispose();
+  private readonly onFocusChanged = (): void => {
+    if (this.disposed) return;
+    if (this.focusTimer !== null) clearTimeout(this.focusTimer);
+    this.focusTimer = setTimeout(() => {
+      this.focusTimer = null;
+      // A blur event can be the last event before either window is destroyed.
+      // Even a callback already queued by the event loop must be harmless.
+      if (this.disposed || this.parent.isDestroyed()) return;
+      const overlay = this.overlay?.window;
+      if (
+        this.parent.isFocused() ||
+        (overlay !== undefined && !overlay.isDestroyed() && overlay.isFocused())
+      )
+        this.show();
+      else this.hideHost();
+    }, 0);
+  };
 
   constructor(
     parent: BrowserWindow,
@@ -35,25 +58,20 @@ export class MpvSurface {
     this.parent = parent;
     this.overlay = overlay;
     this.createNativeVideoWindow = createNativeVideoWindow;
-    parent.on("move", () => this.syncHostBounds());
-    parent.on("resize", () => this.syncHostBounds());
-    parent.on("restore", () => this.show());
-    parent.on("focus", () => this.show());
-    parent.on("minimize", () => this.host?.hide());
-    const syncFocus = (): void => {
-      setTimeout(() => {
-        if (parent.isFocused() || overlay?.window.isFocused()) this.show();
-        else this.host?.hide();
-      }, 0);
-    };
-    parent.on("blur", syncFocus);
-    overlay?.window.on("focus", syncFocus);
-    overlay?.window.on("blur", syncFocus);
-    parent.on("show", () => this.show());
-    parent.once("closed", () => this.dispose());
+    parent.on("move", this.onBoundsChanged);
+    parent.on("resize", this.onBoundsChanged);
+    parent.on("restore", this.onShow);
+    parent.on("focus", this.onShow);
+    parent.on("minimize", this.onMinimize);
+    parent.on("blur", this.onFocusChanged);
+    overlay?.window.on("focus", this.onFocusChanged);
+    overlay?.window.on("blur", this.onFocusChanged);
+    parent.on("show", this.onShow);
+    parent.once("closed", this.onClosed);
   }
 
   setBounds(bounds: IpcPlayerSurfaceBounds | null): void {
+    if (this.disposed || this.parent.isDestroyed()) return;
     if (bounds !== null) {
       const [contentWidth, contentHeight] = this.parent.getContentSize();
       if (
@@ -64,12 +82,13 @@ export class MpvSurface {
       }
     }
     this.bounds = bounds;
-    if (bounds === null) this.host?.hide();
+    if (bounds === null) this.hideHost();
     else if (this.playbackVisible) this.show();
     else this.syncHostBounds();
   }
 
   prepare(): ReadonlyArray<string> {
+    if (this.disposed || this.parent.isDestroyed()) throw new Error("The player window is closed");
     if (this.bounds === null) throw new Error("The in-app player surface is not ready");
     const host = this.ensureHost();
     this.playbackVisible = true;
@@ -91,23 +110,43 @@ export class MpvSurface {
   }
 
   show(): void {
-    if (this.bounds === null || !this.playbackVisible) return;
+    if (this.disposed || this.parent.isDestroyed() || this.bounds === null || !this.playbackVisible)
+      return;
     this.syncHostBounds();
-    this.host?.showInactive();
+    if (this.host !== null && !this.host.isDestroyed()) this.host.showInactive();
     this.macWindow?.show();
     this.overlay?.moveAboveVideo();
   }
 
   hide(): void {
     this.playbackVisible = false;
-    if (this.host !== null && !this.host.isDestroyed()) this.host.hide();
+    this.hideHost();
     this.detachNativeWindow();
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    if (this.focusTimer !== null) clearTimeout(this.focusTimer);
+    this.focusTimer = null;
+    this.parent.off("move", this.onBoundsChanged);
+    this.parent.off("resize", this.onBoundsChanged);
+    this.parent.off("restore", this.onShow);
+    this.parent.off("focus", this.onShow);
+    this.parent.off("minimize", this.onMinimize);
+    this.parent.off("blur", this.onFocusChanged);
+    this.parent.off("show", this.onShow);
+    this.parent.off("closed", this.onClosed);
+    this.overlay?.window.off("focus", this.onFocusChanged);
+    this.overlay?.window.off("blur", this.onFocusChanged);
     this.hide();
     if (this.host !== null && !this.host.isDestroyed()) this.host.destroy();
     this.host = null;
+    this.bounds = null;
+  }
+
+  private hideHost(): void {
+    if (this.host !== null && !this.host.isDestroyed()) this.host.hide();
   }
 
   private detachNativeWindow(): void {
@@ -144,7 +183,14 @@ export class MpvSurface {
   }
 
   private syncHostBounds(): void {
-    if (this.bounds === null || this.host === null || this.host.isDestroyed()) return;
+    if (
+      this.disposed ||
+      this.parent.isDestroyed() ||
+      this.bounds === null ||
+      this.host === null ||
+      this.host.isDestroyed()
+    )
+      return;
     const parentBounds = this.parent.getContentBounds();
     this.host.setBounds({
       x: parentBounds.x + this.bounds.x,
