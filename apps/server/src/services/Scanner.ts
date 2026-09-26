@@ -1,4 +1,5 @@
 import {
+  catalogItemOrigins,
   catalogItemSources,
   Database,
   libraryRoots,
@@ -11,7 +12,7 @@ import {
   serverScanSeen,
   streams,
 } from "@lumen/database";
-import { and, eq, exists, isNull, notExists, or, sql } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, notExists, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { readdir, stat } from "node:fs/promises";
 import { join, relative } from "node:path";
@@ -288,17 +289,33 @@ export const makeScanner = Effect.gen(function* () {
                   fileSizeBytes: file.size,
                   modifiedAtMs: file.modifiedAtMs,
                   inode: file.inode,
+                  // A changed file stays incomplete until its new probe succeeds.
+                  ...(change === "changed" ? { contentFingerprint: null } : {}),
                   scannedAtMs: Date.now(),
                 })
                 .where(eq(mediaSources.id, sourceId));
             }
-            // An earlier root's cleanup in this run may have recorded a move source as missing.
-            if (moved)
+            if (moved) {
+              // Release the old path so a new file there can claim its own origin.
+              yield* transaction
+                .update(catalogItemOrigins)
+                .set({ rootId, relativePath: file.relativePath })
+                .where(
+                  inArray(
+                    catalogItemOrigins.itemId,
+                    transaction
+                      .select({ itemId: catalogItemSources.itemId })
+                      .from(catalogItemSources)
+                      .where(eq(catalogItemSources.sourceId, sourceId)),
+                  ),
+                );
+              // An earlier root's cleanup in this run may have recorded a move source as missing.
               yield* transaction
                 .delete(serverScanMissing)
                 .where(
                   and(eq(serverScanMissing.runId, runId), eq(serverScanMissing.sourceId, sourceId)),
                 );
+            }
             const seenAtMs = Date.now();
             yield* transaction
               .insert(mediaSourceAvailability)

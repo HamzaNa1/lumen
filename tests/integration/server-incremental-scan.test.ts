@@ -344,6 +344,37 @@ describe("incremental library scans", () => {
     expect(after.probed).toEqual([]);
   });
 
+  test("repairs a changed source whose new probe never completed", async () => {
+    const library = await makeLibrary();
+    await library.write("Arrival (2016).mkv", "arrival");
+    await library.scan("full");
+    await library.write("Arrival (2016).mkv", "arrival, extended cut");
+    await library.scan("incremental", { ingest: false });
+
+    const repaired = await library.scan("incremental");
+    const after = await library.scan("incremental");
+
+    expect(repaired.probed).toEqual(["Arrival (2016).mkv"]);
+    expect(repaired.stats.unchanged).toBe(1);
+    expect(repaired.stats.probesEnqueued).toBe(1);
+    expect(after.probed).toEqual([]);
+  });
+
+  test("releases a moved file's old path so a new file can take it", async () => {
+    const library = await makeLibrary();
+    await library.write("Arrival (2016).mkv", "arrival");
+    await library.scan("full");
+    await rename(join(library.root, "Arrival (2016).mkv"), join(library.root, "Heat (1995).mkv"));
+    await library.scan("incremental");
+    await library.write("Arrival (2016).mkv", "a different arrival");
+
+    const report = await library.scan("incremental");
+
+    expect(report.probed).toEqual(["Arrival (2016).mkv"]);
+    expect(report.stats.new).toBe(1);
+    expect(report.stats.unchanged).toBe(1);
+  });
+
   test("a full scan probes every discovered file", async () => {
     const library = await makeLibrary();
     await library.write("Arrival (2016).mkv", "arrival");
