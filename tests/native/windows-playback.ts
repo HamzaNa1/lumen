@@ -22,7 +22,13 @@ app.commandLine.appendSwitch("force-device-scale-factor", scale);
 const evidence = join(root, `out/playback-evidence/scale-${scale}`);
 mkdirSync(evidence, { recursive: true });
 const observations: unknown[] = [];
-const clip = readFileSync("tests/fixtures/playback.mp4");
+const fixtures = [
+  { name: "aac", data: readFileSync("tests/fixtures/playback.mp4") },
+  { name: "dts", data: readFileSync("tests/fixtures/playback-dts.mkv") },
+  { name: "ac3", data: readFileSync("tests/fixtures/playback-ac3.mkv") },
+  { name: "eac3", data: readFileSync("tests/fixtures/playback-eac3.mkv") },
+];
+let fixture = fixtures[0]!;
 // Use the same bundled executable as the installed app, not a PATH shim.
 process.chdir(root);
 const startMpv = MpvProcess.start;
@@ -43,11 +49,12 @@ MpvProcess.start = (options) => {
   });
 };
 const upstream = createServer((request, response) => {
+  const clip = fixture.data;
   const match = /^bytes=(\d+)-(\d*)$/.exec(request.headers.range ?? "");
   const start = match ? Number(match[1]) : 0;
   const end = match?.[2] ? Math.min(Number(match[2]), clip.length - 1) : clip.length - 1;
   response.writeHead(match ? 206 : 200, {
-    "content-type": "video/mp4",
+    "content-type": fixture.name === "aac" ? "video/mp4" : "video/x-matroska",
     "content-length": end - start + 1,
     "accept-ranges": "bytes",
     ...(match ? { "content-range": `bytes ${start}-${end}/${clip.length}` } : {}),
@@ -120,7 +127,7 @@ async function run(): Promise<void> {
           id: "audio-1",
           ordinal: 1,
           kind: "audio",
-          codec: "aac",
+          codec: fixture.name,
           language: null,
           title: null,
           isDefault: true,
@@ -147,6 +154,8 @@ async function run(): Promise<void> {
       "current-ao",
       "aid",
       "audio-params",
+      "audio-out-params",
+      "track-list",
       "video-params",
       "audio-device-list",
     ]) {
@@ -246,6 +255,18 @@ async function run(): Promise<void> {
       audio.length > 4_800 && audio.some((value) => value !== 0),
       "Decoded audio is missing or silent",
     );
+  }
+  for (const audioFixture of fixtures.slice(1)) {
+    fixture = audioFixture;
+    const index = processNumber;
+    await controller.start({ client, connectionId: "test", itemId: "test-item" });
+    visible.push(await inspect(`codec-${fixture.name}`));
+    const state = controller.getState();
+    assert(state);
+    assert.equal(state.selectedAudioStreamId, "audio-1");
+    await controller.stop();
+    const audio = readFileSync(join(evidence, `audio-${index}.pcm`));
+    assert(audio.length > 4_800 && audio.some((value) => value !== 0), `${fixture.name} is silent`);
   }
   assert(
     visible.every(Boolean),
