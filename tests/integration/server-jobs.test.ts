@@ -433,9 +433,13 @@ describe("library watcher background job", () => {
     // Each attempt takes real time, so backoff measured from the claim time would
     // make the retry due before its delay has passed.
     const records: Array<Record<string, unknown>> = [];
-    const logger = createLogger("debug", {
-      write: (line) => {
-        records.push(JSON.parse(line));
+    const logger = createLogger({
+      level: "debug",
+      format: "json",
+      destination: {
+        write: (line) => {
+          records.push(JSON.parse(line));
+        },
       },
     });
     const slowFailingWatcher = Layer.succeed(LibraryWatcher, {

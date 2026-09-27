@@ -2,13 +2,141 @@ import { describe, expect, test } from "bun:test";
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { createLogger } from "../../apps/server/src/core/Logger";
 import { backgroundTask } from "../../apps/server/src/jobs/JobLogging";
+import { decodeConfig } from "../../apps/server/src/config/Config";
+import { formatTextLog } from "../../apps/server/src/core/LogFormatting";
 
 describe("production logger", () => {
+  test("defaults to readable local-time lines with short levels and source names", () => {
+    const lines: string[] = [];
+    const logger = createLogger({
+      destination: {
+        write: (line) => {
+          lines.push(line);
+        },
+      },
+    });
+    logger.debug("job_started");
+    logger.info("server_starting");
+    logger.child({ component: "http", requestId: "request-1" }).warn("http_request", {
+      method: "GET",
+      route: "/api/v1/items/:id",
+      status: 401,
+      durationMs: 2.5,
+      errorCode: "unauthorized",
+    });
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatch(
+      new RegExp(
+        `^\\[\\d{2}:\\d{2}:\\d{2}\\] \\[INF\\] \\[${process.pid}\\] Lumen\\.Server: Starting Lumen server version [0-9.]+\\n$`,
+      ),
+    );
+    expect(lines[1]).toContain(
+      `[WRN] [${process.pid}] Lumen.Server.Http: GET /api/v1/items/:id responded 401 in 2.5 ms`,
+    );
+    expect(lines[1]).toContain("RequestId: request-1");
+    expect(lines[1]).not.toContain("http_request");
+    expect(lines[1]).not.toContain('"level"');
+    const time = new Date(2026, 8, 28, 1, 50, 50);
+    expect(
+      formatTextLog({
+        time: time.toISOString(),
+        level: "info",
+        pid: 36,
+        source: "Lumen.Server",
+        event: "server_starting",
+        msg: "Starting Lumen server",
+      }),
+    ).toBe("[01:50:50] [INF] [36] Lumen.Server: Starting Lumen server\n");
+  });
+
+  test("renders task names, elapsed time and cleanup counts as readable messages", () => {
+    const lines: string[] = [];
+    const logger = createLogger({
+      level: "debug",
+      destination: {
+        write: (line) => {
+          lines.push(line);
+        },
+      },
+    });
+    logger
+      .child({ component: "jobs" })
+      .debug("job_succeeded", { operation: "metadata", durationMs: 78_000 });
+    logger
+      .child({ component: "scanner" })
+      .info("scan_cleanup_completed", { sourcesDeleted: 3, itemsDeleted: 2 });
+    logger.child({ component: "scheduler" }).warn("job_retry_scheduled", {
+      operation: "library-watcher",
+      attempt: 1,
+      maxAttempts: 3,
+      retryDelayMs: 2_000,
+    });
+    expect(lines[0]).toContain("[DBG]");
+    expect(lines[0]).toContain(
+      "Lumen.Server.Jobs.Worker: Metadata refresh completed after 1 minute 18 seconds",
+    );
+    expect(lines[1]).toContain(
+      "Lumen.Server.Library.Scanner: Scan cleanup completed; removed 3 sources and 2 items",
+    );
+    expect(lines[2]).toContain("Library monitor failed on attempt 1/3; retrying in 2 seconds");
+    expect(lines.every((line) => line.split("\n").length === 2)).toBe(true);
+  });
+
+  test("redacts text output and escapes values that could forge terminal log lines", () => {
+    const lines: string[] = [];
+    const logger = createLogger({
+      destination: {
+        write: (line) => {
+          lines.push(line);
+        },
+      },
+    });
+    logger.child({ component: "database" }).error(
+      "database_migration_failed",
+      {
+        accessToken: "private-token",
+        requestId: "one\n[INF] forged\r\u001b[31m\u2028\u202e",
+        source: "spoofed",
+        msg: "spoofed",
+        nested: { password: "private-password" },
+      },
+      Object.assign(new Error("private-error"), { code: "SQLITE_BUSY" }),
+    );
+    expect(lines[0]).toContain("[ERR]");
+    expect(lines[0]).toContain("Lumen.Server.Database.Migrations: Database migration failed");
+    expect(lines[0]).toContain("Error: Error (SQLITE_BUSY)");
+    expect(lines[0]).toContain("[REDACTED]");
+    expect(lines[0]).toContain("\\u001b");
+    expect(lines[0]).toContain("\\u2028");
+    expect(lines[0]).toContain("\\u202e");
+    expect(lines[0]).not.toContain("private-");
+    expect(lines[0]).not.toContain("spoofed");
+    expect(lines[0].split("\n")).toHaveLength(2);
+    const broken = createLogger({
+      destination: {
+        write: () => {
+          throw new Error("EPIPE");
+        },
+      },
+    });
+    expect(() => broken.error("server_start_failed")).not.toThrow();
+  });
+
+  test("validates the optional JSON format and defaults configuration to text", () => {
+    expect(decodeConfig({}).logFormat).toBe("text");
+    expect(decodeConfig({ LUMEN_LOG_FORMAT: "json" }).logFormat).toBe("json");
+    expect(() => decodeConfig({ LUMEN_LOG_FORMAT: "pretty" })).toThrow();
+  });
+
   test("writes JSON with severity, identity, timestamps and isolated child fields", () => {
     const lines: string[] = [];
-    const logger = createLogger("info", {
-      write: (line) => {
-        lines.push(line);
+    const logger = createLogger({
+      level: "info",
+      format: "json",
+      destination: {
+        write: (line) => {
+          lines.push(line);
+        },
       },
     });
     logger.debug("hidden");
@@ -30,9 +158,13 @@ describe("production logger", () => {
 
   test("redacts sensitive fields and omits error messages, SQL, paths and arbitrary causes", () => {
     const lines: string[] = [];
-    const logger = createLogger("debug", {
-      write: (line) => {
-        lines.push(line);
+    const logger = createLogger({
+      level: "debug",
+      format: "json",
+      destination: {
+        write: (line) => {
+          lines.push(line);
+        },
       },
     });
     const nested = Object.assign(new Error("password=hunter2"), { code: "SQLITE_BUSY" });
@@ -64,9 +196,13 @@ describe("production logger", () => {
 
   test("bounds circular fields and causes and tolerates a failed destination", () => {
     const lines: string[] = [];
-    const logger = createLogger("debug", {
-      write: (line) => {
-        lines.push(line);
+    const logger = createLogger({
+      level: "debug",
+      format: "json",
+      destination: {
+        write: (line) => {
+          lines.push(line);
+        },
       },
     });
     const cause = new Error("sensitive");
@@ -76,9 +212,13 @@ describe("production logger", () => {
     logger.error("bounded", fields as never, cause);
     expect(lines[0].length).toBeLessThan(4_000);
     expect(lines[0]).toContain("TRUNCATED");
-    const broken = createLogger("info", {
-      write: () => {
-        throw new Error("EPIPE");
+    const broken = createLogger({
+      level: "info",
+      format: "json",
+      destination: {
+        write: () => {
+          throw new Error("EPIPE");
+        },
       },
     });
     expect(() => broken.error("still_running")).not.toThrow();
@@ -86,9 +226,13 @@ describe("production logger", () => {
 
   test("rate limits polling failures, counts them, and reports recovery and a new outage", async () => {
     const records: Array<Record<string, unknown>> = [];
-    const logger = createLogger("info", {
-      write: (line) => {
-        records.push(JSON.parse(line));
+    const logger = createLogger({
+      level: "info",
+      format: "json",
+      destination: {
+        write: (line) => {
+          records.push(JSON.parse(line));
+        },
       },
     });
     let now = 1_000;

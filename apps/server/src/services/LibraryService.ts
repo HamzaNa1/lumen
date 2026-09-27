@@ -356,6 +356,9 @@ export const makeLibraryService = Effect.gen(function* () {
         }
       }),
     );
+    logger.info("scan_run_queued", {
+      runId, libraryId: input.libraryId, mode: input.mode, roots: enabledRoots.length,
+    });
     return { runId };
   });
 

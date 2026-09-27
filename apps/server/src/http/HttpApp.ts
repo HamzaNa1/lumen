@@ -202,7 +202,7 @@ const routeParts = (url: URL): string[] => url.pathname.split("/").filter(Boolea
 export const makeHttpHandler = (
   services: HttpServices,
   config: ServerConfig,
-  logger: Logger = createLogger(config.logLevel),
+  logger: Logger = createLogger({ level: config.logLevel, format: config.logFormat }),
 ) => {
   const limiter = new RequestLimiter({
     maxRequests: config.maxRequestsPerMinute,

@@ -13,9 +13,13 @@ const capture = (level: "debug" | "info" | "warn" | "error" = "info") => {
   const records: Array<Record<string, unknown>> = [];
   return {
     records,
-    logger: createLogger(level, {
-      write: (line) => {
-        records.push(JSON.parse(line));
+    logger: createLogger({
+      level: level,
+      format: "json",
+      destination: {
+        write: (line) => {
+          records.push(JSON.parse(line));
+        },
       },
     }),
   };

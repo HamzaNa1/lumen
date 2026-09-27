@@ -5,11 +5,13 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { makeServerConfig } from "../config/ServerConfig";
 
-let logger = createLogger();
+let logger = createLogger().child({ component: "database" });
 
 const program = Effect.gen(function* () {
   const config = yield* makeServerConfig();
-  logger = createLogger(config.logLevel);
+  logger = createLogger({ level: config.logLevel, format: config.logFormat }).child({
+    component: "database",
+  });
   logger.info("database_migration_started");
   yield* Effect.promise(() => mkdir(dirname(config.databasePath), { recursive: true }));
   yield* Effect.scoped(

@@ -2,6 +2,7 @@ import { Context } from "effect";
 import pino, { type DestinationStream } from "pino";
 import { version } from "../../package.json";
 import type { ServerConfig } from "../config/Config";
+import { formatTextLog, logMessage, logSource } from "./LogFormatting";
 
 export type LogLevel = ServerConfig["logLevel"];
 export interface LogFields {
@@ -19,7 +20,17 @@ export interface Logger {
 
 const sensitiveField =
   /password|secret|token|authorization|cookie|grant$|api.?key|body|headers|path$|url$|query|username/i;
-const reservedFields = new Set(["level", "time", "pid", "service", "version", "event", "error"]);
+const reservedFields = new Set([
+  "level",
+  "time",
+  "pid",
+  "service",
+  "version",
+  "event",
+  "error",
+  "source",
+  "msg",
+]);
 
 const safeFields = (fields: LogFields): LogFields => {
   let remaining = 64;
@@ -82,11 +93,22 @@ const errorDetails = (error: unknown, depth = 0): unknown => {
   };
 };
 
-export const createLogger = (level: LogLevel = "info", destination?: DestinationStream): Logger => {
+export interface LoggerOptions {
+  readonly level?: LogLevel;
+  readonly format?: ServerConfig["logFormat"];
+  readonly destination?: DestinationStream;
+}
+
+export const createLogger = ({
+  level = "info",
+  format = "text",
+  destination,
+}: LoggerOptions = {}): Logger => {
   // Synchronous stdout applies backpressure without an unbounded in-process
   // queue, and needs no asynchronous flush when the process terminates.
   const stdout = destination === undefined ? pino.destination({ dest: 1, sync: true }) : undefined;
   stdout?.on("error", () => undefined);
+  const sink = destination ?? stdout;
   const output = pino(
     {
       level,
@@ -94,7 +116,13 @@ export const createLogger = (level: LogLevel = "info", destination?: Destination
       timestamp: pino.stdTimeFunctions.isoTime,
       formatters: { level: (label) => ({ level: label }) },
     },
-    destination ?? stdout,
+    format === "json"
+      ? sink
+      : {
+          write: (line) => {
+            sink?.write(formatTextLog(JSON.parse(line)));
+          },
+        },
   );
   const wrap = (bindings: LogFields): Logger => {
     const log =
@@ -102,10 +130,12 @@ export const createLogger = (level: LogLevel = "info", destination?: Destination
       (event, fields = {}, error) => {
         if (!output.isLevelEnabled(level)) return;
         try {
+          const context = { ...bindings, ...safeFields(fields) };
           output[level]({
-            ...bindings,
-            ...safeFields(fields),
+            ...context,
             event,
+            source: logSource(context.component),
+            msg: logMessage(event, { ...context, version }),
             ...(error === undefined ? {} : { error: errorDetails(error) }),
           });
         } catch {

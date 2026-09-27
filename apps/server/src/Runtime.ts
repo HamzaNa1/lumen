@@ -61,7 +61,7 @@ export interface ServerServices {
 
 export const makeLayers = (
   config: ServerConfig,
-  logger: Logger = createLogger(config.logLevel),
+  logger: Logger = createLogger({ level: config.logLevel, format: config.logFormat }),
 ) => {
   const database = makeDatabaseLayers(config);
   const repositories = RepositoriesLive(database);
@@ -151,7 +151,7 @@ export const startServer = async (
   const startedAt = performance.now();
   try {
     const config = await yieldConfig(overrides);
-    logger ??= createLogger(config.logLevel);
+    logger ??= createLogger({ level: config.logLevel, format: config.logFormat });
     logger.info("server_starting");
     return await startConfiguredServer(config, logger, startedAt);
   } catch (cause) {
