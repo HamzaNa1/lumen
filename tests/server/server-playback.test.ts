@@ -1,5 +1,5 @@
 import { seedPlayback } from "../helpers/playback";
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -264,6 +264,45 @@ describe("watch groups HTTP API", () => {
     const { first, login } = await setupGroup();
     for (let index = 0; index < 12; index++) expect((await first("/watch-groups")).status).toBe(200);
     await login();
+  });
+
+  test("a slow password check cannot delay another group's pause command", async () => {
+    const { first, second, outsider, media } = await setupGroup();
+    const watching = await (await first("/watch-groups", "POST", { name: "Watching" })).json();
+    const started = await (await first(`/watch-groups/${watching.group.id}/commands`, "POST", { type: "start", itemId: media.itemId, positionSeconds: 0 })).json();
+    const protectedGroup = await (await second("/watch-groups", "POST", { name: "Protected", password: "groupSecret" })).json();
+    const verificationStarted = Promise.withResolvers<void>();
+    const release = Promise.withResolvers<boolean>();
+    const original = Bun.password.verify;
+    const verify = spyOn(Bun.password, "verify").mockImplementation((password, hash, algorithm) => {
+      if (password === "groupSecret") { verificationStarted.resolve(); return release.promise; }
+      return original(password, hash, algorithm);
+    });
+    const joining = outsider(`/watch-groups/${protectedGroup.group.id}/join`, "POST", { password: "groupSecret" });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await verificationStarted.promise;
+      const paused = first(`/watch-groups/${watching.group.id}/commands`, "POST", { type: "pause", playbackId: started.group.playback.id });
+      const result = await Promise.race([paused.then((response) => response.status), new Promise<string>((resolve) => { timeout = setTimeout(() => resolve("blocked"), 1000); })]);
+      expect(result).toBe(200);
+    } finally {
+      clearTimeout(timeout);
+      release.resolve(true);
+      await joining;
+      verify.mockRestore();
+    }
+  });
+
+  test("disconnected members expire and empty watch groups disappear", async () => {
+    const { first, second } = await setupGroup();
+    const created = await (await first("/watch-groups", "POST", { name: "Temporary" })).json();
+    await second(`/watch-groups/${created.group.id}/join`, "POST", {});
+    const now = Date.now();
+    const clock = spyOn(Date, "now").mockReturnValue(now + 46000);
+    try {
+      expect((await (await first("/watch-groups")).json()).groups).toEqual([]);
+      expect((await second(`/watch-groups/${created.group.id}`)).status).toBe(404);
+    } finally { clock.mockRestore(); }
   });
 
 });

@@ -16,6 +16,7 @@ export class WatchGroupController {
   private timer: ReturnType<typeof setInterval> | null = null;
   private applying: Promise<void> | null = null;
   private playbackId: string | null = null;
+  private announcedPlaybackId: string | null = null;
   private revision = -1;
   private loadingId: string | null = null;
   private serverTimeMs = 0;
@@ -50,6 +51,7 @@ export class WatchGroupController {
       this.connection = connection;
       this.abort = new AbortController();
       this.accept(snapshot);
+      this.membershipChange = false;
       this.timer = setInterval(() => void this.reconcile(), 250);
       this.timer.unref();
       void this.poll(this.abort.signal);
@@ -86,9 +88,14 @@ export class WatchGroupController {
     this.connection = null;
     this.status = { group: null, connected: true, error: null };
     this.onStatus(this.status);
+    if (this.announcedPlaybackId !== null && this.announcedPlaybackId !== this.playbackId) {
+      this.announcedPlaybackId = null;
+      this.onPlayback(null, null);
+    }
     if (this.loadingId !== null) await this.player.stop();
     await this.applying;
     this.playbackId = null;
+    this.announcedPlaybackId = null;
     this.revision = -1;
     await this.player.resetSpeed();
     if (connection !== null && group !== null) {
@@ -141,6 +148,10 @@ export class WatchGroupController {
       this.retryAt = 0;
     this.lastResponseAt = performance.now();
     this.status = { group: snapshot.group, connected: true, error: null };
+    if (snapshot.group?.playback == null && this.announcedPlaybackId !== null) {
+      this.announcedPlaybackId = null;
+      this.onPlayback(null, null);
+    }
     if (this.loadingId !== null && this.loadingId !== snapshot.group?.playback?.id)
       void this.player.stop().catch((cause) => this.report(cause));
     this.onStatus(this.status);
@@ -223,12 +234,12 @@ export class WatchGroupController {
       if (this.playbackId !== null) {
         this.playbackId = null;
         await this.player.stop();
-        this.onPlayback(null, null);
       }
       return;
     }
     if (this.playbackId !== playback.id) {
       this.loadingId = playback.id;
+      this.announcedPlaybackId = playback.id;
       this.onPlayback(playback.itemId, playback.title);
       try {
         await this.player.waitForSurface();

@@ -825,3 +825,61 @@ test("remote playback waits until the renderer prepares its video surface", asyn
     expect(ready).toBe(true);
   });
 });
+
+for (const transition of ["join", "stop", "leave"]) {
+const stopBeforeSurface = transition !== "join";
+test(transition === "leave" ? "leaving a group during initial loading clears the player screen" : stopBeforeSurface ? "stopping a group during initial loading clears the player screen" : "joining a paused watch group loads its current show at the group's position", async () => {
+  const { WatchGroupController } = await import("../../apps/desktop/src/main/player/WatchGroupController");
+  const { ServerClient } = await import("../../apps/desktop/src/main/api/ServerClient");
+  await withPlayback(async ({ controller }) => {
+    if (!stopBeforeSurface) await controller.setSurface({ x: 0, y: 0, width: 800, height: 600 });
+    const itemId = crypto.randomUUID();
+    const groupId = crypto.randomUUID();
+    const playbackId = crypto.randomUUID();
+    const group = {
+      id: groupId, name: "Movie night", members: [], passwordProtected: false, revision: 1,
+      playback: { id: playbackId, itemId, title: "Current show", durationSeconds: 60, positionSeconds: 35, paused: true, updatedAtMs: Date.now(), revision: 1 },
+    };
+    const client = new ServerClient({
+      origin: "http://localhost:3000",
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/commands")) return Response.json({ group: { ...group, revision: 2, playback: null }, serverTimeMs: Date.now() });
+        if (url.pathname.endsWith("/join")) return Response.json({ group, serverTimeMs: Date.now() });
+        if (url.pathname === "/api/v1/watch-groups") return Response.json({ groups: [], serverTimeMs: Date.now() });
+        if (url.pathname === "/api/v1/playback/sessions") return Response.json({
+          sessionId: crypto.randomUUID(), itemId, sourceId: crypto.randomUUID(), title: "Current show", streamUrl: "http://localhost:3000/stream", grantToken: "grant", durationSeconds: 60, streams: [], grantExpiresInSeconds: 3600,
+        });
+        if (url.pathname === `/api/v1/watch-groups/${groupId}` && init?.method !== "DELETE") {
+          await new Promise<void>((resolve) => {
+            if (init?.signal?.aborted) resolve();
+            else init?.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          throw new Error("Aborted");
+        }
+        return Response.json({ ok: true });
+      }) as typeof fetch,
+    });
+    client.setSession({ userId: crypto.randomUUID(), role: "admin", sessionId: crypto.randomUUID(), accessToken: "test-token", accessExpiresAtMs: Date.now() + 60000 });
+    const opened: Array<string | null> = [];
+    const announced = Promise.withResolvers<void>();
+    const groups = new WatchGroupController(controller, () => undefined, (item) => { opened.push(item); announced.resolve(); });
+    try {
+      const joining = groups.enter({ client, connectionId: "connection" }, { groupId });
+      if (stopBeforeSurface) {
+        await announced.promise;
+        const stopping = transition === "leave" ? groups.leave() : groups.control("stop");
+        await controller.setSurface({ x: 0, y: 0, width: 800, height: 600 });
+        await stopping;
+        await joining;
+        expect(opened).toEqual([itemId, null]);
+      } else {
+        await joining;
+        expect(controller.getState()).toMatchObject({ itemId, paused: true, positionSeconds: 35 });
+        expect(opened).toEqual([itemId]);
+      }
+    } finally { await groups.leave(); }
+  });
+});
+
+}

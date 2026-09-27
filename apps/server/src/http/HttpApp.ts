@@ -219,6 +219,11 @@ export const makeHttpHandler = (
     maxActive: config.maxConcurrentRequests,
   });
   const watchGroupLimiter = new RequestLimiter({ maxRequests: 20, loginRequests: config.loginAttemptsPerMinute, maxActive: 2 });
+  const watchGroupAction = async <T>(principal: AuthPrincipal, action: () => Promise<T>): Promise<T> => {
+    watchGroupLimiter.sweep(Date.now());
+    await call(watchGroupLimiter.check(principal.user.id, Date.now(), "login"));
+    return call(watchGroupLimiter.run(principal.user.id, Effect.tryPromise({ try: action, catch: (cause) => cause })));
+  };
   const authenticate = async (request: Request): Promise<AuthPrincipal> => {
     const token = bearer(request);
     if (token === null) throw unauthorized();
@@ -309,9 +314,8 @@ export const makeHttpHandler = (
       if (parts.length === 3 && method === "GET")
         return unknownJson({ groups: watchGroups.list(), serverTimeMs: Date.now() });
       if (parts.length === 3 && method === "POST") {
-        watchGroupLimiter.sweep(Date.now());
-        await call(watchGroupLimiter.check(principal.user.id, Date.now(), "login"));
-        return unknownJson(await watchGroups.create(principal, decode(CreateWatchGroup, await body(request, config.maxRequestBodyBytes))), 201);
+        const input = decode(CreateWatchGroup, await body(request, config.maxRequestBodyBytes));
+        return unknownJson(await watchGroupAction(principal, () => watchGroups.create(principal, input)), 201);
       }
       const groupId = parts[3];
       if (groupId !== undefined && parts.length === 4 && method === "GET")
@@ -321,10 +325,8 @@ export const makeHttpHandler = (
         return unknownJson({ ok: true });
       }
       if (groupId !== undefined && parts.length === 5 && parts[4] === "join" && method === "POST") {
-        watchGroupLimiter.sweep(Date.now());
-        await call(watchGroupLimiter.check(principal.user.id, Date.now(), "login"));
         const input = decode(JoinWatchGroup, await body(request, config.maxRequestBodyBytes));
-        return unknownJson(await watchGroups.join(principal, groupId, input.password));
+        return unknownJson(await watchGroupAction(principal, () => watchGroups.join(principal, groupId, input.password)));
       }
       if (groupId !== undefined && parts.length === 5 && parts[4] === "commands" && method === "POST")
         return unknownJson(await watchGroups.command(principal, groupId, decode(WatchGroupCommand, await body(request, config.maxRequestBodyBytes))));

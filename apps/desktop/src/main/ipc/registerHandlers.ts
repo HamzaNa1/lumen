@@ -149,6 +149,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const user = await client.me();
     const current = client.currentSession ?? session;
     connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
+    await watchGroups.leave();
+    await dependencies.player.stop();
     try {
       await dependencies.registry.save({
         connectionId,

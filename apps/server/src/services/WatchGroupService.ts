@@ -31,15 +31,8 @@ type AuthorizeMedia = (
 // Groups belong to the live server session; restarting the server ends them.
 export class WatchGroupService {
   private readonly groups = new Map<string, Group>();
-  private mutations: Promise<unknown> = Promise.resolve();
 
   constructor(private readonly authorizeMedia: AuthorizeMedia) {}
-
-  private serialized<T>(operation: () => Promise<T> | T): Promise<T> {
-    const next = this.mutations.then(operation);
-    this.mutations = next.catch(() => undefined);
-    return next;
-  }
 
   list(): ReadonlyArray<WatchGroupSummary> {
     this.sweep();
@@ -51,60 +44,62 @@ export class WatchGroupService {
     }));
   }
 
-  create(principal: AuthPrincipal, input: CreateWatchGroup): Promise<WatchGroupSnapshot> {
-    return this.serialized(async () => {
-      this.sweep();
-      const name = input.name.trim();
-      if (name.length === 0) throw badRequest("Enter a group name");
-      if (this.membership(principal) !== undefined)
-        throw conflict("Leave your current group first");
-      if (this.groups.size >= 256) throw conflict("Too many watch groups; try again later");
-      const passwordHash = input.password ? await hashPassword(input.password) : null;
-      const group: Group = {
-        state: {
-          id: newUuid(),
-          name,
-          passwordProtected: passwordHash !== null,
-          members: [],
-          revision: 0,
-          playback: null,
-        },
-        passwordHash,
-        members: new Map(),
-        listeners: new Set(),
-      };
-      this.groups.set(group.state.id, group);
-      this.addMember(group, principal);
-      return this.snapshot(group);
-    });
+  async create(principal: AuthPrincipal, input: CreateWatchGroup): Promise<WatchGroupSnapshot> {
+    const name = input.name.trim();
+    if (name.length === 0) throw badRequest("Enter a group name");
+    const passwordHash = input.password ? await hashPassword(input.password) : null;
+    this.sweep();
+    if (this.membership(principal) !== undefined) throw conflict("Leave your current group first");
+    if (this.groups.size >= 256) throw conflict("Too many watch groups; try again later");
+    const group: Group = {
+      state: {
+        id: newUuid(),
+        name,
+        passwordProtected: passwordHash !== null,
+        members: [],
+        revision: 0,
+        playback: null,
+      },
+      passwordHash,
+      members: new Map(),
+      listeners: new Set(),
+    };
+    this.groups.set(group.state.id, group);
+    this.addMember(group, principal);
+    return this.snapshot(group);
   }
 
-  join(principal: AuthPrincipal, groupId: string, password = ""): Promise<WatchGroupSnapshot> {
-    return this.serialized(async () => {
-      this.sweep();
-      const group = this.requireGroup(groupId);
-      const current = this.membership(principal);
-      if (current === group) return this.snapshot(group);
-      if (current !== undefined) throw conflict("Leave your current group first");
-      if (group.members.size >= 64) throw conflict("This group is full");
-      if (group.passwordHash !== null && !(await verifyPassword(password, group.passwordHash)))
-        throw forbidden("Incorrect group password");
-      if (group.state.playback !== null)
-        await this.authorizeMedia(principal, group.state.playback.itemId);
-      this.addMember(group, principal);
-      return this.snapshot(group);
-    });
+  async join(
+    principal: AuthPrincipal,
+    groupId: string,
+    password = "",
+  ): Promise<WatchGroupSnapshot> {
+    this.sweep();
+    const group = this.requireGroup(groupId);
+    if (this.membership(principal) === group)
+      return this.snapshot(this.requireMember(principal, groupId));
+    if (group.passwordHash !== null && !(await verifyPassword(password, group.passwordHash)))
+      throw forbidden("Incorrect group password");
+    const itemId = group.state.playback?.itemId;
+    if (itemId !== undefined) await this.authorizeMedia(principal, itemId);
+    this.sweep();
+    this.requireGroup(groupId);
+    if (group.state.playback?.itemId !== itemId)
+      throw conflict("Group playback changed; try joining again");
+    const current = this.membership(principal);
+    if (current === group) return this.snapshot(this.requireMember(principal, groupId));
+    if (current !== undefined) throw conflict("Leave your current group first");
+    if (group.members.size >= 64) throw conflict("This group is full");
+    this.addMember(group, principal);
+    return this.snapshot(group);
   }
 
-  leave(principal: AuthPrincipal, groupId: string): Promise<void> {
-    return this.serialized(() => {
-      const group = this.groups.get(groupId);
-      if (group === undefined) return;
-      if (!group.members.has(this.memberId(principal))) return;
-      this.requireMember(principal, groupId);
-      group.members.delete(this.memberId(principal));
-      this.changedMembers(group);
-    });
+  async leave(principal: AuthPrincipal, groupId: string): Promise<void> {
+    const group = this.groups.get(groupId);
+    if (group === undefined || !group.members.has(this.memberId(principal))) return;
+    this.requireMember(principal, groupId);
+    group.members.delete(this.memberId(principal));
+    this.changedMembers(group);
   }
 
   async read(
@@ -135,74 +130,81 @@ export class WatchGroupService {
     return this.snapshot(group);
   }
 
-  command(
+  async command(
     principal: AuthPrincipal,
     groupId: string,
     command: WatchGroupCommand,
   ): Promise<WatchGroupSnapshot> {
-    return this.serialized(async () => {
-      this.sweep();
-      const group = this.requireMember(principal, groupId);
-      const member = group.members.get(this.memberId(principal));
-      if (member !== undefined) member.lastSeenAtMs = Date.now();
-      const revision = group.state.revision + 1;
-      if (command.type === "start") {
-        const media = await this.authorizeMedia(principal, command.itemId);
-        for (const member of group.members.values())
+    this.sweep();
+    const group = this.requireMember(principal, groupId);
+    const member = group.members.get(this.memberId(principal));
+    if (member !== undefined) member.lastSeenAtMs = Date.now();
+    if (command.type === "start") {
+      const expectedRevision = group.state.revision;
+      const members = Array.from(group.members.values());
+      const media = await this.authorizeMedia(principal, command.itemId);
+      for (const member of members) {
+        if (member.principal.deviceId !== principal.deviceId)
           await this.authorizeMedia(member.principal, command.itemId);
-        if (media.durationSeconds !== null && command.positionSeconds > media.durationSeconds)
-          throw badRequest("Position exceeds duration");
-        group.state = {
-          ...group.state,
-          revision,
-          playback: {
-            id: newUuid(),
-            itemId: command.itemId,
-            title: media.title,
-            durationSeconds: media.durationSeconds,
-            positionSeconds: command.positionSeconds,
-            paused: false,
-            updatedAtMs: Date.now(),
-            revision,
-          },
-        };
-      } else {
-        const playback = group.state.playback;
-        if (playback === null || playback.id !== command.playbackId)
-          throw conflict("Group playback changed; try again");
-        const now = Date.now();
-        if (
-          command.type === "seek" &&
-          playback.durationSeconds !== null &&
-          command.positionSeconds > playback.durationSeconds
-        )
-          throw badRequest("Position exceeds duration");
-        group.state = {
-          ...group.state,
-          revision,
-          playback:
-            command.type === "stop"
-              ? null
-              : {
-                  ...playback,
-                  revision,
-                  updatedAtMs: now,
-                  positionSeconds:
-                    command.type === "seek"
-                      ? command.positionSeconds
-                      : watchGroupPosition(playback, now),
-                  paused:
-                    command.type === "pause"
-                      ? true
-                      : command.type === "resume"
-                        ? false
-                        : playback.paused,
-                },
-        };
       }
-      this.notify(group);
-      return this.snapshot(group);
-    });
+      this.sweep();
+      this.requireMember(principal, groupId);
+      if (group.state.revision !== expectedRevision)
+        throw conflict("Group changed while preparing playback; try again");
+      if (media.durationSeconds !== null && command.positionSeconds > media.durationSeconds)
+        throw badRequest("Position exceeds duration");
+      const revision = group.state.revision + 1;
+      group.state = {
+        ...group.state,
+        revision,
+        playback: {
+          id: newUuid(),
+          itemId: command.itemId,
+          title: media.title,
+          durationSeconds: media.durationSeconds,
+          positionSeconds: command.positionSeconds,
+          paused: false,
+          updatedAtMs: Date.now(),
+          revision,
+        },
+      };
+    } else {
+      const playback = group.state.playback;
+      if (playback === null || playback.id !== command.playbackId)
+        throw conflict("Group playback changed; try again");
+      const now = Date.now();
+      if (
+        command.type === "seek" &&
+        playback.durationSeconds !== null &&
+        command.positionSeconds > playback.durationSeconds
+      )
+        throw badRequest("Position exceeds duration");
+      const revision = group.state.revision + 1;
+      group.state = {
+        ...group.state,
+        revision,
+        playback:
+          command.type === "stop"
+            ? null
+            : {
+                ...playback,
+                revision,
+                updatedAtMs: now,
+                positionSeconds:
+                  command.type === "seek"
+                    ? command.positionSeconds
+                    : watchGroupPosition(playback, now),
+                paused:
+                  command.type === "pause"
+                    ? true
+                    : command.type === "resume"
+                      ? false
+                      : playback.paused,
+              },
+      };
+    }
+    this.notify(group);
+    return this.snapshot(group);
   }
 
   private memberId(principal: AuthPrincipal): string {
