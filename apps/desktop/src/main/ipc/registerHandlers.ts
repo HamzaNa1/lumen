@@ -324,6 +324,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     watch.connect(activeClient(dependencies), activeConnectionId(dependencies));
     return watch.status;
   });
+  handle("watch:retry", async () => watch.retry());
   handle("watch:action", async (_event, raw) => {
     watch.connect(activeClient(dependencies), activeConnectionId(dependencies));
     await watch.action(decode(WatchAction, raw));
@@ -381,6 +382,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const bounds = decode(Schema.NullOr(IpcPlayerSurfaceBounds), raw);
     await dependencies.player.setSurface(bounds);
     dependencies.overlay.setVisible(bounds !== null);
+    watch.setSurfaceReady(bounds !== null);
     return { ok: true };
   });
   handle("player:select-audio", async (_event, raw) => {
@@ -419,14 +421,21 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
     const playback = watch.status.group?.playback;
-    if (playback != null) await watch.action({ type: "stop", itemId: playback.itemId });
-    await dependencies.player.stop();
+    try {
+      if (playback != null) await watch.action({ type: "stop", itemId: playback.itemId });
+    } catch {
+      // Leave the unavailable group so reconnect cannot undo the local stop.
+      watch.disconnect();
+    } finally {
+      await dependencies.player.stop();
+    }
     return { ok: true };
   });
 };
 
 export const unregisterIpcHandlers = (): void => {
   for (const name of [
+    "watch:retry",
     "watch:state",
     "watch:action",
     "accounts:list",

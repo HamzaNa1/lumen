@@ -21,6 +21,7 @@ import type {
 
 export interface LumenBridge {
   readonly watch: {
+    readonly retry: () => Promise<void>;
     readonly state: () => Promise<WatchStatus>;
     readonly action: (action: WatchAction) => Promise<WatchStatus>;
     readonly onState: (callback: (status: WatchStatus) => void) => () => void;

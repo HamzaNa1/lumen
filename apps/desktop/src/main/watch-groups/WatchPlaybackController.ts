@@ -8,6 +8,11 @@ import type { ServerClient } from "../api/ServerClient";
 import type { PlayerController } from "../player/PlayerController";
 import { WatchGroupClient } from "./WatchGroupClient";
 
+export type WatchPlayer = Pick<
+  PlayerController,
+  "start" | "stop" | "getState" | "seek" | "pause" | "speed"
+>;
+
 export class WatchPlaybackController {
   private client: WatchGroupClient | null = null;
   private connectionId: string | null = null;
@@ -15,7 +20,10 @@ export class WatchPlaybackController {
   private syncing = false;
   private appliedRevision = -1;
   private appliedGroup: string | null = null;
-  private failedRevision: number | null = null;
+  private playbackError: string | null = null;
+  private retryAt = 0;
+  private failures = 0;
+  private surfaceReady = false;
   private speed = 1;
   private readonly timer: ReturnType<typeof setInterval>;
   status: WatchStatus = {
@@ -27,7 +35,7 @@ export class WatchPlaybackController {
   };
 
   constructor(
-    private readonly player: PlayerController,
+    private readonly player: WatchPlayer,
     private readonly onStatus: (status: WatchStatus) => void,
   ) {
     this.timer = setInterval(() => void this.synchronize(), 500);
@@ -40,8 +48,21 @@ export class WatchPlaybackController {
     this.server = server;
     this.connectionId = connectionId;
     this.client = new WatchGroupClient(server, (status) => {
-      this.status = status;
-      this.onStatus(status);
+      if (
+        status.connection === "connected" &&
+        (this.status.connection !== "connected" ||
+          status.group?.revision !== this.status.group?.revision)
+      ) {
+        this.retryAt = 0;
+        this.failures = 0;
+      }
+      if (
+        status.group?.id !== this.status.group?.id ||
+        status.group?.revision !== this.status.group?.revision
+      )
+        this.playbackError = null;
+      this.status = { ...status, error: status.error ?? this.playbackError };
+      this.onStatus(this.status);
       void this.synchronize();
     });
     this.client.connect();
@@ -53,9 +74,11 @@ export class WatchPlaybackController {
     this.server = null;
     this.connectionId = null;
     client?.close();
+    this.playbackError = null;
     this.appliedGroup = null;
     this.appliedRevision = -1;
-    this.failedRevision = null;
+    this.retryAt = 0;
+    this.failures = 0;
     void this.setSpeed(1).catch(() => undefined);
   }
 
@@ -87,6 +110,17 @@ export class WatchPlaybackController {
     }
   }
 
+  retry(): void {
+    this.retryAt = 0;
+    this.failures = 0;
+    void this.synchronize();
+  }
+
+  setSurfaceReady(ready: boolean): void {
+    this.surfaceReady = ready;
+    if (ready) void this.synchronize();
+  }
+
   get grouped(): boolean {
     return this.status.group !== null;
   }
@@ -115,9 +149,10 @@ export class WatchPlaybackController {
     if (this.appliedGroup !== group.id) {
       this.appliedGroup = group.id;
       this.appliedRevision = -1;
-      this.failedRevision = null;
+      this.retryAt = 0;
+      this.failures = 0;
     }
-    if (this.failedRevision === group.revision) return;
+    if (Date.now() < this.retryAt) return;
     this.syncing = true;
     try {
       const playback = group.playback;
@@ -128,6 +163,7 @@ export class WatchPlaybackController {
         this.appliedRevision = group.revision;
         return;
       }
+      if (!this.surfaceReady) return;
       if (state === null || state.itemId !== playback.itemId) {
         await this.player.start({
           client: this.server,
@@ -152,17 +188,24 @@ export class WatchPlaybackController {
       const correction = watchCorrection(state.positionSeconds, target, playback.paused);
       if (this.appliedRevision !== group.revision || correction.seek !== null)
         await this.player.seek(state.sessionId, target);
-      await this.setSpeed(correction.speed);
+      await this.setSpeed(
+        this.appliedRevision !== group.revision || correction.seek !== null ? 1 : correction.speed,
+      );
       if (state.paused !== playback.paused)
         await this.player.pause(state.sessionId, playback.paused);
       this.appliedRevision = group.revision;
+      this.failures = 0;
+      this.playbackError = null;
+      if (this.status.error !== null) {
+        this.status = { ...this.status, error: null };
+        this.onStatus(this.status);
+      }
     } catch (cause) {
       if (this.client === client && this.status.group?.id === group.id) {
-        this.failedRevision = group.revision;
-        this.status = {
-          ...this.status,
-          error: cause instanceof Error ? cause.message : "Could not synchronize playback",
-        };
+        this.retryAt = Date.now() + Math.min(10_000, 1000 * 2 ** this.failures++);
+        this.playbackError =
+          cause instanceof Error ? cause.message : "Could not synchronize playback";
+        this.status = { ...this.status, error: this.playbackError };
         this.onStatus(this.status);
       }
     } finally {
