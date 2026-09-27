@@ -112,8 +112,8 @@ export const MediaPlayer = ({
           <button
             className="media-player-video-hit-target"
             type="button"
-            aria-label={settingsOpen ? "Close playback settings" : "Pause playback"}
-            disabled={!settingsOpen && (inactive || paused)}
+            aria-label={settingsOpen ? "Close playback settings" : paused ? "Resume playback" : "Pause playback"}
+            disabled={!settingsOpen && inactive}
             onClick={() => {
               if (settingsOpen) setSettingsOpen(false);
               else onPause();
