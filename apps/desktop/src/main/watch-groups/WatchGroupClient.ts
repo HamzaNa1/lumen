@@ -2,6 +2,8 @@ import { WatchMessage, type WatchAction, type WatchStatus } from "@lumen/contrac
 import { Schema } from "effect";
 import type { ServerClient } from "../api/ServerClient";
 
+class WatchRequestRejected extends Error {}
+
 export class WatchGroupClient {
   private socket: WebSocket | null = null;
   private stopped = false;
@@ -63,6 +65,7 @@ export class WatchGroupClient {
           }, 5000);
           if (this.desiredGroup !== null) {
             void this.request({ type: "join", ...this.desiredGroup }).catch((cause: unknown) => {
+              if (!(cause instanceof WatchRequestRejected)) return;
               this.desiredGroup = null;
               this.update({
                 group: null,
@@ -76,7 +79,7 @@ export class WatchGroupClient {
             clearTimeout(pending.timer);
             this.pending.delete(message.requestId);
             if (message.error === null) pending.resolve();
-            else pending.reject(new Error(message.error));
+            else pending.reject(new WatchRequestRejected(message.error));
           }
         } else if (message.type === "pong") {
           this.lastPong = Date.now();

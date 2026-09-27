@@ -18,7 +18,7 @@ import type { PlaybackBridge } from "./PlaybackBridge";
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
   readonly surface: MpvSurface;
-  readonly onState: (state: IpcPlayerState | null) => void;
+  readonly onState: (state: IpcPlayerState) => void;
 }
 
 interface MpvTrack {
@@ -105,7 +105,7 @@ const resolveTrackIds = async (
 export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
   private readonly surface: MpvSurface;
-  private readonly onState: (state: IpcPlayerState | null) => void;
+  private readonly onState: (state: IpcPlayerState) => void;
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
   private refreshing: ActiveSession | null = null;
@@ -310,9 +310,9 @@ export class PlayerController extends EventEmitter {
     this.assertActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
+    this.state = { ...this.requireState(), positionSeconds, ended: false };
     await this.active?.ipc.command(["seek", positionSeconds, "absolute+exact"]);
     this.assertActive(sessionId);
-    this.state = { ...this.requireState(), positionSeconds, ended: false };
     this.publish();
     return this.requireState();
   }
@@ -468,7 +468,6 @@ export class PlayerController extends EventEmitter {
     const state = this.state;
     this.active = null;
     this.state = null;
-    this.onState(null);
     this.surface.hide();
     if (active === null) return Promise.resolve();
     const stopping = this.cleanup(active, state === null ? null : { active, state });

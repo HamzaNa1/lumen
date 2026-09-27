@@ -1,14 +1,9 @@
-import {
-  IpcItemDetails,
-  WatchRequest,
-  watchPosition,
-  type WatchGroup,
-  type WatchMessage,
-} from "@lumen/contracts";
+import { IpcItemDetails, WatchRequest, type WatchGroup, type WatchMessage } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { HttpServices } from "../http/HttpApp";
 import type { AuthPrincipal } from "../services/AuthService";
+import { RequestLimiter } from "../core/Limits";
 import { hashPassword, verifyPassword } from "../core/Security";
 
 export interface WatchSocketData {
@@ -20,7 +15,6 @@ export interface WatchSocketData {
   pending: number;
   windowStart: number;
   messages: number;
-  passwordAttempts: number;
   closed: boolean;
   authTimer?: ReturnType<typeof setTimeout>;
 }
@@ -36,10 +30,17 @@ const Authentication = Schema.Struct({
 export class WatchGroups {
   private readonly sockets = new Set<ServerWebSocket<WatchSocketData>>();
   private readonly groups = new Map<string, Group>();
+  private passwordOperations = 0;
+  private readonly attempts = new RequestLimiter({
+    maxRequests: 10,
+    loginRequests: 10,
+    maxActive: 4,
+  });
   private readonly timer: ReturnType<typeof setInterval>;
 
   constructor(private readonly services: Pick<HttpServices, "auth" | "catalog" | "access">) {
     this.timer = setInterval(() => {
+      this.attempts.sweep(Date.now());
       for (const [id, group] of this.groups) {
         if (group.emptySince !== null && Date.now() - group.emptySince > 30_000)
           this.groups.delete(id);
@@ -65,7 +66,6 @@ export class WatchGroups {
         pending: 0,
         windowStart: Date.now(),
         messages: 0,
-        passwordAttempts: 0,
         closed: false,
       },
     });
@@ -86,7 +86,6 @@ export class WatchGroups {
       if (Date.now() - data.windowStart >= 60_000) {
         data.windowStart = Date.now();
         data.messages = 0;
-        data.passwordAttempts = 0;
       }
       if (++data.messages > 240 || data.pending >= 8 || typeof raw !== "string") {
         socket.close(1008, "Request limit exceeded");
@@ -156,6 +155,16 @@ export class WatchGroups {
     this.send(socket, { type: "state", group: null });
   }
 
+  private async passwordWork<A>(operation: () => Promise<A>): Promise<A> {
+    if (this.passwordOperations >= 4) throw new Error("Watch groups are busy. Try again shortly.");
+    this.passwordOperations += 1;
+    try {
+      return await operation();
+    } finally {
+      this.passwordOperations -= 1;
+    }
+  }
+
   private async receive(socket: ServerWebSocket<WatchSocketData>, raw: string): Promise<void> {
     if (socket.data.closed) return;
     const value: unknown = JSON.parse(raw);
@@ -172,9 +181,17 @@ export class WatchGroups {
     }
     const { requestId, action } = Schema.decodeUnknownSync(WatchRequest)(value);
     try {
-      const principal = await Effect.runPromise(
-        this.services.auth.authenticate(socket.data.token, Date.now()),
-      );
+      let principal: AuthPrincipal;
+      try {
+        principal = await Effect.runPromise(
+          this.services.auth.authenticate(socket.data.token, Date.now()),
+        );
+      } catch {
+        this.leave(socket);
+        socket.data.principal = null;
+        socket.close(1008, "Sign-in required");
+        return;
+      }
       if (socket.data.closed) return;
       socket.data.principal = principal;
       if (action.type === "ping") {
@@ -182,14 +199,16 @@ export class WatchGroups {
       } else if (action.type === "list") this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
-        if (++socket.data.passwordAttempts > 5)
-          throw new Error("Too many attempts. Try again in a minute.");
+        await Effect.runPromise(this.attempts.check(principal.user.id, Date.now()));
         let group: Group;
         if (action.type === "create") {
           if (this.groups.size >= 64) throw new Error("Too many watch groups. Try again later.");
           const name = action.name.trim();
           if (name.length === 0) throw new Error("Enter a group name");
-          const passwordHash = action.password === "" ? null : await hashPassword(action.password);
+          const passwordHash =
+            action.password === ""
+              ? null
+              : await this.passwordWork(() => hashPassword(action.password));
           group = {
             state: {
               id: crypto.randomUUID(),
@@ -208,7 +227,9 @@ export class WatchGroups {
           group = found;
           if (
             group.passwordHash !== null &&
-            !(await verifyPassword(action.password, group.passwordHash))
+            !(await this.passwordWork(() =>
+              verifyPassword(action.password, group.passwordHash ?? ""),
+            ))
           )
             throw new Error("Incorrect group password");
           if (this.groups.get(action.groupId) !== group)
@@ -216,6 +237,8 @@ export class WatchGroups {
         }
         if (socket.data.closed) return;
         if (group.state.members.length >= 32) throw new Error("This group is full");
+        if (action.type === "create" && this.groups.size >= 64)
+          throw new Error("Too many watch groups. Try again later.");
         this.leave(socket);
         this.groups.set(group.state.id, group);
         group.emptySince = null;
@@ -233,26 +256,27 @@ export class WatchGroups {
         const group = this.groups.get(socket.data.groupId ?? "");
         if (group === undefined) throw new Error("Join a watch group first");
         const previous = group.state;
-        if (action.type === "play") {
-          const details = Schema.decodeUnknownSync(IpcItemDetails)(
-            await Effect.runPromise(
-              this.services.catalog.itemDetails(principal, action.itemId, false, Date.now()),
-            ),
-          );
+        const details = Schema.decodeUnknownSync(IpcItemDetails)(
           await Effect.runPromise(
-            this.services.access.requireLibrary(
-              principal,
-              details.item.libraryId,
-              "playback:control",
-              Date.now(),
-            ),
-          );
-          if (socket.data.closed || socket.data.groupId !== group.state.id) return;
-          if (group.state !== previous) throw new Error("Group changed. Try playing again.");
+            this.services.catalog.itemDetails(principal, action.itemId, false, Date.now()),
+          ),
+        );
+        await Effect.runPromise(
+          this.services.access.requireLibrary(
+            principal,
+            details.item.libraryId,
+            "playback:control",
+            Date.now(),
+          ),
+        );
+        if (socket.data.closed || socket.data.groupId !== group.state.id) return;
+        if (group.state.revision !== previous.revision)
+          throw new Error("Group changed. Try again.");
+        if (action.type === "play") {
           if (details.item.kind === "show" || details.item.kind === "season")
             throw new Error("Choose a movie or episode");
           group.state = {
-            ...previous,
+            ...group.state,
             revision: previous.revision + 1,
             playback: {
               itemId: action.itemId,
@@ -267,17 +291,14 @@ export class WatchGroups {
           if (playback === null || playback.itemId !== action.itemId)
             throw new Error("The group is watching something else");
           group.state = {
-            ...previous,
+            ...group.state,
             revision: previous.revision + 1,
             playback:
               action.type === "stop"
                 ? null
                 : {
                     ...playback,
-                    positionSeconds:
-                      action.type === "seek" || action.type === "pause"
-                        ? action.positionSeconds
-                        : watchPosition(playback, Date.now()),
+                    positionSeconds: action.positionSeconds,
                     paused: action.type === "pause" ? action.paused : playback.paused,
                     updatedAtMs: Date.now(),
                   },

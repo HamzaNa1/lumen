@@ -12,6 +12,7 @@ const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T>
 
 const api = {
   watch: {
+    retry: () => invoke<void>("watch:retry"),
     state: () => invoke<WatchStatus>("watch:state"),
     action: (action: WatchAction) => invoke<WatchStatus>("watch:action", action),
     onState: (callback: (status: WatchStatus) => void): (() => void) => {
