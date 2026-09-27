@@ -63,6 +63,7 @@ export const watchProxy = (origin: URL) => {
   type Connection = { upstream: WebSocket; ready: Promise<void> };
   const sockets = new Set<import("bun").ServerWebSocket<Connection>>();
   let dropJoin = false;
+  let busyJoin = false;
   const server = Bun.serve<Connection>({
     hostname: "127.0.0.1",
     port: 0,
@@ -85,7 +86,19 @@ export const watchProxy = (origin: URL) => {
       },
       async message(socket, message) {
         const raw = String(message);
-        const request = JSON.parse(raw) as { action?: { type?: string } };
+        const request = JSON.parse(raw) as { requestId?: string; action?: { type?: string } };
+        if (busyJoin && request.action?.type === "join") {
+          busyJoin = false;
+          socket.send(
+            JSON.stringify({
+              type: "reply",
+              requestId: request.requestId,
+              error: "Temporarily busy",
+              retryAfterMs: 20,
+            }),
+          );
+          return;
+        }
         if (dropJoin && request.action?.type === "join") {
           dropJoin = false;
           socket.close();
@@ -102,6 +115,10 @@ export const watchProxy = (origin: URL) => {
   });
   return {
     origin: server.url.toString(),
+    overloadRejoin() {
+      busyJoin = true;
+      for (const socket of sockets) socket.close();
+    },
     interruptRejoin() {
       dropJoin = true;
       for (const socket of sockets) socket.close();

@@ -2,11 +2,19 @@ import { WatchMessage, type WatchAction, type WatchStatus } from "@lumen/contrac
 import { Schema } from "effect";
 import type { ServerClient } from "../api/ServerClient";
 
-class WatchRequestRejected extends Error {}
+class WatchRequestRejected extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs: number | null,
+  ) {
+    super(message);
+  }
+}
 
 export class WatchGroupClient {
   private socket: WebSocket | null = null;
   private stopped = false;
+  private rejoinTimer: ReturnType<typeof setTimeout> | undefined;
   private reconnectTimer: ReturnType<typeof setTimeout> | undefined;
   private heartbeat: ReturnType<typeof setInterval> | undefined;
   private attempts = 0;
@@ -54,7 +62,12 @@ export class WatchGroupClient {
           this.attempts = 0;
           this.bestRtt = Infinity;
           this.lastPong = Date.now();
-          this.update({ connection: "connected", memberId: message.memberId, error: null });
+          this.update({
+            connection: "connected",
+            memberId: message.memberId,
+            group: null,
+            error: null,
+          });
           void this.request({ type: "ping", sentAtMs: Date.now() }).catch(() => socket.close());
           this.heartbeat = setInterval(() => {
             if (Date.now() - this.lastPong > 15_000) {
@@ -63,23 +76,15 @@ export class WatchGroupClient {
             }
             void this.request({ type: "ping", sentAtMs: Date.now() }).catch(() => socket.close());
           }, 5000);
-          if (this.desiredGroup !== null) {
-            void this.request({ type: "join", ...this.desiredGroup }).catch((cause: unknown) => {
-              if (!(cause instanceof WatchRequestRejected)) return;
-              this.desiredGroup = null;
-              this.update({
-                group: null,
-                error: cause instanceof Error ? cause.message : "Could not rejoin group",
-              });
-            });
-          }
+          void this.rejoin();
         } else if (message.type === "reply") {
           const pending = this.pending.get(message.requestId);
           if (pending !== undefined) {
             clearTimeout(pending.timer);
             this.pending.delete(message.requestId);
             if (message.error === null) pending.resolve();
-            else pending.reject(new WatchRequestRejected(message.error));
+            else
+              pending.reject(new WatchRequestRejected(message.error, message.retryAfterMs ?? null));
           }
         } else if (message.type === "pong") {
           this.lastPong = Date.now();
@@ -98,6 +103,7 @@ export class WatchGroupClient {
     socket.onclose = () => {
       clearTimeout(timeout);
       clearInterval(this.heartbeat);
+      clearTimeout(this.rejoinTimer);
       if (this.socket !== socket) return;
       this.socket = null;
       this.rejectPending("Watch group disconnected. Try again after reconnecting.");
@@ -114,6 +120,33 @@ export class WatchGroupClient {
     };
   }
 
+  get rejoining(): boolean {
+    return this.desiredGroup !== null && this.status.group === null;
+  }
+
+  private async rejoin(): Promise<void> {
+    const desired = this.desiredGroup;
+    const socket = this.socket;
+    if (desired === null || socket === null) return;
+    try {
+      await this.request({ type: "join", ...desired });
+    } catch (cause) {
+      if (
+        this.socket !== socket ||
+        this.desiredGroup !== desired ||
+        !(cause instanceof WatchRequestRejected)
+      )
+        return;
+      if (cause.retryAfterMs !== null) {
+        this.update({ error: "Group is busy. Rejoining shortly…" });
+        this.rejoinTimer = setTimeout(() => void this.rejoin(), cause.retryAfterMs);
+      } else {
+        this.desiredGroup = null;
+        this.update({ group: null, error: cause.message });
+      }
+    }
+  }
+
   async action(action: WatchAction): Promise<void> {
     await this.request(action);
     if (action.type === "create" && this.status.group !== null)
@@ -127,6 +160,7 @@ export class WatchGroupClient {
     this.stopped = true;
     this.desiredGroup = null;
     clearTimeout(this.reconnectTimer);
+    clearTimeout(this.rejoinTimer);
     clearInterval(this.heartbeat);
     this.rejectPending("Watch groups closed");
     const socket = this.socket;

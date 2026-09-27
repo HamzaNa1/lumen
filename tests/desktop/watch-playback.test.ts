@@ -72,7 +72,7 @@ test("a late join waits for its native surface, seeks to the shared pause positi
     });
     playback.connect(await fixture.login(), "viewer");
     await eventually(() => playback.status.connection === "connected");
-    await playback.action({ type: "join", groupId: owner.status.group!.id, password: "" });
+    await playback.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
     await Bun.sleep(550);
     expect(native.state).toBeNull();
     playback.setSurfaceReady(true);
@@ -108,7 +108,7 @@ test("a temporary native playback failure recovers without another group command
     playback.connect(await fixture.login(), "viewer");
     playback.setSurfaceReady(true);
     await eventually(() => playback.status.connection === "connected");
-    await playback.action({ type: "join", groupId: owner.status.group!.id, password: "" });
+    await playback.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
     await eventually(() => playback.status.error === "Temporary media failure");
     await eventually(() => native.state?.positionSeconds === 2);
     expect(playback.status.error).toBeNull();

@@ -53,6 +53,9 @@ export const WatchMessage = Schema.Union([
     type: Schema.Literal("reply"),
     requestId: Uuid,
     error: Schema.NullOr(Schema.String),
+    retryAfterMs: Schema.optional(
+      Schema.Number.check(Schema.isBetween({ minimum: 1, maximum: 60000 })),
+    ),
   }),
   Schema.Struct({
     type: Schema.Literal("pong"),
