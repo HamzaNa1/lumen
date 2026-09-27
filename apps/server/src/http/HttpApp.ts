@@ -2,7 +2,8 @@ import { EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, User } from "@
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
-import { newUuid } from "../core/Security";
+import { createLogger, type Logger } from "../core/Logger";
+import { isRoutineProbe, requestIdFor, requestMethod, requestRoute } from "./RequestLogging";
 import { RequestLimiter, LimitExceeded } from "../core/Limits";
 import { lstat } from "node:fs/promises";
 import type { ServerConfig } from "../config/Config";
@@ -116,10 +117,6 @@ const errorResponse = (cause: unknown, requestId: string): Response => {
       cause.status,
       cause.code === "unauthorized" ? { "www-authenticate": "Bearer" } : {},
     );
-  console.error("request_failed", {
-    requestId,
-    error: cause instanceof Error ? cause.message : String(cause),
-  });
   return json(S.Message, { message: "Internal server error", requestId }, 500);
 };
 
@@ -202,7 +199,11 @@ const queryNumber = (url: URL, name: string, fallback: number): number => {
 
 const routeParts = (url: URL): string[] => url.pathname.split("/").filter(Boolean);
 
-export const makeHttpHandler = (services: HttpServices, config: ServerConfig) => {
+export const makeHttpHandler = (
+  services: HttpServices,
+  config: ServerConfig,
+  logger: Logger = createLogger({ level: config.logLevel, format: config.logFormat }),
+) => {
   const limiter = new RequestLimiter({
     maxRequests: config.maxRequestsPerMinute,
     loginRequests: config.loginAttemptsPerMinute,
@@ -950,7 +951,17 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     throw notFound("Endpoint not found");
   };
   return async (request: Request): Promise<Response> => {
-    const requestId = request.headers.get("x-request-id")?.slice(0, 128) ?? newUuid();
+    const startedAt = performance.now();
+    const requestId = requestIdFor(request);
+    const pathname = new URL(request.url).pathname;
+    const log = logger.child({
+      component: "http",
+      requestId,
+      method: requestMethod(request.method),
+      route: requestRoute(pathname),
+    });
+    let response: Response;
+    let failure: unknown;
     const key = clientKey(request);
     const login = ["/auth/login", "/auth/register", "/auth/migrate-session"].some((path) =>
       new URL(request.url).pathname.endsWith(path),
@@ -958,9 +969,37 @@ export const makeHttpHandler = (services: HttpServices, config: ServerConfig) =>
     try {
       const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
       const checked = limiter.check(key, Date.now(), login ? "login" : "request");
-      return await Effect.runPromise(checked.pipe(Effect.flatMap(() => limiter.run(key, execute))));
+      response = await Effect.runPromise(
+        checked.pipe(Effect.flatMap(() => limiter.run(key, execute))),
+      );
     } catch (cause) {
-      return errorResponse(cause, requestId);
+      failure = cause;
+      response = errorResponse(cause, requestId);
     }
+    response.headers.set("x-request-id", requestId);
+    const level =
+      response.status >= 500
+        ? "error"
+        : response.status >= 400
+          ? "warn"
+          : isRoutineProbe(pathname)
+            ? "debug"
+            : "info";
+    log[level](
+      "http_request",
+      {
+        status: response.status,
+        // Response creation time; media and SSE bodies may continue streaming.
+        durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
+        errorCode:
+          failure instanceof ServerError
+            ? failure.code
+            : failure instanceof LimitExceeded
+              ? "rate_limited"
+              : undefined,
+      },
+      response.status >= 500 ? failure : undefined,
+    );
+    return response;
   };
 };

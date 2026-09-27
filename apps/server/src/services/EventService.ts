@@ -1,3 +1,4 @@
+import { ServerLogger } from "../core/Logger";
 import { Database, serverEventLog } from "@lumen/database";
 import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
@@ -30,6 +31,7 @@ export interface EventServiceShape {
 }
 
 export const makeEventService = Effect.gen(function* () {
+  const logger = (yield* ServerLogger).child({ component: "events" });
   const database = yield* Database;
   const publish: EventServiceShape["publish"] = Effect.fn("Events.publish")(
     function* (topic, userId, payload) {
@@ -79,7 +81,12 @@ export const makeEventService = Effect.gen(function* () {
             return;
           }
           const rows = await Effect.runPromise(
-            read(cursor, userId, 100).pipe(Effect.catch(() => Effect.succeed([]))),
+            read(cursor, userId, 100).pipe(
+              Effect.catch((cause) => {
+                logger.error("event_stream_read_failed", {}, cause);
+                return Effect.succeed([]);
+              }),
+            ),
           );
           for (const row of rows) {
             cursor = row.id;

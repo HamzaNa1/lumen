@@ -17,6 +17,7 @@ const Environment = Schema.Struct({
   LUMEN_DATABASE_PATH: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_DATA_DIR: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_LOG_LEVEL: Schema.optional(LogLevel),
+  LUMEN_LOG_FORMAT: Schema.optional(Schema.Literals(["text", "json"])),
   LUMEN_MAX_REQUEST_BODY_BYTES: Schema.optional(Numeric),
   LUMEN_MAX_CONCURRENT_REQUESTS: Schema.optional(Numeric),
   LUMEN_MAX_REQUESTS_PER_MINUTE: Schema.optional(Numeric),
@@ -36,6 +37,7 @@ export interface ServerConfig {
   readonly databasePath: string;
   readonly dataDir: string;
   readonly logLevel: "debug" | "info" | "warn" | "error";
+  readonly logFormat: "text" | "json";
   readonly maxRequestBodyBytes: number;
   readonly maxConcurrentRequests: number;
   readonly maxRequestsPerMinute: number;
@@ -74,6 +76,7 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     databasePath,
     dataDir,
     logLevel: parsed.LUMEN_LOG_LEVEL ?? "info",
+    logFormat: parsed.LUMEN_LOG_FORMAT ?? "text",
     maxRequestBodyBytes: toBoundedInteger("LUMEN_MAX_REQUEST_BODY_BYTES", parsed.LUMEN_MAX_REQUEST_BODY_BYTES, 1_048_576, 1_024, 100_000_000),
     maxConcurrentRequests: toBoundedInteger("LUMEN_MAX_CONCURRENT_REQUESTS", parsed.LUMEN_MAX_CONCURRENT_REQUESTS, 128, 1, 10_000),
     maxRequestsPerMinute: toBoundedInteger("LUMEN_MAX_REQUESTS_PER_MINUTE", parsed.LUMEN_MAX_REQUESTS_PER_MINUTE, 600, 1, 1_000_000),

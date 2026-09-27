@@ -1,7 +1,9 @@
+import { ServerLogger } from "../core/Logger";
+import { backgroundTask } from "./JobLogging";
 import { Database, serverScheduledJobs } from "@lumen/database";
 import { and, eq, isNotNull, isNull, lt, lte, ne, or, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
-import { Context, Effect, Exit, Layer } from "effect";
+import { Cause, Context, Effect, Exit, Layer } from "effect";
 import {
   artworkSweepIntervalMs,
   artworkSweepJobName,
@@ -40,6 +42,7 @@ const waitForNextTick = (signal: AbortSignal): Promise<void> =>
 
 export const makeScheduledJobService = (config?: ServerConfig) =>
   Effect.gen(function* () {
+    const logger = (yield* ServerLogger).child({ component: "scheduler" });
     const database = yield* Database;
     const definitions: ReadonlyArray<ScheduledJobDefinition> = [
       {
@@ -54,7 +57,10 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
             {
               name: artworkSweepJobName,
               intervalMs: artworkSweepIntervalMs,
-              run: (nowMs: number) => sweepGeneratedArtwork(database, config.dataDir, nowMs),
+              run: (nowMs: number) =>
+                sweepGeneratedArtwork(database, config.dataDir, nowMs).pipe(
+                  Effect.provideService(ServerLogger, logger),
+                ),
             },
           ]),
     ];
@@ -106,6 +112,8 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
             .returning({ name: serverScheduledJobs.name });
           if (claimed == null) continue;
 
+          const startedAt = performance.now();
+          logger.debug("scheduled_job_started", { operation: definition.name });
           const outcome = yield* Effect.exit(definition.run(nowMs));
           const finishedAtMs = Date.now();
           if (Exit.isSuccess(outcome)) {
@@ -137,6 +145,15 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
                 ),
               );
           }
+          logger[Exit.isSuccess(outcome) ? "debug" : "error"](
+            "scheduled_job_finished",
+            {
+              operation: definition.name,
+              result: Exit.isSuccess(outcome) ? "succeeded" : "failed",
+              durationMs: Math.round(performance.now() - startedAt),
+            },
+            Exit.isFailure(outcome) ? Cause.squash(outcome.cause) : undefined,
+          );
           executed += 1;
         }
         return executed;
@@ -144,9 +161,15 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
     );
 
     const start = async (signal: AbortSignal): Promise<void> => {
-      while (!signal.aborted) {
-        await Effect.runPromise(runDue(Date.now()).pipe(Effect.catch(() => Effect.succeed(0))));
-        if (!signal.aborted) await waitForNextTick(signal);
+      logger.info("scheduler_started");
+      const tick = backgroundTask(logger, "scheduled_jobs", () => runDue(Date.now()), 0);
+      try {
+        while (!signal.aborted) {
+          await tick();
+          if (!signal.aborted) await waitForNextTick(signal);
+        }
+      } finally {
+        logger.info("scheduler_stopped");
       }
     };
 

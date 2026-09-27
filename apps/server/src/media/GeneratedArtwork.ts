@@ -1,3 +1,4 @@
+import { ServerLogger } from "../core/Logger";
 import { artwork, type DatabaseClient, serverScheduledJobs } from "@lumen/database";
 import { like, sql } from "drizzle-orm";
 import { Effect } from "effect";
@@ -63,6 +64,7 @@ export const sweepGeneratedArtwork = Effect.fn("GeneratedArtwork.sweep")(functio
     }).pipe(Effect.catch(() => Effect.succeed(false)));
     if (removed) deleted += 1;
   }
-  console.info("artwork_sweep_completed", { filesDeleted: deleted });
+  const logger = yield* ServerLogger;
+  logger.info("artwork_sweep_completed", { filesDeleted: deleted });
   return deleted;
 });
