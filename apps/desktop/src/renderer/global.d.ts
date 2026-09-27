@@ -1,5 +1,7 @@
 import type {
   EpisodeOrderOptions,
+  WatchAction,
+  WatchStatus,
   EpisodeOrderSelection,
   HomeContent,
   IpcAccounts,
@@ -18,6 +20,11 @@ import type {
 } from "@lumen/contracts";
 
 export interface LumenBridge {
+  readonly watch: {
+    readonly state: () => Promise<WatchStatus>;
+    readonly action: (action: WatchAction) => Promise<WatchStatus>;
+    readonly onState: (callback: (status: WatchStatus) => void) => () => void;
+  };
   readonly accounts: {
     readonly list: () => Promise<IpcAccounts>;
     readonly discoverServer: (origin: string) => Promise<IpcServerDiscovery>;
@@ -102,7 +109,7 @@ export interface LumenBridge {
     readonly start: (
       itemId: string,
       startAtSeconds?: number,
-    ) => Promise<Omit<IpcPlayerSession, "grantToken">>;
+    ) => Promise<Omit<IpcPlayerSession, "grantToken"> | null>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<IpcPlayerState>;
@@ -124,7 +131,7 @@ export interface LumenBridge {
     readonly fullscreen: (enabled: boolean) => Promise<boolean>;
     readonly fullscreenState: () => Promise<boolean>;
     readonly stop: () => Promise<unknown>;
-    readonly onState: (callback: (state: IpcPlayerState) => void) => () => void;
+    readonly onState: (callback: (state: IpcPlayerState | null) => void) => () => void;
     readonly onDisplay: (callback: (display: IpcPlayerDisplay) => void) => () => void;
     readonly onOverlayAction: (callback: (action: "back" | "retry" | "stop") => void) => () => void;
     readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => () => void;

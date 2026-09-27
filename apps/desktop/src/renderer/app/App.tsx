@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
+import type { IpcAccount, IpcItem, IpcPlayerState, WatchStatus } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
@@ -40,6 +40,8 @@ export const App = (): React.ReactElement => {
   const startingItemId = useRef<string | null>(null);
   // Where to go when the viewer leaves the player.
   const returnTo = useRef("/");
+  const watchRef = useRef<WatchStatus | null>(null);
+  const [watchStatus, setWatchStatus] = useState<WatchStatus | null>(null);
   const activePlayer = useRef<IpcPlayerState | null>(null);
   const wasOnPlayerRoute = useRef(onPlayerRoute);
   const onPlayerRouteRef = useRef(onPlayerRoute);
@@ -49,9 +51,26 @@ export const App = (): React.ReactElement => {
     setPlayer(state);
   }, []);
 
+  useEffect(() => bridge.watch.onState((status) => {
+    watchRef.current = status;
+    setWatchStatus(status);
+    if (status.group !== null && status.group.playback === null && status.group.revision > 0 && onPlayerRouteRef.current) {
+      void router.navigate({ href: returnTo.current, replace: true });
+    }
+  }), [router]);
+
   useEffect(() => {
     const receivePlayer = (state: IpcPlayerState | null): void => {
-      if (state !== null && !onPlayerRouteRef.current) {
+      if (state !== null && watchRef.current?.group?.playback?.itemId === state.itemId) {
+        setPlayingItem(null);
+        setPlaybackLoading(false);
+        setPlaybackError(null);
+        updatePlayer(state);
+        if (!onPlayerRouteRef.current) {
+          returnTo.current = router.state.location.href;
+          void navigate({ to: "/player" });
+        }
+      } else if (state !== null && !onPlayerRouteRef.current) {
         void bridge.player.stop().catch(() => undefined);
         updatePlayer(null);
       } else updatePlayer(state);
@@ -62,7 +81,7 @@ export const App = (): React.ReactElement => {
       .then(receivePlayer)
       .catch(() => undefined);
     return unsubscribe;
-  }, [updatePlayer]);
+  }, [navigate, router, updatePlayer]);
   const beginPlayback = useCallback(
     async (item: IpcItem): Promise<void> => {
       if (startingItemId.current === item.id || activePlayer.current?.itemId === item.id) return;
@@ -72,6 +91,7 @@ export const App = (): React.ReactElement => {
       updatePlayer(null);
       try {
         await bridge.player.start(item.id, item.resumePositionSeconds ?? undefined);
+        if (watchRef.current?.group !== null && watchRef.current?.group !== undefined) return;
         if (!onPlayerRouteRef.current) {
           await bridge.player.stop();
           updatePlayer(null);
@@ -158,13 +178,13 @@ export const App = (): React.ReactElement => {
   useEffect(() => {
     if (!onPlayerRoute) return;
     void bridge.player.display({
-      title: playingItem?.title ?? "Now playing",
+      title: playingItem?.title ?? watchStatus?.group?.playback?.title ?? "Now playing",
       context: `${active?.serverLabel ?? "Lumen"} · Original quality`,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
     });
-  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError]);
+  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError, watchStatus]);
   useEffect(
     () =>
       bridge.player.onOverlayAction((action) => {

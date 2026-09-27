@@ -1,3 +1,4 @@
+import { WatchGroups } from "./WatchGroups";
 import type { IpcAccount, IpcLibrary } from "@lumen/contracts";
 import { AccountMenu } from "@lumen/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -101,6 +102,7 @@ export const Sidebar = ({
         ) : null}
       </nav>
       <div className="sidebar-footer">
+        <WatchGroups />
         <AccountMenu
           accounts={accounts}
           active={account}

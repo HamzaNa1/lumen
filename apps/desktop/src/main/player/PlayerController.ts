@@ -18,7 +18,7 @@ import type { PlaybackBridge } from "./PlaybackBridge";
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
   readonly surface: MpvSurface;
-  readonly onState: (state: IpcPlayerState) => void;
+  readonly onState: (state: IpcPlayerState | null) => void;
 }
 
 interface MpvTrack {
@@ -105,7 +105,7 @@ const resolveTrackIds = async (
 export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
   private readonly surface: MpvSurface;
-  private readonly onState: (state: IpcPlayerState) => void;
+  private readonly onState: (state: IpcPlayerState | null) => void;
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
   private refreshing: ActiveSession | null = null;
@@ -129,6 +129,7 @@ export class PlayerController extends EventEmitter {
     readonly itemId: string;
     /** Resume point; playback starts from the beginning when omitted. */
     readonly startAtSeconds?: number;
+    readonly paused?: boolean;
   }): Promise<IpcPlayerSession> {
     const generation = ++this.startGeneration;
     await this.stopActive();
@@ -247,13 +248,13 @@ export class PlayerController extends EventEmitter {
           ? input.startAtSeconds
           : 0;
       if (startAtSeconds > 0) await ipc.command(["seek", startAtSeconds, "absolute"]);
-      await ipc.command(["set_property", "pause", "no"]);
+      await ipc.command(["set_property", "pause", input.paused === true ? "yes" : "no"]);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.surface.show();
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
-        paused: false,
+        paused: input.paused ?? false,
         positionSeconds: startAtSeconds,
         durationSeconds: session.durationSeconds,
         bufferedRanges: [],
@@ -305,16 +306,21 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
-  seek(sessionId: string, positionSeconds: number): IpcPlayerState {
+  async seek(sessionId: string, positionSeconds: number): Promise<IpcPlayerState> {
     this.assertActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
-    this.active?.ipc
-      .command(["seek", positionSeconds, "absolute"])
-      .catch((cause: unknown) => this.emitError(cause));
+    await this.active?.ipc.command(["seek", positionSeconds, "absolute+exact"]);
+    this.assertActive(sessionId);
     this.state = { ...this.requireState(), positionSeconds, ended: false };
     this.publish();
     return this.requireState();
+  }
+
+  async speed(sessionId: string, speed: number): Promise<void> {
+    this.assertActive(sessionId);
+    if (!Number.isFinite(speed) || speed < 0.9 || speed > 1.1) throw new Error("Invalid playback speed");
+    await this.active?.ipc.command(["set_property", "speed", speed]);
   }
 
   volume(sessionId: string, volume: number, muted = false): IpcPlayerState {
@@ -462,6 +468,7 @@ export class PlayerController extends EventEmitter {
     const state = this.state;
     this.active = null;
     this.state = null;
+    this.onState(null);
     this.surface.hide();
     if (active === null) return Promise.resolve();
     const stopping = this.cleanup(active, state === null ? null : { active, state });
