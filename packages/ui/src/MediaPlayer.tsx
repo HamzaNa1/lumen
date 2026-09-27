@@ -18,6 +18,7 @@ import { type Ref, useState } from "react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
 import { formatPlayerTime, streamLabels } from "./PlayerFormatting";
+import { usePlayerShortcuts } from "./usePlayerShortcuts";
 
 interface MediaPlayerProps {
   readonly title: string;
@@ -90,6 +91,7 @@ export const MediaPlayer = ({
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
+  const seekBy = usePlayerShortcuts({ enabled: !inactive, position, duration, onPause, onSeek });
 
   return (
     <section
@@ -172,7 +174,7 @@ export const MediaPlayer = ({
                 className="media-player-skip"
                 variant="icon"
                 disabled={inactive || duration === null}
-                onClick={() => onSeek(Math.max(0, position - 10))}
+                onClick={() => seekBy(-10)}
                 aria-label="Back 10 seconds"
               >
                 <RotateCcw aria-hidden="true" size={21} strokeWidth={1.75} />
@@ -197,7 +199,7 @@ export const MediaPlayer = ({
                 className="media-player-skip"
                 variant="icon"
                 disabled={inactive || duration === null}
-                onClick={() => onSeek(Math.min(duration ?? position + 10, position + 10))}
+                onClick={() => seekBy(10)}
                 aria-label="Forward 10 seconds"
               >
                 <RotateCw aria-hidden="true" size={21} strokeWidth={1.75} />

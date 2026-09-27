@@ -11,6 +11,7 @@ export {
 } from "./Controls";
 export { MediaCard, PosterFallback, posterHue } from "./MediaCard";
 export { MediaPlayer } from "./MediaPlayer";
+export { usePlayerShortcuts } from "./usePlayerShortcuts";
 export {
   DropdownGroup,
   DropdownItem,
