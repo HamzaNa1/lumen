@@ -41,15 +41,15 @@ const messages: Readonly<Record<string, string>> = {
 };
 
 const sources: Readonly<Record<string, string>> = {
-  http: "Lumen.Server.Http",
-  jobs: "Lumen.Server.Jobs.Worker",
-  worker: "Lumen.Server.Jobs.Worker",
-  scheduler: "Lumen.Server.Jobs.TaskManager",
-  scanner: "Lumen.Server.Library.Scanner",
-  ingest: "Lumen.Server.Library.MediaIngest",
-  libraries: "Lumen.Server.Library.LibraryManager",
-  events: "Lumen.Server.Events",
-  database: "Lumen.Server.Database.Migrations",
+  http: "HTTP",
+  jobs: "Jobs/Worker",
+  worker: "Jobs/Worker",
+  scheduler: "Jobs/Scheduler",
+  scanner: "Library/Scanner",
+  ingest: "Library/Ingest",
+  libraries: "Library/Manager",
+  events: "Events",
+  database: "Database/Migrations",
 };
 
 const operations: Readonly<Record<string, string>> = {
@@ -117,7 +117,7 @@ const displayValue = (key: string, value: unknown): string => {
 };
 
 export const logSource = (component: LogFields[string]): string =>
-  typeof component === "string" ? (lookup(sources, component) ?? "Lumen.Server") : "Lumen.Server";
+  typeof component === "string" ? (lookup(sources, component) ?? "Server") : "Server";
 
 export const logMessage = (event: string, fields: LogFields): string =>
   lookup(messages, event)?.replace(/\{(\w+)\}/gu, (_, key: string) =>
@@ -176,5 +176,5 @@ export const formatTextLog = (record: LogRecord): string => {
     .map(([key, value]) => `${key[0].toUpperCase()}${key.slice(1)}: ${displayValue(key, value)}`);
   const details = context.length === 0 ? "" : ` (${context.join("; ")})`;
   const error = record.error === undefined ? "" : `. Error: ${formatError(record.error)}`;
-  return `${singleLine(`[${time}] [${labels[record.level]}] [${record.pid}] ${record.source}: ${record.msg}${details}${error}`)}\n`;
+  return `${singleLine(`[${time}] [${labels[record.level]}] [${record.source}] ${record.msg}${details}${error}`)}\n`;
 };

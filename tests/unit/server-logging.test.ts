@@ -26,27 +26,24 @@ describe("production logger", () => {
     });
     expect(lines).toHaveLength(2);
     expect(lines[0]).toMatch(
-      new RegExp(
-        `^\\[\\d{2}:\\d{2}:\\d{2}\\] \\[INF\\] \\[${process.pid}\\] Lumen\\.Server: Starting Lumen server version [0-9.]+\\n$`,
-      ),
+      /^\[\d{2}:\d{2}:\d{2}\] \[INF\] \[Server\] Starting Lumen server version [0-9.]+\n$/u,
     );
-    expect(lines[1]).toContain(
-      `[WRN] [${process.pid}] Lumen.Server.Http: GET /api/v1/items/:id responded 401 in 2.5 ms`,
-    );
+    expect(lines[1]).toContain("[WRN] [HTTP] GET /api/v1/items/:id responded 401 in 2.5 ms");
     expect(lines[1]).toContain("RequestId: request-1");
     expect(lines[1]).not.toContain("http_request");
     expect(lines[1]).not.toContain('"level"');
+    expect(lines.every((line) => !line.includes(`[${process.pid}]`))).toBe(true);
     const time = new Date(2026, 8, 28, 1, 50, 50);
     expect(
       formatTextLog({
         time: time.toISOString(),
         level: "info",
         pid: 36,
-        source: "Lumen.Server",
+        source: "Server",
         event: "server_starting",
         msg: "Starting Lumen server",
       }),
-    ).toBe("[01:50:50] [INF] [36] Lumen.Server: Starting Lumen server\n");
+    ).toBe("[01:50:50] [INF] [Server] Starting Lumen server\n");
   });
 
   test("renders task names, elapsed time and cleanup counts as readable messages", () => {
@@ -73,12 +70,14 @@ describe("production logger", () => {
     });
     expect(lines[0]).toContain("[DBG]");
     expect(lines[0]).toContain(
-      "Lumen.Server.Jobs.Worker: Metadata refresh completed after 1 minute 18 seconds",
+      "[Jobs/Worker] Metadata refresh completed after 1 minute 18 seconds",
     );
     expect(lines[1]).toContain(
-      "Lumen.Server.Library.Scanner: Scan cleanup completed; removed 3 sources and 2 items",
+      "[Library/Scanner] Scan cleanup completed; removed 3 sources and 2 items",
     );
-    expect(lines[2]).toContain("Library monitor failed on attempt 1/3; retrying in 2 seconds");
+    expect(lines[2]).toContain(
+      "[Jobs/Scheduler] Library monitor failed on attempt 1/3; retrying in 2 seconds",
+    );
     expect(lines.every((line) => line.split("\n").length === 2)).toBe(true);
   });
 
@@ -103,7 +102,7 @@ describe("production logger", () => {
       Object.assign(new Error("private-error"), { code: "SQLITE_BUSY" }),
     );
     expect(lines[0]).toContain("[ERR]");
-    expect(lines[0]).toContain("Lumen.Server.Database.Migrations: Database migration failed");
+    expect(lines[0]).toContain("[Database/Migrations] Database migration failed");
     expect(lines[0]).toContain("Error: Error (SQLITE_BUSY)");
     expect(lines[0]).toContain("[REDACTED]");
     expect(lines[0]).toContain("\\u001b");
