@@ -14,7 +14,7 @@ import {
 } from "@lumen/database";
 import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
-import { Cause, Context, Effect, Exit, Layer, Option } from "effect";
+import { Cause, Clock, Context, Effect, Exit, Layer, Option } from "effect";
 import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
@@ -242,10 +242,13 @@ export const makeJobService = (config?: ServerConfig) =>
 
     const runServerJob = Effect.fn("JobService.runServerJob")(function* (nowMs: number) {
       // `nowMs` is the caller's clock when this attempt began. Advancing it by the
-      // real time elapsed keeps claim latency and run time in the lease deadline
+      // elapsed clock time keeps claim latency and run time in the lease deadline
       // and in the recorded completion, failure, and retry times.
+      const clock = yield* Clock.Clock;
+      const startedAtNanos = clock.currentTimeNanosUnsafe();
       const startedAt = performance.now();
-      const currentMs = () => nowMs + Math.ceil(performance.now() - startedAt);
+      const currentMs = () =>
+        nowMs + Math.ceil(Number(clock.currentTimeNanosUnsafe() - startedAtNanos) / 1_000_000);
       const job = yield* claimNextServerJob(database, {
         workerId: `server-${newUuid()}`,
         nowMs,

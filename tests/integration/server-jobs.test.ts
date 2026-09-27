@@ -13,6 +13,7 @@ import {
   Fiber,
   Layer,
 } from "../../packages/database/node_modules/effect/dist/index.js";
+import { TestClock } from "../../packages/database/node_modules/effect/dist/testing/index.js";
 import { mkdir, mkdtemp, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -571,96 +572,98 @@ describe("library watcher background job", () => {
     expect(result.jobs.map((job) => [job.state, job.attempts])).toEqual([["succeeded", 2]]);
   });
 
-  test("a watcher that outlives its lease is stopped and retried", async () => {
-    const { root, databasePath } = await makeWatcherWorkspace();
-    const hangingWatcher = Layer.succeed(LibraryWatcher, { check: () => Effect.never });
-
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const scheduledJobs = yield* ScheduledJobService;
-        const jobService = yield* JobService;
-        yield* insertWatchedLibrary(root);
-        yield* scheduledJobs.runDue(1_000);
-        const ran = yield* jobService.runOne(1_000);
-        return { ran, jobs: yield* listWatcherJobs };
-      }).pipe(Effect.provide(makeWatcherLayer(databasePath, hangingWatcher, { scanLeaseMs: 200 }))),
-    );
-
-    expect(result.ran).toBe(true);
-    expect(
-      result.jobs.map(({ nextRunAtMs, updatedAtMs, ...job }) => ({
-        ...job,
-        // The failure is recorded before the lease expires at 1_200.
-        failedBeforeLeaseExpiry: updatedAtMs > 1_000 && updatedAtMs < 1_200,
-        retryDelayMs: nextRunAtMs - updatedAtMs,
-      })),
-    ).toEqual([
-      {
-        state: "pending",
-        attempts: 1,
-        maxAttempts: 3,
-        completedAtMs: null,
-        lastErrorCode: "JOB_FAILED",
-        lastErrorMessage: "Job exceeded its 200ms lease",
-        failedBeforeLeaseExpiry: true,
-        retryDelayMs: 2_000,
-      },
-    ]);
-  });
-
-  test("a watcher claimed slowly still stops before its persisted lease expires", async () => {
-    const { root, databasePath } = await makeWatcherWorkspace();
-    const hangingWatcher = Layer.succeed(LibraryWatcher, { check: () => Effect.never });
-    const leaseMs = 400;
-    const claimDelayMs = 200;
-    // Stands in for connection contention: the claim transaction starts late, after
-    // the lease clock has already started.
-    const slowTransactions = (database: DatabaseClient) =>
-      new Proxy(database, {
-        get: (target, key, receiver) =>
-          key === "transaction"
-            ? (...args: Parameters<DatabaseClient["transaction"]>) =>
-                Effect.sleep(claimDelayMs).pipe(Effect.andThen(target.transaction(...args)))
-            : Reflect.get(target, key, receiver),
-      });
-
-    const result = await Effect.runPromise(
-      Effect.gen(function* () {
-        const scheduledJobs = yield* ScheduledJobService;
-        const jobService = yield* JobService;
-        yield* insertWatchedLibrary(root);
-        yield* scheduledJobs.runDue(1_000);
-        const startedAt = performance.now();
-        const ran = yield* jobService.runOne(1_000);
-        const elapsedMs = performance.now() - startedAt;
-        const recovered = yield* jobService.recover(1_000 + leaseMs + 1);
-        return { ran, elapsedMs, recovered, jobs: yield* listWatcherJobs };
-      }).pipe(
-        Effect.provide(
-          makeWatcherLayer(
-            databasePath,
-            hangingWatcher,
-            { scanLeaseMs: leaseMs },
-            slowTransactions,
+  test.each([0, 200, 360, 450])(
+    "enforces the original watcher lease after a %i ms claim delay",
+    async (claimDelayMs) => {
+      const { root, databasePath } = await makeWatcherWorkspace();
+      const leaseMs = 400;
+      const cutoffMs = 360;
+      const claimStarted = Effect.runSync(Deferred.make<void>());
+      const watcherStarted = Effect.runSync(Deferred.make<void>());
+      let checks = 0;
+      let interrupted = false;
+      const hangingWatcher = Layer.succeed(LibraryWatcher, {
+        check: () =>
+          Effect.gen(function* () {
+            checks += 1;
+            yield* Deferred.succeed(watcherStarted, undefined);
+            yield* Effect.never;
+            return 0;
+          }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                interrupted = true;
+              }),
+            ),
           ),
-        ),
-      ),
-    );
+      });
+      // The claim delay and the lease timeout advance on the same test clock.
+      const slowTransactions = (database: DatabaseClient) =>
+        new Proxy(database, {
+          get: (target, key, receiver) =>
+            key === "transaction"
+              ? (...args: Parameters<DatabaseClient["transaction"]>) =>
+                  Deferred.succeed(claimStarted, undefined).pipe(
+                    Effect.andThen(Effect.sleep(claimDelayMs)),
+                    Effect.andThen(target.transaction(...args)),
+                  )
+              : Reflect.get(target, key, receiver),
+        });
 
-    expect(result.ran).toBe(true);
-    // The claim really waited, and the run still ended within the lease that
-    // started before the claim.
-    expect(result.elapsedMs).toBeGreaterThanOrEqual(claimDelayMs);
-    expect(result.elapsedMs).toBeLessThan(leaseMs);
-    expect(result.recovered).toBe(0);
-    expect(
-      result.jobs.map((job) => [
-        job.state,
-        job.lastErrorMessage,
-        job.updatedAtMs < 1_000 + leaseMs,
-      ]),
-    ).toEqual([["pending", `Job exceeded its ${leaseMs}ms lease`, true]]);
-  });
+      const result = await Effect.runPromise(
+        Effect.gen(function* () {
+          const scheduledJobs = yield* ScheduledJobService;
+          const jobService = yield* JobService;
+          yield* insertWatchedLibrary(root);
+          yield* scheduledJobs.runDue(1_000);
+          yield* TestClock.setTime(1_000);
+          const worker = yield* Effect.forkChild(jobService.runOne(1_000));
+          yield* Deferred.await(claimStarted);
+          yield* TestClock.adjust(claimDelayMs);
+          if (claimDelayMs < cutoffMs) {
+            yield* Deferred.await(watcherStarted);
+            // Work is still running just before the cutoff, then is interrupted
+            // at the cutoff, regardless of time spent claiming or writing logs.
+            yield* TestClock.adjust(cutoffMs - claimDelayMs - 1);
+            expect(worker.pollUnsafe()).toBeUndefined();
+            expect(interrupted).toBe(false);
+            yield* TestClock.adjust(1);
+          }
+          const ran = yield* Fiber.join(worker);
+          const recovered = yield* jobService.recover(1_000 + leaseMs + 1);
+          return { ran, recovered, jobs: yield* listWatcherJobs };
+        }).pipe(
+          Effect.provide(
+            makeWatcherLayer(
+              databasePath,
+              hangingWatcher,
+              { scanLeaseMs: leaseMs },
+              slowTransactions,
+            ),
+          ),
+          Effect.provide(TestClock.layer()),
+        ),
+      );
+
+      expect(result.ran).toBe(true);
+      expect(result.recovered).toBe(0);
+      expect(checks).toBe(claimDelayMs < cutoffMs ? 1 : 0);
+      expect(interrupted).toBe(claimDelayMs < cutoffMs);
+      const failedAtMs = 1_000 + Math.max(cutoffMs, claimDelayMs);
+      expect(result.jobs).toEqual([
+        {
+          state: "pending",
+          attempts: 1,
+          maxAttempts: 3,
+          nextRunAtMs: failedAtMs + 2_000,
+          updatedAtMs: failedAtMs,
+          completedAtMs: null,
+          lastErrorCode: "JOB_FAILED",
+          lastErrorMessage: "Job exceeded its 400ms lease",
+        },
+      ]);
+    },
+  );
 
   test("a scan started while the watcher is deciding defers the library instead of failing", async () => {
     const { root, databasePath } = await makeWatcherWorkspace();
