@@ -2127,6 +2127,12 @@ body:has(.app-shell) {
 .media-player:not(.controls-visible) .media-player-console {
   display: none;
 }
+.media-player:not(.controls-visible) {
+  cursor: none;
+}
+.media-player:not(.controls-visible) .media-player-video-hit-target {
+  cursor: none;
+}
 .media-player-header {
   display: flex;
   align-items: center;
@@ -2167,6 +2173,20 @@ body:has(.app-shell) {
   overflow: hidden;
   background: #000;
 }
+.media-player-video-hit-target {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: inherit;
+}
+.media-player-video-hit-target:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
 .media-player-placeholder {
   position: absolute;
   inset: 0;
@@ -2174,8 +2194,12 @@ body:has(.app-shell) {
   place-content: center;
   justify-items: center;
   gap: 10px;
+  pointer-events: none;
   color: rgba(255, 255, 255, 0.7);
   text-align: center;
+}
+.media-player-placeholder .button {
+  pointer-events: auto;
 }
 .media-player-placeholder strong {
   color: #fff;
