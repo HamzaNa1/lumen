@@ -34,6 +34,7 @@ interface ActiveSession {
   readonly ipc: MpvIpc;
   readonly capability: string;
   readonly trackIds: ReadonlyMap<string, number>;
+  tickCount: number;
   sequence: number;
 }
 
@@ -147,6 +148,7 @@ export class PlayerController extends EventEmitter {
         ipc,
         capability,
         trackIds: new Map(),
+        tickCount: 0,
         sequence: 0,
       };
       this.active = active;
@@ -265,13 +267,23 @@ export class PlayerController extends EventEmitter {
     }
   }
 
-  pause(sessionId: string, paused: boolean): IpcPlayerState {
+  async pause(sessionId: string, paused: boolean): Promise<IpcPlayerState> {
+    this.assertActive(sessionId);
+    const active = this.active;
+    if (active === null) throw new Error("Playback session is not active");
+    try {
+      await active.ipc.command(["set_property", "pause", paused ? "yes" : "no"]);
+    } catch (cause) {
+      this.emitError(cause);
+      throw cause;
+    }
     this.assertActive(sessionId);
     this.state = { ...this.requireState(), paused };
-    this.active?.ipc
-      .command(["set_property", "pause", paused ? "yes" : "no"])
-      .catch((cause: unknown) => this.emitError(cause));
     this.publish();
+    if (paused) {
+      const state = await this.samplePosition(active, this.requireState());
+      await this.saveProgress(active, state);
+    }
     return this.requireState();
   }
 
@@ -429,11 +441,12 @@ export class PlayerController extends EventEmitter {
   private stopActive(): Promise<void> {
     if (this.stopping !== null) return this.stopping;
     const active = this.active;
+    const state = this.state;
     this.active = null;
     this.state = null;
     this.surface.hide();
     if (active === null) return Promise.resolve();
-    const stopping = this.cleanup(active);
+    const stopping = this.cleanup(active, state === null ? null : { active, state });
     this.stopping = stopping;
     const clearStopping = (): void => {
       if (this.stopping === stopping) this.stopping = null;
@@ -482,11 +495,13 @@ export class PlayerController extends EventEmitter {
     if (active === null || state === null || this.reporting === active) return;
     this.reporting = active;
     try {
+      active.tickCount += 1;
       active.sequence += 1;
-      if (active.sequence % 3 === 0) await active.client.heartbeat(state.sessionId, state);
+      const sequence = active.sequence;
+      if (active.tickCount % 3 === 0) await active.client.heartbeat(state.sessionId, state);
       if (this.active !== active) return;
-      if (active.sequence % 6 === 0)
-        await active.client.progress(state.sessionId, state, active.sequence);
+      if (active.tickCount % 6 === 0)
+        await active.client.progress(state.sessionId, state, sequence);
     } catch (cause) {
       if (this.active === active) this.emitError(cause);
     } finally {
@@ -494,16 +509,47 @@ export class PlayerController extends EventEmitter {
     }
   }
 
-  private async cleanup({
-    session,
-    client,
-    process,
-    ipc,
-    capability,
-  }: PlaybackResources): Promise<void> {
+  private async samplePosition(active: ActiveSession, state: IpcPlayerState): Promise<IpcPlayerState> {
+    let positionSeconds = state.positionSeconds;
+    try {
+      const position = await active.ipc.command(["get_property", "time-pos"], 150);
+      if (typeof position === "number" && Number.isFinite(position) && position >= 0)
+        positionSeconds = position;
+    } catch {
+      // The last sampled position is still useful if MPV is already closing.
+    }
+    if (state.durationSeconds !== null)
+      positionSeconds = Math.min(positionSeconds, state.durationSeconds);
+    if (this.active === active && this.state === state) {
+      this.state = { ...this.state, positionSeconds };
+      this.publish();
+    }
+    return { ...state, positionSeconds };
+  }
+
+  private async saveProgress(active: ActiveSession, state: IpcPlayerState): Promise<void> {
+    active.sequence += 1;
+    try {
+      await active.client.progress(state.sessionId, state, active.sequence);
+    } catch (cause) {
+      this.emitError(cause);
+    }
+  }
+
+  private async cleanup(
+    resources: PlaybackResources,
+    finalProgress: { readonly active: ActiveSession; readonly state: IpcPlayerState } | null = null,
+  ): Promise<void> {
+    const { session, client, process, ipc, capability } = resources;
+    const savedState = finalProgress === null
+      ? null
+      : await this.samplePosition(finalProgress.active, finalProgress.state);
     if (capability !== null) this.bridge.revoke(capability);
     ipc?.close();
-    await process?.stop();
+    const stoppingProcess = process?.stop().catch((cause: unknown) => this.emitError(cause));
+    if (finalProgress !== null && savedState !== null)
+      await this.saveProgress(finalProgress.active, savedState);
+    await stoppingProcess;
     try {
       await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
         method: "DELETE",

@@ -153,6 +153,12 @@ describe("direct-play HTTP delivery", () => {
       body: JSON.stringify({ trackId: seeded.itemId, positionMs: 4_000, durationMs: 10_000, sequence: 6 }),
     });
     expect(progress.status).toBe(200);
+    const staleProgress = await fetch(new URL(`/api/v1/playback/sessions/${playback.sessionId}/progress`, base), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ trackId: seeded.itemId, positionMs: 2_000, durationMs: 10_000, sequence: 5 }),
+    });
+    expect(staleProgress.status).toBe(200);
     const sqlite = new SqliteDatabase(databasePath, { readonly: true });
     try {
       const sessions = sqlite.query<{ count: number }, []>("SELECT count(*) AS count FROM playback_sessions").get();
