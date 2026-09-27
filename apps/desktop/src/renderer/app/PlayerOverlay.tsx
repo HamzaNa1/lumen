@@ -96,6 +96,7 @@ export const PlayerOverlay = (): React.ReactElement => {
         error={display.error}
         position={player?.positionSeconds ?? 0}
         duration={player?.durationSeconds ?? display.duration}
+        bufferedRanges={player?.bufferedRanges ?? []}
         volume={player?.volume ?? 100}
         muted={player?.muted ?? false}
         streams={player?.streams ?? []}

@@ -1,5 +1,5 @@
 import { EpisodeOrderOptions, type EpisodeOrderSelection } from "@lumen/contracts";
-import { HomeContent, IpcAudioOutput, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
+import { HomeContent, IpcAudioOutput, IpcBufferedRange, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
@@ -102,6 +102,7 @@ const playerStateSchema = Schema.Struct({
   paused: Schema.Boolean,
   positionSeconds: Schema.Number,
   durationSeconds: Schema.NullOr(Schema.Number),
+  bufferedRanges: Schema.Array(IpcBufferedRange),
   volume: Schema.Number,
   muted: Schema.Boolean,
   ended: Schema.Boolean,

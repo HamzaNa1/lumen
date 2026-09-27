@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import type {
   IpcAudioOutput,
+  IpcBufferedRange,
   IpcPlayerSession,
   IpcPlayerState,
   IpcPlayerSurfaceBounds,
@@ -25,6 +26,21 @@ interface MpvTrack {
   readonly type: "audio" | "sub";
   readonly "ff-index"?: number;
 }
+
+const bufferedRangesFrom = (value: unknown): ReadonlyArray<IpcBufferedRange> => {
+  if (value === null || typeof value !== "object" || !("seekable-ranges" in value)) return [];
+  const ranges = value["seekable-ranges"];
+  if (!Array.isArray(ranges)) return [];
+  return ranges.flatMap((range: unknown) => {
+    if (range === null || typeof range !== "object" || !("start" in range) || !("end" in range))
+      return [];
+    const { start, end } = range;
+    return typeof start === "number" && Number.isFinite(start) && start >= 0 &&
+        typeof end === "number" && Number.isFinite(end) && end > start
+      ? [{ startSeconds: start, endSeconds: end }]
+      : [];
+  });
+};
 
 interface ActiveSession {
   readonly session: IpcPlayerSession;
@@ -50,6 +66,7 @@ const wait = (milliseconds: number): Promise<void> =>
   new Promise((resolve) => setTimeout(resolve, milliseconds));
 
 const FILE_LOADED_TIMEOUT_MS = 15_000;
+const CACHE_STATE_TIMEOUT_MS = 100;
 
 const isPropertyUnavailable = (cause: unknown): boolean =>
   cause instanceof Error && cause.message.includes("property unavailable");
@@ -239,6 +256,7 @@ export class PlayerController extends EventEmitter {
         paused: false,
         positionSeconds: startAtSeconds,
         durationSeconds: session.durationSeconds,
+        bufferedRanges: [],
         volume: 100,
         muted: false,
         ended: false,
@@ -461,10 +479,14 @@ export class PlayerController extends EventEmitter {
     if (active === null || state === null || this.refreshing === active) return;
     this.refreshing = active;
     try {
+      const cacheState = active.ipc
+        .command(["get_property", "demuxer-cache-state"], CACHE_STATE_TIMEOUT_MS)
+        .catch(() => null);
       const value = await active.ipc.command(["get_property", "time-pos"]);
       const duration = await active.ipc.command(["get_property", "duration"]);
       const paused = await active.ipc.command(["get_property", "pause"]);
       const ended = await active.ipc.command(["get_property", "eof-reached"]);
+      const cache = await cacheState;
       // A stop, replacement session, or user action makes this sample stale.
       if (this.active !== active || this.state !== state) return;
       const next: IpcPlayerState = {
@@ -473,6 +495,7 @@ export class PlayerController extends EventEmitter {
           typeof value === "number" && value >= 0 ? value : state.positionSeconds,
         durationSeconds:
           typeof duration === "number" && duration >= 0 ? duration : state.durationSeconds,
+        bufferedRanges: bufferedRangesFrom(cache),
         paused: paused === true,
         ended: ended === true,
       };

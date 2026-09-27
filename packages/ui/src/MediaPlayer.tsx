@@ -1,5 +1,5 @@
 import { Slider } from "@base-ui/react/slider";
-import type { IpcAudioOutput, IpcPlayableStream } from "@lumen/contracts";
+import type { IpcAudioOutput, IpcBufferedRange, IpcPlayableStream } from "@lumen/contracts";
 import {
   ArrowLeft,
   LoaderCircle,
@@ -27,6 +27,7 @@ interface MediaPlayerProps {
   readonly error: string | null;
   readonly position: number;
   readonly duration: number | null;
+  readonly bufferedRanges: ReadonlyArray<IpcBufferedRange>;
   readonly volume: number;
   readonly muted: boolean;
   readonly streams: ReadonlyArray<IpcPlayableStream>;
@@ -56,6 +57,7 @@ export const MediaPlayer = ({
   error,
   position,
   duration,
+  bufferedRanges,
   volume,
   muted,
   streams,
@@ -156,6 +158,20 @@ export const MediaPlayer = ({
               <Slider.Label className="sr-only">Playback position</Slider.Label>
               <Slider.Control className="media-slider-control">
                 <Slider.Track className="media-slider-track">
+                  {duration === null || duration <= 0
+                    ? null
+                    : bufferedRanges.map(({ startSeconds, endSeconds }) => {
+                        const start = Math.min(duration, Math.max(0, startSeconds));
+                        const end = Math.min(duration, Math.max(0, endSeconds));
+                        return end > start ? (
+                          <span
+                            key={`${startSeconds}-${endSeconds}`}
+                            className="media-slider-buffered"
+                            style={{ left: `${(start / duration) * 100}%`, width: `${((end - start) / duration) * 100}%` }}
+                            aria-hidden="true"
+                          />
+                        ) : null;
+                      })}
                   <Slider.Indicator className="media-slider-indicator" />
                   <Slider.Thumb className="media-slider-thumb" />
                 </Slider.Track>
