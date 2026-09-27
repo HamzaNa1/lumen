@@ -58,13 +58,22 @@ const withPlayback = async (
     progress: ReturnType<typeof mock>;
     request: ReturnType<typeof mock>;
     stopProcess: ReturnType<typeof mock>;
+    exit: () => void;
+    disconnect: () => void;
   }) => Promise<void>,
 ): Promise<void> => {
   const stopProcess = mock(async () => undefined);
-  const startProcess = spyOn(MpvProcess, "start").mockReturnValue({
-    stop: stopProcess,
-  } as unknown as MpvProcess);
-  const connect = spyOn(MpvIpc.prototype, "connect").mockResolvedValue(undefined);
+  let exit = () => {};
+  const startProcess = spyOn(MpvProcess, "start").mockImplementation((options) => {
+    exit = () => options.onExit?.(1);
+    return { stop: stopProcess } as unknown as MpvProcess;
+  });
+  let disconnect = () => {};
+  const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async function (
+    this: InstanceType<typeof MpvIpc>,
+  ) {
+    disconnect = () => { this.emit("disconnected"); };
+  });
   const properties = new Map<string, unknown>([
     ["window-id", 1],
     ["time-pos", 12.25],
@@ -108,6 +117,7 @@ const withPlayback = async (
       streams: [],
     }),
     request,
+    closePlayback: (sessionId: string) => request(`/api/v1/playback/sessions/${sessionId}`, { method: "DELETE" }),
     heartbeat,
     progress,
   };
@@ -131,7 +141,7 @@ const withPlayback = async (
       itemId: "item-1",
     } as unknown as Parameters<typeof controller.start>[0]);
     states.length = 0;
-    await run({ controller, states, properties, heartbeat, progress, request, stopProcess });
+    await run({ controller, states, properties, heartbeat, progress, request, stopProcess, exit, disconnect });
   } finally {
     await controller.stop();
     startProcess.mockRestore();
@@ -141,6 +151,22 @@ const withPlayback = async (
 };
 
 describe("playback progress updates", () => {
+  test.each(["exit", "disconnect"] as const)("native %s reports player loss once and ignores intentional cleanup", async (failure) => {
+    await withPlayback(async (playback) => {
+      const lost = mock(() => {});
+      playback.controller.on("player-lost", lost);
+      await playback.controller.refreshState();
+      expect(playback.controller.sample()).not.toBeNull();
+      playback[failure]();
+      playback[failure]();
+      expect(lost).toHaveBeenCalledTimes(1);
+      expect(playback.controller.sample()).toBeNull();
+      await playback.controller.stop();
+      playback[failure]();
+      expect(lost).toHaveBeenCalledTimes(1);
+    });
+  });
+
   test("pausing saves the current MPV position without waiting for the reporting timer", async () => {
     await withPlayback(async ({ controller, properties, progress }) => {
       properties.set("time-pos", 27.5);
@@ -153,6 +179,17 @@ describe("playback progress updates", () => {
       );
       await controller.pause("session-1", false);
       expect(progress).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("a stalled progress request does not hold a local pause", async () => {
+    await withPlayback(async ({ controller, progress }) => {
+      const pending = Promise.withResolvers<void>();
+      progress.mockImplementationOnce(() => pending.promise);
+      try {
+        await expect(controller.pause("session-1", true)).resolves.toMatchObject({ paused: true });
+        expect(progress).toHaveBeenCalledTimes(1);
+      } finally { pending.resolve(); }
     });
   });
 
@@ -648,7 +685,7 @@ describe("macOS MPV window lifecycle", () => {
     calls.length = 0;
     Reflect.set(controller, "active", {
       session: { sessionId: "session-1" },
-      client: { request: async () => calls.push("delete session") },
+      client: { closePlayback: async () => calls.push("delete session") },
       process: {
         stop: async () => {
           calls.push("destroy:start");
@@ -748,7 +785,7 @@ describe("macOS MPV window lifecycle", () => {
               streams: [],
             };
           },
-          request: async () => calls.push("session:delete"),
+          closePlayback: async () => calls.push("session:delete"),
         };
 
         await controller.start({

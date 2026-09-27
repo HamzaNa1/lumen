@@ -228,3 +228,35 @@ describe("ServerClient discovery", () => {
     expect(requestBody).toEqual({ trackId: ids.track });
   });
 });
+
+
+test.each(["headers", "body"] as const)("authenticated JSON requests bound stalled %s including cleanup", async (phase) => {
+  let signal: AbortSignal | null | undefined;
+  const client = new ServerClient({
+    origin: "http://localhost:3210",
+    requestTimeoutMs: 20,
+    fetchImpl: async (_input, init) => {
+      signal = init?.signal;
+      if (phase === "headers") return new Promise<Response>(() => {});
+      return new Response(new ReadableStream({ start() {} }));
+    },
+  });
+  client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession,
+    accessToken: "saved-session", accessExpiresAtMs: 1 });
+  await expect(client.leaveWatchGroup(ids.library)).rejects.toThrow();
+  expect(signal?.aborted).toBe(true);
+  await expect(client.closePlayback(ids.playbackSession)).rejects.toThrow();
+});
+
+test("request deadlines preserve caller cancellation", async () => {
+  const abort = new AbortController();
+  const client = new ServerClient({
+    origin: "http://localhost:3210",
+    fetchImpl: async () => new Promise<Response>(() => {}),
+  });
+  client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession,
+    accessToken: "saved-session", accessExpiresAtMs: 1 });
+  const request = client.request("/api/v1/test", { signal: abort.signal });
+  abort.abort(new Error("Obsolete request"));
+  await expect(request).rejects.toThrow("Obsolete request");
+});

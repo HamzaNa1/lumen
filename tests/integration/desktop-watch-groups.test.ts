@@ -237,3 +237,37 @@ test("reconnect and an expired personal grant obtain a fresh alignment", async (
   expect(player.seeks).toEqual([5, 10, 10]);
   await controller.dispose();
 });
+
+
+test("native player loss reports failure and reloads with bounded retries and explicit retry", async () => {
+  const player = new FakePlayer();
+  const statuses: string[] = [];
+  const controller = new WatchGroupController({
+    player,
+    acquire: async () => session,
+    release: async () => {},
+    now: () => player.now,
+    clock: (now) => ({ serverNowMs: now, uncertaintyMs: 0, fine: true }),
+    onStatus: (status) => { statuses.push(status); },
+  });
+  controller.setConnected(true);
+  controller.update(watchGroupSnapshot());
+  await controller.tick();
+  controller.playerLost();
+  expect(statuses.at(-1)).toBe("failed");
+  player.loading = async () => { throw new Error("IPC disconnected"); };
+  for (let i = 0; i < 8; i++) {
+    player.now += 10_000;
+    await controller.tick();
+  }
+  expect(player.loads).toBe(3);
+  expect(statuses.at(-1)).toBe("failed");
+  player.loading = null;
+  controller.retry();
+  await controller.tick();
+  expect(player.loads).toBe(4);
+  expect(player.paused).toBe(false);
+  expect(player.seeks.at(-1)).toBe(85);
+  expect(statuses.at(-1)).toBe("ready");
+  await controller.dispose();
+});

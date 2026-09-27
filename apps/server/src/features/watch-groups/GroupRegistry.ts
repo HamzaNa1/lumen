@@ -141,7 +141,7 @@ export class GroupRegistry {
           id,
           name: input.name.trim(),
           passwordHash,
-          queue: new GroupQueue(this.deps.limits.queue),
+          queue: new GroupQueue(this.deps.limits.queue, this.deps.limits.members + 2),
           members: new Map(),
           controls: new TokenBucket(
             this.deps.limits.roomControlsPerSecond,
@@ -252,18 +252,21 @@ export class GroupRegistry {
       return { groupId: room.id, membershipId: member.id };
     });
   }
-  detach(roomId: string, memberId: string, peerId: string): Promise<void> {
+  async detach(roomId: string, memberId: string, peerId: string): Promise<void> {
     const room = this.rooms.get(roomId);
-    if (room === undefined || this.disposed) return Promise.resolve();
-    return room.queue.run(async () => {
-      const member = room.members.get(memberId);
-      if (member?.peer?.id !== peerId) return;
-      member.peer = null;
-      member.disconnectedAt = this.deps.now();
-      room.rosterRevision++;
-      this.freezeEmpty(room);
-      await this.broadcast(room);
-    });
+    if (room === undefined) return;
+    while (!this.disposed && room.members.get(memberId)?.peer?.id === peerId) {
+      await room.queue.runLifecycle(`detach:${memberId}`, async () => {
+        const member = room.members.get(memberId);
+        if (member?.peer?.id !== peerId) return;
+        member.peer = null;
+        member.disconnectedAt = this.deps.now();
+        room.rosterRevision++;
+        this.freezeEmpty(room);
+        await this.broadcast(room);
+      });
+      // A previous peer's coalesced cleanup can finish after its replacement closes.
+    }
   }
   refresh(
     roomId: string,
@@ -354,6 +357,7 @@ export class GroupRegistry {
       this.deps.log("watch_group_command", {
         groupId: room.id,
         commandId: command.commandId,
+        queueDepth: room.queue.depth,
         outcome,
         reason: code ?? "accepted",
         revision,
@@ -403,7 +407,7 @@ export class GroupRegistry {
         if (room.maintenancePending) return;
         room.maintenancePending = true;
         try {
-          await room.queue.run(async () => {
+          await room.queue.runLifecycle("maintenance", async () => {
             for (const member of room.members.values()) {
               for (const [id, result] of member.results)
                 if (now - result.at > this.deps.limits.resultTtlMs) member.results.delete(id);
@@ -603,7 +607,7 @@ export class GroupRegistry {
     );
     room.endTimer = (this.deps.scheduler ?? watchGroupScheduler).after(delay, () => {
       void room.queue
-        .run(async () => {
+        .runLifecycle("end", async () => {
           const next = transition(
             room.playback,
             { type: "end", expectedRevision: state.revision, expectedPlaybackId: state.playbackId },

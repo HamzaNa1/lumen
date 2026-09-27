@@ -42,3 +42,21 @@ test("connection tickets are single use, bounded and expire", () => {
   now = 30_000;
   expect(() => tickets.consume(expired)).toThrow("expired");
 });
+
+
+test("lifecycle work has bounded reserved capacity and runs ahead of waiting controls", async () => {
+  const queue = new GroupQueue(2, 2);
+  const blocked = Promise.withResolvers<void>();
+  const order: string[] = [];
+  const first = queue.run(() => blocked.promise);
+  const control = queue.run(() => { order.push("control"); });
+  await expect(queue.run(() => {})).rejects.toThrow("busy");
+  const detach = queue.runLifecycle("detach", () => { order.push("detach"); });
+  const duplicate = queue.runLifecycle("detach", () => { order.push("duplicate"); });
+  const end = queue.runLifecycle("end", () => { order.push("end"); });
+  await expect(queue.runLifecycle("excess", () => {})).rejects.toThrow("busy");
+  blocked.resolve();
+  await Promise.all([first, control, detach, duplicate, end]);
+  expect(order).toEqual(["detach", "end", "control"]);
+  await queue.idle();
+});

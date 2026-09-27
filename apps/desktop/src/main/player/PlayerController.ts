@@ -119,6 +119,7 @@ export class PlayerController extends EventEmitter {
   private startGeneration = 0;
   private preciseSample: PlayerSample | null = null;
   private rate = 1;
+  private failedProcess: MpvProcess | null = null;
   private surfaceReady = false;
   private stopping: Promise<void> | null = null;
   // Avoid relying on a Windows driver to downmix center/surround channels.
@@ -160,9 +161,15 @@ export class PlayerController extends EventEmitter {
         cwd: process.cwd(),
         resourcesPath: process.resourcesPath,
         videoOutputArguments: this.surface.prepare(),
-        onExit: () => this.emit("ended"),
+        onExit: () => {
+          if (playerProcess !== null && this.active?.process === playerProcess)
+            this.playerLost(this.active);
+        },
       });
       ipc = new MpvIpc();
+      ipc.on("disconnected", () => {
+        if (this.active?.ipc === ipc) this.playerLost(this.active);
+      });
       await ipc.connect(playerProcess);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       const registered = this.bridge.register({
@@ -293,7 +300,7 @@ export class PlayerController extends EventEmitter {
     this.publish();
     if (paused) {
       const state = await this.samplePosition(active, this.requireState());
-      await this.saveProgress(active, state);
+      void this.saveProgress(active, state);
     }
     return this.requireState();
   }
@@ -520,6 +527,7 @@ export class PlayerController extends EventEmitter {
     this.state = null;
     this.preciseSample = null;
     this.rate = 1;
+    this.failedProcess = null;
     this.publish();
     this.surface.hide();
     if (active === null) return Promise.resolve();
@@ -577,7 +585,7 @@ export class PlayerController extends EventEmitter {
       // the window between spawn and file-loaded); keep the last state and
       // wait for the next tick instead of spamming error listeners.
       if (this.active !== active || isPropertyUnavailable(cause)) return;
-      this.emitError(cause);
+      this.playerLost(active);
     } finally {
       if (this.refreshing === active) this.refreshing = null;
     }
@@ -629,7 +637,7 @@ export class PlayerController extends EventEmitter {
     try {
       await active.client.progress(state.sessionId, state, active.sequence);
     } catch (cause) {
-      this.emitError(cause);
+      if (this.active === active) this.emitError(cause);
     }
   }
 
@@ -649,10 +657,15 @@ export class PlayerController extends EventEmitter {
       await this.saveProgress(finalProgress.active, savedState);
     await stoppingProcess;
     try {
-      await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
-        method: "DELETE",
-      });
+      await client.closePlayback(session.sessionId);
     } catch {}
+  }
+
+  private playerLost(active: ActiveSession): void {
+    if (this.active !== active || this.failedProcess === active.process) return;
+    this.failedProcess = active.process;
+    this.preciseSample = null;
+    this.emit("player-lost");
   }
 
   private assertActive(sessionId: string): void {

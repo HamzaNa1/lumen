@@ -34,6 +34,7 @@ export interface AccountSession {
 export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: typeof fetch;
+  readonly requestTimeoutMs?: number;
 }
 
 export class ServerHttpError extends Error {
@@ -118,11 +119,13 @@ const decodeSession = (value: unknown): AccountSession => {
 export class ServerClient {
   private readonly origin: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly requestTimeoutMs: number;
   private session: AccountSession | null = null;
 
   constructor(options: ServerClientOptions) {
     this.origin = normalizeOrigin(options.origin);
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   }
 
   get serverOrigin(): string {
@@ -232,13 +235,33 @@ export class ServerClient {
     const accessToken = this.session.accessToken;
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${accessToken}`);
-    const response = await this.fetchImpl(new URL(path, this.origin), {
-      ...init,
-      headers,
-      redirect: "manual",
-    });
-    const value = await readJson(response);
-    return schema === undefined ? (value as T) : (decode(schema, value) as T);
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(new Error("Server request timed out")),
+      this.requestTimeoutMs,
+    );
+    const signal = init.signal == null
+      ? deadline.signal
+      : AbortSignal.any([init.signal, deadline.signal]);
+    let onAbort = () => {};
+    try {
+      signal.throwIfAborted();
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const request = async (): Promise<T> => {
+        const response = await this.fetchImpl(new URL(path, this.origin), {
+          ...init, headers, signal, redirect: "manual",
+        });
+        const value = await readJson(response);
+        return schema === undefined ? (value as T) : (decode(schema, value) as T);
+      };
+      return await Promise.race([request(), aborted]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   async libraries(): Promise<ReadonlyArray<IpcLibrary>> {
@@ -502,6 +525,7 @@ export class ServerClient {
 
   async progress(sessionId: string, state: IpcPlayerState, sequence: number): Promise<void> {
     await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/progress`, {
+      signal: AbortSignal.timeout(2_000),
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
@@ -533,6 +557,7 @@ export class ServerClient {
   }
   async leaveWatchGroup(groupId: string): Promise<void> {
     await this.request(`/api/v1/watch-groups/${encodeURIComponent(groupId)}/memberships/me`, {
+      signal: AbortSignal.timeout(2_000),
       method: "DELETE",
     });
   }
@@ -559,6 +584,7 @@ export class ServerClient {
   }
   async closePlayback(sessionId: string): Promise<void> {
     await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}`, {
+      signal: AbortSignal.timeout(2_000),
       method: "DELETE",
     });
   }

@@ -109,6 +109,9 @@ export class PlaybackCoordinator {
     this.group?.controller.retry();
     this.group?.connection.requestSnapshot();
   }
+  playerLost(): void {
+    this.group?.controller.playerLost();
+  }
   localFailure(error: unknown): void {
     if ((error as { status?: number } | null)?.status === 409)
       this.group?.controller.renewSession();
@@ -136,9 +139,13 @@ export class PlaybackCoordinator {
         return null;
       }
       const groupId = membership.groupId;
+      const diagnostic = (event: string, fields: Record<string, string | number>): void => {
+        console.info(event, { groupId, ...fields });
+      };
       let connection: WatchGroupConnection;
       let reportedStatus: string | null = null;
       const controller = new WatchGroupController({
+        diagnostic,
         player: {
           loadPaused: async (session, signal) => {
             await this.player.waitForSurface(signal);
@@ -186,6 +193,7 @@ export class PlaybackCoordinator {
         },
       });
       connection = new WatchGroupConnection({
+        diagnostic,
         api: client,
         membership,
         onSnapshot: (snapshot) => {

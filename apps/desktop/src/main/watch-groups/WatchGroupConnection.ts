@@ -16,11 +16,13 @@ import {
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import { ServerClock } from "./ServerClock";
+import type { GroupDiagnostic } from "./GroupDiagnostics";
 export interface GroupConnectionApi {
   readonly serverOrigin: string;
   watchGroupTicket(groupId: string): Promise<{ ticket: string; serverInstanceId: string }>;
 }
 export interface GroupConnectionOptions {
+  readonly diagnostic?: GroupDiagnostic;
   readonly api: GroupConnectionApi;
   readonly membership: GroupSnapshot;
   readonly onSnapshot: (snapshot: GroupSnapshot) => void;
@@ -42,6 +44,7 @@ export class WatchGroupConnection {
   private attached = false;
   private snapshot: GroupSnapshot | null = null;
   private attempts = 0;
+  private reconnects = 0;
   private disconnectedAt: number | null = null;
   private lastMessage = 0;
   private lastTick = 0;
@@ -262,6 +265,8 @@ export class WatchGroupConnection {
     if (this.socket?.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(frame));
   }
   private reconnect(): void {
+    this.reconnects++;
+    this.options.diagnostic?.("watch_group_reconnect", { count: this.reconnects });
     this.generation++;
     this.connected = false;
     this.attached = false;

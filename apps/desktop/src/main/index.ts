@@ -69,6 +69,7 @@ const bootstrap = async (): Promise<void> => {
     if (!overlay.window.isDestroyed()) overlay.window.webContents.send("watch-groups:state", state);
   });
   player.on("error", (error: unknown) => coordinator?.localFailure(error));
+  player.on("player-lost", () => coordinator?.playerLost());
   const resume = () => coordinator?.resume();
   powerMonitor.on("resume", resume);
   mainWindow.once("closed", () => powerMonitor.off("resume", resume));

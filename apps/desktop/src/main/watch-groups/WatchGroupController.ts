@@ -8,7 +8,9 @@ import {
 } from "@lumen/contracts";
 import type { GroupPlayer } from "./GroupPlayer";
 import { chooseCorrection } from "./SyncPolicy";
+import { GroupDiagnostics, type GroupDiagnostic } from "./GroupDiagnostics";
 export interface GroupControllerOptions {
+  readonly diagnostic?: GroupDiagnostic;
   readonly player: GroupPlayer;
   readonly acquire: (playbackId: string, signal: AbortSignal) => Promise<IpcPlayerSession>;
   readonly release: (session: IpcPlayerSession) => Promise<void>;
@@ -34,7 +36,10 @@ export class WatchGroupController {
   private failures = 0;
   private reloadRequested = false;
   private retryAt = 0;
-  constructor(private readonly options: GroupControllerOptions) {}
+  private readonly diagnostics: GroupDiagnostics;
+  constructor(private readonly options: GroupControllerOptions) {
+    this.diagnostics = new GroupDiagnostics(options.diagnostic);
+  }
   update(snapshot: GroupSnapshot): void {
     if (this.disposed) return;
     if (
@@ -75,6 +80,15 @@ export class WatchGroupController {
     this.requested = true;
     void this.tick();
   }
+  playerLost(): void {
+    if (this.disposed || this.reloadRequested) return;
+    this.operation.abort();
+    this.operation = new AbortController();
+    this.reloadRequested = true;
+    this.recordFailure();
+    this.requested = true;
+    void this.tick();
+  }
   retry(): void {
     this.failures = 0;
     this.retryAt = 0;
@@ -98,6 +112,7 @@ export class WatchGroupController {
     await this.worker;
     await this.options.player.setPlaybackRate(1).catch(() => undefined);
     await this.options.player.stopLocal();
+    this.diagnostics.flush(this.options.now());
   }
   private async reconcile(): Promise<void> {
     while (this.requested && !this.disposed) {
@@ -107,18 +122,22 @@ export class WatchGroupController {
         await this.apply(signal);
       } catch {
         if (signal.aborted || this.disposed) continue;
-        this.failures++;
-        this.retryAt = this.options.now() + Math.min(5_000, 500 * 2 ** this.failures);
+        this.recordFailure();
         await this.setRate(1).catch(() => undefined);
         await this.setPaused(true).catch(() => undefined);
-        this.options.onStatus(
-          "failed",
-          this.failures >= 3
-            ? "Playback could not synchronize. Retry or leave the group."
-            : "Playback interrupted. Retrying synchronization…",
-        );
       }
     }
+  }
+  private recordFailure(): void {
+    this.failures++;
+    this.diagnostics.failure(this.failures);
+    this.retryAt = this.options.now() + Math.min(5_000, 500 * 2 ** this.failures);
+    this.options.onStatus(
+      "failed",
+      this.failures >= 3
+        ? "Playback could not synchronize. Retry or leave the group."
+        : "Playback interrupted. Retrying synchronization…",
+    );
   }
   private async apply(signal: AbortSignal): Promise<void> {
     const snapshot = this.latest;
@@ -200,6 +219,7 @@ export class WatchGroupController {
         signal,
       );
       signal.throwIfAborted();
+      this.diagnostics.correction("seek");
       this.alignment = state.alignmentRevision;
       this.terminalAlignment = null;
       this.lastSeek = this.options.now();
@@ -221,6 +241,7 @@ export class WatchGroupController {
     ) {
       const atSample = this.options.clock(sample.sampledAtMs);
       if (atSample !== null) {
+        this.diagnostics.sample(positionAt(state, atSample.serverNowMs) - sample.positionSeconds * 1_000, now);
         const correction = chooseCorrection({
           targetMs: positionAt(state, atSample.serverNowMs),
           actualMs: sample.positionSeconds * 1_000,
@@ -239,6 +260,7 @@ export class WatchGroupController {
               signal,
             );
           signal.throwIfAborted();
+          this.diagnostics.correction("seek");
           this.lastSeek = this.options.now();
         } else if (correction.type === "rate") await this.setRate(clock.fine ? correction.rate : 1);
         else await this.setRate(1);
@@ -255,7 +277,7 @@ export class WatchGroupController {
   }
   private async stop(): Promise<void> {
     if (this.loadedId !== null) {
-      await this.setRate(1);
+      await this.setRate(1).catch(() => undefined);
       await this.options.player.stopLocal();
     }
     this.loadedId = null;
@@ -268,6 +290,7 @@ export class WatchGroupController {
     if (this.rate === rate) return;
     await this.options.player.setPlaybackRate(rate);
     this.rate = rate;
+    this.diagnostics.correction("rate");
   }
   private async setPaused(paused: boolean): Promise<void> {
     if (this.loadedId === null || this.paused === paused) return;

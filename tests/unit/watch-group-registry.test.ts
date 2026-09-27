@@ -1,3 +1,4 @@
+import { FakeGroupScheduler } from "../helpers/watch-group-scheduler";
 import { expect, test } from "bun:test";
 import {
   GroupRegistry,
@@ -25,8 +26,9 @@ const principal = (): AuthPrincipal => ({
     updatedAtMs: 0,
   },
 });
-const fixture = () => {
-  let now = 0;
+const fixture = (queue = defaultWatchGroupLimits.queue) => {
+  const scheduler = new FakeGroupScheduler();
+  let validation: Promise<void> = Promise.resolve();
   let allowed = true;
   const media: GroupMedia = {
     itemId: id(),
@@ -36,9 +38,10 @@ const fixture = () => {
     durationMs: 600_000,
   };
   const registry = new GroupRegistry({
-    limits: { ...defaultWatchGroupLimits, members: 2, groups: 2 },
-    now: () => now,
-    validate: async (p) => p,
+    limits: { ...defaultWatchGroupLimits, members: 2, groups: 2, queue },
+    scheduler,
+    now: () => scheduler.now,
+    validate: async (p) => { await validation; return p; },
     resolve: async () => media,
     canPlay: async () => allowed,
     startSession: async () => {
@@ -61,8 +64,9 @@ const fixture = () => {
     media,
     peer,
     advance: (ms: number) => {
-      now += ms;
+      scheduler.advance(ms);
     },
+    blockValidation: (pending: Promise<void>) => { validation = pending; },
     deny: () => {
       allowed = false;
     },
@@ -161,5 +165,64 @@ test("membership capacity and conflicting devices reject before altering existin
     f.registry.create(principal(), { name: "Excess", idempotencyKey: id() }),
   ).rejects.toThrow("limit");
   expect((await f.registry.state(first, group.groupId)).members.length).toBe(2);
+  await f.registry.dispose();
+});
+
+
+test.each(["detach", "end"] as const)("%s lifecycle work survives a saturated room queue", async (action) => {
+  const f = fixture(1);
+  const user = principal();
+  const group = await f.registry.create(user, { name: "Busy", idempotencyKey: id() });
+  const peer = f.peer();
+  await f.registry.attach((await f.registry.ticket(user, group.groupId)).ticket, peer.connection);
+  await f.registry.command(group.groupId, group.membershipId, peer.connection.id,
+    command(group, { type: "start", itemId: f.media.itemId, positionMs: 0 }));
+  const blocked = Promise.withResolvers<void>();
+  f.blockValidation(blocked.promise);
+  const state = f.registry.state(user, group.groupId);
+  await expect(f.registry.state(user, group.groupId)).rejects.toThrow("busy");
+  const detached = action === "detach"
+    ? f.registry.detach(group.groupId, group.membershipId, peer.connection.id)
+    : Promise.resolve();
+  f.advance(action === "end" ? 600_000 : 1_000);
+  blocked.resolve();
+  await Promise.all([state, detached]);
+  await f.registry.sweep();
+  const current = await f.registry.state(user, group.groupId);
+  expect(current.playback).toMatchObject({ state: { mode: action === "end" ? "ended" : "paused" } });
+  if (action === "detach") {
+    expect(current.members[0]?.connected).toBe(false);
+    f.advance(30_000);
+    await f.registry.sweep();
+    const other = await f.registry.create(user, { name: "Released device", idempotencyKey: id() });
+    expect(other.groupId).not.toBe(group.groupId);
+  }
+  await f.registry.dispose();
+});
+
+
+test("replacement disconnect is retained while an old peer detach is pending", async () => {
+  const f = fixture();
+  const user = principal();
+  const group = await f.registry.create(user, { name: "Replace", idempotencyKey: id() });
+  const old = f.peer();
+  let detachingNew: Promise<void> | undefined;
+  const next: GroupPeer = {
+    id: id(),
+    send: () => { detachingNew = f.registry.detach(group.groupId, group.membershipId, next.id); },
+    close: () => {},
+  };
+  await f.registry.attach((await f.registry.ticket(user, group.groupId)).ticket, old.connection);
+  const ticket = await f.registry.ticket(user, group.groupId);
+  const blocked = Promise.withResolvers<void>();
+  f.blockValidation(blocked.promise);
+  const attaching = f.registry.attach(ticket.ticket, next);
+  await Promise.resolve();
+  const detachingOld = f.registry.detach(group.groupId, group.membershipId, old.connection.id);
+  blocked.resolve();
+  await attaching;
+  expect(detachingNew).toBeDefined();
+  await Promise.all([detachingOld, detachingNew]);
+  expect((await f.registry.state(user, group.groupId)).members[0]?.connected).toBe(false);
   await f.registry.dispose();
 });
