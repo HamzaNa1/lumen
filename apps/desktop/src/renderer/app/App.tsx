@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
+import type { IpcAccount, IpcItem, IpcPlayerState, IpcWatchGroupState } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
@@ -29,11 +29,16 @@ export const App = (): React.ReactElement => {
   const onPlayerRoute = useMatches({
     select: (matches) => matches.some((match) => match.routeId === "/player"),
   });
+  const [group, setGroup] = useState<IpcWatchGroupState | null>(null);
+  const groupRef = useRef<IpcWatchGroupState | null>(null);
+  const pendingStart = useRef<IpcItem | null>(null);
   const [playingItem, setPlayingItem] = useState<IpcItem | null>(null);
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [connectionsView, setConnectionsView] = useState<"starting" | "saved" | "add" | null>("starting");
+  const [connectionsView, setConnectionsView] = useState<"starting" | "saved" | "add" | null>(
+    "starting",
+  );
   const [startupError, setStartupError] = useState<string | null>(null);
   const startupAttempted = useRef(false);
   const [signInAccount, setSignInAccount] = useState<IpcAccount | null>(null);
@@ -51,10 +56,7 @@ export const App = (): React.ReactElement => {
 
   useEffect(() => {
     const receivePlayer = (state: IpcPlayerState | null): void => {
-      if (state !== null && !onPlayerRouteRef.current) {
-        void bridge.player.stop().catch(() => undefined);
-        updatePlayer(null);
-      } else updatePlayer(state);
+      updatePlayer(state);
     };
     const unsubscribe = bridge.player.onState(receivePlayer);
     void bridge.player
@@ -63,9 +65,57 @@ export const App = (): React.ReactElement => {
       .catch(() => undefined);
     return unsubscribe;
   }, [updatePlayer]);
+  useEffect(() => {
+    let disposed = false;
+    let lastPlaybackId: string | null = null;
+    const receive = (state: IpcWatchGroupState | null): void => {
+      if (disposed) return;
+      groupRef.current = state;
+      setGroup(state);
+      const playback = state?.snapshot?.playback;
+      if (
+        playback?.type === "playback" &&
+        playback.state.media !== null &&
+        ["playing", "paused"].includes(playback.state.mode)
+      ) {
+        const playbackId = playback.state.playbackId;
+        if (lastPlaybackId === playbackId) return;
+        lastPlaybackId = playbackId;
+        pendingStart.current = null;
+        returnTo.current = "/watch-groups";
+        void navigate({ to: "/player" });
+        const media = playback.state.media;
+        void bridge.library
+          .itemDetails(media.itemId)
+          .then((details) => {
+            if (disposed || lastPlaybackId !== playbackId) return;
+            setPlayingItem({
+              ...details.item,
+              durationMs: media.durationMs,
+              resumePositionSeconds: null,
+            });
+          })
+          .catch(() => undefined);
+      } else if (state !== null && playback !== undefined) {
+        lastPlaybackId = null;
+        pendingStart.current = null;
+        setPlayingItem(null);
+        if (onPlayerRouteRef.current) void navigate({ to: "/watch-groups", replace: true });
+      }
+    };
+    const unsubscribe = bridge.watchGroups.onState(receive);
+    void bridge.watchGroups
+      .state()
+      .then(receive)
+      .catch(() => undefined);
+    return () => {
+      disposed = true;
+      unsubscribe();
+    };
+  }, [navigate]);
   const beginPlayback = useCallback(
     async (item: IpcItem): Promise<void> => {
-      if (startingItemId.current === item.id || activePlayer.current?.itemId === item.id) return;
+      if (startingItemId.current === item.id) return;
       startingItemId.current = item.id;
       setPlaybackLoading(true);
       setPlaybackError(null);
@@ -73,13 +123,13 @@ export const App = (): React.ReactElement => {
       try {
         await bridge.player.start(item.id, item.resumePositionSeconds ?? undefined);
         if (!onPlayerRouteRef.current) {
-          await bridge.player.stop();
+          await bridge.player.cleanup();
           updatePlayer(null);
           return;
         }
         const state = await bridge.player.state();
         if (!onPlayerRouteRef.current) {
-          await bridge.player.stop();
+          await bridge.player.cleanup();
           updatePlayer(null);
           return;
         }
@@ -94,6 +144,11 @@ export const App = (): React.ReactElement => {
     },
     [updatePlayer],
   );
+  const surfaceReady = useCallback((): void => {
+    const item = pendingStart.current;
+    pendingStart.current = null;
+    if (item !== null) void beginPlayback(item);
+  }, [beginPlayback]);
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
@@ -106,6 +161,7 @@ export const App = (): React.ReactElement => {
       return;
     }
     setPlaybackError(null);
+    pendingStart.current = item;
     setPlayingItem(item);
     if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
     void navigate({ to: "/player" });
@@ -115,7 +171,8 @@ export const App = (): React.ReactElement => {
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
     null;
   useEffect(() => {
-    if (!accountsQuery.isSuccess || connectionsView !== "starting" || startupAttempted.current) return;
+    if (!accountsQuery.isSuccess || connectionsView !== "starting" || startupAttempted.current)
+      return;
     startupAttempted.current = true;
     if (active === null) {
       setConnectionsView("saved");
@@ -141,10 +198,18 @@ export const App = (): React.ReactElement => {
     setPlayingItem(null);
     setPlaybackLoading(false);
     setPlaybackError(null);
+    pendingStart.current = null;
+    const currentGroup = groupRef.current;
+    const remoteTerminal =
+      currentGroup !== null &&
+      (currentGroup.snapshot?.playback.type === "playback-access-denied" ||
+        (currentGroup.snapshot?.playback.type === "playback" &&
+          ["stopped", "ended"].includes(currentGroup.snapshot.playback.state.mode)));
+    if (remoteTerminal) return;
     // The page playback started from can mount while the session is still stopping.
     // Refresh progress and next up once the stop request has finished.
     void bridge.player
-      .stop()
+      .cleanup()
       .catch(() => undefined)
       .then(() => {
         if (active !== null)
@@ -159,18 +224,32 @@ export const App = (): React.ReactElement => {
     if (!onPlayerRoute) return;
     void bridge.player.display({
       title: playingItem?.title ?? "Now playing",
-      context: `${active?.serverLabel ?? "Lumen"} · Original quality`,
+      context:
+        group === null
+          ? `${active?.serverLabel ?? "Lumen"} · Original quality`
+          : `${group.snapshot?.name ?? "Watch group"} · ${group.status === "ready" ? "Watching together" : group.status}`,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
-      loading: playbackLoading,
-      error: playerUnavailable ? playbackError : null,
+      loading:
+        playbackLoading ||
+        (group !== null && ["connecting", "synchronizing"].includes(group.status)),
+      error: group?.error ?? (playerUnavailable ? playbackError : null),
     });
-  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError]);
+  }, [
+    active,
+    group,
+    onPlayerRoute,
+    playingItem,
+    playerUnavailable,
+    playbackLoading,
+    playbackError,
+  ]);
   useEffect(
     () =>
       bridge.player.onOverlayAction((action) => {
         // Leaving the player route stops playback and clears its state.
         if (action === "back" || action === "stop")
           void router.navigate({ href: returnTo.current, replace: true });
+        else if (groupRef.current !== null) void bridge.watchGroups.retry();
         else if (playingItem !== null) void beginPlayback(playingItem);
       }),
     [beginPlayback, playingItem, router],
@@ -240,10 +319,14 @@ export const App = (): React.ReactElement => {
         initialError={startupError ?? undefined}
         initialShowAddServer={connectionsView === "add"}
         initialSignInAccount={signInAccount}
-        onClose={startupError === null ? () => {
-          setSignInAccount(null);
-          setConnectionsView(null);
-        } : undefined}
+        onClose={
+          startupError === null
+            ? () => {
+                setSignInAccount(null);
+                setConnectionsView(null);
+              }
+            : undefined
+        }
         onChanged={() => {
           setStartupError(null);
           setSignInAccount(null);
@@ -255,6 +338,8 @@ export const App = (): React.ReactElement => {
 
   const scope = [active.connectionId, active.serverId, active.userId] as const;
   const workspace = {
+    group,
+    surfaceReady,
     account: active,
     scope,
     openItem,

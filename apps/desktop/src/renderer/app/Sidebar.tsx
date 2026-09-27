@@ -11,6 +11,7 @@ import {
   Search,
   Tv,
   Users,
+  Clapperboard,
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { LumenMark } from "./LumenMark";
@@ -62,6 +63,9 @@ export const Sidebar = ({
         <div className="nav-group">
           <Link className="nav-item" to="/" activeOptions={{ exact: true }}>
             <NavLabel icon={House}>Home</NavLabel>
+          </Link>
+          <Link className="nav-item" to="/watch-groups">
+            <NavLabel icon={Clapperboard}>Watch groups</NavLabel>
           </Link>
           <Link className="nav-item" to="/search">
             <NavLabel icon={Search} trailing={<kbd className="nav-shortcut">⌘K</kbd>}>

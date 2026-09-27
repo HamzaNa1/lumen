@@ -43,14 +43,16 @@ class FakeBaseWindow {
 
 mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {}, screen: {} }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
-const { PlayerController, startNativePlayer } = await import("../../apps/desktop/src/main/player/PlayerController");
+const { PlayerController, startNativePlayer } = await import(
+  "../../apps/desktop/src/main/player/PlayerController"
+);
 const { MpvIpc } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
 
 const withPlayback = async (
   run: (playback: {
     controller: InstanceType<typeof PlayerController>;
-    states: IpcPlayerState[];
+    states: (IpcPlayerState | null)[];
     properties: Map<string, unknown>;
     heartbeat: ReturnType<typeof mock>;
     progress: ReturnType<typeof mock>;
@@ -76,15 +78,21 @@ const withPlayback = async (
     timeoutMs = 5_000,
   ): Promise<unknown> {
     if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
+    if (args[0] === "seek") {
+      properties.set("time-pos", args[1]);
+      queueMicrotask(() => this.emit("playback-restart"));
+    }
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
       return Promise.race([
         value,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("MPV command timed out")), timeoutMs)),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("MPV command timed out")), timeoutMs),
+        ),
       ]);
     return Promise.resolve(value);
   });
-  const states: IpcPlayerState[] = [];
+  const states: (IpcPlayerState | null)[] = [];
   const heartbeat = mock(async () => undefined);
   const progress = mock(async () => undefined);
   const request = mock(async () => undefined);
@@ -114,10 +122,14 @@ const withPlayback = async (
       show: () => undefined,
       hide: () => undefined,
     },
-    onState: (state: IpcPlayerState) => states.push(state),
+    onState: (state: IpcPlayerState | null) => states.push(state),
   } as unknown as ConstructorParameters<typeof PlayerController>[0]);
   try {
-    await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
+    await controller.start({
+      client,
+      connectionId: "connection-1",
+      itemId: "item-1",
+    } as unknown as Parameters<typeof controller.start>[0]);
     states.length = 0;
     await run({ controller, states, properties, heartbeat, progress, request, stopProcess });
   } finally {
@@ -158,9 +170,9 @@ describe("playback progress updates", () => {
       properties.set("time-pos", pending.promise);
       const pausing = controller.pause("session-1", true);
       await Promise.resolve();
-      controller.seek("session-1", 40);
+      const seeking = controller.seek("session-1", 40);
       pending.resolve(12.25);
-      await pausing;
+      await Promise.all([pausing, seeking]);
       expect(controller.getState()?.positionSeconds).toBe(40);
     });
   });
@@ -193,8 +205,12 @@ describe("playback progress updates", () => {
   test("leaving the player saves its last position before closing the server session", async () => {
     await withPlayback(async ({ controller, properties, progress, request }) => {
       const calls: string[] = [];
-      progress.mockImplementation(async () => { calls.push("progress"); });
-      request.mockImplementation(async () => { calls.push("delete"); });
+      progress.mockImplementation(async () => {
+        calls.push("progress");
+      });
+      request.mockImplementation(async () => {
+        calls.push("delete");
+      });
       properties.set("time-pos", 41.75);
       await controller.stop();
       expect(progress).toHaveBeenCalledWith(
@@ -211,7 +227,9 @@ describe("playback progress updates", () => {
       const pending = Promise.withResolvers<void>();
       const saved = Promise.withResolvers<void>();
       stopProcess.mockImplementation(() => pending.promise);
-      progress.mockImplementation(async () => { saved.resolve(); });
+      progress.mockImplementation(async () => {
+        saved.resolve();
+      });
       const stopping = controller.stop();
       try {
         await saved.promise;
@@ -247,7 +265,9 @@ describe("playback progress updates", () => {
         started.resolve();
         return pending.promise;
       });
-      progress.mockImplementation(async () => { saved.resolve(); });
+      progress.mockImplementation(async () => {
+        saved.resolve();
+      });
       for (let tick = 0; tick < 5; tick++) await controller.tick();
       const reporting = controller.tick();
       await started.promise;
@@ -323,8 +343,8 @@ describe("playback progress updates", () => {
   test("a pending sample cannot overwrite a seek or resurrect a stopped session", async () => {
     await withPlayback(async ({ controller, states }) => {
       const sampling = controller.refreshState();
-      controller.seek("session-1", 40);
-      await sampling;
+      const seeking = controller.seek("session-1", 40);
+      await Promise.all([sampling, seeking]);
       expect(controller.getState()?.positionSeconds).toBe(40);
       expect(states).toHaveLength(1);
 
@@ -332,7 +352,8 @@ describe("playback progress updates", () => {
       await controller.stop();
       await stoppingSample;
       expect(controller.getState()).toBeNull();
-      expect(states).toHaveLength(1);
+      expect(states).toHaveLength(2);
+      expect(states.at(-1)).toBeNull();
     });
   });
 
@@ -375,10 +396,13 @@ describe("Windows player surface visibility", () => {
       isDestroyed: () => false,
       isFocused: () => state.overlayFocused,
     });
-    const surface = new MpvSurface(parent as unknown as BrowserWindow, {
-      window: overlayWindow,
-      moveAboveVideo: () => undefined,
-    } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
+    const surface = new MpvSurface(
+      parent as unknown as BrowserWindow,
+      {
+        window: overlayWindow,
+        moveAboveVideo: () => undefined,
+      } as unknown as ConstructorParameters<typeof MpvSurface>[1],
+    );
     const host = new FakeBaseWindow();
     // Exercise the Windows surface policy on any OS without loading user32.dll.
     Reflect.set(surface, "host", host);
@@ -471,7 +495,9 @@ describe("player surface shutdown", () => {
   for (const stopped of [false, true]) {
     test(`queued focus work cannot access a closed window (${stopped ? "after Back" : "during playback"})`, () => {
       const callbacks: Array<() => void> = [];
-      const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
+      const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((
+        callback: () => void,
+      ) => {
         callbacks.push(callback);
         return 123;
       }) as unknown as typeof setTimeout);
@@ -486,11 +512,17 @@ describe("player surface shutdown", () => {
         },
       });
       const overlayWindow = new EventEmitter();
-      Object.assign(overlayWindow, { isDestroyed: () => true, isFocused: () => {
-        throw new TypeError("Object has been destroyed");
-      } });
+      Object.assign(overlayWindow, {
+        isDestroyed: () => true,
+        isFocused: () => {
+          throw new TypeError("Object has been destroyed");
+        },
+      });
       try {
-        const surface = new MpvSurface(parent as BrowserWindow, { window: overlayWindow } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
+        const surface = new MpvSurface(
+          parent as BrowserWindow,
+          { window: overlayWindow } as unknown as ConstructorParameters<typeof MpvSurface>[1],
+        );
         Reflect.set(surface, "playbackVisible", true);
         if (stopped) surface.hide();
         parent.emit("blur");
@@ -519,47 +551,50 @@ describe("player surface shutdown", () => {
 });
 
 describe("macOS MPV window lifecycle", () => {
-  test.skipIf(process.platform !== "darwin")("play, Back, and immediate replay attach and detach once per session", () => {
-    events.length = 0;
-    const parent = {
-      on: () => undefined,
-      once: () => undefined,
-      off: () => undefined,
-      isDestroyed: () => false,
-      getContentSize: () => [800, 600],
-      getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
-    } as unknown as BrowserWindow;
-    const surface = new MpvSurface(parent, undefined, (_host, windowId) => {
-      events.push(`mpv:attach:${windowId}`);
-      return {
-        sync: () => undefined,
-        show: () => undefined,
-        dispose: () => events.push(`mpv:detach:${windowId}`),
-      };
-    });
-    surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+  test.skipIf(process.platform !== "darwin")(
+    "play, Back, and immediate replay attach and detach once per session",
+    () => {
+      events.length = 0;
+      const parent = {
+        on: () => undefined,
+        once: () => undefined,
+        off: () => undefined,
+        isDestroyed: () => false,
+        getContentSize: () => [800, 600],
+        getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+      } as unknown as BrowserWindow;
+      const surface = new MpvSurface(parent, undefined, (_host, windowId) => {
+        events.push(`mpv:attach:${windowId}`);
+        return {
+          sync: () => undefined,
+          show: () => undefined,
+          dispose: () => events.push(`mpv:detach:${windowId}`),
+        };
+      });
+      surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
 
-    surface.prepare();
-    surface.attachNativeWindow(101);
-    surface.hide(); // Back stops playback before libmpv is destroyed.
-    surface.hide(); // A second stop must not detach the same native window.
-    surface.prepare();
-    surface.attachNativeWindow(202);
-    surface.hide();
+      surface.prepare();
+      surface.attachNativeWindow(101);
+      surface.hide(); // Back stops playback before libmpv is destroyed.
+      surface.hide(); // A second stop must not detach the same native window.
+      surface.prepare();
+      surface.attachNativeWindow(202);
+      surface.hide();
 
-    expect(events).toEqual([
-      "host:create",
-      "host:show",
-      "mpv:attach:101",
-      "host:hide",
-      "mpv:detach:101",
-      "host:show",
-      "mpv:attach:202",
-      "host:hide",
-      "mpv:detach:202",
-    ]);
-    surface.dispose();
-  });
+      expect(events).toEqual([
+        "host:create",
+        "host:show",
+        "mpv:attach:101",
+        "host:hide",
+        "mpv:detach:101",
+        "host:show",
+        "mpv:attach:202",
+        "host:hide",
+        "mpv:detach:202",
+      ]);
+      surface.dispose();
+    },
+  );
 
   test("Cocoa teardown never messages the MPV window and cannot run twice", () => {
     const selectors = new Map<bigint, string>();
@@ -650,92 +685,110 @@ describe("macOS MPV window lifecycle", () => {
     ]);
   });
 
-  test.skipIf(process.platform !== "darwin")("controller plays, stops on Back, and replays after destruction", async () => {
-    const calls: string[] = [];
-    let sessionNumber = 0;
-    let windowNumber = 0;
-    const startProcess = spyOn(MpvProcess, "start").mockImplementation(() => {
-      calls.push("process:start");
-      return {
-        stop: async () => {
-          calls.push("process:destroy");
-        },
-      } as unknown as MpvProcess;
-    });
-    const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async () => {
-      calls.push("ipc:connect");
-    });
-    const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
-      this: InstanceType<typeof MpvIpc>,
-      args: ReadonlyArray<string | number>,
-    ): Promise<unknown> {
-      if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
-      if (args[0] === "get_property" && args[1] === "window-id") return Promise.resolve(++windowNumber);
-      return Promise.resolve(null);
-    });
-    const close = spyOn(MpvIpc.prototype, "close").mockImplementation(() => {
-      calls.push("ipc:close");
-    });
-    try {
-      const controller = new PlayerController({
-        bridge: {
-          register: () => ({ capability: "test", url: "http://127.0.0.1/video" }),
-          revoke: () => calls.push("bridge:revoke"),
-        },
-        surface: {
-          prepare: () => {
-            calls.push("surface:prepare");
-            return [];
+  test.skipIf(process.platform !== "darwin")(
+    "controller plays, stops on Back, and replays after destruction",
+    async () => {
+      const calls: string[] = [];
+      let sessionNumber = 0;
+      let windowNumber = 0;
+      const startProcess = spyOn(MpvProcess, "start").mockImplementation(() => {
+        calls.push("process:start");
+        return {
+          stop: async () => {
+            calls.push("process:destroy");
           },
-          attachNativeWindow: (windowId: number) => calls.push(`surface:attach:${windowId}`),
-          show: () => calls.push("surface:show"),
-          hide: () => calls.push("surface:hide"),
-        },
-        onState: () => undefined,
-      } as unknown as ConstructorParameters<typeof PlayerController>[0]);
-      const client = {
-        serverOrigin: "http://localhost:3000",
-        startPlayback: async () => {
-          sessionNumber += 1;
-          return {
-            sessionId: `session-${sessionNumber}`,
-            itemId: "item-1",
-            streamUrl: "/stream",
-            grantToken: "grant",
-            durationSeconds: 60,
-            streams: [],
-          };
-        },
-        request: async () => calls.push("session:delete"),
-      };
+        } as unknown as MpvProcess;
+      });
+      const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async () => {
+        calls.push("ipc:connect");
+      });
+      const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
+        this: InstanceType<typeof MpvIpc>,
+        args: ReadonlyArray<string | number>,
+      ): Promise<unknown> {
+        if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
+        if (args[0] === "seek") {
+          properties.set("time-pos", args[1]);
+          queueMicrotask(() => this.emit("playback-restart"));
+        }
+        if (args[0] === "get_property" && args[1] === "window-id")
+          return Promise.resolve(++windowNumber);
+        return Promise.resolve(null);
+      });
+      const close = spyOn(MpvIpc.prototype, "close").mockImplementation(() => {
+        calls.push("ipc:close");
+      });
+      try {
+        const controller = new PlayerController({
+          bridge: {
+            register: () => ({ capability: "test", url: "http://127.0.0.1/video" }),
+            revoke: () => calls.push("bridge:revoke"),
+          },
+          surface: {
+            prepare: () => {
+              calls.push("surface:prepare");
+              return [];
+            },
+            attachNativeWindow: (windowId: number) => calls.push(`surface:attach:${windowId}`),
+            show: () => calls.push("surface:show"),
+            hide: () => calls.push("surface:hide"),
+          },
+          onState: () => undefined,
+        } as unknown as ConstructorParameters<typeof PlayerController>[0]);
+        const client = {
+          serverOrigin: "http://localhost:3000",
+          startPlayback: async () => {
+            sessionNumber += 1;
+            return {
+              sessionId: `session-${sessionNumber}`,
+              itemId: "item-1",
+              streamUrl: "/stream",
+              grantToken: "grant",
+              durationSeconds: 60,
+              streams: [],
+            };
+          },
+          request: async () => calls.push("session:delete"),
+        };
 
-      await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
-      await controller.stop(); // Back
-      await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
-      await controller.stop();
+        await controller.start({
+          client,
+          connectionId: "connection-1",
+          itemId: "item-1",
+        } as unknown as Parameters<typeof controller.start>[0]);
+        await controller.stop(); // Back
+        await controller.start({
+          client,
+          connectionId: "connection-1",
+          itemId: "item-1",
+        } as unknown as Parameters<typeof controller.start>[0]);
+        await controller.stop();
 
-      expect(calls.filter((call) => call.startsWith("surface:") || call.startsWith("process:"))).toEqual([
-        "surface:hide",
-        "surface:prepare",
-        "process:start",
-        "surface:attach:1",
-        "surface:show",
-        "surface:hide",
-        "process:destroy",
-        "surface:hide",
-        "surface:prepare",
-        "process:start",
-        "surface:attach:2",
-        "surface:show",
-        "surface:hide",
-        "process:destroy",
-      ]);
-      expect(calls.filter((call) => call === "session:delete")).toHaveLength(2);
-    } finally {
-      startProcess.mockRestore();
-      connect.mockRestore();
-      command.mockRestore();
-      close.mockRestore();
-    }
-  });
+        expect(
+          calls.filter((call) => call.startsWith("surface:") || call.startsWith("process:")),
+        ).toEqual([
+          "surface:hide",
+          "surface:prepare",
+          "process:start",
+          "surface:attach:1",
+          "surface:show",
+          "surface:hide",
+          "process:destroy",
+          "surface:hide",
+          "surface:prepare",
+          "process:start",
+          "surface:attach:2",
+          "surface:show",
+          "surface:hide",
+          "process:destroy",
+        ]);
+        expect(calls.filter((call) => call === "session:delete")).toHaveLength(2);
+      } finally {
+        startProcess.mockRestore();
+        connect.mockRestore();
+        command.mockRestore();
+        close.mockRestore();
+      }
+    },
+  );
 });

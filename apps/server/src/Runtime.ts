@@ -1,3 +1,5 @@
+import { WatchGroupService, WatchGroupServiceLive } from "./services/WatchGroupService";
+import { makeWatchGroupSocket, type WatchGroupSocketData } from "./http/WatchGroupSocket";
 import { createLogger, ServerLogger, type Logger } from "./core/Logger";
 import { Database, RepositoriesLive, serverIdentity } from "@lumen/database";
 import { Cause, Effect, Exit, Fiber, Layer } from "effect";
@@ -28,6 +30,7 @@ import { HomeService, HomeServiceLive } from "./services/HomeService";
 import { EventService, EventServiceLive } from "./services/EventService";
 import { LibraryService, LibraryServiceLive } from "./services/LibraryService";
 import { ScanService, ScanServiceLive } from "./services/ScanService";
+import { PlaybackMediaLive } from "./services/PlaybackMedia";
 import { PlaybackService, PlaybackServiceLive } from "./services/PlaybackService";
 import { ScannerLive } from "./services/Scanner";
 import {
@@ -41,6 +44,7 @@ import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 
 export interface ServerServices {
+  readonly watchGroups: WatchGroupService["Service"];
   readonly auth: AuthService["Service"];
   readonly access: AccessControl["Service"];
   readonly admin: AdminService["Service"];
@@ -76,7 +80,13 @@ export const makeLayers = (
   const admin = AdminServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const catalog = CatalogServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const home = HomeServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
-  const playback = PlaybackServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
+  const playbackMedia = PlaybackMediaLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
+  const playback = PlaybackServiceLive.pipe(
+    Layer.provide(Layer.mergeAll(dependencies, access, playbackMedia, auth)),
+  );
+  const watchGroups = WatchGroupServiceLive(config.watchGroups).pipe(
+    Layer.provide(Layer.mergeAll(auth, access, playbackMedia, playback)),
+  );
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
   const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(dependencies));
   const ffprobe = FfprobeLive(config);
@@ -97,6 +107,7 @@ export const makeLayers = (
   const identity = ServerIdentityLive.pipe(Layer.provide(dependencies));
   return Layer.mergeAll(
     dependencies,
+    watchGroups,
     auth,
     access,
     assets,
@@ -119,6 +130,7 @@ const makeServices = Effect.gen(function* () {
   const database = yield* Database;
   const identity = yield* ServerIdentityService;
   return {
+    watchGroups: yield* WatchGroupService,
     auth: yield* AuthService,
     access: yield* AccessControl,
     admin: yield* AdminService,
@@ -139,7 +151,7 @@ const makeServices = Effect.gen(function* () {
 });
 
 export interface RunningServer {
-  readonly server: Bun.Server<unknown>;
+  readonly server: Bun.Server<WatchGroupSocketData>;
   readonly stop: () => Promise<void>;
 }
 
@@ -189,7 +201,7 @@ const startConfiguredServer = async (
     if (Exit.isFailure(exit)) rejectServices(Cause.squash(exit.cause));
   });
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
-  let server: Bun.Server<unknown> | undefined;
+  let server: Bun.Server<WatchGroupSocketData> | undefined;
   try {
     const services = await Promise.race([
       servicesPromise,
@@ -213,6 +225,7 @@ const startConfiguredServer = async (
       }
     }
     const httpServices: HttpServices = {
+      watchGroups: services.watchGroups,
       auth: services.auth,
       access: services.access,
       admin: services.admin,
@@ -240,7 +253,16 @@ const startConfiguredServer = async (
       },
     };
     const handler = makeHttpHandler(httpServices, config, logger);
-    const listeningServer = Bun.serve({ hostname: config.host, port: config.port, fetch: handler });
+    const groupSocket = makeWatchGroupSocket(services.watchGroups, config.watchGroups);
+    const listeningServer = Bun.serve({
+      hostname: config.host,
+      port: config.port,
+      fetch: (request, server) =>
+        new URL(request.url).pathname === "/api/v1/watch-groups/socket"
+          ? groupSocket.upgrade(request, server)
+          : handler(request),
+      websocket: groupSocket.websocket,
+    });
     server = listeningServer;
     logger.info("server_listening", {
       host: config.host,
@@ -257,6 +279,7 @@ const startConfiguredServer = async (
         const shutdownStartedAt = performance.now();
         logger.info("server_stopping");
         abort.abort();
+        groupSocket.dispose();
         try {
           const outcomes = await Promise.allSettled([
             listeningServer.stop(true),

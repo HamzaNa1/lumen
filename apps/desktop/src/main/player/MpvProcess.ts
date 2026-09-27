@@ -63,6 +63,9 @@ export class MpvProcess {
     const arguments_ = [
       "--no-config",
       "--load-scripts=no",
+      "--input-default-bindings=no",
+      "--input-vo-keyboard=no",
+      "--input-media-keys=no",
       "--idle=yes",
       "--no-terminal",
       `--input-ipc-server=${socketPath}`,

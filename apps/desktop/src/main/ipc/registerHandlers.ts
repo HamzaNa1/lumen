@@ -1,3 +1,5 @@
+import { CreateWatchGroup, IpcJoinWatchGroup, PlaybackSeconds, Uuid } from "@lumen/contracts";
+import type { PlaybackCoordinator } from "../player/PlaybackCoordinator";
 import {
   EpisodeOrderSelection,
   IpcAudioOutput,
@@ -20,12 +22,16 @@ const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unkn
 const requestId = (): string => crypto.randomUUID();
 const hasSessionToken = (session: AccountSession | null): boolean =>
   typeof session?.accessToken === "string" &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/u.test(session.accessToken);
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/u.test(
+    session.accessToken,
+  );
 
 const validateClient = async (client: ServerClient) => {
-  try { return await client.me(); }
-  catch (cause) {
-    if (cause instanceof ServerHttpError && cause.status === 401) throw new Error("Sign-in required");
+  try {
+    return await client.me();
+  } catch (cause) {
+    if (cause instanceof ServerHttpError && cause.status === 401)
+      throw new Error("Sign-in required");
     throw cause;
   }
 };
@@ -43,6 +49,7 @@ export interface IpcDependencies {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
   readonly player: PlayerController;
+  readonly coordinator: PlaybackCoordinator;
   readonly bridge: PlaybackBridge;
   readonly installationId: string;
   readonly window: BrowserWindow;
@@ -67,7 +74,12 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const discoveredServers = new Map<string, IpcServerDiscovery>();
   const restoring = new Map<string, Promise<ServerClient>>();
   let playerDisplay: IpcPlayerDisplay | null = null;
-  const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
+  const restoreClient = (account: {
+    readonly connectionId: string;
+    readonly origin: string;
+    readonly serverId: string;
+    readonly role: "admin" | "user" | "guest";
+  }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) return validateClient(cached).then(() => cached);
     const pending = restoring.get(account.connectionId);
@@ -75,12 +87,14 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const next = (async () => {
       const client = new ServerClient({ origin: account.origin });
       const identity = await client.identity();
-      if (identity.serverId !== account.serverId) throw new Error("Server identity changed; remove this connection and enroll it again");
+      if (identity.serverId !== account.serverId)
+        throw new Error("Server identity changed; remove this connection and enroll it again");
       const session = await dependencies.registry.session(account.connectionId);
       if (session !== null && hasSessionToken(session)) client.setSession(session);
       else if (session !== null && typeof session.refreshToken === "string") {
         const migrated = await client.migrateLegacySession(session.refreshToken).catch((cause) => {
-          if (cause instanceof ServerHttpError && cause.status === 401) throw new Error("Sign-in required");
+          if (cause instanceof ServerHttpError && cause.status === 401)
+            throw new Error("Sign-in required");
           throw cause;
         });
         await dependencies.registry.updateSession(account.connectionId, migrated);
@@ -93,7 +107,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       }
       dependencies.clients.set(account.connectionId, client);
       return client;
-    })().finally(() => { restoring.delete(account.connectionId); });
+    })().finally(() => {
+      restoring.delete(account.connectionId);
+    });
     restoring.set(account.connectionId, next);
     return next;
   };
@@ -132,14 +148,22 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const identity = await client.identity();
     if (identity.serverId !== discovery.identity.serverId)
       throw new Error("Server identity changed; connect to the server again");
-    const deviceId = deviceIdForAccount(dependencies.installationId, identity.serverId, input.username);
+    const deviceId = deviceIdForAccount(
+      dependencies.installationId,
+      identity.serverId,
+      input.username,
+    );
     const setupRequired = await client.setupRequired(discovery.setupRequired);
     const session = await (setupRequired || input.signUp === true
       ? client.register(input, deviceId)
       : client.login(input, deviceId));
     const user = await client.me();
     const current = client.currentSession ?? session;
-    connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
+    connectionId =
+      (await dependencies.registry.list()).accounts.find(
+        (account) => account.serverId === identity.serverId && account.userId === session.userId,
+      )?.connectionId ?? connectionId;
+    await dependencies.coordinator.cleanup();
     try {
       await dependencies.registry.save({
         connectionId,
@@ -154,7 +178,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         accessExpiresAtMs: current.accessExpiresAtMs,
       });
     } catch (cause) {
-      throw new Error(`${setupRequired || input.signUp === true ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
+      throw new Error(
+        `${setupRequired || input.signUp === true ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`,
+        { cause },
+      );
     }
     dependencies.clients.set(connectionId, client);
     discoveredServers.delete(client.serverOrigin);
@@ -165,16 +192,41 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const account = dependencies.registry.find(connectionId);
     if (account === null) throw new Error("Connection not found");
     await restoreClient(account);
+    if (dependencies.registry.active()?.connectionId !== connectionId)
+      await dependencies.coordinator.cleanup();
     await dependencies.registry.activate(connectionId);
     return dependencies.registry.list();
   });
   handle("accounts:remove", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
-    await dependencies.player.stop();
+    await dependencies.coordinator.cleanup();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
     return dependencies.registry.list();
   });
+  handle("watch-groups:list", async (_event, raw) =>
+    activeClient(dependencies).watchGroups(decode(Schema.NullOr(Uuid), raw ?? null)),
+  );
+  handle("watch-groups:create", async (_event, raw) =>
+    dependencies.coordinator.create(
+      activeClient(dependencies),
+      activeConnectionId(dependencies),
+      decode(CreateWatchGroup, raw),
+    ),
+  );
+  handle("watch-groups:join", async (_event, raw) => {
+    const input = decode(IpcJoinWatchGroup, raw);
+    return dependencies.coordinator.join(
+      activeClient(dependencies),
+      activeConnectionId(dependencies),
+      input.groupId,
+      input.password,
+    );
+  });
+  handle("watch-groups:leave", async () => dependencies.coordinator.leave());
+  handle("watch-groups:state", async () => dependencies.coordinator.getState());
+  handle("watch-groups:retry", async () => dependencies.coordinator.retry());
+  handle("player:cleanup", async () => dependencies.coordinator.cleanup());
   handle("library:list", async () => activeClient(dependencies).libraries());
   handle("library:home", async () => activeClient(dependencies).home());
   handle("library:items", async (_event, raw) => {
@@ -184,7 +236,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     );
     return activeClient(dependencies).items(input.libraryId, input.cursor);
   });
-  handle("library:item-details", async (_event, raw) => activeClient(dependencies).itemDetails(decode(Schema.String, raw)));
+  handle("library:item-details", async (_event, raw) =>
+    activeClient(dependencies).itemDetails(decode(Schema.String, raw)),
+  );
   handle("library:episode-order", async (_event, raw) =>
     activeClient(dependencies).episodeOrder(decode(Schema.String, raw)),
   );
@@ -196,15 +250,22 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return activeClient(dependencies).setEpisodeOrder(input.itemId, input.selection);
   });
   handle("library:item-children", async (_event, raw) => {
-    const input = decode(Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }), raw);
+    const input = decode(
+      Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }),
+      raw,
+    );
     return activeClient(dependencies).itemChildren(input.itemId, input.cursor);
   });
   handle("library:set-watched", async (_event, raw) => {
     const input = decode(Schema.Struct({ itemId: Schema.String, completed: Schema.Boolean }), raw);
     return activeClient(dependencies).setWatched(input.itemId, input.completed);
   });
-  handle("library:next-up", async (_event, raw) => activeClient(dependencies).nextUp(decode(Schema.String, raw)));
-  handle("library:artwork", async (_event, raw) => activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)));
+  handle("library:next-up", async (_event, raw) =>
+    activeClient(dependencies).nextUp(decode(Schema.String, raw)),
+  );
+  handle("library:artwork", async (_event, raw) =>
+    activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)),
+  );
   handle("library:search", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ query: Schema.String, libraryId: Schema.NullOr(Schema.String) }),
@@ -309,28 +370,29 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("admin:jobLog", async () => activeClient(dependencies).jobLog());
   handle("player:start", async (_event, raw) => {
     const input = decode(
-      Schema.Struct({ itemId: Schema.String, startAtSeconds: Schema.optional(Schema.Number) }),
+      Schema.Struct({ itemId: Uuid, startAtSeconds: Schema.optional(PlaybackSeconds) }),
       raw,
     );
-    const result = await dependencies.player.start({
+    const result = await dependencies.coordinator.start({
       client: activeClient(dependencies),
       connectionId: activeConnectionId(dependencies),
       itemId: input.itemId,
       ...(input.startAtSeconds === undefined ? {} : { startAtSeconds: input.startAtSeconds }),
     });
-    const { grantToken: _grantToken, ...safe } = result;
+    if (result === null) return null;
+    const { grantToken: _grantToken, streamUrl: _streamUrl, ...safe } = result;
     return safe;
   });
   handle("player:pause", async (_event, raw) => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, paused: Schema.Boolean }), raw);
-    return dependencies.player.pause(input.sessionId, input.paused);
+    return dependencies.coordinator.pause(input.sessionId, input.paused);
   });
   handle("player:seek", async (_event, raw) => {
     const input = decode(
-      Schema.Struct({ sessionId: Schema.String, positionSeconds: Schema.Number }),
+      Schema.Struct({ sessionId: Schema.String, positionSeconds: PlaybackSeconds }),
       raw,
     );
-    return dependencies.player.seek(input.sessionId, input.positionSeconds);
+    return dependencies.coordinator.seek(input.sessionId, input.positionSeconds);
   });
   handle("player:volume", async (_event, raw) => {
     const input = decode(
@@ -380,13 +442,20 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
-    await dependencies.player.stop();
+    await dependencies.coordinator.stop();
     return { ok: true };
   });
 };
 
 export const unregisterIpcHandlers = (): void => {
   for (const name of [
+    "watch-groups:list",
+    "watch-groups:create",
+    "watch-groups:join",
+    "watch-groups:leave",
+    "watch-groups:state",
+    "watch-groups:retry",
+    "player:cleanup",
     "accounts:list",
     "accounts:setup",
     "accounts:discover-server",

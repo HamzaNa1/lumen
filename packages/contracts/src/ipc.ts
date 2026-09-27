@@ -1,3 +1,4 @@
+import { PlaybackSeconds } from "./schemas/watch-groups.ts";
 import { Schema } from "effect";
 import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 import { ServerInfo } from "./server.ts";
@@ -165,7 +166,7 @@ export const IpcPlayerSession = Schema.Struct({
   sourceId: Uuid,
   title: Schema.String.check(Schema.isMinLength(1)),
   streamUrl: Schema.String.check(Schema.isMinLength(1)),
-  durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  durationSeconds: Schema.NullOr(PlaybackSeconds),
   streams: Schema.Array(IpcPlayableStream),
   grantExpiresInSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   grantToken: Schema.String.check(Schema.isMinLength(1)),
@@ -185,8 +186,8 @@ export const IpcPlayerState = Schema.Struct({
   sessionId: Uuid,
   itemId: Uuid,
   paused: Schema.Boolean,
-  positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  positionSeconds: PlaybackSeconds,
+  durationSeconds: Schema.NullOr(PlaybackSeconds),
   bufferedRanges: Schema.Array(IpcBufferedRange),
   volume: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   muted: Schema.Boolean,
@@ -201,7 +202,7 @@ export type IpcPlayerState = Schema.Schema.Type<typeof IpcPlayerState>;
 export const IpcPlayerDisplay = Schema.Struct({
   title: Schema.String,
   context: Schema.String,
-  duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  duration: Schema.NullOr(PlaybackSeconds),
   loading: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
 });

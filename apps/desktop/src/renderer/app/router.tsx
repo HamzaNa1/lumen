@@ -1,3 +1,4 @@
+import { WatchGroupsPage } from "./WatchGroupsPage";
 import { createHashHistory } from "@tanstack/history";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
@@ -74,7 +75,14 @@ const jobLogRoute = createRoute({
   component: JobLogPage,
 });
 
+const watchGroupsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/watch-groups",
+  component: WatchGroupsPage,
+});
+
 const routeTree = rootRoute.addChildren([
+  watchGroupsRoute,
   homeRoute,
   libraryIndexRoute,
   libraryRoute,

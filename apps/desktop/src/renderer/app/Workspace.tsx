@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
+import type { IpcAccount, IpcItem, IpcPlayerState, IpcWatchGroupState } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import {
   type QueryClient,
@@ -14,6 +14,8 @@ import { errorMessage } from "./format";
 export const bridge = window.lumen;
 
 export interface WorkspaceValue {
+  readonly group: IpcWatchGroupState | null;
+  readonly surfaceReady: () => void;
   readonly account: IpcAccount;
   readonly scope: readonly unknown[];
   readonly openItem: (item: IpcItem) => void;

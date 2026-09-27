@@ -116,7 +116,7 @@ export const PlayerOverlay = (): React.ReactElement => {
         fullscreen={fullscreen}
         onBack={() => {
           void bridge.player
-            .stop()
+            .cleanup()
             .catch(() => undefined)
             .then(() => {
               setPlayer(null);
@@ -127,11 +127,17 @@ export const PlayerOverlay = (): React.ReactElement => {
         onFullscreen={() => void bridge.player.fullscreen(!fullscreen).then(setFullscreen)}
         onPause={() => {
           if (player !== null)
-            void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer).catch(() => undefined);
+            void bridge.player
+              .pause(player.sessionId, !player.paused)
+              .then(setPlayer)
+              .catch(() => undefined);
         }}
         onSeek={(positionSeconds) => {
           if (player !== null)
-            void bridge.player.seek(player.sessionId, positionSeconds).then(setPlayer);
+            void bridge.player
+              .seek(player.sessionId, positionSeconds)
+              .then(setPlayer)
+              .catch(() => undefined);
         }}
         onVolume={(volume, muted) => {
           if (player !== null)
