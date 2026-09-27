@@ -2,7 +2,8 @@ import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { git, latestStableTag, parseProduct, repositoryRoot, run } from "./lib/releases";
+import { git, latestStableTag, repositoryRoot, run } from "./lib/releases";
+import { parseProduct, productWorkspaces, workspaceFilters } from "./lib/products";
 
 const product = parseProduct(process.argv[2]);
 const counterpart = product === "server" ? "desktop" : "server";
@@ -18,7 +19,11 @@ let added = false;
 try {
   run("git", ["worktree", "add", "--detach", checkout, tag]);
   added = true;
-  run(process.execPath, ["install", "--frozen-lockfile"], checkout);
+  run(
+    process.execPath,
+    ["install", "--frozen-lockfile", ...workspaceFilters(productWorkspaces(counterpart))],
+    checkout,
+  );
   console.log(`Checking candidate ${product} against ${tag}`);
   execFileSync(process.execPath, ["test", "tests/compatibility/releases.test.ts"], {
     cwd: repositoryRoot,

@@ -11,7 +11,7 @@
     "package": "electron-builder --publish never",
     "preview": "electron-vite preview",
     "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-    "test": "bun test ../../tests/e2e ../../tests/integration"
+    "test": "bun test ../../tests/desktop ../../tests/shared"
   },
   "dependencies": {
     "koffi": "3.3.1"

@@ -1,18 +1,9 @@
 import { semver } from "bun";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { type Product, productWorkspaces } from "./products";
 
 export const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
-export const products = {
-  server: { name: "Lumen Server", manifest: "apps/server/package.json", packages: ["database"] },
-  desktop: { name: "Lumen Desktop", manifest: "apps/desktop/package.json", packages: ["ui"] },
-} as const;
-export type Product = keyof typeof products;
-
-export const parseProduct = (value: string | undefined): Product => {
-  if (value !== "server" && value !== "desktop") throw new Error("Choose server or desktop.");
-  return value;
-};
 
 export const isReleaseVersion = (value: string | undefined): value is string => {
   if (value === undefined) return false;
@@ -79,9 +70,7 @@ export const assertCanPromote = (
 };
 
 export const releasePaths = (product: Product): string[] => [
-  `apps/${product}`,
-  "packages/contracts",
-  ...products[product].packages.map((name) => `packages/${name}`),
+  ...productWorkspaces(product),
   "package.json",
   "bunfig.toml",
   "tsconfig.base.json",

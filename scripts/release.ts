@@ -2,13 +2,12 @@ import { appendFileSync } from "node:fs";
 import {
   assertCanPromote,
   git,
-  parseProduct,
   planRelease,
-  products,
   releasePaths,
   remoteTags,
 } from "./lib/releases";
 import { verifyVersion } from "./version";
+import { parseProduct, products } from "./lib/products";
 
 const [command, target, version, previousTag = ""] = process.argv.slice(2);
 const product = parseProduct(target);

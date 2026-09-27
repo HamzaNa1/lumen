@@ -3,12 +3,10 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import {
   isReleaseVersion,
-  parseProduct,
-  products,
   repositoryRoot,
   run,
-  type Product,
 } from "./lib/releases";
+import { parseProduct, products, type Product } from "./lib/products";
 
 export const verifyVersion = (product: Product, version: string, root = repositoryRoot): void => {
   if (!isReleaseVersion(version)) throw new Error(`Invalid release version: ${version}`);

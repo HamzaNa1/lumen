@@ -3,10 +3,10 @@ import {
   assertCanPromote,
   isReleaseVersion,
   latestStableTag,
-  parseProduct,
   planRelease,
   releasePaths,
 } from "../../scripts/lib/releases";
+import { parseProduct } from "../../scripts/lib/products";
 
 describe("independent release policy", () => {
   test("validates product names and versions before using them in commands or paths", () => {

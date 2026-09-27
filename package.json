@@ -13,11 +13,13 @@
     "lint": "biome lint .",
     "test": "bun test",
     "check": "bun run lint && bun run typecheck && bun test && bun run build",
+    "check:server": "bun scripts/check.ts server",
+    "check:desktop": "bun scripts/check.ts desktop",
     "db:generate": "bun run --cwd packages/database generate",
     "db:migrate": "bun run --cwd apps/server db:migrate",
     "version:set": "bun scripts/version.ts set",
     "version:check": "bun scripts/version.ts check",
-    "backup": "bun scripts/backup.ts"
+    "backup": "bun apps/server/scripts/backup.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

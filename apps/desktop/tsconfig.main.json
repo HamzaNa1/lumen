@@ -8,10 +8,8 @@
       "electron": ["./node_modules/electron"],
       "koffi": ["./node_modules/koffi"],
       "@lumen/contracts": ["../../packages/contracts/src/index.ts"],
-      "@lumen/contracts/*": ["../../packages/contracts/src/*"],
-      "@lumen/database": ["../../packages/database/src/index.ts"],
-      "@lumen/database/*": ["../../packages/database/src/*"]
+      "@lumen/contracts/*": ["../../packages/contracts/src/*"]
     }
   },
-  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "electron.vite.config.ts", "../../tests/native/**/*.ts", "../../packages/contracts/src/**/*.ts", "../../packages/database/src/**/*.ts"]
+  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "scripts/**/*.ts", "electron.vite.config.ts", "../../tests/native/**/*.ts", "../../packages/contracts/src/**/*.ts"]
 }

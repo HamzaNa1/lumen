@@ -10,5 +10,5 @@
       "@lumen/database/*": ["../../packages/database/src/*"]
     }
   },
-  "include": ["src/**/*.ts", "../../packages/contracts/src/**/*.ts", "../../packages/database/src/**/*.ts"]
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "../../packages/contracts/src/**/*.ts", "../../packages/database/src/**/*.ts"]
 }
