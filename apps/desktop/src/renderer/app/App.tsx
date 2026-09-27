@@ -1,3 +1,4 @@
+import { WatchGroups } from "./WatchGroups";
 import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -40,6 +41,8 @@ export const App = (): React.ReactElement => {
   const startingItemId = useRef<string | null>(null);
   // Where to go when the viewer leaves the player.
   const returnTo = useRef("/");
+  const groupPlayback = useRef(false);
+  const [groupTitle, setGroupTitle] = useState<string | null>(null);
   const activePlayer = useRef<IpcPlayerState | null>(null);
   const wasOnPlayerRoute = useRef(onPlayerRoute);
   const onPlayerRouteRef = useRef(onPlayerRoute);
@@ -51,10 +54,13 @@ export const App = (): React.ReactElement => {
 
   useEffect(() => {
     const receivePlayer = (state: IpcPlayerState | null): void => {
-      if (state !== null && !onPlayerRouteRef.current) {
+      if (state !== null && !onPlayerRouteRef.current && !groupPlayback.current) {
         void bridge.player.stop().catch(() => undefined);
         updatePlayer(null);
-      } else updatePlayer(state);
+      } else {
+        updatePlayer(state);
+        if (state !== null) setPlaybackLoading(false);
+      }
     };
     const unsubscribe = bridge.player.onState(receivePlayer);
     void bridge.player
@@ -63,6 +69,25 @@ export const App = (): React.ReactElement => {
       .catch(() => undefined);
     return unsubscribe;
   }, [updatePlayer]);
+  useEffect(() => bridge.watchGroups.onPlayback(({ itemId, title }) => {
+    groupPlayback.current = itemId !== null;
+    setGroupTitle(title);
+    setPlayingItem(null);
+    updatePlayer(null);
+    setPlaybackError(null);
+    setPlaybackLoading(itemId !== null);
+    if (itemId !== null) {
+      if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
+      void navigate({ to: "/player" });
+    } else if (onPlayerRouteRef.current) void router.navigate({ href: returnTo.current, replace: true });
+  }), [navigate, router, updatePlayer]);
+  useEffect(() => bridge.watchGroups.onState((status) => {
+    if (status.error !== null) {
+      setPlaybackError(status.error);
+      if (activePlayer.current === null) setPlaybackLoading(false);
+    }
+    if (status.group === null) { groupPlayback.current = false; setGroupTitle(null); }
+  }), []);
   const beginPlayback = useCallback(
     async (item: IpcItem): Promise<void> => {
       if (startingItemId.current === item.id || activePlayer.current?.itemId === item.id) return;
@@ -158,13 +183,13 @@ export const App = (): React.ReactElement => {
   useEffect(() => {
     if (!onPlayerRoute) return;
     void bridge.player.display({
-      title: playingItem?.title ?? "Now playing",
+      title: groupTitle ?? playingItem?.title ?? "Now playing",
       context: `${active?.serverLabel ?? "Lumen"} · Original quality`,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
     });
-  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError]);
+  }, [active, groupTitle, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError]);
   useEffect(
     () =>
       bridge.player.onOverlayAction((action) => {
@@ -306,6 +331,7 @@ export const App = (): React.ReactElement => {
             />
           }
         >
+          <div className="workspace-toolbar"><WatchGroups key={active.connectionId} /></div>
           <Outlet />
           {playbackError === null ? null : (
             <div className="toast" role="alert">

@@ -76,6 +76,7 @@ const withPlayback = async (
     timeoutMs = 5_000,
   ): Promise<unknown> {
     if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
+    if (args[0] === "set_property" && args[1] === "speed") properties.set("speed", args[2]);
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
       return Promise.race([
@@ -109,6 +110,7 @@ const withPlayback = async (
       revoke: () => undefined,
     },
     surface: {
+      setBounds: () => undefined,
       prepare: () => [],
       attachNativeWindow: () => undefined,
       show: () => undefined,
@@ -739,3 +741,145 @@ describe("macOS MPV window lifecycle", () => {
     }
   });
 });
+
+
+describe("watch group playback synchronization", () => {
+  test("catches up a sub-second delay by speeding up without seeking", async () => {
+    await withPlayback(async ({ controller, properties }) => {
+      properties.set("time-pos", 12.25);
+      await controller.synchronize(12.75, false, false);
+      expect(properties.get("speed")).toBe(1.05);
+      expect(controller.getState()?.positionSeconds).toBe(12.25);
+    });
+  });
+});
+
+test("watch group seeks a large delay and restores normal speed", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    properties.set("time-pos", 12.25);
+    await controller.synchronize(12.75, false, false);
+    await controller.synchronize(15, false, false);
+    expect(controller.getState()?.positionSeconds).toBe(15);
+    expect(properties.get("speed")).toBe(1);
+  });
+});
+
+test("watch group applies pause and explicit seeks even below the drift threshold", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    properties.set("time-pos", 12.25);
+    await controller.synchronize(12.3, true, true);
+    expect(controller.getState()).toMatchObject({ positionSeconds: 12.3, paused: true });
+    expect(properties.get("speed")).toBe(1);
+    await controller.synchronize(12.3, false, false);
+    expect(controller.getState()?.paused).toBe(false);
+  });
+});
+
+test("watch group clears catch-up speed once synchronized, on pause, and on leave", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    await controller.synchronize(12.9, false, false);
+    expect(properties.get("speed")).toBe(1.05);
+    await controller.synchronize(12.3, false, false);
+    expect(properties.get("speed")).toBe(1);
+    await controller.synchronize(12.9, false, false);
+    await controller.synchronize(12.9, true, false);
+    expect(properties.get("speed")).toBe(1);
+    await controller.synchronize(12.9, false, false);
+    await controller.resetSpeed();
+    expect(properties.get("speed")).toBe(1);
+  });
+});
+
+test("a stale group position sample cannot affect a stopped player", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    const pending = Promise.withResolvers<number>();
+    properties.set("time-pos", pending.promise);
+    const sync = controller.synchronize(40, false, false);
+    const stop = controller.stop();
+    pending.resolve(12.25);
+    await Promise.all([sync, stop]);
+    expect(controller.getState()).toBeNull();
+    expect(properties.get("speed")).toBeUndefined();
+  });
+});
+
+test("a player slightly ahead slows down, and exactly one second uses speed correction", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    await controller.synchronize(11.75, false, false);
+    expect(properties.get("speed")).toBe(0.95);
+    await controller.synchronize(13.25, false, false);
+    expect(properties.get("speed")).toBe(1.05);
+    expect(controller.getState()?.positionSeconds).toBe(12.25);
+  });
+});
+
+
+test("remote playback waits until the renderer prepares its video surface", async () => {
+  await withPlayback(async ({ controller }) => {
+    let ready = false;
+    const waiting = controller.waitForSurface().then(() => { ready = true; });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    await controller.setSurface({ x: 0, y: 0, width: 800, height: 600 });
+    await waiting;
+    expect(ready).toBe(true);
+  });
+});
+
+for (const transition of ["join", "stop", "leave"]) {
+const stopBeforeSurface = transition !== "join";
+test(transition === "leave" ? "leaving a group during initial loading clears the player screen" : stopBeforeSurface ? "stopping a group during initial loading clears the player screen" : "joining a paused watch group loads its current show at the group's position", async () => {
+  const { WatchGroupController } = await import("../../apps/desktop/src/main/player/WatchGroupController");
+  const { ServerClient } = await import("../../apps/desktop/src/main/api/ServerClient");
+  await withPlayback(async ({ controller }) => {
+    if (!stopBeforeSurface) await controller.setSurface({ x: 0, y: 0, width: 800, height: 600 });
+    const itemId = crypto.randomUUID();
+    const groupId = crypto.randomUUID();
+    const playbackId = crypto.randomUUID();
+    const group = {
+      id: groupId, name: "Movie night", members: [], passwordProtected: false, revision: 1,
+      playback: { id: playbackId, itemId, title: "Current show", durationSeconds: 60, positionSeconds: 35, paused: true, updatedAtMs: Date.now(), revision: 1 },
+    };
+    const client = new ServerClient({
+      origin: "http://localhost:3000",
+      fetchImpl: (async (input: string | URL | Request, init?: RequestInit) => {
+        const url = new URL(String(input));
+        if (url.pathname.endsWith("/commands")) return Response.json({ group: { ...group, revision: 2, playback: null }, serverTimeMs: Date.now() });
+        if (url.pathname.endsWith("/join")) return Response.json({ group, serverTimeMs: Date.now() });
+        if (url.pathname === "/api/v1/watch-groups") return Response.json({ groups: [], serverTimeMs: Date.now() });
+        if (url.pathname === "/api/v1/playback/sessions") return Response.json({
+          sessionId: crypto.randomUUID(), itemId, sourceId: crypto.randomUUID(), title: "Current show", streamUrl: "http://localhost:3000/stream", grantToken: "grant", durationSeconds: 60, streams: [], grantExpiresInSeconds: 3600,
+        });
+        if (url.pathname === `/api/v1/watch-groups/${groupId}` && init?.method !== "DELETE") {
+          await new Promise<void>((resolve) => {
+            if (init?.signal?.aborted) resolve();
+            else init?.signal?.addEventListener("abort", () => resolve(), { once: true });
+          });
+          throw new Error("Aborted");
+        }
+        return Response.json({ ok: true });
+      }) as typeof fetch,
+    });
+    client.setSession({ userId: crypto.randomUUID(), role: "admin", sessionId: crypto.randomUUID(), accessToken: "test-token", accessExpiresAtMs: Date.now() + 60000 });
+    const opened: Array<string | null> = [];
+    const announced = Promise.withResolvers<void>();
+    const groups = new WatchGroupController(controller, () => undefined, (item) => { opened.push(item); announced.resolve(); });
+    try {
+      const joining = groups.enter({ client, connectionId: "connection" }, { groupId });
+      if (stopBeforeSurface) {
+        await announced.promise;
+        const stopping = transition === "leave" ? groups.leave() : groups.control("stop");
+        await controller.setSurface({ x: 0, y: 0, width: 800, height: 600 });
+        await stopping;
+        await joining;
+        expect(opened).toEqual([itemId, null]);
+      } else {
+        await joining;
+        expect(controller.getState()).toMatchObject({ itemId, paused: true, positionSeconds: 35 });
+        expect(opened).toEqual([itemId]);
+      }
+    } finally { await groups.leave(); }
+  });
+});
+
+}

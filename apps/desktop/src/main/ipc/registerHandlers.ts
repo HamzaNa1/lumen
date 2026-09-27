@@ -1,3 +1,5 @@
+import { CreateWatchGroup, JoinWatchGroup } from "@lumen/contracts";
+import { WatchGroupController } from "../player/WatchGroupController";
 import {
   EpisodeOrderSelection,
   IpcAudioOutput,
@@ -67,6 +69,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const discoveredServers = new Map<string, IpcServerDiscovery>();
   const restoring = new Map<string, Promise<ServerClient>>();
   let playerDisplay: IpcPlayerDisplay | null = null;
+  const watchGroups = new WatchGroupController(dependencies.player, (status) => {
+    for (const window of [dependencies.window, dependencies.overlay.window])
+      if (!window.isDestroyed()) window.webContents.send("watch-groups:state", status);
+  }, (itemId, title) => {
+    if (!dependencies.window.isDestroyed()) dependencies.window.webContents.send("watch-groups:playback", { itemId, title });
+  });
+  dependencies.window.once("closed", () => { void watchGroups.leave().catch(() => undefined); });
   const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) return validateClient(cached).then(() => cached);
@@ -140,6 +149,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const user = await client.me();
     const current = client.currentSession ?? session;
     connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
+    await watchGroups.leave();
+    await dependencies.player.stop();
     try {
       await dependencies.registry.save({
         connectionId,
@@ -165,11 +176,16 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const account = dependencies.registry.find(connectionId);
     if (account === null) throw new Error("Connection not found");
     await restoreClient(account);
+    if (dependencies.registry.active()?.connectionId !== connectionId) {
+      await watchGroups.leave();
+      await dependencies.player.stop();
+    }
     await dependencies.registry.activate(connectionId);
     return dependencies.registry.list();
   });
   handle("accounts:remove", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
+    if (dependencies.registry.active()?.connectionId === connectionId) await watchGroups.leave();
     await dependencies.player.stop();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
@@ -307,11 +323,26 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     activeClient(dependencies).scanStatus(decode(Schema.String, raw)),
   );
   handle("admin:jobLog", async () => activeClient(dependencies).jobLog());
+  handle("watch-groups:list", async () => (await activeClient(dependencies).watchGroups()).groups);
+  handle("watch-groups:state", async () => watchGroups.getState());
+  handle("watch-groups:create", async (_event, raw) => watchGroups.enter(
+    { client: activeClient(dependencies), connectionId: activeConnectionId(dependencies) },
+    { create: decode(CreateWatchGroup, raw) },
+  ));
+  handle("watch-groups:join", async (_event, raw) => {
+    const input = decode(Schema.Struct({ groupId: Schema.String, ...JoinWatchGroup.fields }), raw);
+    return watchGroups.enter({ client: activeClient(dependencies), connectionId: activeConnectionId(dependencies) }, input);
+  });
+  handle("watch-groups:leave", async () => watchGroups.leave());
   handle("player:start", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ itemId: Schema.String, startAtSeconds: Schema.optional(Schema.Number) }),
       raw,
     );
+    if (watchGroups.getState().group !== null) {
+      await watchGroups.command({ type: "start", itemId: input.itemId, positionSeconds: input.startAtSeconds ?? 0 });
+      return;
+    }
     const result = await dependencies.player.start({
       client: activeClient(dependencies),
       connectionId: activeConnectionId(dependencies),
@@ -323,6 +354,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:pause", async (_event, raw) => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, paused: Schema.Boolean }), raw);
+    if (watchGroups.getState().group !== null) {
+      await watchGroups.control(input.paused ? "pause" : "resume");
+      return dependencies.player.getState();
+    }
     return dependencies.player.pause(input.sessionId, input.paused);
   });
   handle("player:seek", async (_event, raw) => {
@@ -330,6 +365,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       Schema.Struct({ sessionId: Schema.String, positionSeconds: Schema.Number }),
       raw,
     );
+    if (watchGroups.getState().group !== null) {
+      await watchGroups.control("seek", input.positionSeconds);
+      return dependencies.player.getState();
+    }
     return dependencies.player.seek(input.sessionId, input.positionSeconds);
   });
   handle("player:volume", async (_event, raw) => {
@@ -380,6 +419,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
+    if (watchGroups.getState().group !== null) await watchGroups.control("stop");
     await dependencies.player.stop();
     return { ok: true };
   });
@@ -387,6 +427,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
 
 export const unregisterIpcHandlers = (): void => {
   for (const name of [
+    "watch-groups:list",
+    "watch-groups:state",
+    "watch-groups:create",
+    "watch-groups:join",
+    "watch-groups:leave",
     "accounts:list",
     "accounts:setup",
     "accounts:discover-server",

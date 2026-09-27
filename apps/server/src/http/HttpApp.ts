@@ -1,3 +1,5 @@
+import { IpcItemDetails, CreateWatchGroup, JoinWatchGroup, WatchGroupCommand } from "@lumen/contracts";
+import { WatchGroupService } from "../services/WatchGroupService";
 import { API_VERSION, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
 import { version as serverVersion } from "../../package.json";
 import { Effect, Schema } from "effect";
@@ -205,11 +207,23 @@ export const makeHttpHandler = (
   config: ServerConfig,
   logger: Logger = createLogger({ level: config.logLevel, format: config.logFormat }),
 ) => {
+  const watchGroups = new WatchGroupService(async (principal, itemId) => {
+    const details = decode(IpcItemDetails, await call(services.catalog.itemDetails(principal, itemId, false, Date.now())));
+    await call(services.access.requireLibrary(principal, details.item.libraryId, "playback:control", Date.now()));
+    if (!["movie", "episode"].includes(details.item.kind)) throw badRequest("Choose a movie or episode");
+    return { title: details.item.title, durationSeconds: details.item.durationSeconds };
+  });
   const limiter = new RequestLimiter({
     maxRequests: config.maxRequestsPerMinute,
     loginRequests: config.loginAttemptsPerMinute,
     maxActive: config.maxConcurrentRequests,
   });
+  const watchGroupLimiter = new RequestLimiter({ maxRequests: 20, loginRequests: config.loginAttemptsPerMinute, maxActive: 2 });
+  const watchGroupAction = async <T>(principal: AuthPrincipal, action: () => Promise<T>): Promise<T> => {
+    watchGroupLimiter.sweep(Date.now());
+    await call(watchGroupLimiter.check(principal.user.id, Date.now(), "login"));
+    return call(watchGroupLimiter.run(principal.user.id, Effect.tryPromise({ try: action, catch: (cause) => cause })));
+  };
   const authenticate = async (request: Request): Promise<AuthPrincipal> => {
     const token = bearer(request);
     if (token === null) throw unauthorized();
@@ -230,7 +244,7 @@ export const makeHttpHandler = (
           apiVersion: API_VERSION,
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
-          capabilities: { directPlayOnly: true },
+          capabilities: { directPlayOnly: true, watchGroups: true },
         },
         200,
         { "cache-control": "no-store" },
@@ -296,6 +310,27 @@ export const makeHttpHandler = (
       });
     }
     const principal = await authenticate(request);
+    if (parts[2] === "watch-groups") {
+      if (parts.length === 3 && method === "GET")
+        return unknownJson({ groups: watchGroups.list(), serverTimeMs: Date.now() });
+      if (parts.length === 3 && method === "POST") {
+        const input = decode(CreateWatchGroup, await body(request, config.maxRequestBodyBytes));
+        return unknownJson(await watchGroupAction(principal, () => watchGroups.create(principal, input)), 201);
+      }
+      const groupId = parts[3];
+      if (groupId !== undefined && parts.length === 4 && method === "GET")
+        return unknownJson(await watchGroups.read(principal, groupId, queryNumber(url, "after", -1), request.signal));
+      if (groupId !== undefined && parts.length === 4 && method === "DELETE") {
+        await watchGroups.leave(principal, groupId);
+        return unknownJson({ ok: true });
+      }
+      if (groupId !== undefined && parts.length === 5 && parts[4] === "join" && method === "POST") {
+        const input = decode(JoinWatchGroup, await body(request, config.maxRequestBodyBytes));
+        return unknownJson(await watchGroupAction(principal, () => watchGroups.join(principal, groupId, input.password)));
+      }
+      if (groupId !== undefined && parts.length === 5 && parts[4] === "commands" && method === "POST")
+        return unknownJson(await watchGroups.command(principal, groupId, decode(WatchGroupCommand, await body(request, config.maxRequestBodyBytes))));
+    }
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
     if (
       url.pathname === "/api/v1/admin/metadata-settings" &&
@@ -964,10 +999,10 @@ export const makeHttpHandler = (
     });
     let response: Response;
     let failure: unknown;
-    const key = clientKey(request);
     const login = ["/auth/login", "/auth/register", "/auth/migrate-session"].some((path) =>
       new URL(request.url).pathname.endsWith(path),
     );
+    const key = `${login ? "login" : "request"}:${clientKey(request)}`;
     try {
       const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
       const checked = limiter.check(key, Date.now(), login ? "login" : "request");

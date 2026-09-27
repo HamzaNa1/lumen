@@ -8,7 +8,7 @@ export const PlayerPage = (): React.ReactElement => {
     useWorkspace();
   const navigate = useNavigate();
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const hasPlayback = playingItem !== null || player !== null;
+  const hasPlayback = playingItem !== null || player !== null || playbackLoading || playbackError !== null;
 
   usePlayerShortcuts({
     enabled: player !== null && !playbackLoading && playbackError === null,
@@ -64,7 +64,7 @@ export const PlayerPage = (): React.ReactElement => {
     };
   }, [beginPlayback, hasPlayback, playingItem, reportPlaybackError]);
 
-  if (playingItem === null && player === null) {
+  if (!hasPlayback) {
     return <div className="watch-page" />;
   }
 
