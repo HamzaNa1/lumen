@@ -1,4 +1,5 @@
-import { EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, User } from "@lumen/contracts";
+import { API_VERSION, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
+import { version as serverVersion } from "../../package.json";
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
@@ -222,11 +223,12 @@ export const makeHttpHandler = (
     if (authless) return unknownJson({ status: "ok" });
     if (method === "GET" && url.pathname === "/api/v1/server") {
       return json(
-        Schema.Unknown,
+        ServerInfo,
         {
           serverId: services.identity.installationId,
           displayName: "Lumen",
-          apiVersion: "1.0.0",
+          apiVersion: API_VERSION,
+          serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
           capabilities: { directPlayOnly: true },
         },
@@ -245,7 +247,7 @@ export const makeHttpHandler = (
         installationId: services.identity.installationId,
         startedAtMs: services.startedAtMs,
         uptimeMs: Date.now() - services.startedAtMs,
-        version: "0.1.0",
+        version: serverVersion,
       });
     }
     if (method === "GET" && url.pathname === "/metrics")

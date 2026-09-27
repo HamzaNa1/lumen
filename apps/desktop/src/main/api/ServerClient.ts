@@ -3,13 +3,10 @@ import { HomeContent, IpcAudioOutput, IpcBufferedRange, IpcItemDetails, IpcPlaya
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
+import { ServerInfo } from "@lumen/contracts";
+import { assertCompatibleApi } from "./ApiCompatibility";
 
-export interface ServerIdentity {
-  readonly serverId: string;
-  readonly displayName: string;
-  readonly apiVersion: string;
-  readonly setupRequired?: boolean;
-}
+export type ServerIdentity = ServerInfo;
 
 export interface AccountSession {
   readonly userId: string;
@@ -28,13 +25,6 @@ export interface ServerClientOptions {
 export class ServerHttpError extends Error {
   constructor(message: string, readonly status: number) { super(message); }
 }
-
-const identitySchema = Schema.Struct({
-  serverId: Schema.String,
-  displayName: Schema.String,
-  apiVersion: Schema.String,
-  setupRequired: Schema.optional(Schema.Boolean),
-});
 
 const sessionSchema = Schema.Struct({
   userId: Schema.String,
@@ -154,7 +144,7 @@ export class ServerClient {
 
   async identity(): Promise<ServerIdentity> {
     const response = await this.fetchImpl(new URL("/api/v1/server", this.origin), { redirect: "manual", cache: "no-store" });
-    return decode(identitySchema, await readJson(response));
+    return parseIdentity(await readJson(response));
   }
 
   async setupRequired(fallback = false): Promise<boolean> {
@@ -442,7 +432,11 @@ const readJson = async (response: Response): Promise<unknown> => {
   return response.json() as Promise<unknown>;
 };
 
-export const parseIdentity = (value: unknown): ServerIdentity => decode(identitySchema, value);
+export const parseIdentity = (value: unknown): ServerIdentity => {
+  const identity = decode(ServerInfo, value);
+  assertCompatibleApi(identity.apiVersion);
+  return identity;
+};
 export const parseLibraries = (value: unknown): ReadonlyArray<IpcLibrary> => decode(librarySchema, value);
 export const parsePlayerSession = (value: unknown): IpcPlayerSession => decode(playerSessionSchema, value);
 export const parsePlayerState = (value: unknown): IpcPlayerState => decode(playerStateSchema, value);

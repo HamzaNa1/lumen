@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { deviceIdForAccount, getOrCreateInstallationId } from "../../apps/desktop/src/main/accounts/InstallationId";
 import { ids } from "../../packages/testkit/src/ids";
+import { IncompatibleServerError } from "../../apps/desktop/src/main/api/ApiCompatibility";
 
 describe("desktop installation identity", () => {
   test("persists one installation ID across loads", async () => {
@@ -31,6 +32,32 @@ describe("desktop installation identity", () => {
 });
 
 describe("ServerClient discovery", () => {
+  test.each(["2.0.0", "0.9.0", "1.0.0-rc.1", "1.01.0", "unknown", ""])("rejects unsupported API %s before further requests", async (apiVersion) => {
+    const requests: string[] = [];
+    const client = new ServerClient({
+      origin: "https://media.example",
+      fetchImpl: async (input) => {
+        requests.push(new URL(String(input)).pathname);
+        return Response.json({ serverId: "server", displayName: "Lumen", apiVersion });
+      },
+    });
+    await expect(client.discover()).rejects.toBeInstanceOf(IncompatibleServerError);
+    expect(requests).toEqual(["/api/v1/server"]);
+  });
+
+  test("accepts compatible API additions independently of the application version", async () => {
+    const client = new ServerClient({
+      origin: "https://media.example",
+      fetchImpl: async () => Response.json({
+        serverId: "server", displayName: "Lumen", apiVersion: "1.12.4", serverVersion: "9.0.0",
+        capabilities: { directPlayOnly: true, futureFeature: false },
+      }),
+    });
+    const identity = await client.identity();
+    expect(identity.serverVersion).toBe("9.0.0");
+    expect(identity.capabilities).toEqual({ directPlayOnly: true, futureFeature: false });
+  });
+
   test("exchanges a legacy credential for a saved session token", async () => {
     const requests: string[] = [];
     const client = new ServerClient({

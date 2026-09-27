@@ -1,0 +1,115 @@
+name: release-server
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Server version (for example, 0.0.8 or 0.0.9-rc.1)'
+        required: true
+        type: string
+concurrency:
+  group: release-server
+  cancel-in-progress: false
+permissions:
+  contents: read
+jobs:
+  preflight:
+    uses: ./.github/workflows/release-preflight.yml
+    with:
+      product: server
+      version: ${{ inputs.version }}
+  server-image:
+    needs: preflight
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      name: ${{ steps.image.outputs.name }}
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set image name
+        id: image
+        shell: bash
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}-server" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - name: Build and publish versioned server image
+        id: build
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: apps/server/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:${{ needs.preflight.outputs.version }}
+            ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.version=${{ needs.preflight.outputs.version }}
+  publish:
+    needs: [preflight, server-image]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Publish server release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          RELEASE_TAG: ${{ needs.preflight.outputs.tag }}
+          PREVIOUS_TAG: ${{ needs.preflight.outputs.previous-tag }}
+          SERVER_IMAGE: ${{ needs.server-image.outputs.name }}
+          SERVER_DIGEST: ${{ needs.server-image.outputs.digest }}
+        run: |
+          bun scripts/release.ts preflight server "$RELEASE_VERSION"
+          bun scripts/release.ts notes server "$RELEASE_VERSION" "$PREVIOUS_TAG" > release-notes.md
+          flags=(--latest=false)
+          if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi
+          gh release create "$RELEASE_TAG" \
+            --target "$GITHUB_SHA" \
+            --title "Lumen Server v$RELEASE_VERSION" \
+            --notes-file release-notes.md \
+            "${flags[@]}"
+  promote:
+    if: needs.preflight.outputs.prerelease == 'false'
+    needs: [preflight, server-image, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/setup-buildx-action@v4
+      - name: Promote stable image without moving latest backward
+        env:
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+          SERVER_IMAGE: ${{ needs.server-image.outputs.name }}
+          SERVER_DIGEST: ${{ needs.server-image.outputs.digest }}
+        run: |
+          bun scripts/release.ts promotion-check server "$RELEASE_VERSION"
+          docker buildx imagetools create --tag "$SERVER_IMAGE:latest" "$SERVER_IMAGE@$SERVER_DIGEST"

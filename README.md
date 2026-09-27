@@ -19,15 +19,27 @@ The server requires no transcoder. Configure a read-only media root and a local 
 
 ## Releases
 
-All workspaces currently use `0.0.1` for the first release. Check it, then commit and push these changes to the default branch:
+Server and desktop releases are independent within the monorepo. Each app's `package.json` owns its release version; private shared packages are built from the release commit and do not share either app's release numbering. Existing `v0.0.x` tags remain the historical combined releases.
+
+Prepare only the app being released, then push its version commit to the default branch:
 
 ```sh
-bun run version:check 0.0.1
+bun run version:set server 0.0.8
+bun run version:check server 0.0.8
+# Or release the desktop independently:
+bun run version:set desktop 0.0.8
+bun run version:check desktop 0.0.8
 ```
 
-In GitHub Actions, run the `release` workflow from the default branch and enter `0.0.1` as the version. The workflow requires that version to match every workspace and rejects an existing `v0.0.1` tag. After the desktop installers and server image succeed, it creates a GitHub Release and tag named `v0.0.1`, attaches the installers, and publishes a multi-platform server image for AMD64 and ARM64 as `ghcr.io/<owner>/<repository>-server:0.0.1` and `:sha-<commit-sha>`. Stable releases also update `:latest`; prereleases do not. GitHub Container Registry controls whether the image is public or private.
+`version:set` commits only that app's manifest and `bun.lock`. Package manifests, the lockfile, and `bunfig.toml` must be clean first so unrelated dependency changes cannot enter the release commit. Server and desktop versions can diverge; neither command bumps the other app or shared packages.
 
-For later releases, run `bun run version:set 0.0.2`. The command updates the manifests and `bun.lock`, then creates a `chore: release 0.0.2` commit containing only those files. Push the commit to the default branch and enter `0.0.2` in the workflow. A version such as `0.0.2-rc.1` creates a prerelease.
+Run `release-server` or `release-desktop` in GitHub Actions from the default branch with the prepared version. Release eligibility is product-specific: `bun run check:server` or `bun run check:desktop` validates the selected app, its shared dependencies, and release tooling. Each release also tests against the latest stable counterpart (using a historical combined tag until that product has a separate release). This allows a healthy product to ship while the other app's development version is broken, while shared contract or released-counterpart compatibility failures still block affected releases. Full-repository `bun run check` remains the development and CI gate. Tags and release titles identify the product: `server-v0.0.8` / `Lumen Server v0.0.8`, or `desktop-v0.0.8` / `Lumen Desktop v0.0.8`.
+
+Server releases publish AMD64 and ARM64 images as `ghcr.io/<owner>/<repository>-server:<version>` and `:sha-<commit-sha>`, with the exact digest in their release notes. Stable images update `:latest` after the GitHub Release succeeds. Desktop releases attach the installers and own GitHub's repository-wide Latest designation. A version such as `0.0.9-rc.1` creates a prerelease and never updates either stable Latest designation. GHCR controls image visibility.
+
+Publication is serialized per app, and versions must advance within that app's release history so older runs cannot move Latest backward. Release notes include that app and its shared dependencies since its previous release. Failed server image promotion can be retried by rerunning the failed `promote` job; a newer stable release blocks promotion of an older image.
+
+Application versions do not determine client/server compatibility. The handshake advertises an independent API version and optional capabilities; the desktop accepts stable API `1.x` and rejects incompatible versions before sign-in. Additive features should use capabilities, while breaking protocol changes require a new API major version. The release compatibility test covers discovery, authentication, session restoration, and library browsing against the latest stable counterpart. Run it locally after fetching tags with `bun scripts/check-release-compatibility.ts server` or `desktop`.
 
 For example, after substituting your image name and media path:
 

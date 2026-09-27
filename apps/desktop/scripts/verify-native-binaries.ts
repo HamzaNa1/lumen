@@ -43,7 +43,7 @@ const digest = (path: string): string =>
   createHash("sha256").update(readFileSync(path)).digest("hex");
 const currentFiles = (): Record<string, string> =>
   Object.fromEntries(
-    nativeFiles(root)
+    [...nativeFiles(root)]
       .sort((left, right) => relativePath(left).localeCompare(relativePath(right)))
       .map((path) => [relativePath(path), digest(path)]),
   );

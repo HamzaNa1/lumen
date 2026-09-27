@@ -1,86 +1,77 @@
-import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import {
+  isReleaseVersion,
+  repositoryRoot,
+  run,
+} from "./lib/releases";
+import { parseProduct, products, type Product } from "./lib/products";
 
-const root = fileURLToPath(new URL("../", import.meta.url));
-const [command, version] = process.argv.slice(2);
-
-const validVersion = (value: string | undefined): value is string => {
-  if (value === undefined) return false;
-  const match =
-    /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$/.exec(
-      value,
-    );
-  if (match === null) return false;
-  return match[4]?.split(".").every((part) => !/^0\d+$/.test(part)) ?? true;
-};
-
-const readManifest = (path: string): { version?: string; workspaces?: string[] } =>
-  JSON.parse(readFileSync(join(root, path), "utf8")) as { version?: string; workspaces?: string[] };
-
-const run = (executable: string, args: string[]): void => {
-  const result = spawnSync(executable, args, { cwd: root, stdio: "inherit" });
-  if (result.error !== undefined) throw result.error;
-  if (result.status !== 0) process.exit(result.status ?? 1);
-};
-
-const workspaceManifests = (): string[] => {
-  const patterns = readManifest("package.json").workspaces ?? [];
-  const files = ["package.json"];
-  for (const pattern of patterns) {
-    if (!pattern.endsWith("/*")) throw new Error(`Unsupported workspace pattern: ${pattern}`);
-    const base = pattern.slice(0, -2);
-    for (const entry of readdirSync(join(root, base), { withFileTypes: true })) {
-      if (!entry.isDirectory()) continue;
-      const path = join(base, entry.name, "package.json");
-      if (existsSync(join(root, path))) files.push(path);
-    }
-  }
-  return files.sort();
-};
-
-if ((command !== "set" && command !== "check") || !validVersion(version)) {
-  throw new Error(
-    "Usage: bun run version:set <major.minor.patch[-prerelease]> or bun run version:check <version>",
-  );
-}
-
-const files = workspaceManifests();
-if (command === "set") {
-  for (const file of files) {
-    const path = join(root, file);
-    const source = readFileSync(path, "utf8");
-    if (readManifest(file).version === undefined) throw new Error(`${file} has no version`);
-    const updated = source.replace(
-      /("version"\s*:\s*")[^"]+/,
-      (_, prefix: string) => `${prefix}${version}`,
-    );
-    if (updated === source && readManifest(file).version !== version)
-      throw new Error(`Could not update ${file}`);
-    writeFileSync(path, updated);
-  }
-  run(process.execPath, ["install", "--lockfile-only"]);
-}
-
-for (const file of files) {
-  const actual = readManifest(file).version;
+export const verifyVersion = (product: Product, version: string, root = repositoryRoot): void => {
+  if (!isReleaseVersion(version)) throw new Error(`Invalid release version: ${version}`);
+  const file = products[product].manifest;
+  const actual = JSON.parse(readFileSync(join(root, file), "utf8")).version;
   if (actual !== version)
     throw new Error(`${file} is ${actual ?? "unversioned"}; expected ${version}`);
-}
+  const lockfile = Bun.JSONC.parse(readFileSync(join(root, "bun.lock"), "utf8")) as {
+    workspaces?: Record<string, { version?: string }>;
+  };
+  const locked = lockfile.workspaces?.[`apps/${product}`]?.version;
+  if (locked !== version)
+    throw new Error(`bun.lock has ${product} ${locked ?? "unversioned"}; expected ${version}`);
+  run(process.execPath, ["install", "--frozen-lockfile", "--dry-run"], root);
+};
 
-const install = spawnSync(process.execPath, ["install", "--frozen-lockfile", "--dry-run"], {
-  cwd: root,
-  encoding: "utf8",
-});
-if (install.status !== 0) {
-  process.stderr.write(install.stderr || install.stdout || "Lockfile check failed\n");
-  process.exit(install.status ?? 1);
-}
-console.log(`Verified ${version} in ${files.length} package manifests and bun.lock`);
+export const setVersion = (product: Product, version: string, root = repositoryRoot): void => {
+  if (!isReleaseVersion(version)) throw new Error(`Invalid release version: ${version}`);
+  const file = products[product].manifest;
+  const versionFiles = [file, "bun.lock"];
+  const dirty = execFileSync(
+    "git",
+    ["status", "--porcelain", "--", ":(glob)**/package.json", "bun.lock", "bunfig.toml"],
+    {
+      cwd: root,
+      encoding: "utf8",
+    },
+  );
+  if (dirty.trim() !== "")
+    throw new Error(
+      "Commit or stash package manifests, bun.lock, and bunfig.toml before setting a release version.",
+    );
+  const path = join(root, file);
+  const source = readFileSync(path, "utf8");
+  const current = JSON.parse(source).version;
+  if (!isReleaseVersion(current)) throw new Error(`${file} has no valid version`);
+  if (current === version) throw new Error(`${file} is already ${version}`);
+  verifyVersion(product, current, root);
+  writeFileSync(
+    path,
+    source.replace(/("version"\s*:\s*")[^"]+/, (_, prefix: string) => `${prefix}${version}`),
+  );
+  run(process.execPath, ["install", "--lockfile-only"], root);
+  verifyVersion(product, version, root);
+  run("git", ["add", "--", ...versionFiles], root);
+  run(
+    "git",
+    ["commit", "--only", "-m", `chore: release ${product} ${version}`, "--", ...versionFiles],
+    root,
+  );
+};
 
-if (command === "set") {
-  const versionFiles = [...files, "bun.lock"];
-  run("git", ["add", "--", ...versionFiles]);
-  run("git", ["commit", "--only", "-m", `chore: release ${version}`, "--", ...versionFiles]);
+if (import.meta.main) {
+  const [command, target, version, ...extra] = process.argv.slice(2);
+  if (
+    (command !== "set" && command !== "check") ||
+    !isReleaseVersion(version) ||
+    extra.length !== 0
+  ) {
+    throw new Error(
+      "Usage: bun run version:set <server|desktop> <version> or bun run version:check <server|desktop> <version>",
+    );
+  }
+  const product = parseProduct(target);
+  if (command === "set") setVersion(product, version);
+  else verifyVersion(product, version);
+  console.log(`Verified ${product} ${version} and bun.lock`);
 }

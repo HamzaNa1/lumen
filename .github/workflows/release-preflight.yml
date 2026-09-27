@@ -1,0 +1,53 @@
+name: release-preflight
+on:
+  workflow_call:
+    inputs:
+      product:
+        required: true
+        type: string
+      version:
+        required: true
+        type: string
+    outputs:
+      version:
+        value: ${{ jobs.check.outputs.version }}
+      tag:
+        value: ${{ jobs.check.outputs.tag }}
+      prerelease:
+        value: ${{ jobs.check.outputs.prerelease }}
+      previous-tag:
+        value: ${{ jobs.check.outputs.previous-tag }}
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
+      previous-tag: ${{ steps.release.outputs.previous-tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Validate release
+        id: release
+        env:
+          RELEASE_PRODUCT: ${{ inputs.product }}
+          RELEASE_VERSION: ${{ inputs.version }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: bun scripts/release.ts preflight "$RELEASE_PRODUCT" "$RELEASE_VERSION"
+      - name: Install and check the selected product
+        env:
+          RELEASE_PRODUCT: ${{ inputs.product }}
+        run: |
+          bun scripts/install-product.ts "$RELEASE_PRODUCT"
+          bun scripts/check.ts "$RELEASE_PRODUCT"
+      - name: Check compatibility with the released counterpart
+        env:
+          RELEASE_PRODUCT: ${{ inputs.product }}
+        run: bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
