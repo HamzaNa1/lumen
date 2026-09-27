@@ -1,12 +1,28 @@
 import { useNavigate } from "@tanstack/react-router";
+import { usePlayerShortcuts } from "@lumen/ui";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { bridge, useWorkspace } from "./Workspace";
 
 export const PlayerPage = (): React.ReactElement => {
-  const { playingItem, player, beginPlayback, reportPlaybackError } = useWorkspace();
+  const { playingItem, player, playbackLoading, playbackError, beginPlayback, reportPlaybackError } =
+    useWorkspace();
   const navigate = useNavigate();
   const surfaceRef = useRef<HTMLDivElement>(null);
   const hasPlayback = playingItem !== null || player !== null;
+
+  usePlayerShortcuts({
+    enabled: player !== null && !playbackLoading && playbackError === null,
+    position: player?.positionSeconds ?? 0,
+    duration: player?.durationSeconds ?? null,
+    onPause: () => {
+      if (player !== null)
+        void bridge.player.pause(player.sessionId, !player.paused).catch(() => undefined);
+    },
+    onSeek: (positionSeconds) => {
+      if (player !== null)
+        void bridge.player.seek(player.sessionId, positionSeconds).catch(() => undefined);
+    },
+  });
 
   useEffect(() => {
     if (!hasPlayback) void navigate({ to: "/", replace: true });
