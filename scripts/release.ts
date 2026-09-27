@@ -1,13 +1,9 @@
 import { appendFileSync } from "node:fs";
-import {
-  assertCanPromote,
-  git,
-  planRelease,
-  releasePaths,
-  remoteTags,
-} from "./lib/releases";
+import { execFileSync } from "node:child_process";
+import { assertCanPromote, git, planRelease, remoteTags } from "./lib/releases";
 import { verifyVersion } from "./version";
-import { parseProduct, products } from "./lib/products";
+import { parseProduct } from "./lib/products";
+import { generateReleaseNotes } from "./lib/release-notes";
 
 const [command, target, version, previousTag = ""] = process.argv.slice(2);
 const product = parseProduct(target);
@@ -29,19 +25,12 @@ if (command === "preflight") {
   assertCanPromote(product, version, remoteTags());
 } else if (command === "notes") {
   const revision = process.env.GITHUB_SHA ?? git("rev-parse", "HEAD");
-  const range = previousTag === "" ? revision : `${previousTag}..${revision}`;
-  const changes = git(
-    "log",
-    "--no-merges",
-    "--format=- %s (%h)",
-    range,
-    "--",
-    ...releasePaths(product),
-  );
-  console.log(
-    `${products[product].name} ${version}\n\n${changes || "No component changes since the previous release."}`,
-  );
-  if (previousTag !== "") console.log(`\nChanges since \`${previousTag}\`.`);
+  const repository =
+    process.env.GH_REPO ??
+    execFileSync("gh", ["repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"], {
+      encoding: "utf8",
+    }).trim();
+  console.log(generateReleaseNotes({ product, version, repository, previousTag, revision }));
   if (product === "server") {
     const image = process.env.SERVER_IMAGE;
     const digest = process.env.SERVER_DIGEST;

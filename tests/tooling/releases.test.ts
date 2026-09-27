@@ -4,6 +4,7 @@ import {
   isReleaseVersion,
   latestStableTag,
   planRelease,
+  releaseTag,
   releasePaths,
 } from "../../scripts/lib/releases";
 import { parseProduct } from "../../scripts/lib/products";
@@ -30,11 +31,11 @@ describe("independent release policy", () => {
   test("uses the legacy combined tag as the initial baseline", () => {
     expect(planRelease("server", "0.0.8", ["v0.0.7", "v0.0.6"])).toEqual({
       version: "0.0.8",
-      tag: "server-v0.0.8",
+      tag: "v0.0.8+server",
       prerelease: false,
       previousTag: "v0.0.7",
     });
-    expect(() => planRelease("desktop", "0.0.7", ["v0.0.7"])).toThrow("must be newer");
+    expect(() => planRelease("desktop", "0.0.7", ["v0.0.7"])).toThrow("already exists");
   });
 
   test("ignores releases of the other product and compares versions numerically", () => {
@@ -42,7 +43,7 @@ describe("independent release policy", () => {
     expect(planRelease("server", "0.0.11", tags).previousTag).toBe("server-v0.0.10");
     expect(() => planRelease("server", "0.0.9", tags)).toThrow("already exists");
     expect(() => planRelease("server", "0.0.8", tags)).toThrow("must be newer");
-    expect(planRelease("desktop", "0.0.8", ["server-v0.0.8", "v0.0.7"]).tag).toBe("desktop-v0.0.8");
+    expect(planRelease("desktop", "0.0.8", ["server-v0.0.8", "v0.0.7"]).tag).toBe("v0.0.8+desktop");
   });
 
   test("allows a stable release while a future prerelease exists", () => {
@@ -66,6 +67,46 @@ describe("independent release policy", () => {
     expect(releasePaths("desktop")).toContain("packages/contracts");
     expect(releasePaths("desktop")).toContain("packages/ui");
     expect(releasePaths("desktop")).not.toContain("packages/database");
+  });
+
+  test("uses version-first tags without treating the product as a prerelease", () => {
+    expect(releaseTag("server", "0.0.10")).toBe("v0.0.10+server");
+    expect(releaseTag("desktop", "0.0.10-rc.2")).toBe("v0.0.10-rc.2+desktop");
+    expect(planRelease("server", "0.0.10", ["server-v0.0.9"]).prerelease).toBe(false);
+    expect(planRelease("desktop", "0.0.10-rc.2", []).prerelease).toBe(true);
+  });
+
+  test("continues each product's history across all tag formats", () => {
+    const tags = [
+      "v0.0.8",
+      "server-v0.0.9",
+      "desktop-v0.0.9",
+      "v0.0.10+server",
+      "v2.0.0+desktop",
+      "v0.0.11-rc.1+server",
+    ];
+    expect(latestStableTag("server", tags)).toBe("v0.0.10+server");
+    expect(latestStableTag("desktop", tags)).toBe("v2.0.0+desktop");
+    expect(planRelease("server", "0.0.11", tags).previousTag).toBe("v0.0.10+server");
+    expect(planRelease("desktop", "2.0.1", tags).previousTag).toBe("v2.0.0+desktop");
+    expect(() => planRelease("server", "0.0.9", tags)).toThrow("already exists");
+    expect(() => planRelease("server", "0.0.10", tags)).toThrow("already exists");
+    expect(() => planRelease("server", "0.0.7", tags)).toThrow("must be newer");
+    expect(
+      latestStableTag("server", ["v5.0.0+desktop", "v3.0.0+server.extra", "server-vinvalid"]),
+    ).toBeUndefined();
+  });
+
+  test("promotes only the newest stable product release with either product tag format", () => {
+    expect(() =>
+      assertCanPromote("server", "0.0.10", ["server-v0.0.9", "v0.0.10+server", "v9.0.0+desktop"]),
+    ).not.toThrow();
+    expect(() => assertCanPromote("server", "0.0.9", ["server-v0.0.9", "v0.0.10+server"])).toThrow(
+      "must be newer",
+    );
+    expect(() => assertCanPromote("server", "0.0.11-rc.1", ["v0.0.11-rc.1+server"])).toThrow(
+      "Prereleases cannot",
+    );
   });
 
   test("retries promotion only while the published version is still the newest stable release", () => {

@@ -27,12 +27,24 @@ export const remoteTags = (): string[] =>
     .map((line) => line.split("\trefs/tags/")[1])
     .filter((tag): tag is string => tag !== undefined);
 
+export const releaseTag = (product: Product, version: string): string => {
+  if (!isReleaseVersion(version)) throw new Error(`Invalid release version: ${version}`);
+  return `v${version}+${product}`;
+};
+
 export const productTags = (product: Product, tags: readonly string[]) =>
   tags
     .flatMap((tag) => {
-      const prefix = tag.startsWith(`${product}-v`) ? `${product}-v` : "v";
-      if (!tag.startsWith(prefix)) return [];
-      const version = tag.slice(prefix.length);
+      let version: string;
+      if (tag.startsWith("v") && tag.endsWith(`+${product}`)) {
+        version = tag.slice(1, -`+${product}`.length);
+      } else if (tag.startsWith(`${product}-v`)) {
+        version = tag.slice(`${product}-v`.length);
+      } else if (tag.startsWith("v")) {
+        version = tag.slice(1);
+      } else {
+        return [];
+      }
       return isReleaseVersion(version) ? [{ tag, version }] : [];
     })
     .sort((a, b) => semver.order(b.version, a.version));
@@ -41,13 +53,12 @@ export const latestStableTag = (product: Product, tags: readonly string[]): stri
   productTags(product, tags).find(({ version }) => !version.includes("-"))?.tag;
 
 export const planRelease = (product: Product, version: string, tags: readonly string[]) => {
-  if (!isReleaseVersion(version)) throw new Error(`Invalid release version: ${version}`);
-  const tag = `${product}-v${version}`;
-  if (tags.includes(tag)) throw new Error(`${tag} already exists.`);
+  const tag = releaseTag(product, version);
+  const history = productTags(product, tags);
+  const existing = history.find((entry) => entry.version === version);
+  if (existing !== undefined) throw new Error(`${existing.tag} already exists.`);
   const prerelease = version.includes("-");
-  const previous = productTags(product, tags).find(
-    (entry) => prerelease || !entry.version.includes("-"),
-  );
+  const previous = history.find((entry) => prerelease || !entry.version.includes("-"));
   if (previous !== undefined && semver.order(version, previous.version) <= 0) {
     throw new Error(`${tag} must be newer than ${previous.tag}.`);
   }
@@ -60,8 +71,9 @@ export const assertCanPromote = (
   tags: readonly string[],
 ): void => {
   if (version.includes("-")) throw new Error("Prereleases cannot update latest.");
-  const tag = `${product}-v${version}`;
-  if (!tags.includes(tag)) throw new Error(`${tag} has not been published.`);
+  const canonicalTag = releaseTag(product, version);
+  const tag = tags.find((entry) => entry === canonicalTag || entry === `${product}-v${version}`);
+  if (tag === undefined) throw new Error(`${canonicalTag} has not been published.`);
   planRelease(
     product,
     version,
