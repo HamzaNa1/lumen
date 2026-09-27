@@ -420,15 +420,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
-    const playback = watch.status.group?.playback;
-    try {
-      if (playback != null) await watch.action({ type: "stop", itemId: playback.itemId });
-    } catch {
-      // Leave the unavailable group so reconnect cannot undo the local stop.
-      watch.disconnect();
-    } finally {
-      await dependencies.player.stop();
-    }
+    await watch.stop();
     return { ok: true };
   });
 };

@@ -1,3 +1,4 @@
+import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { expect, test } from "bun:test";
 import type { IpcPlayerState } from "@lumen/contracts";
 import { watchCorrection, watchPosition } from "../../packages/contracts/src/watch-groups";
@@ -5,7 +6,7 @@ import {
   WatchPlaybackController,
   type WatchPlayer,
 } from "../../apps/desktop/src/main/watch-groups/WatchPlaybackController";
-import { eventually, watchFixture } from "../helpers/watch-groups";
+import { eventually, watchFixture, watchProxy } from "../helpers/watch-groups";
 
 class NativePlayback implements WatchPlayer {
   state: IpcPlayerState | null = null;
@@ -138,4 +139,42 @@ test("small delays change speed, large delays seek, and paused playback never sp
       2500,
     ),
   ).toBe(10);
+});
+
+test("stopping during a delayed rejoin cancels membership recovery and stays stopped", async () => {
+  const fixture = await watchFixture();
+  const proxy = watchProxy(fixture.running.server.url);
+  const native = new NativePlayback();
+  const playback = new WatchPlaybackController(native, () => undefined);
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Movie night", password: "together" });
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
+    await owner.action({ type: "pause", itemId: fixture.itemId, paused: true, positionSeconds: 2 });
+    const server = new ServerClient({ origin: proxy.origin });
+    server.setSession((await fixture.login()).currentSession);
+    playback.connect(server, "viewer");
+    playback.setSurfaceReady(true);
+    await eventually(() => playback.status.connection === "connected");
+    await playback.action({
+      type: "join",
+      groupId: owner.status.group?.id ?? "",
+      password: "together",
+    });
+    await eventually(() => native.state !== null);
+    proxy.overloadRejoin(300);
+    await eventually(
+      () =>
+        playback.status.group === null &&
+        playback.status.error === "Group is busy. Rejoining shortly…",
+    );
+    await playback.stop();
+    await Bun.sleep(650);
+    expect(native.state).toBeNull();
+    expect(playback.status.group).toBeNull();
+  } finally {
+    playback.close();
+    await proxy.close();
+    await fixture.close();
+  }
 });

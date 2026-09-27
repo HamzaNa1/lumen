@@ -110,6 +110,18 @@ export class WatchPlaybackController {
     }
   }
 
+  async stop(): Promise<void> {
+    const playback = this.status.group?.playback;
+    try {
+      if (playback != null) await this.action({ type: "stop", itemId: playback.itemId });
+      else if (this.grouped) this.disconnect();
+    } catch {
+      this.disconnect();
+    } finally {
+      await this.player.stop();
+    }
+  }
+
   retry(): void {
     this.retryAt = 0;
     this.failures = 0;
