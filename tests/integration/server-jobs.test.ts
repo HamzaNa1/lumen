@@ -1,3 +1,4 @@
+import { createLogger, ServerLogger } from "../../apps/server/src/core/Logger";
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   Database,
@@ -430,6 +431,12 @@ describe("library watcher background job", () => {
     const { root, databasePath } = await makeWatcherWorkspace();
     // Each attempt takes real time, so backoff measured from the claim time would
     // make the retry due before its delay has passed.
+    const records: Array<Record<string, unknown>> = [];
+    const logger = createLogger("debug", {
+      write: (line) => {
+        records.push(JSON.parse(line));
+      },
+    });
     const slowFailingWatcher = Layer.succeed(LibraryWatcher, {
       check: () =>
         Effect.sleep(20).pipe(Effect.andThen(Effect.fail(new Error("Media share is offline")))),
@@ -453,7 +460,13 @@ describe("library watcher background job", () => {
         }
         yield* scheduledJobs.runDue(61_000);
         return { attempts, afterNextTick: yield* listWatcherJobs };
-      }).pipe(Effect.provide(makeWatcherLayer(databasePath, slowFailingWatcher))),
+      }).pipe(
+        Effect.provide(
+          makeWatcherLayer(databasePath, slowFailingWatcher).pipe(
+            Layer.provide(Layer.succeed(ServerLogger, logger)),
+          ),
+        ),
+      ),
     );
 
     for (const { dueAtMs, early, ran, job } of result.attempts) {
@@ -476,6 +489,29 @@ describe("library watcher background job", () => {
       ["failed", 3, 0, 0],
     ]);
     expect(result.afterNextTick.map((job) => job.state)).toEqual(["failed", "pending"]);
+    const outcomes = records.filter(
+      ({ event }) => event === "job_retry_scheduled" || event === "job_failed",
+    );
+    expect(
+      outcomes.map(({ level, event, attempt, retryDelayMs }) => [
+        level,
+        event,
+        attempt,
+        retryDelayMs,
+      ]),
+    ).toEqual([
+      ["warn", "job_retry_scheduled", 1, 2_000],
+      ["warn", "job_retry_scheduled", 2, 4_000],
+      ["error", "job_failed", 3, undefined],
+    ]);
+    expect(new Set(outcomes.map(({ jobId }) => jobId)).size).toBe(1);
+    for (const record of outcomes) {
+      expect(record.jobId).toBeString();
+      expect(record.operation).toBe("library-watcher");
+      expect(record.durationMs).toBeGreaterThanOrEqual(20);
+      expect(record.error).toMatchObject({ type: "Error" });
+    }
+    expect(JSON.stringify(records)).not.toContain("Media share is offline");
   });
 
   test("a watcher abandoned by a crashed worker is recovered after its lease expires", async () => {

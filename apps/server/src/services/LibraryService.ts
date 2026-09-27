@@ -1,3 +1,4 @@
+import { ServerLogger } from "../core/Logger";
 import type { Library, LibraryGrant, LibraryRoot } from "@lumen/contracts";
 import {
   catalogItems,
@@ -56,6 +57,7 @@ export interface LibraryServiceShape {
 }
 
 export const makeLibraryService = Effect.gen(function* () {
+  const logger = (yield* ServerLogger).child({ component: "libraries" });
   const repositories = yield* Repositories;
   const database = yield* Database;
 
@@ -155,11 +157,11 @@ export const makeLibraryService = Effect.gen(function* () {
       const counts = yield* database
         .transaction((transaction) => purgeLibrary(transaction, libraryId))
         .pipe(
-          Effect.tapError(() =>
-            Effect.sync(() => console.error("library_deleted", { libraryId, result: "failed" })),
+          Effect.tapError((cause) =>
+            Effect.sync(() => logger.error("library_deleted", { libraryId, result: "failed" }, cause)),
           ),
         );
-      console.info("library_deleted", {
+      logger.info("library_deleted", {
         libraryId,
         result: counts === null ? "not_found" : "succeeded",
         ...counts,
@@ -263,11 +265,11 @@ export const makeLibraryService = Effect.gen(function* () {
           }),
         )
         .pipe(
-          Effect.tapError(() =>
-            Effect.sync(() => console.error("library_root_deleted", { rootId, result: "failed" })),
+          Effect.tapError((cause) =>
+            Effect.sync(() => logger.error("library_root_deleted", { rootId, result: "failed" }, cause)),
           ),
         );
-      console.info("library_root_deleted", { rootId, result: "succeeded", ...counts });
+      logger.info("library_root_deleted", { rootId, result: "succeeded", ...counts });
     },
   );
 

@@ -1,3 +1,4 @@
+import { ServerLogger } from "../core/Logger";
 import {
   catalogItemOrigins,
   catalogItemSources,
@@ -158,6 +159,7 @@ export interface ScannerShape {
 }
 
 export const makeScanner = Effect.gen(function* () {
+  const logger = (yield* ServerLogger).child({ component: "scanner" });
   const database = yield* Database;
   // Ingest sets the fingerprint last, so a missing one means an earlier probe never completed.
   const ingestIncomplete = or(
@@ -482,8 +484,8 @@ export const makeScanner = Effect.gen(function* () {
         }),
       );
       if (result.skipped === null)
-        console.info("scan_cleanup_completed", { runId, rootId, ...result });
-      else console.warn("scan_cleanup_skipped", { runId, rootId, reason: result.skipped });
+        logger.info("scan_cleanup_completed", { runId, rootId, ...result });
+      else logger.warn("scan_cleanup_skipped", { runId, rootId, reason: result.skipped });
       return result;
     },
   );

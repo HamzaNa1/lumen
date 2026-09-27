@@ -1,3 +1,5 @@
+import { ServerLogger } from "../core/Logger";
+import { backgroundTask, logJobOutcome } from "./JobLogging";
 import {
   catalogItems,
   catalogItemSources,
@@ -41,6 +43,7 @@ export interface JobServiceShape {
 
 export const makeJobService = (config?: ServerConfig) =>
   Effect.gen(function* () {
+    const logger = (yield* ServerLogger).child({ component: "jobs" });
     const database = yield* Database;
     const repositories = yield* Repositories;
     const scanner = yield* Scanner;
@@ -197,7 +200,7 @@ export const makeJobService = (config?: ServerConfig) =>
           .where(parked)
           .returning({ id: scanJobs.id });
         if (cancelled.length > 0)
-          console.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
+          logger.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
       } else {
         yield* database.update(scanJobs).set({ availableAtMs: nowMs }).where(parked);
       }
@@ -229,7 +232,9 @@ export const makeJobService = (config?: ServerConfig) =>
           .where(and(eq(scanJobs.id, row.id), eq(scanJobs.status, "running")));
         if (row.operation === "discover") yield* settleCleanups(row.runId, nowMs);
       }
-      return rows.length + (yield* recoverServerJobs(database, nowMs));
+      const recovered = rows.length + (yield* recoverServerJobs(database, nowMs));
+      if (recovered > 0) logger.warn("job_leases_recovered", { count: recovered });
+      return recovered;
     });
 
     // Time left at the end of a lease to stop the job and record the outcome.
@@ -247,6 +252,13 @@ export const makeJobService = (config?: ServerConfig) =>
         leaseMs,
       });
       if (job === null) return false;
+      const fields = {
+        jobId: job.id,
+        operation: job.kind,
+        attempt: job.attempts,
+        maxAttempts: job.maxAttempts,
+      };
+      logger.debug("job_started", fields);
       // Stop the job before its persisted lease expires so recovery never hands the
       // same job to a second worker while this one is still running it.
       const budgetMs = job.leaseExpiresAtMs - leaseStopMarginMs - currentMs();
@@ -270,6 +282,7 @@ export const makeJobService = (config?: ServerConfig) =>
           error instanceof Error ? error.message : String(error),
         );
       }
+      logJobOutcome(logger, fields, outcome, startedAt);
       return true;
     });
 
@@ -295,6 +308,10 @@ export const makeJobService = (config?: ServerConfig) =>
           errorCode: failure === undefined ? null : "JOB_FAILED",
           errorMessage: failure?.errorMessage ?? null,
         });
+        logger[failure === undefined ? "info" : "error"]("scan_run_finished", {
+          runId,
+          result: failure === undefined ? "succeeded" : "failed",
+        });
       }
     });
 
@@ -306,13 +323,23 @@ export const makeJobService = (config?: ServerConfig) =>
         operations: [],
       });
       if (job === null) return false;
+      const startedAt = performance.now();
+      const fields = {
+        jobId: job.id,
+        runId: job.runId,
+        sourceId: job.sourceId,
+        operation: job.operation,
+        attempt: job.attempts,
+        maxAttempts: job.maxAttempts,
+      };
+      logger.debug("job_started", fields);
       const outcome = yield* Effect.exit(
         Effect.gen(function* () {
           if (job.operation === "discover") {
             const rootId = job.dedupeKey.slice("discover:".length);
             const discovery = yield* scanner.discover(job.runId, rootId);
             if (!discovery.complete || discovery.generation === null) {
-              console.warn("scan_cleanup_skipped", {
+              logger.warn("scan_cleanup_skipped", {
                 runId: job.runId,
                 rootId,
                 reason: "discovery_incomplete",
@@ -399,6 +426,7 @@ export const makeJobService = (config?: ServerConfig) =>
           );
         if (job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
         yield* finishRunIfDone(job.runId, nowMs);
+        logJobOutcome(logger, fields, outcome, startedAt);
         return true;
       } else {
         const cause = Cause.squash(outcome.cause);
@@ -425,20 +453,30 @@ export const makeJobService = (config?: ServerConfig) =>
           );
         if (!retry && job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
         if (!retry) yield* finishRunIfDone(job.runId, nowMs);
+        logJobOutcome(logger, fields, outcome, startedAt);
         return true;
       }
     });
 
     const start = async (signal: AbortSignal): Promise<void> => {
-      await Effect.runPromise(
-        queueMissingMetadata(Date.now()).pipe(Effect.catch(() => Effect.succeed(0))),
-      );
-      while (!signal.aborted) {
-        await Effect.runPromise(recover(Date.now()).pipe(Effect.catch(() => Effect.void)));
-        const didWork = await Effect.runPromise(
-          runOne(Date.now()).pipe(Effect.catch(() => Effect.succeed(false))),
-        );
-        if (!didWork) await Bun.sleep(100);
+      logger.info("job_worker_started");
+      const queued = await backgroundTask(
+        logger,
+        "metadata_backfill",
+        () => queueMissingMetadata(Date.now()),
+        0,
+      )();
+      if (queued > 0) logger.info("metadata_backfill_queued", { count: queued });
+      const recoverJobs = backgroundTask(logger, "job_recovery", () => recover(Date.now()), 0);
+      const runJob = backgroundTask(logger, "job_dispatch", () => runOne(Date.now()), false);
+      try {
+        while (!signal.aborted) {
+          await recoverJobs();
+          const didWork = await runJob();
+          if (!didWork && !signal.aborted) await Bun.sleep(100);
+        }
+      } finally {
+        logger.info("job_worker_stopped");
       }
     };
 

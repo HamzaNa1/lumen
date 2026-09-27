@@ -17,7 +17,8 @@
     "@lumen/contracts": "workspace:*",
     "@lumen/database": "workspace:*",
     "drizzle-orm": "1.0.0-rc.4",
-    "effect": "4.0.0-beta.83"
+    "effect": "4.0.0-beta.83",
+    "pino": "10.3.1"
   },
   "devDependencies": {
     "@types/bun": "1.4.2",

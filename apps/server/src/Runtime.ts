@@ -1,5 +1,6 @@
+import { createLogger, ServerLogger, type Logger } from "./core/Logger";
 import { Database, RepositoriesLive, serverIdentity } from "@lumen/database";
-import { Effect, Fiber, Layer } from "effect";
+import { Cause, Effect, Exit, Fiber, Layer } from "effect";
 import { makeServerConfig } from "./config/ServerConfig";
 import type { ServerConfig } from "./config/Config";
 import { makeDatabaseLayers } from "./database/DatabaseLayer";
@@ -58,7 +59,10 @@ export interface ServerServices {
   readonly metadataSettings: MetadataSettingsShape;
 }
 
-export const makeLayers = (config: ServerConfig) => {
+export const makeLayers = (
+  config: ServerConfig,
+  logger: Logger = createLogger(config.logLevel),
+) => {
   const database = makeDatabaseLayers(config);
   const repositories = RepositoriesLive(database);
   const dependencies = Layer.mergeAll(database, repositories);
@@ -108,7 +112,7 @@ export const makeLayers = (config: ServerConfig) => {
     identity,
     metadataSettings,
     tmdb,
-  );
+  ).pipe(Layer.provide(Layer.succeed(ServerLogger, logger)));
 };
 
 const makeServices = Effect.gen(function* () {
@@ -141,14 +145,38 @@ export interface RunningServer {
 
 export const startServer = async (
   overrides: Partial<ServerConfig> = {},
+  suppliedLogger?: Logger,
 ): Promise<RunningServer> => {
-  const config = await yieldConfig(overrides);
+  let logger = suppliedLogger;
+  const startedAt = performance.now();
+  try {
+    const config = await yieldConfig(overrides);
+    logger ??= createLogger(config.logLevel);
+    logger.info("server_starting");
+    return await startConfiguredServer(config, logger, startedAt);
+  } catch (cause) {
+    (logger ?? createLogger()).error("server_start_failed", {}, cause);
+    throw cause;
+  }
+};
+
+const startConfiguredServer = async (
+  config: ServerConfig,
+  logger: Logger,
+  startedAt: number,
+): Promise<RunningServer> => {
   await mkdir(dirname(config.databasePath), { recursive: true });
   await mkdir(config.dataDir, { recursive: true });
-  const serviceLayer = makeLayers(config) as unknown as Layer.Layer<ServerServices, unknown, never>;
+  const serviceLayer = makeLayers(config, logger) as unknown as Layer.Layer<
+    ServerServices,
+    unknown,
+    never
+  >;
   let resolveServices: (services: ServerServices) => void = () => undefined;
-  const servicesPromise = new Promise<ServerServices>((resolve) => {
+  let rejectServices: (cause: unknown) => void = () => undefined;
+  const servicesPromise = new Promise<ServerServices>((resolve, reject) => {
     resolveServices = resolve;
+    rejectServices = reject;
   });
   const serviceProgram = makeServices.pipe(
     Effect.flatMap((services) =>
@@ -157,69 +185,116 @@ export const startServer = async (
     Effect.provide(serviceLayer),
   ) as Effect.Effect<never, unknown, never>;
   const serviceFiber = Effect.runFork(serviceProgram);
-  const services = await Promise.race([
-    servicesPromise,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(new Error("Server services did not initialize")), 30_000),
-    ),
-  ]);
-  for (const path of [
-    config.databasePath,
-    `${config.databasePath}-wal`,
-    `${config.databasePath}-shm`,
-  ]) {
-    try {
-      await chmod(path, 0o600);
-    } catch (cause) {
-      if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
-    }
-  }
-  const httpServices: HttpServices = {
-    auth: services.auth,
-    access: services.access,
-    admin: services.admin,
-    catalog: services.catalog,
-    home: services.home,
-    events: services.events,
-    libraries: services.libraries,
-    scans: services.scans,
-    assets: services.assets,
-    playback: services.playback,
-    jobs: services.jobs,
-    identity: services.identity,
-    metadataSettings: services.metadataSettings,
-    tmdb: services.tmdb,
-    startedAtMs: Date.now(),
-    databaseReady: async () => {
-      try {
-        await Effect.runPromise(
-          services.database.select({ ready: sql<number>`1` }).from(serverIdentity).limit(1),
+  serviceFiber.addObserver((exit) => {
+    if (Exit.isFailure(exit)) rejectServices(Cause.squash(exit.cause));
+  });
+  let startupTimeout: ReturnType<typeof setTimeout> | undefined;
+  let server: Bun.Server<unknown> | undefined;
+  try {
+    const services = await Promise.race([
+      servicesPromise,
+      new Promise<never>((_, reject) => {
+        startupTimeout = setTimeout(
+          () => reject(new Error("Server services did not initialize")),
+          30_000,
         );
-        return true;
-      } catch {
-        return false;
+      }),
+    ]);
+    clearTimeout(startupTimeout);
+    for (const path of [
+      config.databasePath,
+      `${config.databasePath}-wal`,
+      `${config.databasePath}-shm`,
+    ]) {
+      try {
+        await chmod(path, 0o600);
+      } catch (cause) {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
       }
-    },
-  };
-  const handler = makeHttpHandler(httpServices, config);
-  const server = Bun.serve({ hostname: config.host, port: config.port, fetch: handler });
-  console.log(`Lumen server listening on ${server.url}`);
-  const abort = new AbortController();
-  const worker = services.jobs.start(abort.signal);
-  const scheduler = services.scheduledJobs.start(abort.signal);
-  let stopping: Promise<void> | null = null;
-  const stop = async (): Promise<void> => {
-    if (stopping !== null) return stopping;
-    stopping = (async () => {
-      abort.abort();
-      await server.stop(true);
-      await worker;
-      await scheduler;
-      await Effect.runPromise(Fiber.interrupt(serviceFiber));
-    })();
-    return stopping;
-  };
-  return { server, stop };
+    }
+    const httpServices: HttpServices = {
+      auth: services.auth,
+      access: services.access,
+      admin: services.admin,
+      catalog: services.catalog,
+      home: services.home,
+      events: services.events,
+      libraries: services.libraries,
+      scans: services.scans,
+      assets: services.assets,
+      playback: services.playback,
+      jobs: services.jobs,
+      identity: services.identity,
+      metadataSettings: services.metadataSettings,
+      tmdb: services.tmdb,
+      startedAtMs: Date.now(),
+      databaseReady: async () => {
+        try {
+          await Effect.runPromise(
+            services.database.select({ ready: sql<number>`1` }).from(serverIdentity).limit(1),
+          );
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    };
+    const handler = makeHttpHandler(httpServices, config, logger);
+    const listeningServer = Bun.serve({ hostname: config.host, port: config.port, fetch: handler });
+    server = listeningServer;
+    logger.info("server_listening", {
+      host: config.host,
+      port: listeningServer.port,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+    const abort = new AbortController();
+    const worker = services.jobs.start(abort.signal);
+    const scheduler = services.scheduledJobs.start(abort.signal);
+    let stopping: Promise<void> | null = null;
+    const stop = async (): Promise<void> => {
+      if (stopping !== null) return stopping;
+      stopping = (async () => {
+        const shutdownStartedAt = performance.now();
+        logger.info("server_stopping");
+        abort.abort();
+        try {
+          const outcomes = await Promise.allSettled([
+            listeningServer.stop(true),
+            worker,
+            scheduler,
+          ]);
+          const failure = outcomes.find((outcome) => outcome.status === "rejected");
+          if (failure?.status === "rejected") throw failure.reason;
+        } catch (cause) {
+          logger.error("server_stop_failed", {}, cause);
+          throw cause;
+        } finally {
+          await Effect.runPromise(Fiber.interrupt(serviceFiber));
+        }
+        logger.info("server_stopped", {
+          durationMs: Math.round(performance.now() - shutdownStartedAt),
+        });
+      })();
+      return stopping;
+    };
+    // Observe rejection immediately, including before anyone calls stop().
+    for (const [component, task] of [
+      ["worker", worker],
+      ["scheduler", scheduler],
+    ] as const) {
+      void task.catch((cause: unknown) => {
+        logger.error("background_service_failed", { component }, cause);
+        void stop().catch(() => undefined);
+      });
+    }
+    return { server: listeningServer, stop };
+  } catch (cause) {
+    await server?.stop(true);
+    await Effect.runPromise(Fiber.interrupt(serviceFiber));
+    throw cause;
+  } finally {
+    clearTimeout(startupTimeout);
+  }
 };
 
 const yieldConfig = async (overrides: Partial<ServerConfig>): Promise<ServerConfig> => {
@@ -227,11 +302,19 @@ const yieldConfig = async (overrides: Partial<ServerConfig>): Promise<ServerConf
   return base;
 };
 
-if (import.meta.main) {
-  const running = await startServer();
-  const shutdown = async (): Promise<void> => {
-    await running.stop();
-  };
-  process.once("SIGINT", () => void shutdown());
-  process.once("SIGTERM", () => void shutdown());
-}
+export const runServer = async (): Promise<void> => {
+  try {
+    const running = await startServer();
+    const shutdown = (): void => {
+      void running.stop().catch(() => {
+        process.exitCode = 1;
+      });
+    };
+    process.once("SIGINT", shutdown);
+    process.once("SIGTERM", shutdown);
+  } catch {
+    process.exitCode = 1;
+  }
+};
+
+if (import.meta.main) await runServer();

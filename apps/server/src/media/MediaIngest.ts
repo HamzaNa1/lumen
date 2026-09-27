@@ -1,3 +1,4 @@
+import { ServerLogger } from "../core/Logger";
 import {
   albums,
   artists,
@@ -41,6 +42,7 @@ export interface MediaIngestShape {
 }
 
 export const makeMediaIngest = Effect.gen(function* () {
+  const logger = (yield* ServerLogger).child({ component: "ingest" });
   const database = yield* Database;
   const repositories = yield* Repositories;
   const ffprobe = yield* Ffprobe;
@@ -234,9 +236,8 @@ export const makeMediaIngest = Effect.gen(function* () {
     const filename = parts.at(-1) ?? "Untitled";
     const video = libraryKind === "music" ? null : parseVideoPath(libraryKind, source.relativePath);
     if (video?.warning)
-      console.warn("catalog_path_unmatched", {
+      logger.warn("catalog_path_unmatched", {
         sourceId,
-        relativePath: source.relativePath,
         reason: video.warning,
       });
     const itemTitle =

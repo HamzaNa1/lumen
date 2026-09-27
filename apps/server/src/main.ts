@@ -1,3 +1,3 @@
-import { startServer } from "./Runtime";
+import { runServer } from "./Runtime";
 
-await startServer();
+await runServer();
