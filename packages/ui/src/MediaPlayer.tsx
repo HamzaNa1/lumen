@@ -109,6 +109,16 @@ export const MediaPlayer = ({
 
       <div className="media-player-frame">
         <div className="media-player-surface" ref={surfaceRef}>
+          <button
+            className="media-player-video-hit-target"
+            type="button"
+            aria-label={settingsOpen ? "Close playback settings" : "Pause playback"}
+            disabled={!settingsOpen && (inactive || paused)}
+            onClick={() => {
+              if (settingsOpen) setSettingsOpen(false);
+              else onPause();
+            }}
+          />
           <div className="media-player-placeholder">
             {error !== null ? (
               <>
@@ -246,6 +256,7 @@ export const MediaPlayer = ({
                     <strong>Audio and subtitles</strong>
                     <SelectField
                       label="Audio output"
+                      modal={false}
                       disabled={inactive || changingAudioOutput}
                       value={audioOutput}
                       options={[
@@ -264,6 +275,7 @@ export const MediaPlayer = ({
                     {audioStreams.length > 0 ? (
                       <SelectField
                         label="Audio track"
+                        modal={false}
                         value={selectedAudioStreamId}
                         options={audioStreams.map((stream, index) => ({
                           value: stream.id,
@@ -275,6 +287,7 @@ export const MediaPlayer = ({
                     {subtitleStreams.length > 0 ? (
                       <SelectField
                         label="Subtitles"
+                        modal={false}
                         value={selectedSubtitleStreamId ?? "off"}
                         options={[
                           { value: "off", label: "Off" },

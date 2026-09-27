@@ -48,6 +48,7 @@ interface SelectFieldProps<T extends string> {
   readonly hideLabel?: boolean;
   readonly disabled?: boolean;
   readonly placeholder?: string;
+  readonly modal?: boolean;
 }
 
 export const SelectField = <T extends string>({
@@ -59,11 +60,13 @@ export const SelectField = <T extends string>({
   hideLabel = false,
   disabled = false,
   placeholder = "Select an option",
+  modal,
 }: SelectFieldProps<T>): React.ReactElement => (
   <Select.Root<T>
     value={value}
     items={options}
     disabled={disabled}
+    modal={modal}
     onValueChange={(nextValue) => {
       if (nextValue !== null) onValueChange(nextValue);
     }}
