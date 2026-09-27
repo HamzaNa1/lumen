@@ -10,3 +10,5 @@ export * from "./schemas/common.ts";
 export * from "./schemas/library.ts";
 export * from "./schemas/scanning.ts";
 export * from "./schemas/search.ts";
+
+export * from "./watch-groups.ts";
