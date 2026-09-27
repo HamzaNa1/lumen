@@ -6,6 +6,7 @@ import { CircleAlert, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
 import { errorMessage } from "./format";
+import { LumenMark } from "./LumenMark";
 import { Sidebar } from "./Sidebar";
 import {
   bridge,
@@ -32,7 +33,9 @@ export const App = (): React.ReactElement => {
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [connectionsView, setConnectionsView] = useState<"saved" | "add" | null>("saved");
+  const [connectionsView, setConnectionsView] = useState<"starting" | "saved" | "add" | null>("starting");
+  const [startupError, setStartupError] = useState<string | null>(null);
+  const startupAttempted = useRef(false);
   const [signInAccount, setSignInAccount] = useState<IpcAccount | null>(null);
   const startingItemId = useRef<string | null>(null);
   // Where to go when the viewer leaves the player.
@@ -111,6 +114,24 @@ export const App = (): React.ReactElement => {
   const active =
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
     null;
+  useEffect(() => {
+    if (!accountsQuery.isSuccess || connectionsView !== "starting" || startupAttempted.current) return;
+    startupAttempted.current = true;
+    if (active === null) {
+      setConnectionsView("saved");
+      return;
+    }
+    void bridge.accounts
+      .activate(active.connectionId)
+      .then((result) => {
+        queryClient.setQueryData(["accounts"], result);
+        setConnectionsView(null);
+      })
+      .catch((cause) => {
+        setStartupError(errorMessage(cause, "Could not open server"));
+        setConnectionsView("saved");
+      });
+  }, [accountsQuery.isSuccess, active, connectionsView, queryClient]);
   const playerUnavailable = player === null;
   useEffect(() => {
     const leavingPlayer = wasOnPlayerRoute.current && !onPlayerRoute;
@@ -180,11 +201,31 @@ export const App = (): React.ReactElement => {
         onChanged={() => void queryClient.invalidateQueries({ queryKey: ["accounts"] })}
       />
     );
+  if (connectionsView === "starting")
+    return (
+      <main className="connect-page" role="status" aria-label="Connecting to server">
+        <div className="connect-column">
+          <div className="connect-brand">
+            <LumenMark />
+            <span>Lumen</span>
+          </div>
+          <section className="connect-card">
+            <header className="connect-heading">
+              <h1>Connecting to {active?.serverLabel ?? "server"}…</h1>
+              <p>Opening your last server.</p>
+            </header>
+            <LoaderCircle className="spinner" aria-hidden="true" size={22} />
+          </section>
+        </div>
+      </main>
+    );
   if (accounts.length === 0 || active === null)
     return (
       <ConnectPage
         accounts={accounts}
+        initialError={startupError ?? undefined}
         onChanged={() => {
+          setStartupError(null);
           setConnectionsView(null);
           void queryClient.invalidateQueries({ queryKey: ["accounts"] });
         }}
@@ -195,14 +236,16 @@ export const App = (): React.ReactElement => {
     return (
       <ConnectPage
         accounts={accounts}
-        activeConnectionId={active.connectionId}
+        activeConnectionId={startupError === null ? active.connectionId : undefined}
+        initialError={startupError ?? undefined}
         initialShowAddServer={connectionsView === "add"}
         initialSignInAccount={signInAccount}
-        onClose={() => {
+        onClose={startupError === null ? () => {
           setSignInAccount(null);
           setConnectionsView(null);
-        }}
+        } : undefined}
         onChanged={() => {
+          setStartupError(null);
           setSignInAccount(null);
           setConnectionsView(null);
           void queryClient.invalidateQueries({ queryKey: ["accounts"] });
