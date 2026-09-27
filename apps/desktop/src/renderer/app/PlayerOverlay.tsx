@@ -1,3 +1,4 @@
+import { WatchGroups } from "./WatchGroups";
 import type { IpcPlayerDisplay, IpcPlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -17,7 +18,7 @@ export const PlayerOverlay = (): React.ReactElement => {
     if (hideTimer.current !== null) clearTimeout(hideTimer.current);
     const hideWhenIdle = (): void => {
       const controlsInUse = document.querySelector(
-        ".media-player-header:hover, .media-player-console:hover, .media-player-header:focus-within, .media-player-console:focus-within",
+        ".media-player-header:hover, .media-player-console:hover, .media-player-header:focus-within, .media-player-console:focus-within, .watch-group-dialog",
       );
       if (controlsInUse !== null) hideTimer.current = setTimeout(hideWhenIdle, 1_000);
       else setControlsVisible(false);
@@ -90,6 +91,7 @@ export const PlayerOverlay = (): React.ReactElement => {
     <div className="player-overlay">
       <MediaPlayer
         title={display.title}
+        headerActions={<WatchGroups />}
         subtitle={display.context}
         paused={player?.paused ?? true}
         loading={display.loading}

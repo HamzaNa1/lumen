@@ -76,6 +76,7 @@ const withPlayback = async (
     timeoutMs = 5_000,
   ): Promise<unknown> {
     if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
+    if (args[0] === "set_property" && args[1] === "speed") properties.set("speed", args[2]);
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
       return Promise.race([
@@ -109,6 +110,7 @@ const withPlayback = async (
       revoke: () => undefined,
     },
     surface: {
+      setBounds: () => undefined,
       prepare: () => [],
       attachNativeWindow: () => undefined,
       show: () => undefined,
@@ -737,5 +739,89 @@ describe("macOS MPV window lifecycle", () => {
       command.mockRestore();
       close.mockRestore();
     }
+  });
+});
+
+
+describe("watch group playback synchronization", () => {
+  test("catches up a sub-second delay by speeding up without seeking", async () => {
+    await withPlayback(async ({ controller, properties }) => {
+      properties.set("time-pos", 12.25);
+      await controller.synchronize(12.75, false, false);
+      expect(properties.get("speed")).toBe(1.05);
+      expect(controller.getState()?.positionSeconds).toBe(12.25);
+    });
+  });
+});
+
+test("watch group seeks a large delay and restores normal speed", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    properties.set("time-pos", 12.25);
+    await controller.synchronize(12.75, false, false);
+    await controller.synchronize(15, false, false);
+    expect(controller.getState()?.positionSeconds).toBe(15);
+    expect(properties.get("speed")).toBe(1);
+  });
+});
+
+test("watch group applies pause and explicit seeks even below the drift threshold", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    properties.set("time-pos", 12.25);
+    await controller.synchronize(12.3, true, true);
+    expect(controller.getState()).toMatchObject({ positionSeconds: 12.3, paused: true });
+    expect(properties.get("speed")).toBe(1);
+    await controller.synchronize(12.3, false, false);
+    expect(controller.getState()?.paused).toBe(false);
+  });
+});
+
+test("watch group clears catch-up speed once synchronized, on pause, and on leave", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    await controller.synchronize(12.9, false, false);
+    expect(properties.get("speed")).toBe(1.05);
+    await controller.synchronize(12.3, false, false);
+    expect(properties.get("speed")).toBe(1);
+    await controller.synchronize(12.9, false, false);
+    await controller.synchronize(12.9, true, false);
+    expect(properties.get("speed")).toBe(1);
+    await controller.synchronize(12.9, false, false);
+    await controller.resetSpeed();
+    expect(properties.get("speed")).toBe(1);
+  });
+});
+
+test("a stale group position sample cannot affect a stopped player", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    const pending = Promise.withResolvers<number>();
+    properties.set("time-pos", pending.promise);
+    const sync = controller.synchronize(40, false, false);
+    const stop = controller.stop();
+    pending.resolve(12.25);
+    await Promise.all([sync, stop]);
+    expect(controller.getState()).toBeNull();
+    expect(properties.get("speed")).toBeUndefined();
+  });
+});
+
+test("a player slightly ahead slows down, and exactly one second uses speed correction", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    await controller.synchronize(11.75, false, false);
+    expect(properties.get("speed")).toBe(0.95);
+    await controller.synchronize(13.25, false, false);
+    expect(properties.get("speed")).toBe(1.05);
+    expect(controller.getState()?.positionSeconds).toBe(12.25);
+  });
+});
+
+
+test("remote playback waits until the renderer prepares its video surface", async () => {
+  await withPlayback(async ({ controller }) => {
+    let ready = false;
+    const waiting = controller.waitForSurface().then(() => { ready = true; });
+    await Promise.resolve();
+    expect(ready).toBe(false);
+    await controller.setSurface({ x: 0, y: 0, width: 800, height: 600 });
+    await waiting;
+    expect(ready).toBe(true);
   });
 });

@@ -111,6 +111,8 @@ export class PlayerController extends EventEmitter {
   private refreshing: ActiveSession | null = null;
   private reporting: ActiveSession | null = null;
   private startGeneration = 0;
+  private surfaceReady = false;
+  private readonly surfaceWaiters = new Set<() => void>();
   private stopping: Promise<void> | null = null;
   // Avoid relying on a Windows driver to downmix center/surround channels.
   // Automatic output remains available for a correctly configured surround system.
@@ -129,6 +131,7 @@ export class PlayerController extends EventEmitter {
     readonly itemId: string;
     /** Resume point; playback starts from the beginning when omitted. */
     readonly startAtSeconds?: number;
+    readonly paused?: boolean;
   }): Promise<IpcPlayerSession> {
     const generation = ++this.startGeneration;
     await this.stopActive();
@@ -247,13 +250,13 @@ export class PlayerController extends EventEmitter {
           ? input.startAtSeconds
           : 0;
       if (startAtSeconds > 0) await ipc.command(["seek", startAtSeconds, "absolute"]);
-      await ipc.command(["set_property", "pause", "no"]);
+      await ipc.command(["set_property", "pause", input.paused === true ? "yes" : "no"]);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.surface.show();
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
-        paused: false,
+        paused: input.paused ?? false,
         positionSeconds: startAtSeconds,
         durationSeconds: session.durationSeconds,
         bufferedRanges: [],
@@ -283,6 +286,27 @@ export class PlayerController extends EventEmitter {
       }
       throw cause;
     }
+  }
+
+  async synchronize(positionSeconds: number, paused: boolean, forceSeek: boolean): Promise<void> {
+    const active = this.active;
+    if (active === null) return;
+    const position = await active.ipc.command(["get_property", "time-pos"]);
+    if (this.active !== active || typeof position !== "number") return;
+    const state = this.requireState();
+    const seek = forceSeek || Math.abs(positionSeconds - position) > 1 || (paused && Math.abs(positionSeconds - position) > 0.1);
+    if (state.paused !== paused) await active.ipc.command(["set_property", "pause", paused ? "yes" : "no"]);
+    if (seek) await active.ipc.command(["seek", positionSeconds, "absolute+exact"]);
+    const drift = positionSeconds - position;
+    const speed = paused || seek || Math.abs(drift) <= 0.1 ? 1 : drift > 0 ? 1.05 : 0.95;
+    await active.ipc.command(["set_property", "speed", speed]);
+    if (this.active !== active) return;
+    this.state = { ...this.requireState(), positionSeconds: seek ? positionSeconds : position, paused };
+    this.publish();
+  }
+
+  async resetSpeed(): Promise<void> {
+    if (this.active !== null) await this.active.ipc.command(["set_property", "speed", 1]);
   }
 
   async pause(sessionId: string, paused: boolean): Promise<IpcPlayerState> {
@@ -331,8 +355,22 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
+  waitForSurface(): Promise<void> {
+    if (this.surfaceReady) return Promise.resolve();
+    return new Promise<void>((resolve, reject) => {
+      const ready = (): void => { clearTimeout(timer); this.surfaceWaiters.delete(ready); resolve(); };
+      const timer = setTimeout(() => {
+        this.surfaceWaiters.delete(ready);
+        reject(new Error("The player surface did not become ready"));
+      }, 5_000);
+      this.surfaceWaiters.add(ready);
+    });
+  }
+
   async setSurface(bounds: IpcPlayerSurfaceBounds | null): Promise<void> {
     this.surface.setBounds(bounds);
+    this.surfaceReady = bounds !== null;
+    if (this.surfaceReady) for (const ready of this.surfaceWaiters) ready();
     if (this.active !== null) this.surface.show();
   }
 

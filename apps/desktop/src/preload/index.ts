@@ -1,4 +1,6 @@
 import type {
+  CreateWatchGroup,
+  WatchGroupStatus,
   EpisodeOrderSelection,
   IpcPlayerDisplay,
   IpcPlayerSurfaceBounds,
@@ -51,6 +53,23 @@ const api = {
     startScan: (input: unknown) => invoke<unknown>("admin:startScan", input),
     scanStatus: (runId: string) => invoke<unknown>("admin:scanStatus", runId),
     jobLog: () => invoke<unknown>("admin:jobLog"),
+  },
+  watchGroups: {
+    list: () => invoke<unknown>("watch-groups:list"),
+    state: () => invoke<WatchGroupStatus>("watch-groups:state"),
+    create: (input: CreateWatchGroup) => invoke<WatchGroupStatus>("watch-groups:create", input),
+    join: (groupId: string, password?: string) => invoke<WatchGroupStatus>("watch-groups:join", { groupId, password }),
+    leave: () => invoke<WatchGroupStatus>("watch-groups:leave"),
+    onState: (callback: (state: WatchGroupStatus) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, state: WatchGroupStatus): void => callback(state);
+      ipcRenderer.on("watch-groups:state", listener);
+      return () => ipcRenderer.removeListener("watch-groups:state", listener);
+    },
+    onPlayback: (callback: (playback: { itemId: string | null; title: string | null }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, playback: { itemId: string | null; title: string | null }): void => callback(playback);
+      ipcRenderer.on("watch-groups:playback", listener);
+      return () => ipcRenderer.removeListener("watch-groups:playback", listener);
+    },
   },
   player: {
     start: (itemId: string, startAtSeconds?: number) =>

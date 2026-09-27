@@ -1,3 +1,4 @@
+import { type CreateWatchGroup, type WatchGroupCommand, WatchGroupSnapshot, WatchGroupSummary } from "@lumen/contracts";
 import { EpisodeOrderOptions, type EpisodeOrderSelection } from "@lumen/contracts";
 import { HomeContent, IpcAudioOutput, IpcBufferedRange, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
 import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
@@ -221,6 +222,30 @@ export class ServerClient {
     const response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers, redirect: "manual" });
     const value = await readJson(response);
     return schema === undefined ? (value as T) : decode(schema, value) as T;
+  }
+
+  async watchGroups(): Promise<{ groups: ReadonlyArray<WatchGroupSummary>; serverTimeMs: number }> {
+    return this.request("/api/v1/watch-groups", { signal: AbortSignal.timeout(10_000) }, Schema.Struct({ groups: Schema.Array(WatchGroupSummary), serverTimeMs: Schema.Number }));
+  }
+
+  async createWatchGroup(input: CreateWatchGroup): Promise<WatchGroupSnapshot> {
+    return this.request("/api/v1/watch-groups", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(input), signal: AbortSignal.timeout(15_000) }, WatchGroupSnapshot);
+  }
+
+  async joinWatchGroup(groupId: string, password?: string): Promise<WatchGroupSnapshot> {
+    return this.request(`/api/v1/watch-groups/${encodeURIComponent(groupId)}/join`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }), signal: AbortSignal.timeout(15_000) }, WatchGroupSnapshot);
+  }
+
+  async leaveWatchGroup(groupId: string): Promise<void> {
+    await this.request(`/api/v1/watch-groups/${encodeURIComponent(groupId)}`, { method: "DELETE", signal: AbortSignal.timeout(5_000) });
+  }
+
+  async watchGroupState(groupId: string, revision: number, signal: AbortSignal): Promise<WatchGroupSnapshot> {
+    return this.request(`/api/v1/watch-groups/${encodeURIComponent(groupId)}?after=${revision}`, { signal: AbortSignal.any([signal, AbortSignal.timeout(12_000)]) }, WatchGroupSnapshot);
+  }
+
+  async watchGroupCommand(groupId: string, command: WatchGroupCommand): Promise<WatchGroupSnapshot> {
+    return this.request(`/api/v1/watch-groups/${encodeURIComponent(groupId)}/commands`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(command), signal: AbortSignal.timeout(10_000) }, WatchGroupSnapshot);
   }
 
   async libraries(): Promise<ReadonlyArray<IpcLibrary>> {

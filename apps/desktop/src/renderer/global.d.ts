@@ -1,4 +1,7 @@
 import type {
+  CreateWatchGroup,
+  WatchGroupSummary,
+  WatchGroupStatus,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
   HomeContent,
@@ -98,11 +101,20 @@ export interface LumenBridge {
     readonly scanStatus: (runId: string) => Promise<ScanRun>;
     readonly jobLog: () => Promise<ReadonlyArray<JobLogEntry>>;
   };
+  readonly watchGroups: {
+    readonly list: () => Promise<ReadonlyArray<WatchGroupSummary>>;
+    readonly state: () => Promise<WatchGroupStatus>;
+    readonly create: (input: CreateWatchGroup) => Promise<WatchGroupStatus>;
+    readonly join: (groupId: string, password?: string) => Promise<WatchGroupStatus>;
+    readonly leave: () => Promise<WatchGroupStatus>;
+    readonly onState: (callback: (state: WatchGroupStatus) => void) => () => void;
+    readonly onPlayback: (callback: (playback: { itemId: string | null; title: string | null }) => void) => () => void;
+  };
   readonly player: {
     readonly start: (
       itemId: string,
       startAtSeconds?: number,
-    ) => Promise<Omit<IpcPlayerSession, "grantToken">>;
+    ) => Promise<Omit<IpcPlayerSession, "grantToken"> | undefined>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<IpcPlayerState>;
