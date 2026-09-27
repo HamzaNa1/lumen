@@ -64,10 +64,15 @@ export const watchProxy = (origin: URL) => {
   const sockets = new Set<import("bun").ServerWebSocket<Connection>>();
   let dropJoin = false;
   let busyJoin = false;
+  let retryAfterMs = 20;
   const server = Bun.serve<Connection>({
     hostname: "127.0.0.1",
     port: 0,
     fetch(request, server) {
+      if (request.headers.get("upgrade")?.toLowerCase() !== "websocket") {
+        const incoming = new URL(request.url);
+        return fetch(new URL(incoming.pathname + incoming.search, origin), request);
+      }
       const url = new URL("/api/v1/watch-groups", origin);
       url.protocol = "ws:";
       const upstream = new WebSocket(url);
@@ -94,7 +99,7 @@ export const watchProxy = (origin: URL) => {
               type: "reply",
               requestId: request.requestId,
               error: "Temporarily busy",
-              retryAfterMs: 20,
+              retryAfterMs,
             }),
           );
           return;
@@ -115,7 +120,8 @@ export const watchProxy = (origin: URL) => {
   });
   return {
     origin: server.url.toString(),
-    overloadRejoin() {
+    overloadRejoin(delayMs = 20) {
+      retryAfterMs = delayMs;
       busyJoin = true;
       for (const socket of sockets) socket.close();
     },
