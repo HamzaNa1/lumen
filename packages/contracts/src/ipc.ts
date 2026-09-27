@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
+import { ServerInfo } from "./server.ts";
 
 export const IpcLogin = Schema.Struct({
   _tag: Schema.Literal("auth.login"),
@@ -64,12 +65,7 @@ export type IpcAccounts = Schema.Schema.Type<typeof IpcAccounts>;
 
 export const IpcServerDiscovery = Schema.Struct({
   origin: Schema.String.check(Schema.isMinLength(1)),
-  identity: Schema.Struct({
-    serverId: Schema.String.check(Schema.isMinLength(1)),
-    displayName: Schema.String.check(Schema.isMinLength(1)),
-    apiVersion: Schema.String.check(Schema.isMinLength(1)),
-    setupRequired: Schema.optional(Schema.Boolean),
-  }),
+  identity: ServerInfo,
   setupRequired: Schema.Boolean,
 });
 export type IpcServerDiscovery = Schema.Schema.Type<typeof IpcServerDiscovery>;

@@ -9,7 +9,7 @@
     "dev:server": "bun run --cwd apps/server dev",
     "dev:desktop": "bun run --cwd apps/desktop dev",
     "build": "bun run --filter '*' build",
-    "typecheck": "bun run --filter '*' typecheck",
+    "typecheck": "bun run --filter '*' typecheck && tsc -p tsconfig.scripts.json",
     "lint": "biome lint .",
     "test": "bun test",
     "check": "bun run lint && bun run typecheck && bun test && bun run build",
