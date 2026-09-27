@@ -2144,6 +2144,7 @@ body:has(.app-shell) {
   flex: none;
 }
 .media-player-title {
+  flex: 1;
   min-width: 0;
 }
 .media-player-title h1,

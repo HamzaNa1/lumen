@@ -1,4 +1,10 @@
-import type { IpcPlayableStream, PlaybackProgress, PlaybackSession } from "@lumen/contracts";
+import type {
+  GroupMedia,
+  IpcPlayableStream,
+  PlaybackProgress,
+  PlaybackSession,
+  User,
+} from "@lumen/contracts";
 import {
   catalogItems,
   catalogItemSources,
@@ -15,14 +21,16 @@ import {
   serverPlaybackSequences,
   streams as streamTable,
   tracks,
+  users,
 } from "@lumen/database";
-import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
 import { hashToken, newOpaqueToken, newUuid } from "../core/Security";
 import { canonicalPath, isPathWithin } from "../core/Paths";
+import { PlaybackMedia } from "./PlaybackMedia";
 import { AccessControl } from "./AccessControl";
-import type { AuthPrincipal } from "./AuthService";
+import { AuthService, type AuthPrincipal } from "./AuthService";
 import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Schemas";
 import type { Schema } from "effect";
 
@@ -50,6 +58,7 @@ export interface PlaybackServiceShape {
     principal: AuthPrincipal,
     input: PlaybackInput,
     nowMs: number,
+    exact?: GroupMedia,
   ) => Effect.Effect<PlaybackStartResponse, unknown>;
   readonly heartbeat: (
     principal: AuthPrincipal,
@@ -82,20 +91,11 @@ export const makePlaybackService = Effect.gen(function* () {
   const database = yield* Database;
   const repositories = yield* Repositories;
   const access = yield* AccessControl;
-  const resolveTrack = Effect.fn("Playback.resolveTrack")(function* (requestedId: string) {
-    const row = yield* database
-      .select({ id: tracks.id })
-      .from(tracks)
-      .leftJoin(catalogItemSources, eq(catalogItemSources.sourceId, tracks.sourceId))
-      .where(or(eq(tracks.id, requestedId), eq(catalogItemSources.itemId, requestedId)))
-      .limit(1)
-      .get();
-    if (row == null) return yield* notFound("Media source not found");
-    return row.id;
-  });
+  const auth = yield* AuthService;
+  const media = yield* PlaybackMedia;
 
   const start: PlaybackServiceShape["start"] = Effect.fn("Playback.start")(
-    function* (principal, input, nowMs) {
+    function* (principal, input, nowMs, exact) {
       const device = yield* database
         .select({ id: devices.id, revokedAtMs: devices.revokedAtMs })
         .from(devices)
@@ -104,7 +104,8 @@ export const makePlaybackService = Effect.gen(function* () {
       if (device == null || device.revokedAtMs !== null)
         return yield* forbidden("Device is unavailable");
       if (input.trackId === null) return yield* badRequest("A source is required for direct play");
-      const trackId = yield* resolveTrack(input.trackId);
+      const resolved = yield* media.resolve(principal, input.trackId, nowMs, exact);
+      const trackId = resolved.trackId;
       yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
       const grantToken = newOpaqueToken();
       const sessionId = newUuid();
@@ -170,12 +171,12 @@ export const makePlaybackService = Effect.gen(function* () {
       return {
         session,
         grantToken,
-        itemId: input.trackId,
+        itemId: resolved.itemId,
         sourceId: source.sourceId,
-        sourceGeneration: 1,
+        sourceGeneration: resolved.sourceGeneration,
         title: source.title,
         streamPath: `/api/v1/media/${encodeURIComponent(trackId)}`,
-        durationSeconds: source.durationMs === null ? null : Math.round(source.durationMs / 1000),
+        durationSeconds: source.durationMs === null ? null : source.durationMs / 1000,
         streams,
         grantExpiresInSeconds: 3_600,
       };
@@ -184,18 +185,19 @@ export const makePlaybackService = Effect.gen(function* () {
 
   const heartbeat: PlaybackServiceShape["heartbeat"] = Effect.fn("Playback.heartbeat")(
     function* (principal, sessionId, input, nowMs) {
+      principal = yield* auth.validateSession(principal.sessionId, nowMs);
       const session = (yield* database
         .select()
         .from(playbackSessions)
         .where(eq(playbackSessions.id, sessionId))
         .get()) as (PlaybackSession & { userId: string }) | undefined;
       if (session == null) return yield* notFound("Playback session not found");
-      if (session.userId !== principal.user.id)
+      if (session.userId !== principal.user.id || session.deviceId !== principal.deviceId)
         return yield* forbidden("Playback session belongs to another user");
       if (session.closedAtMs !== null || session.expiresAtMs <= nowMs)
         return yield* conflict("Playback session is closed");
-      const activeTrackId =
-        input.activeTrackId === null ? null : yield* resolveTrack(input.activeTrackId);
+      // A heartbeat renews the existing source; it must never switch cuts or mint a new grant.
+      const activeTrackId = session.activeTrackId;
       if (activeTrackId !== null)
         yield* access.requireTrack(principal, activeTrackId, "playback:control", nowMs);
       yield* database
@@ -204,6 +206,7 @@ export const makePlaybackService = Effect.gen(function* () {
           state: input.state,
           activeTrackId,
           lastSeenAtMs: nowMs,
+          expiresAtMs: nowMs + 3_600_000,
           errorCode: input.errorCode ?? null,
         })
         .where(
@@ -214,8 +217,13 @@ export const makePlaybackService = Effect.gen(function* () {
             gt(playbackSessions.expiresAtMs, nowMs),
           ),
         );
+      yield* database
+        .update(playbackGrants)
+        .set({ expiresAtMs: nowMs + 3_600_000 })
+        .where(and(eq(playbackGrants.sessionId, sessionId), gt(playbackGrants.expiresAtMs, nowMs)));
       return {
         ...session,
+        expiresAtMs: nowMs + 3_600_000,
         state: input.state,
         activeTrackId,
         lastSeenAtMs: nowMs,
@@ -250,6 +258,8 @@ export const makePlaybackService = Effect.gen(function* () {
       const session = yield* database
         .select({
           userId: playbackSessions.userId,
+          activeTrackId: playbackSessions.activeTrackId,
+          deviceId: playbackSessions.deviceId,
           expiresAtMs: playbackSessions.expiresAtMs,
           closedAtMs: playbackSessions.closedAtMs,
         })
@@ -261,7 +271,9 @@ export const makePlaybackService = Effect.gen(function* () {
         return yield* forbidden("Playback session belongs to another user");
       if (session.closedAtMs !== null || session.expiresAtMs <= nowMs)
         return yield* conflict("Playback session is closed");
-      const trackId = yield* resolveTrack(input.trackId);
+      const trackId = session.activeTrackId;
+      if (trackId === null || session.deviceId !== principal.deviceId)
+        return yield* forbidden("Playback session is unavailable");
       yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
       const result = yield* database.transaction((transaction) =>
         Effect.gen(function* () {
@@ -358,6 +370,8 @@ export const makePlaybackService = Effect.gen(function* () {
   )(function* (grantToken, trackId, nowMs) {
     const row = yield* database
       .select({
+        user: users,
+        deviceId: devices.id,
         absolutePath: mediaSources.absolutePath,
         rootPath: libraryRoots.path,
         size: mediaSources.fileSizeBytes,
@@ -372,6 +386,11 @@ export const makePlaybackService = Effect.gen(function* () {
       })
       .from(playbackGrants)
       .innerJoin(playbackSessions, eq(playbackSessions.id, playbackGrants.sessionId))
+      .innerJoin(users, eq(users.id, playbackSessions.userId))
+      .innerJoin(
+        devices,
+        and(eq(devices.id, playbackSessions.deviceId), eq(devices.userId, users.id)),
+      )
       .innerJoin(tracks, eq(tracks.id, playbackGrants.trackId))
       .innerJoin(mediaSources, eq(mediaSources.id, tracks.sourceId))
       .innerJoin(libraryRoots, eq(libraryRoots.id, mediaSources.rootId))
@@ -379,6 +398,8 @@ export const makePlaybackService = Effect.gen(function* () {
       .where(
         and(
           sql`coalesce(${mediaSourceAvailability.isAvailable}, 1) = 1`,
+          eq(users.isActive, true),
+          isNull(devices.revokedAtMs),
           eq(playbackSessions.grantTokenHash, hashToken(grantToken)),
           eq(playbackGrants.trackId, trackId),
           isNull(playbackSessions.closedAtMs),
@@ -389,6 +410,14 @@ export const makePlaybackService = Effect.gen(function* () {
       .get();
     if (row == null || row.size == null)
       return yield* notFound("Playback grant is invalid or expired");
+    yield* access
+      .requireTrack(
+        { user: row.user as User, deviceId: row.deviceId, sessionId: "" },
+        trackId,
+        "playback:control",
+        nowMs,
+      )
+      .pipe(Effect.catch(() => notFound("Playback grant is invalid or expired")));
     const [root, file] = yield* Effect.all([
       Effect.promise(() => canonicalPath(row.rootPath)),
       Effect.promise(() => canonicalPath(row.absolutePath)),

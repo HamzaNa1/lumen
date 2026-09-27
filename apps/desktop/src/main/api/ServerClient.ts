@@ -1,6 +1,20 @@
+import {
+  IpcPlayerSession as PlayerSessionSchema,
+  IpcPlayerState as PlayerStateSchema,
+} from "@lumen/contracts";
+import { GroupList, GroupSnapshot, GroupTicket, type CreateWatchGroup } from "@lumen/contracts";
 import { EpisodeOrderOptions, type EpisodeOrderSelection } from "@lumen/contracts";
-import { HomeContent, IpcAudioOutput, IpcBufferedRange, IpcItemDetails, IpcPlayableStream, JobLogEntry } from "@lumen/contracts";
-import type { IpcConnectionInput, IpcItem, IpcItemPage, IpcLibrary, IpcPlayerSession, IpcPlayerState, IpcServerDiscovery, ScanRun } from "@lumen/contracts";
+import { HomeContent, IpcItemDetails, JobLogEntry } from "@lumen/contracts";
+import type {
+  IpcConnectionInput,
+  IpcItem,
+  IpcItemPage,
+  IpcLibrary,
+  IpcPlayerSession,
+  IpcPlayerState,
+  IpcServerDiscovery,
+  ScanRun,
+} from "@lumen/contracts";
 import { User } from "../../../../../packages/contracts/src/schemas/auth";
 import { Effect, Schema } from "effect";
 import { ServerInfo } from "@lumen/contracts";
@@ -20,10 +34,16 @@ export interface AccountSession {
 export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: typeof fetch;
+  readonly requestTimeoutMs?: number;
 }
 
 export class ServerHttpError extends Error {
-  constructor(message: string, readonly status: number) { super(message); }
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
 }
 
 const sessionSchema = Schema.Struct({
@@ -58,59 +78,39 @@ const scanRunSchema = Schema.Struct({
 });
 
 const itemPageSchema = Schema.Struct({
-  items: Schema.Array(Schema.Struct({
-    id: Schema.String,
-    libraryId: Schema.String,
-    title: Schema.String,
-    kind: Schema.String,
-    durationMs: Schema.NullOr(Schema.Number),
-    year: Schema.NullOr(Schema.Number),
-    artworkId: Schema.NullOr(Schema.String),
-    completed: Schema.optional(Schema.Boolean),
-    resumePositionSeconds: Schema.NullOr(Schema.Number),
-    parentId: Schema.optional(Schema.NullOr(Schema.String)),
-    indexNumber: Schema.optional(Schema.NullOr(Schema.Number)),
-  })),
+  items: Schema.Array(
+    Schema.Struct({
+      id: Schema.String,
+      libraryId: Schema.String,
+      title: Schema.String,
+      kind: Schema.String,
+      durationMs: Schema.NullOr(Schema.Number),
+      year: Schema.NullOr(Schema.Number),
+      artworkId: Schema.NullOr(Schema.String),
+      completed: Schema.optional(Schema.Boolean),
+      resumePositionSeconds: Schema.NullOr(Schema.Number),
+      parentId: Schema.optional(Schema.NullOr(Schema.String)),
+      indexNumber: Schema.optional(Schema.NullOr(Schema.Number)),
+    }),
+  ),
   nextCursor: Schema.NullOr(Schema.String),
 });
 
-const playerSessionSchema = Schema.Struct({
-  sessionId: Schema.String,
-  itemId: Schema.String,
-  sourceId: Schema.String,
-  title: Schema.String,
-  streamUrl: Schema.String,
-  durationSeconds: Schema.NullOr(Schema.Number),
-  streams: Schema.Array(IpcPlayableStream),
-  grantExpiresInSeconds: Schema.Number,
-  grantToken: Schema.String,
-});
-
-const playerStateSchema = Schema.Struct({
-  sessionId: Schema.String,
-  itemId: Schema.String,
-  paused: Schema.Boolean,
-  positionSeconds: Schema.Number,
-  durationSeconds: Schema.NullOr(Schema.Number),
-  bufferedRanges: Schema.Array(IpcBufferedRange),
-  volume: Schema.Number,
-  muted: Schema.Boolean,
-  ended: Schema.Boolean,
-  streams: Schema.Array(IpcPlayableStream),
-  selectedAudioStreamId: Schema.NullOr(Schema.String),
-  selectedSubtitleStreamId: Schema.NullOr(Schema.String),
-  audioOutput: IpcAudioOutput,
-});
+const playerSessionSchema = PlayerSessionSchema;
+const playerStateSchema = PlayerStateSchema;
 
 const normalizeOrigin = (value: string): string => {
   const url = new URL(value);
-  if (!['http:', 'https:'].includes(url.protocol)) throw new Error("Unsupported server URL");
-  if (url.username !== "" || url.password !== "") throw new Error("URL credentials are not allowed");
-  if (url.pathname !== "/" && url.pathname !== "") throw new Error("Server origin cannot contain a path");
+  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Unsupported server URL");
+  if (url.username !== "" || url.password !== "")
+    throw new Error("URL credentials are not allowed");
+  if (url.pathname !== "/" && url.pathname !== "")
+    throw new Error("Server origin cannot contain a path");
   return url.origin;
 };
 
-const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] => Schema.decodeUnknownSync(schema)(value);
+const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
+  Schema.decodeUnknownSync(schema)(value);
 const decodeSession = (value: unknown): AccountSession => {
   const session = decode(sessionSchema, value);
   return { ...session, role: session.role ?? "user" };
@@ -119,11 +119,13 @@ const decodeSession = (value: unknown): AccountSession => {
 export class ServerClient {
   private readonly origin: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly requestTimeoutMs: number;
   private session: AccountSession | null = null;
 
   constructor(options: ServerClientOptions) {
     this.origin = normalizeOrigin(options.origin);
     this.fetchImpl = options.fetchImpl ?? fetch;
+    this.requestTimeoutMs = options.requestTimeoutMs ?? 10_000;
   }
 
   get serverOrigin(): string {
@@ -143,19 +145,30 @@ export class ServerClient {
   }
 
   async identity(): Promise<ServerIdentity> {
-    const response = await this.fetchImpl(new URL("/api/v1/server", this.origin), { redirect: "manual", cache: "no-store" });
+    const response = await this.fetchImpl(new URL("/api/v1/server", this.origin), {
+      redirect: "manual",
+      cache: "no-store",
+    });
     return parseIdentity(await readJson(response));
   }
 
   async setupRequired(fallback = false): Promise<boolean> {
-    const response = await this.fetchImpl(new URL("/api/v1/auth/setup", this.origin), { redirect: "manual", cache: "no-store" });
+    const response = await this.fetchImpl(new URL("/api/v1/auth/setup", this.origin), {
+      redirect: "manual",
+      cache: "no-store",
+    });
     if (response.status === 404) return fallback;
-    return decode(Schema.Struct({ setupRequired: Schema.Boolean }), await readJson(response)).setupRequired;
+    return decode(Schema.Struct({ setupRequired: Schema.Boolean }), await readJson(response))
+      .setupRequired;
   }
 
   async discover(): Promise<IpcServerDiscovery> {
     const identity = await this.identity();
-    return { origin: this.origin, identity, setupRequired: await this.setupRequired(identity.setupRequired ?? false) };
+    return {
+      origin: this.origin,
+      identity,
+      setupRequired: await this.setupRequired(identity.setupRequired ?? false),
+    };
   }
 
   async me(): Promise<User> {
@@ -213,14 +226,42 @@ export class ServerClient {
     return session;
   }
 
-  async request<T>(path: string, init: RequestInit = {}, schema?: Schema.Decoder<unknown, never>): Promise<T> {
+  async request<T>(
+    path: string,
+    init: RequestInit = {},
+    schema?: Schema.Decoder<unknown, never>,
+  ): Promise<T> {
     if (this.session === null) throw new Error("Authentication required");
     const accessToken = this.session.accessToken;
     const headers = new Headers(init.headers);
     headers.set("authorization", `Bearer ${accessToken}`);
-    const response = await this.fetchImpl(new URL(path, this.origin), { ...init, headers, redirect: "manual" });
-    const value = await readJson(response);
-    return schema === undefined ? (value as T) : decode(schema, value) as T;
+    const deadline = new AbortController();
+    const timer = setTimeout(
+      () => deadline.abort(new Error("Server request timed out")),
+      this.requestTimeoutMs,
+    );
+    const signal = init.signal == null
+      ? deadline.signal
+      : AbortSignal.any([init.signal, deadline.signal]);
+    let onAbort = () => {};
+    try {
+      signal.throwIfAborted();
+      const aborted = new Promise<never>((_resolve, reject) => {
+        onAbort = () => reject(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+      });
+      const request = async (): Promise<T> => {
+        const response = await this.fetchImpl(new URL(path, this.origin), {
+          ...init, headers, signal, redirect: "manual",
+        });
+        const value = await readJson(response);
+        return schema === undefined ? (value as T) : (decode(schema, value) as T);
+      };
+      return await Promise.race([request(), aborted]);
+    } finally {
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+    }
   }
 
   async libraries(): Promise<ReadonlyArray<IpcLibrary>> {
@@ -232,51 +273,103 @@ export class ServerClient {
   }
 
   async metadataSettings(): Promise<{ readonly tmdbConfigured: boolean }> {
-    return this.request("/api/v1/admin/metadata-settings", {}, Schema.Struct({ tmdbConfigured: Schema.Boolean }));
+    return this.request(
+      "/api/v1/admin/metadata-settings",
+      {},
+      Schema.Struct({ tmdbConfigured: Schema.Boolean }),
+    );
   }
 
-  async updateMetadataSettings(tmdbApiKey: string | null): Promise<{ readonly tmdbConfigured: boolean }> {
-    return this.request("/api/v1/admin/metadata-settings", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ tmdbApiKey }),
-    }, Schema.Struct({ tmdbConfigured: Schema.Boolean }));
+  async updateMetadataSettings(
+    tmdbApiKey: string | null,
+  ): Promise<{ readonly tmdbConfigured: boolean }> {
+    return this.request(
+      "/api/v1/admin/metadata-settings",
+      {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ tmdbApiKey }),
+      },
+      Schema.Struct({ tmdbConfigured: Schema.Boolean }),
+    );
   }
 
   async users(): Promise<ReadonlyArray<User>> {
     return this.request("/api/v1/users", {}, Schema.Array(User));
   }
 
-  async createUser(input: { readonly username: string; readonly displayName: string; readonly password: string; readonly role?: "admin" | "user" | "guest" }): Promise<User> {
-    return this.request("/api/v1/users", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    }, User);
+  async createUser(input: {
+    readonly username: string;
+    readonly displayName: string;
+    readonly password: string;
+    readonly role?: "admin" | "user" | "guest";
+  }): Promise<User> {
+    return this.request(
+      "/api/v1/users",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      User,
+    );
   }
 
-  async updateUser(userId: string, input: { readonly displayName?: string; readonly password?: string; readonly role?: "admin" | "user" | "guest"; readonly isActive?: boolean }): Promise<User> {
-    return this.request(`/api/v1/users/${encodeURIComponent(userId)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    }, User);
+  async updateUser(
+    userId: string,
+    input: {
+      readonly displayName?: string;
+      readonly password?: string;
+      readonly role?: "admin" | "user" | "guest";
+      readonly isActive?: boolean;
+    },
+  ): Promise<User> {
+    return this.request(
+      `/api/v1/users/${encodeURIComponent(userId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      User,
+    );
   }
 
-  async createLibrary(input: { readonly id: string; readonly name: string; readonly slug: string; readonly kind: "movies" | "shows" | "music" }): Promise<IpcLibrary> {
-    return this.request("/api/v1/libraries", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    }, libraryEntrySchema);
+  async createLibrary(input: {
+    readonly id: string;
+    readonly name: string;
+    readonly slug: string;
+    readonly kind: "movies" | "shows" | "music";
+  }): Promise<IpcLibrary> {
+    return this.request(
+      "/api/v1/libraries",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      libraryEntrySchema,
+    );
   }
 
-  async updateLibrary(libraryId: string, input: { readonly name?: string; readonly slug?: string; readonly kind?: "movies" | "shows" | "music"; readonly isEnabled?: boolean }): Promise<IpcLibrary> {
-    return this.request(`/api/v1/libraries/${encodeURIComponent(libraryId)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(input),
-    }, libraryEntrySchema);
+  async updateLibrary(
+    libraryId: string,
+    input: {
+      readonly name?: string;
+      readonly slug?: string;
+      readonly kind?: "movies" | "shows" | "music";
+      readonly isEnabled?: boolean;
+    },
+  ): Promise<IpcLibrary> {
+    return this.request(
+      `/api/v1/libraries/${encodeURIComponent(libraryId)}`,
+      {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(input),
+      },
+      libraryEntrySchema,
+    );
   }
 
   async deleteLibrary(libraryId: string): Promise<void> {
@@ -287,7 +380,12 @@ export class ServerClient {
     return this.request(`/api/v1/libraries/${encodeURIComponent(libraryId)}/roots`);
   }
 
-  async addLibraryRoot(input: { readonly id: string; readonly libraryId: string; readonly path: string; readonly priority: number }): Promise<unknown> {
+  async addLibraryRoot(input: {
+    readonly id: string;
+    readonly libraryId: string;
+    readonly path: string;
+    readonly priority: number;
+  }): Promise<unknown> {
     return this.request(`/api/v1/libraries/${encodeURIComponent(input.libraryId)}/roots`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -299,12 +397,19 @@ export class ServerClient {
     await this.request(`/api/v1/roots/${encodeURIComponent(rootId)}`, { method: "DELETE" });
   }
 
-  async startScan(libraryId: string, mode: "full" | "incremental" | "refresh"): Promise<{ readonly runId: string }> {
-    return this.request("/api/v1/scans", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ libraryId, mode }),
-    }, Schema.Struct({ runId: Schema.String }));
+  async startScan(
+    libraryId: string,
+    mode: "full" | "incremental" | "refresh",
+  ): Promise<{ readonly runId: string }> {
+    return this.request(
+      "/api/v1/scans",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ libraryId, mode }),
+      },
+      Schema.Struct({ runId: Schema.String }),
+    );
   }
 
   async scanStatus(runId: string): Promise<ScanRun> {
@@ -364,11 +469,17 @@ export class ServerClient {
   async itemChildren(itemId: string, cursor: string | null = null): Promise<IpcItemPage> {
     const query = new URLSearchParams({ limit: "100" });
     if (cursor !== null) query.set("cursor", cursor);
-    return this.request(`/api/v1/items/${encodeURIComponent(itemId)}/children?${query}`, {}, itemPageSchema);
+    return this.request(
+      `/api/v1/items/${encodeURIComponent(itemId)}/children?${query}`,
+      {},
+      itemPageSchema,
+    );
   }
 
   async nextUp(itemId: string): Promise<IpcItem | null> {
-    const response = await this.request<{ item: IpcItem | null }>(`/api/v1/items/${encodeURIComponent(itemId)}/next-up`);
+    const response = await this.request<{ item: IpcItem | null }>(
+      `/api/v1/items/${encodeURIComponent(itemId)}/next-up`,
+    );
     return response.item;
   }
 
@@ -376,7 +487,10 @@ export class ServerClient {
     if (this.session === null) throw new Error("Authentication required");
     const accessToken = this.session.accessToken;
     const url = new URL(`/api/v1/artwork/${encodeURIComponent(artworkId)}`, this.origin);
-    const response = await this.fetchImpl(url, { headers: { authorization: `Bearer ${accessToken}` }, redirect: "manual" });
+    const response = await this.fetchImpl(url, {
+      headers: { authorization: `Bearer ${accessToken}` },
+      redirect: "manual",
+    });
     if (!response.ok) return null;
     const mime = response.headers.get("content-type")?.split(";")[0];
     if (mime !== "image/jpeg" && mime !== "image/png" && mime !== "image/webp") return null;
@@ -386,27 +500,100 @@ export class ServerClient {
   }
 
   async startPlayback(itemId: string): Promise<IpcPlayerSession> {
-    return this.request("/api/v1/playback/sessions", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ trackId: itemId }),
-    }, playerSessionSchema);
+    return this.request(
+      "/api/v1/playback/sessions",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ trackId: itemId }),
+      },
+      playerSessionSchema,
+    );
   }
 
   async heartbeat(sessionId: string, state: IpcPlayerState): Promise<void> {
     await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/heartbeat`, {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ state: state.ended ? "ended" : state.paused ? "paused" : "playing", activeTrackId: state.itemId, errorCode: null }),
+      body: JSON.stringify({
+        state: state.ended ? "ended" : state.paused ? "paused" : "playing",
+        activeTrackId: state.itemId,
+        errorCode: null,
+      }),
     });
   }
 
   async progress(sessionId: string, state: IpcPlayerState, sequence: number): Promise<void> {
     await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/progress`, {
+      signal: AbortSignal.timeout(2_000),
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ trackId: state.itemId, positionMs: Math.round(state.positionSeconds * 1000), durationMs: state.durationSeconds === null ? null : Math.round(state.durationSeconds * 1000), sequence }),
+      body: JSON.stringify({
+        trackId: state.itemId,
+        positionMs: Math.round(state.positionSeconds * 1000),
+        durationMs:
+          state.durationSeconds === null ? null : Math.round(state.durationSeconds * 1000),
+        sequence,
+      }),
     });
+  }
+
+  async watchGroups(cursor: string | null = null): Promise<GroupList> {
+    return this.request(
+      `/api/v1/watch-groups?limit=100${cursor === null ? "" : `&cursor=${encodeURIComponent(cursor)}`}`,
+      {},
+      GroupList,
+    );
+  }
+  async createWatchGroup(input: CreateWatchGroup): Promise<GroupSnapshot> {
+    return this.request("/api/v1/watch-groups", this.groupBody(input), GroupSnapshot);
+  }
+  async joinWatchGroup(groupId: string, password?: string): Promise<GroupSnapshot> {
+    return this.request(
+      `/api/v1/watch-groups/${encodeURIComponent(groupId)}/memberships`,
+      this.groupBody(password === undefined ? {} : { password }),
+      GroupSnapshot,
+    );
+  }
+  async leaveWatchGroup(groupId: string): Promise<void> {
+    await this.request(`/api/v1/watch-groups/${encodeURIComponent(groupId)}/memberships/me`, {
+      signal: AbortSignal.timeout(2_000),
+      method: "DELETE",
+    });
+  }
+  async watchGroupTicket(groupId: string): Promise<typeof GroupTicket.Type> {
+    return this.request(
+      `/api/v1/watch-groups/${encodeURIComponent(groupId)}/connection-tickets`,
+      { ...this.groupBody({}), signal: AbortSignal.timeout(5_000) },
+      GroupTicket,
+    );
+  }
+  async watchGroupSession(
+    groupId: string,
+    expectedPlaybackId: string,
+    signal: AbortSignal,
+  ): Promise<IpcPlayerSession> {
+    return this.request(
+      `/api/v1/watch-groups/${encodeURIComponent(groupId)}/playback-sessions`,
+      {
+        ...this.groupBody({ expectedPlaybackId }),
+        signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+      },
+      playerSessionSchema,
+    );
+  }
+  async closePlayback(sessionId: string): Promise<void> {
+    await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}`, {
+      signal: AbortSignal.timeout(2_000),
+      method: "DELETE",
+    });
+  }
+  private groupBody(input: unknown): RequestInit {
+    return {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    };
   }
 
   async search(query: string, libraryId: string | null = null): Promise<unknown> {
@@ -424,7 +611,7 @@ const readJson = async (response: Response): Promise<unknown> => {
   if (!response.ok) {
     let message = `Server request failed (${response.status})`;
     try {
-      const body = await response.json() as { message?: unknown };
+      const body = (await response.json()) as { message?: unknown };
       if (typeof body.message === "string") message = body.message;
     } catch {}
     throw new ServerHttpError(message, response.status);
@@ -437,8 +624,12 @@ export const parseIdentity = (value: unknown): ServerIdentity => {
   assertCompatibleApi(identity.apiVersion);
   return identity;
 };
-export const parseLibraries = (value: unknown): ReadonlyArray<IpcLibrary> => decode(librarySchema, value);
-export const parsePlayerSession = (value: unknown): IpcPlayerSession => decode(playerSessionSchema, value);
-export const parsePlayerState = (value: unknown): IpcPlayerState => decode(playerStateSchema, value);
+export const parseLibraries = (value: unknown): ReadonlyArray<IpcLibrary> =>
+  decode(librarySchema, value);
+export const parsePlayerSession = (value: unknown): IpcPlayerSession =>
+  decode(playerSessionSchema, value);
+export const parsePlayerState = (value: unknown): IpcPlayerState =>
+  decode(playerStateSchema, value);
 export { decode as decodeIpc };
-export const requestEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> => Effect.runPromise(effect);
+export const requestEffect = <A>(effect: Effect.Effect<A, unknown>): Promise<A> =>
+  Effect.runPromise(effect);

@@ -53,6 +53,10 @@ export interface AuthServiceShape {
     refreshToken: string,
     nowMs: number,
   ) => Effect.Effect<LoginResponse, unknown>;
+  readonly validateSession: (
+    sessionId: string,
+    nowMs: number,
+  ) => Effect.Effect<AuthPrincipal, unknown>;
   readonly authenticate: (token: string, nowMs: number) => Effect.Effect<AuthPrincipal, unknown>;
   readonly logout: (
     principal: AuthPrincipal,
@@ -254,50 +258,59 @@ export const makeAuthService = Effect.gen(function* () {
     return sessionResponse(previous.userId, previous.role, id, token, nowMs);
   });
 
+  const liveSession = Effect.fn("AuthService.liveSession")(function* (
+    sessionId: string,
+    nowMs: number,
+  ) {
+    const session = yield* database
+      .select({
+        id: authSessions.id,
+        userId: authSessions.userId,
+        deviceId: authSessions.deviceId,
+        secretHash: authSessions.sessionTokenHash,
+        lastVerifiedAtMs: authSessions.lastUsedAtMs,
+        expiresAtMs: authSessions.expiresAtMs,
+        revokedAtMs: authSessions.revokedAtMs,
+      })
+      .from(authSessions)
+      .where(eq(authSessions.id, sessionId))
+      .get();
+    if (
+      session == null ||
+      session.revokedAtMs !== null ||
+      nowMs - session.lastVerifiedAtMs >= sessionExpiresInMs ||
+      session.expiresAtMs <= nowMs
+    )
+      return yield* unauthorized();
+    const row = yield* database
+      .select({
+        id: users.id,
+        username: users.username,
+        displayName: users.displayName,
+        role: users.role,
+        isActive: users.isActive,
+        createdAtMs: users.createdAtMs,
+        updatedAtMs: users.updatedAtMs,
+        deviceRevokedAtMs: devices.revokedAtMs,
+      })
+      .from(users)
+      .innerJoin(devices, and(eq(devices.id, session.deviceId), eq(devices.userId, users.id)))
+      .where(eq(users.id, session.userId))
+      .get();
+    if (row == null || !row.isActive || row.deviceRevokedAtMs !== null)
+      return yield* unauthorized();
+    const { deviceRevokedAtMs: _deviceRevokedAtMs, ...userRow } = row;
+    const user = { ...userRow, role: userRow.role as User["role"] };
+    return { session, principal: { user, sessionId: session.id, deviceId: session.deviceId } };
+  });
+  const validateSession: AuthServiceShape["validateSession"] = (sessionId, nowMs) =>
+    liveSession(sessionId, nowMs).pipe(Effect.map((live) => live.principal));
   const authenticate: AuthServiceShape["authenticate"] = Effect.fn("AuthService.authenticate")(
     function* (token, nowMs) {
-      const sessionId = sessionIdFromToken(token);
-      if (sessionId === null) return yield* unauthorized();
-      const session = yield* database
-        .select({
-          id: authSessions.id,
-          userId: authSessions.userId,
-          deviceId: authSessions.deviceId,
-          secretHash: authSessions.sessionTokenHash,
-          lastVerifiedAtMs: authSessions.lastUsedAtMs,
-          expiresAtMs: authSessions.expiresAtMs,
-          revokedAtMs: authSessions.revokedAtMs,
-        })
-        .from(authSessions)
-        .where(eq(authSessions.id, sessionId))
-        .get();
-      if (
-        session == null ||
-        session.revokedAtMs !== null ||
-        nowMs - session.lastVerifiedAtMs >= sessionExpiresInMs ||
-        session.expiresAtMs <= nowMs ||
-        !verifySessionToken(token, session.id, session.secretHash)
-      )
-        return yield* unauthorized();
-      const row = yield* database
-        .select({
-          id: users.id,
-          username: users.username,
-          displayName: users.displayName,
-          role: users.role,
-          isActive: users.isActive,
-          createdAtMs: users.createdAtMs,
-          updatedAtMs: users.updatedAtMs,
-          deviceRevokedAtMs: devices.revokedAtMs,
-        })
-        .from(users)
-        .innerJoin(devices, and(eq(devices.id, session.deviceId), eq(devices.userId, users.id)))
-        .where(eq(users.id, session.userId))
-        .get();
-      if (row == null || !row.isActive || row.deviceRevokedAtMs !== null)
-        return yield* unauthorized();
-      const { deviceRevokedAtMs: _deviceRevokedAtMs, ...userRow } = row;
-      const user = { ...userRow, role: userRow.role as User["role"] };
+      const id = sessionIdFromToken(token);
+      if (id === null) return yield* unauthorized();
+      const { session, principal } = yield* liveSession(id, nowMs);
+      if (!verifySessionToken(token, session.id, session.secretHash)) return yield* unauthorized();
       if (nowMs - session.lastVerifiedAtMs >= sessionVerificationIntervalMs) {
         yield* database
           .update(authSessions)
@@ -311,7 +324,7 @@ export const makeAuthService = Effect.gen(function* () {
         .update(devices)
         .set({ lastSeenAtMs: nowMs })
         .where(eq(devices.id, session.deviceId));
-      return { user, sessionId: session.id, deviceId: session.deviceId };
+      return principal;
     },
   );
 
@@ -331,7 +344,15 @@ export const makeAuthService = Effect.gen(function* () {
     },
   );
 
-  return { setupRequired, register, login, migrateLegacySession, authenticate, logout };
+  return {
+    setupRequired,
+    register,
+    login,
+    migrateLegacySession,
+    authenticate,
+    validateSession,
+    logout,
+  };
 });
 
 export class AuthService extends Context.Service<AuthService, AuthServiceShape>()(

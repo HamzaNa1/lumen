@@ -1,3 +1,5 @@
+import type { PlayerSample } from "../watch-groups/GroupPlayer";
+import { runUntilMpvEvent } from "./MpvWait";
 import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import type {
@@ -18,7 +20,7 @@ import type { PlaybackBridge } from "./PlaybackBridge";
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
   readonly surface: MpvSurface;
-  readonly onState: (state: IpcPlayerState) => void;
+  readonly onState: (state: IpcPlayerState | null) => void;
 }
 
 interface MpvTrack {
@@ -35,8 +37,12 @@ const bufferedRangesFrom = (value: unknown): ReadonlyArray<IpcBufferedRange> => 
     if (range === null || typeof range !== "object" || !("start" in range) || !("end" in range))
       return [];
     const { start, end } = range;
-    return typeof start === "number" && Number.isFinite(start) && start >= 0 &&
-        typeof end === "number" && Number.isFinite(end) && end > start
+    return typeof start === "number" &&
+      Number.isFinite(start) &&
+      start >= 0 &&
+      typeof end === "number" &&
+      Number.isFinite(end) &&
+      end > start
       ? [{ startSeconds: start, endSeconds: end }]
       : [];
   });
@@ -105,12 +111,16 @@ const resolveTrackIds = async (
 export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
   private readonly surface: MpvSurface;
-  private readonly onState: (state: IpcPlayerState) => void;
+  private readonly onState: (state: IpcPlayerState | null) => void;
   private active: ActiveSession | null = null;
   private state: IpcPlayerState | null = null;
   private refreshing: ActiveSession | null = null;
   private reporting: ActiveSession | null = null;
   private startGeneration = 0;
+  private preciseSample: PlayerSample | null = null;
+  private rate = 1;
+  private failedProcess: MpvProcess | null = null;
+  private surfaceReady = false;
   private stopping: Promise<void> | null = null;
   // Avoid relying on a Windows driver to downmix center/surround channels.
   // Automatic output remains available for a correctly configured surround system.
@@ -129,11 +139,19 @@ export class PlayerController extends EventEmitter {
     readonly itemId: string;
     /** Resume point; playback starts from the beginning when omitted. */
     readonly startAtSeconds?: number;
+    readonly session?: IpcPlayerSession;
+    readonly paused?: boolean;
+    readonly signal?: AbortSignal;
   }): Promise<IpcPlayerSession> {
     const generation = ++this.startGeneration;
     await this.stopActive();
     if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-    const session = await input.client.startPlayback(input.itemId);
+    input.signal?.throwIfAborted();
+    const session = input.session ?? (await input.client.startPlayback(input.itemId));
+    const cancelled = (): void => {
+      if (generation === this.startGeneration) void this.stop();
+    };
+    input.signal?.addEventListener("abort", cancelled, { once: true });
     let playerProcess: MpvProcess | null = null;
     let ipc: MpvIpc | null = null;
     let capability: string | null = null;
@@ -143,9 +161,15 @@ export class PlayerController extends EventEmitter {
         cwd: process.cwd(),
         resourcesPath: process.resourcesPath,
         videoOutputArguments: this.surface.prepare(),
-        onExit: () => this.emit("ended"),
+        onExit: () => {
+          if (playerProcess !== null && this.active?.process === playerProcess)
+            this.playerLost(this.active);
+        },
       });
       ipc = new MpvIpc();
+      ipc.on("disconnected", () => {
+        if (this.active?.ipc === ipc) this.playerLost(this.active);
+      });
       await ipc.connect(playerProcess);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       const registered = this.bridge.register({
@@ -169,51 +193,16 @@ export class PlayerController extends EventEmitter {
         sequence: 0,
       };
       this.active = active;
-      // The loadfile ack only means mpv accepted the command, not that the
-      // file demuxed. Wait for file-loaded and fail fast on end-file/error
-      // (e.g. "unrecognized file format") so callers surface the real cause
-      // instead of black-screen + `property unavailable` ticks.
-      let detachLoadListeners = (): void => undefined;
-      const mpv: MpvIpc = ipc;
-      const loaded = new Promise<void>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          detachLoadListeners();
-          reject(new Error("Timed out waiting for media to load"));
-        }, FILE_LOADED_TIMEOUT_MS);
-        const onLoaded = (): void => {
-          detachLoadListeners();
-          resolve();
-        };
-        const onEndFile = (event: unknown): void => {
-          const reason = (event as { readonly reason?: unknown } | null)?.reason;
-          const fileError = (event as { readonly file_error?: unknown } | null)?.file_error;
-          if (reason === "error") {
-            detachLoadListeners();
-            reject(
-              new Error(
-                typeof fileError === "string" && fileError.length > 0
-                  ? `Playback failed: ${fileError}`
-                  : "Playback failed",
-              ),
-            );
-          }
-        };
-        detachLoadListeners = (): void => {
-          clearTimeout(timer);
-          mpv.off("file-loaded", onLoaded);
-          mpv.off("end-file", onEndFile);
-        };
-        mpv.on("file-loaded", onLoaded);
-        mpv.on("end-file", onEndFile);
-      });
-      try {
-        await ipc.command(["set_property", "audio-channels", this.audioOutput]);
-        await ipc.command(["set_property", "pause", "yes"]);
-        await ipc.command(["loadfile", streamUrl, "replace"]);
-        await loaded;
-      } finally {
-        detachLoadListeners();
-      }
+      await ipc.command(["set_property", "audio-channels", this.audioOutput]);
+      await ipc.command(["set_property", "pause", "yes"]);
+      await runUntilMpvEvent(
+        ipc,
+        "file-loaded",
+        () =>
+          ipc?.command(["loadfile", streamUrl, "replace"]) ??
+          Promise.reject(new Error("Player unavailable")),
+        input.signal,
+      );
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       if (process.platform === "darwin") {
         const windowId = await ipc.command(["get_property", "window-id"]);
@@ -246,14 +235,22 @@ export class PlayerController extends EventEmitter {
         input.startAtSeconds > 0
           ? input.startAtSeconds
           : 0;
-      if (startAtSeconds > 0) await ipc.command(["seek", startAtSeconds, "absolute"]);
-      await ipc.command(["set_property", "pause", "no"]);
+      if (startAtSeconds > 0)
+        await runUntilMpvEvent(
+          ipc,
+          "playback-restart",
+          () =>
+            ipc?.command(["seek", startAtSeconds, "absolute+exact"]) ??
+            Promise.reject(new Error("Player unavailable")),
+          input.signal,
+        );
+      await ipc.command(["set_property", "pause", input.paused === true ? "yes" : "no"]);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.surface.show();
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
-        paused: false,
+        paused: input.paused === true,
         positionSeconds: startAtSeconds,
         durationSeconds: session.durationSeconds,
         bufferedRanges: [],
@@ -266,7 +263,7 @@ export class PlayerController extends EventEmitter {
         audioOutput: this.audioOutput,
       };
       this.publish();
-      return this.sanitized(session);
+      return session;
     } catch (cause) {
       const current = this.active;
       if (current !== null && current.session.sessionId === session.sessionId) {
@@ -282,6 +279,8 @@ export class PlayerController extends EventEmitter {
         });
       }
       throw cause;
+    } finally {
+      input.signal?.removeEventListener("abort", cancelled);
     }
   }
 
@@ -296,25 +295,61 @@ export class PlayerController extends EventEmitter {
       throw cause;
     }
     this.assertActive(sessionId);
+    this.preciseSample = null;
     this.state = { ...this.requireState(), paused };
     this.publish();
     if (paused) {
       const state = await this.samplePosition(active, this.requireState());
-      await this.saveProgress(active, state);
+      void this.saveProgress(active, state);
     }
     return this.requireState();
   }
 
-  seek(sessionId: string, positionSeconds: number): IpcPlayerState {
+  async seek(
+    sessionId: string,
+    positionSeconds: number,
+    signal?: AbortSignal,
+  ): Promise<IpcPlayerState> {
     this.assertActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
-    this.active?.ipc
-      .command(["seek", positionSeconds, "absolute"])
-      .catch((cause: unknown) => this.emitError(cause));
-    this.state = { ...this.requireState(), positionSeconds, ended: false };
+    const active = this.active;
+    if (active === null) throw new Error("Playback session is not active");
+    this.preciseSample = null;
+    this.state = { ...this.requireState() };
+    await runUntilMpvEvent(
+      active.ipc,
+      "playback-restart",
+      () => active.ipc.command(["seek", positionSeconds, "absolute+exact"]),
+      signal,
+      5_000,
+    );
+    this.assertActive(sessionId);
+    const actual = await active.ipc.command(["get_property", "time-pos"]);
+    this.assertActive(sessionId);
+    this.state = {
+      ...this.requireState(),
+      positionSeconds:
+        typeof actual === "number" && Number.isFinite(actual)
+          ? Math.max(0, actual)
+          : positionSeconds,
+      ended: false,
+    };
     this.publish();
     return this.requireState();
+  }
+
+  async setPlaybackRate(rate: number): Promise<void> {
+    if (!Number.isFinite(rate) || rate < 0.95 || rate > 1.05)
+      throw new Error("Invalid playback rate");
+    const active = this.active;
+    if (active === null || this.rate === rate) return;
+    await active.ipc.command(["set_property", "speed", rate]);
+    if (this.active === active) this.rate = rate;
+  }
+
+  sample(): PlayerSample | null {
+    return this.preciseSample;
   }
 
   volume(sessionId: string, volume: number, muted = false): IpcPlayerState {
@@ -331,8 +366,36 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
+  async waitForSurface(signal: AbortSignal): Promise<void> {
+    signal.throwIfAborted();
+    if (this.surfaceReady) return;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        this.off("surface-ready", ready);
+        signal.removeEventListener("abort", abort);
+      };
+      const ready = () => {
+        cleanup();
+        resolve();
+      };
+      const abort = () => {
+        cleanup();
+        reject(new Error("Playback was cancelled"));
+      };
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("The player surface is unavailable"));
+      }, 5_000);
+      this.on("surface-ready", ready);
+      signal.addEventListener("abort", abort, { once: true });
+    });
+  }
+
   async setSurface(bounds: IpcPlayerSurfaceBounds | null): Promise<void> {
     this.surface.setBounds(bounds);
+    this.surfaceReady = bounds !== null;
+    if (this.surfaceReady) this.emit("surface-ready");
     if (this.active !== null) this.surface.show();
   }
 
@@ -462,6 +525,10 @@ export class PlayerController extends EventEmitter {
     const state = this.state;
     this.active = null;
     this.state = null;
+    this.preciseSample = null;
+    this.rate = 1;
+    this.failedProcess = null;
+    this.publish();
     this.surface.hide();
     if (active === null) return Promise.resolve();
     const stopping = this.cleanup(active, state === null ? null : { active, state });
@@ -482,22 +549,34 @@ export class PlayerController extends EventEmitter {
       const cacheState = active.ipc
         .command(["get_property", "demuxer-cache-state"], CACHE_STATE_TIMEOUT_MS)
         .catch(() => null);
+      const sampleStart = performance.now();
       const value = await active.ipc.command(["get_property", "time-pos"]);
+      const sampleEnd = performance.now();
       const duration = await active.ipc.command(["get_property", "duration"]);
       const paused = await active.ipc.command(["get_property", "pause"]);
       const ended = await active.ipc.command(["get_property", "eof-reached"]);
+      const buffering = await active.ipc.command(["get_property", "paused-for-cache"]);
+      const seeking = await active.ipc.command(["get_property", "seeking"]);
       const cache = await cacheState;
       // A stop, replacement session, or user action makes this sample stale.
       if (this.active !== active || this.state !== state) return;
       const next: IpcPlayerState = {
         ...state,
-        positionSeconds:
-          typeof value === "number" && value >= 0 ? value : state.positionSeconds,
+        positionSeconds: typeof value === "number" && value >= 0 ? value : state.positionSeconds,
         durationSeconds:
           typeof duration === "number" && duration >= 0 ? duration : state.durationSeconds,
         bufferedRanges: bufferedRangesFrom(cache),
         paused: paused === true,
         ended: ended === true,
+      };
+      this.preciseSample = {
+        positionSeconds: next.positionSeconds,
+        sampledAtMs: (sampleStart + sampleEnd) / 2,
+        uncertaintyMs: (sampleEnd - sampleStart) / 2,
+        paused: next.paused,
+        buffering: buffering === true,
+        seeking: seeking === true,
+        ended: next.ended,
       };
       this.state = next;
       this.publish();
@@ -506,7 +585,7 @@ export class PlayerController extends EventEmitter {
       // the window between spawn and file-loaded); keep the last state and
       // wait for the next tick instead of spamming error listeners.
       if (this.active !== active || isPropertyUnavailable(cause)) return;
-      this.emitError(cause);
+      this.playerLost(active);
     } finally {
       if (this.refreshing === active) this.refreshing = null;
     }
@@ -532,7 +611,10 @@ export class PlayerController extends EventEmitter {
     }
   }
 
-  private async samplePosition(active: ActiveSession, state: IpcPlayerState): Promise<IpcPlayerState> {
+  private async samplePosition(
+    active: ActiveSession,
+    state: IpcPlayerState,
+  ): Promise<IpcPlayerState> {
     let positionSeconds = state.positionSeconds;
     try {
       const position = await active.ipc.command(["get_property", "time-pos"], 150);
@@ -555,7 +637,7 @@ export class PlayerController extends EventEmitter {
     try {
       await active.client.progress(state.sessionId, state, active.sequence);
     } catch (cause) {
-      this.emitError(cause);
+      if (this.active === active) this.emitError(cause);
     }
   }
 
@@ -564,9 +646,10 @@ export class PlayerController extends EventEmitter {
     finalProgress: { readonly active: ActiveSession; readonly state: IpcPlayerState } | null = null,
   ): Promise<void> {
     const { session, client, process, ipc, capability } = resources;
-    const savedState = finalProgress === null
-      ? null
-      : await this.samplePosition(finalProgress.active, finalProgress.state);
+    const savedState =
+      finalProgress === null
+        ? null
+        : await this.samplePosition(finalProgress.active, finalProgress.state);
     if (capability !== null) this.bridge.revoke(capability);
     ipc?.close();
     const stoppingProcess = process?.stop().catch((cause: unknown) => this.emitError(cause));
@@ -574,10 +657,15 @@ export class PlayerController extends EventEmitter {
       await this.saveProgress(finalProgress.active, savedState);
     await stoppingProcess;
     try {
-      await client.request(`/api/v1/playback/sessions/${encodeURIComponent(session.sessionId)}`, {
-        method: "DELETE",
-      });
+      await client.closePlayback(session.sessionId);
     } catch {}
+  }
+
+  private playerLost(active: ActiveSession): void {
+    if (this.active !== active || this.failedProcess === active.process) return;
+    this.failedProcess = active.process;
+    this.preciseSample = null;
+    this.emit("player-lost");
   }
 
   private assertActive(sessionId: string): void {
@@ -591,7 +679,7 @@ export class PlayerController extends EventEmitter {
   }
 
   private publish(): void {
-    if (this.state !== null) this.onState(this.state);
+    this.onState(this.state);
   }
 
   private emitError(cause: unknown): void {
@@ -601,16 +689,25 @@ export class PlayerController extends EventEmitter {
     if (this.listenerCount("error") === 0) return;
     this.emit("error", cause instanceof Error ? cause : new Error(String(cause)));
   }
-
-  private sanitized(session: IpcPlayerSession): IpcPlayerSession {
-    const { grantToken: _grantToken, ...safe } = session;
-    return safe as IpcPlayerState & IpcPlayerSession;
-  }
 }
 
-export const startNativePlayer = (controller: PlayerController): (() => void) => {
+export const startNativePlayer = (
+  controller: PlayerController,
+  reconcile: () => Promise<void> = async () => {},
+): (() => void) => {
   // UI sampling is independent of the slower heartbeat / saved-progress cadence.
-  const refreshTimer = setInterval(() => void controller.refreshState(), 250);
+  let refreshing = false;
+  const refreshTimer = setInterval(() => {
+    if (refreshing) return;
+    refreshing = true;
+    void controller
+      .refreshState()
+      .then(reconcile)
+      .catch(() => undefined)
+      .finally(() => {
+        refreshing = false;
+      });
+  }, 250);
   const reportTimer = setInterval(() => void controller.tick(), 3_000);
   refreshTimer.unref();
   reportTimer.unref();

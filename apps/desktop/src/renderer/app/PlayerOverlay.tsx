@@ -1,5 +1,5 @@
-import type { IpcPlayerDisplay, IpcPlayerState } from "@lumen/contracts";
-import { MediaPlayer } from "@lumen/ui";
+import type { IpcPlayerDisplay, IpcPlayerState, IpcWatchGroupState } from "@lumen/contracts";
+import { Button, MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const bridge = window.lumen;
@@ -7,6 +7,8 @@ const bridge = window.lumen;
 export const PlayerOverlay = (): React.ReactElement => {
   const [player, setPlayer] = useState<IpcPlayerState | null>(null);
   const [display, setDisplay] = useState<IpcPlayerDisplay | null>(null);
+  const [group, setGroup] = useState<IpcWatchGroupState | null>(null);
+  const [controlError, setControlError] = useState<string | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -29,6 +31,8 @@ export const PlayerOverlay = (): React.ReactElement => {
     const onMove = (): void => revealControls();
     window.addEventListener("mousemove", onMove);
     const unsubscribeState = bridge.player.onState(setPlayer);
+    const unsubscribeGroup = bridge.watchGroups.onState(setGroup);
+    void bridge.watchGroups.state().then(setGroup).catch(() => undefined);
     const unsubscribeDisplay = bridge.player.onDisplay((next) => {
       setDisplay(next);
       if (next.loading) setPlayer(null);
@@ -53,6 +57,7 @@ export const PlayerOverlay = (): React.ReactElement => {
     return () => {
       window.removeEventListener("mousemove", onMove);
       unsubscribeState();
+      unsubscribeGroup();
       unsubscribeDisplay();
       unsubscribeFullscreen();
       if (hideTimer.current !== null) clearTimeout(hideTimer.current);
@@ -93,7 +98,7 @@ export const PlayerOverlay = (): React.ReactElement => {
         subtitle={display.context}
         paused={player?.paused ?? true}
         loading={display.loading}
-        error={display.error}
+        error={display.error ?? (group?.status === "failed" ? group.error : null)}
         position={player?.positionSeconds ?? 0}
         duration={player?.durationSeconds ?? display.duration}
         bufferedRanges={player?.bufferedRanges ?? []}
@@ -114,9 +119,22 @@ export const PlayerOverlay = (): React.ReactElement => {
         surfaceRef={surfaceRef}
         controlsVisible={controlsVisible || display.loading || display.error !== null}
         fullscreen={fullscreen}
+        transportDisabled={group !== null && group.status !== "ready"}
+        backLabel={group === null ? "Back" : "Leave group"}
+        headerActions={group === null ? undefined : (
+          <>
+            {controlError === null ? null : <span role="alert">{controlError}</span>}
+            <Button disabled={group.status !== "ready"} onClick={() => {
+              setControlError(null);
+              void bridge.player.stop().catch((error: unknown) => {
+                setControlError(error instanceof Error ? error.message : "Could not stop playback.");
+              });
+            }}>Stop for everyone</Button>
+          </>
+        )}
         onBack={() => {
           void bridge.player
-            .stop()
+            .cleanup()
             .catch(() => undefined)
             .then(() => {
               setPlayer(null);
@@ -127,11 +145,17 @@ export const PlayerOverlay = (): React.ReactElement => {
         onFullscreen={() => void bridge.player.fullscreen(!fullscreen).then(setFullscreen)}
         onPause={() => {
           if (player !== null)
-            void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer).catch(() => undefined);
+            void bridge.player
+              .pause(player.sessionId, !player.paused)
+              .then(setPlayer)
+              .catch(() => undefined);
         }}
         onSeek={(positionSeconds) => {
           if (player !== null)
-            void bridge.player.seek(player.sessionId, positionSeconds).then(setPlayer);
+            void bridge.player
+              .seek(player.sessionId, positionSeconds)
+              .then(setPlayer)
+              .catch(() => undefined);
         }}
         onVolume={(volume, muted) => {
           if (player !== null)

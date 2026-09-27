@@ -1,4 +1,7 @@
 import type {
+  CreateWatchGroup,
+  GroupList,
+  IpcWatchGroupState,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
   HomeContent,
@@ -32,6 +35,15 @@ export interface LumenBridge {
     readonly setup: (origin: string) => Promise<boolean>;
     readonly activate: (connectionId: string) => Promise<IpcAccounts>;
     readonly remove: (connectionId: string) => Promise<IpcAccounts>;
+  };
+  readonly watchGroups: {
+    readonly list: (cursor?: string | null) => Promise<GroupList>;
+    readonly create: (input: CreateWatchGroup) => Promise<IpcWatchGroupState | null>;
+    readonly join: (groupId: string, password?: string) => Promise<IpcWatchGroupState | null>;
+    readonly leave: () => Promise<void>;
+    readonly state: () => Promise<IpcWatchGroupState | null>;
+    readonly retry: () => Promise<void>;
+    readonly onState: (callback: (state: IpcWatchGroupState | null) => void) => () => void;
   };
   readonly library: {
     readonly home: () => Promise<HomeContent>;
@@ -102,9 +114,9 @@ export interface LumenBridge {
     readonly start: (
       itemId: string,
       startAtSeconds?: number,
-    ) => Promise<Omit<IpcPlayerSession, "grantToken">>;
-    readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
-    readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
+    ) => Promise<Omit<IpcPlayerSession, "grantToken" | "streamUrl"> | null>;
+    readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState | null>;
+    readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState | null>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<IpcPlayerState>;
     readonly surface: (bounds: IpcPlayerSurfaceBounds | null) => Promise<unknown>;
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<IpcPlayerState>;
@@ -124,7 +136,8 @@ export interface LumenBridge {
     readonly fullscreen: (enabled: boolean) => Promise<boolean>;
     readonly fullscreenState: () => Promise<boolean>;
     readonly stop: () => Promise<unknown>;
-    readonly onState: (callback: (state: IpcPlayerState) => void) => () => void;
+    readonly cleanup: () => Promise<void>;
+    readonly onState: (callback: (state: IpcPlayerState | null) => void) => () => void;
     readonly onDisplay: (callback: (display: IpcPlayerDisplay) => void) => () => void;
     readonly onOverlayAction: (callback: (action: "back" | "retry" | "stop") => void) => () => void;
     readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => () => void;

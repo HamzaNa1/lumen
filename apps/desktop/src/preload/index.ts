@@ -1,3 +1,5 @@
+import { IpcWatchGroupState, type CreateWatchGroup, type GroupList } from "@lumen/contracts";
+import { Schema } from "effect";
 import type {
   EpisodeOrderSelection,
   IpcPlayerDisplay,
@@ -16,6 +18,22 @@ const api = {
     connect: (input: unknown) => invoke<unknown>("accounts:connect", input),
     activate: (connectionId: string) => invoke<unknown>("accounts:activate", connectionId),
     remove: (connectionId: string) => invoke<unknown>("accounts:remove", connectionId),
+  },
+  watchGroups: {
+    list: (cursor: string | null = null) => invoke<GroupList>("watch-groups:list", cursor),
+    create: (input: CreateWatchGroup) =>
+      invoke<IpcWatchGroupState | null>("watch-groups:create", input),
+    join: (groupId: string, password?: string) =>
+      invoke<IpcWatchGroupState | null>("watch-groups:join", { groupId, password }),
+    leave: () => invoke<void>("watch-groups:leave"),
+    state: () => invoke<IpcWatchGroupState | null>("watch-groups:state"),
+    retry: () => invoke<void>("watch-groups:retry"),
+    onState: (callback: (state: IpcWatchGroupState | null) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, value: unknown): void =>
+        callback(Schema.decodeUnknownSync(Schema.NullOr(IpcWatchGroupState))(value));
+      ipcRenderer.on("watch-groups:state", listener);
+      return () => ipcRenderer.removeListener("watch-groups:state", listener);
+    },
   },
   library: {
     home: () => invoke<unknown>("library:home"),
@@ -41,7 +59,8 @@ const api = {
     updateUser: (input: unknown) => invoke<unknown>("admin:updateUser", input),
     listLibraries: () => invoke<unknown>("admin:listLibraries"),
     metadataSettings: () => invoke<unknown>("admin:metadataSettings"),
-    updateMetadataSettings: (input: unknown) => invoke<unknown>("admin:updateMetadataSettings", input),
+    updateMetadataSettings: (input: unknown) =>
+      invoke<unknown>("admin:updateMetadataSettings", input),
     createLibrary: (input: unknown) => invoke<unknown>("admin:createLibrary", input),
     updateLibrary: (input: unknown) => invoke<unknown>("admin:updateLibrary", input),
     deleteLibrary: (libraryId: string) => invoke<unknown>("admin:deleteLibrary", libraryId),
@@ -68,7 +87,8 @@ const api = {
       invoke<unknown>("player:select-subtitle", { sessionId, streamId }),
     audioOutput: (sessionId: string, output: "stereo" | "auto-safe") =>
       invoke<unknown>("player:audio-output", { sessionId, output }),
-    copyAudioDiagnostics: (sessionId: string) => invoke<void>("player:copy-audio-diagnostics", sessionId),
+    copyAudioDiagnostics: (sessionId: string) =>
+      invoke<void>("player:copy-audio-diagnostics", sessionId),
     state: () => invoke<unknown>("player:state"),
     display: (display: IpcPlayerDisplay) => invoke<unknown>("player:display", display),
     displayState: () => invoke<unknown>("player:display-state"),
@@ -77,6 +97,7 @@ const api = {
     fullscreen: (enabled: boolean) => invoke<unknown>("player:fullscreen", enabled),
     fullscreenState: () => invoke<unknown>("player:fullscreen-state"),
     stop: () => invoke<unknown>("player:stop"),
+    cleanup: () => invoke<void>("player:cleanup"),
     onDisplay: (callback: (display: IpcPlayerDisplay) => void): (() => void) => {
       const listener = (_event: Electron.IpcRendererEvent, display: IpcPlayerDisplay): void =>
         callback(display);

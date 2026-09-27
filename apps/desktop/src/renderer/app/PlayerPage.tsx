@@ -4,14 +4,30 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { bridge, useWorkspace } from "./Workspace";
 
 export const PlayerPage = (): React.ReactElement => {
-  const { playingItem, player, playbackLoading, playbackError, beginPlayback, reportPlaybackError } =
-    useWorkspace();
+  const {
+    playingItem,
+    player,
+    group,
+    playbackLoading,
+    playbackError,
+    surfaceReady,
+    reportPlaybackError,
+  } = useWorkspace();
   const navigate = useNavigate();
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const hasPlayback = playingItem !== null || player !== null;
+  const hasPlayback =
+    playingItem !== null ||
+    player !== null ||
+    (group?.snapshot?.playback.type === "playback" &&
+      group.snapshot.playback.state.media !== null &&
+      ["playing", "paused"].includes(group.snapshot.playback.state.mode));
 
   usePlayerShortcuts({
-    enabled: player !== null && !playbackLoading && playbackError === null,
+    enabled:
+      player !== null &&
+      !playbackLoading &&
+      playbackError === null &&
+      (group === null || group.status === "ready"),
     position: player?.positionSeconds ?? 0,
     duration: player?.durationSeconds ?? null,
     onPause: () => {
@@ -25,8 +41,8 @@ export const PlayerPage = (): React.ReactElement => {
   });
 
   useEffect(() => {
-    if (!hasPlayback) void navigate({ to: "/", replace: true });
-  }, [hasPlayback, navigate]);
+    if (!hasPlayback) void navigate({ to: group === null ? "/" : "/watch-groups", replace: true });
+  }, [group, hasPlayback, navigate]);
 
   useEffect(
     () => () => {
@@ -52,7 +68,7 @@ export const PlayerPage = (): React.ReactElement => {
     };
     void syncSurface()
       .then(() => {
-        if (!disposed && playingItem !== null) void beginPlayback(playingItem);
+        if (!disposed) surfaceReady();
       })
       .catch(reportPlaybackError);
     const observer = new ResizeObserver(() => void syncSurface().catch(reportPlaybackError));
@@ -62,9 +78,9 @@ export const PlayerPage = (): React.ReactElement => {
       observer.disconnect();
       void bridge.player.surface(null).catch(() => undefined);
     };
-  }, [beginPlayback, hasPlayback, playingItem, reportPlaybackError]);
+  }, [surfaceReady, hasPlayback, reportPlaybackError]);
 
-  if (playingItem === null && player === null) {
+  if (!hasPlayback) {
     return <div className="watch-page" />;
   }
 

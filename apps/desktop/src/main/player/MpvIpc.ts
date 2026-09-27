@@ -24,8 +24,16 @@ export class MpvIpc extends EventEmitter {
     this.socket = await this.connectWithRetry(process, socketPath);
     this.socket.setEncoding("utf8");
     this.socket.on("data", (chunk: string) => this.consume(chunk));
-    this.socket.on("error", () => this.rejectAll(new Error("MPV IPC disconnected")));
-    this.socket.on("close", () => this.rejectAll(new Error("MPV IPC closed")));
+    const socket = this.socket;
+    const disconnected = (): void => {
+      if (this.socket !== socket) return;
+      this.socket = null;
+      this.rejectAll(new Error("MPV IPC disconnected"));
+      socket.destroy();
+      this.emit("disconnected");
+    };
+    socket.on("error", disconnected);
+    socket.on("close", disconnected);
   }
 
   command(args: ReadonlyArray<string | number>, timeoutMs = 5_000): Promise<unknown> {

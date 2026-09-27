@@ -1,4 +1,23 @@
-import { API_VERSION, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
+import { GroupFailure } from "../features/watch-groups/GroupFailure";
+import {
+  CreateWatchGroup,
+  JoinWatchGroup,
+  GroupPlaybackRequest,
+  GroupSnapshot,
+  GroupList,
+  GroupTicket,
+  Uuid,
+} from "@lumen/contracts";
+import type { GroupRegistry } from "../features/watch-groups/GroupRegistry";
+import { playbackResponse } from "./PlaybackResponse";
+import {
+  API_VERSION,
+  EpisodeOrderOptions,
+  EpisodeOrderSelection,
+  HomeContent,
+  ServerInfo,
+  User,
+} from "@lumen/contracts";
 import { version as serverVersion } from "../../package.json";
 import { Effect, Schema } from "effect";
 import { decideConditional, decideRange } from "../core/RangePolicy";
@@ -25,6 +44,7 @@ import type { MetadataProvider } from "../media/Tmdb";
 import * as S from "../http/Schemas";
 
 export interface HttpServices {
+  readonly watchGroups?: GroupRegistry;
   readonly auth: AuthServiceShape;
   readonly access: AccessControlShape;
   readonly admin: AdminServiceShape;
@@ -296,6 +316,85 @@ export const makeHttpHandler = (
       });
     }
     const principal = await authenticate(request);
+    if (
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "watch-groups" &&
+      services.watchGroups !== undefined
+    ) {
+      const groups = services.watchGroups;
+      const groupId = parts[3] === undefined ? null : decode(Uuid, parts[3]);
+      if (groupId === null && method === "GET") {
+        const pagination = page(url);
+        return json(
+          GroupList,
+          groups.list(
+            pagination.limit,
+            pagination.cursor === null ? null : decode(Uuid, pagination.cursor),
+          ),
+        );
+      }
+      if (groupId === null && method === "POST")
+        return json(
+          GroupSnapshot,
+          await groups.create(
+            principal,
+            decode(CreateWatchGroup, await body(request, config.maxRequestBodyBytes)),
+          ),
+          201,
+        );
+      if (groupId !== null) {
+        if (parts[4] === "memberships" && parts[5] === undefined && method === "POST") {
+          const input = decode(JoinWatchGroup, await body(request, config.maxRequestBodyBytes));
+          return json(GroupSnapshot, await groups.join(principal, groupId, input.password));
+        }
+        if (
+          parts[4] === "memberships" &&
+          parts[5] === "me" &&
+          parts[6] === undefined &&
+          method === "DELETE"
+        ) {
+          await groups.leave(principal, groupId);
+          return ack();
+        }
+        if (parts[5] === undefined) {
+          if (parts[4] === "state" && method === "GET")
+            return json(GroupSnapshot, await groups.state(principal, groupId));
+          if (parts[4] === "connection-tickets" && method === "POST")
+            return json(GroupTicket, await groups.ticket(principal, groupId));
+          if (parts[4] === "playback-sessions" && method === "POST") {
+            const input = decode(
+              GroupPlaybackRequest,
+              await body(request, config.maxRequestBodyBytes),
+            );
+            try {
+              const session = await groups.playbackSession(
+                principal,
+                groupId,
+                input.expectedPlaybackId,
+              );
+              if (request.signal.aborted) {
+                await call(services.playback.stop(principal, session.session.id, Date.now()));
+                throw new GroupFailure("unavailable", "Playback request was cancelled");
+              }
+              return unknownJson(playbackResponse(session), 201);
+            } catch (error) {
+              if (error instanceof GroupFailure && error.groupCode === "stale_state")
+                return unknownJson(
+                  {
+                    code: error.groupCode,
+                    message: error.message,
+                    snapshot: await groups.state(principal, groupId),
+                  },
+                  409,
+                );
+              throw error;
+            }
+          }
+        }
+      }
+      throw notFound();
+    }
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
     if (
       url.pathname === "/api/v1/admin/metadata-settings" &&
@@ -831,22 +930,7 @@ export const makeHttpHandler = (
     ) {
       const input = decode(S.StartPlaybackBody, await body(request, config.maxRequestBodyBytes));
       const result = await call(services.playback.start(principal, input, Date.now()));
-      return unknownJson(
-        {
-          sessionId: result.session.id,
-          itemId: result.itemId,
-          sourceId: result.sourceId,
-          sourceGeneration: result.sourceGeneration,
-          title: result.title,
-          streamUrl: result.streamPath,
-          durationSeconds: result.durationSeconds,
-          streams: result.streams,
-          grantExpiresInSeconds: result.grantExpiresInSeconds,
-          grantToken: result.grantToken,
-          mode: "DirectPlay",
-        },
-        201,
-      );
+      return unknownJson(playbackResponse(result), 201);
     }
     if (
       method === "POST" &&

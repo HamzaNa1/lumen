@@ -41,6 +41,9 @@ interface MediaPlayerProps {
   readonly controlsVisible: boolean;
   readonly fullscreen: boolean;
   readonly onBack: () => void;
+  readonly backLabel?: string;
+  readonly headerActions?: React.ReactNode;
+  readonly transportDisabled?: boolean;
   readonly onFullscreen: () => void;
   readonly onRetry: () => void;
   readonly onPause: () => void;
@@ -71,6 +74,9 @@ export const MediaPlayer = ({
   controlsVisible,
   fullscreen,
   onBack,
+  backLabel = "Back",
+  headerActions,
+  transportDisabled = false,
   onFullscreen,
   onRetry,
   onPause,
@@ -93,7 +99,8 @@ export const MediaPlayer = ({
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
-  const seekBy = usePlayerShortcuts({ enabled: !inactive, position, duration, onPause, onSeek });
+  const transportInactive = inactive || transportDisabled;
+  const seekBy = usePlayerShortcuts({ enabled: !transportInactive, position, duration, onPause, onSeek });
 
   return (
     <section
@@ -102,13 +109,14 @@ export const MediaPlayer = ({
       data-status={error !== null ? "error" : loading ? "loading" : "ready"}
     >
       <header className="media-player-header">
-        <Button variant="icon" onClick={onBack} aria-label="Back">
+        <Button variant="icon" onClick={onBack} aria-label={backLabel}>
           <ArrowLeft aria-hidden="true" size={21} />
         </Button>
         <div className="media-player-title">
           <h1>{title}</h1>
           {subtitle === undefined || subtitle === "" ? null : <p>{subtitle}</p>}
         </div>
+        {headerActions}
       </header>
 
       <div className="media-player-frame">
@@ -117,7 +125,7 @@ export const MediaPlayer = ({
             className="media-player-video-hit-target"
             type="button"
             aria-label={settingsOpen ? "Close playback settings" : paused ? "Resume playback" : "Pause playback"}
-            disabled={!settingsOpen && inactive}
+            disabled={!settingsOpen && transportInactive}
             onClick={() => {
               if (settingsOpen) setSettingsOpen(false);
               else onPause();
@@ -150,7 +158,7 @@ export const MediaPlayer = ({
               min={0}
               max={duration ?? Math.max(position, 1)}
               value={seekValue}
-              disabled={inactive || duration === null || duration <= 0}
+              disabled={transportInactive || duration === null || duration <= 0}
               onValueChange={setSeekPreview}
               onValueCommitted={(value) => {
                 setSeekPreview(null);
@@ -189,7 +197,7 @@ export const MediaPlayer = ({
               <Button
                 className="media-player-skip"
                 variant="icon"
-                disabled={inactive || duration === null}
+                disabled={transportInactive || duration === null}
                 onClick={() => seekBy(-10)}
                 aria-label="Back 10 seconds"
               >
@@ -201,7 +209,7 @@ export const MediaPlayer = ({
               <Button
                 className="media-player-play"
                 variant="icon"
-                disabled={inactive}
+                disabled={transportInactive}
                 onClick={onPause}
                 aria-label={paused ? "Resume playback" : "Pause playback"}
               >
@@ -214,7 +222,7 @@ export const MediaPlayer = ({
               <Button
                 className="media-player-skip"
                 variant="icon"
-                disabled={inactive || duration === null}
+                disabled={transportInactive || duration === null}
                 onClick={() => seekBy(10)}
                 aria-label="Forward 10 seconds"
               >
