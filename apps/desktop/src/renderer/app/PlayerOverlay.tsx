@@ -126,7 +126,7 @@ export const PlayerOverlay = (): React.ReactElement => {
         onFullscreen={() => void bridge.player.fullscreen(!fullscreen).then(setFullscreen)}
         onPause={() => {
           if (player !== null)
-            void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer);
+            void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer).catch(() => undefined);
         }}
         onSeek={(positionSeconds) => {
           if (player !== null)

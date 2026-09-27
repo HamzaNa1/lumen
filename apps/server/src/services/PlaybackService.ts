@@ -263,7 +263,7 @@ export const makePlaybackService = Effect.gen(function* () {
         return yield* conflict("Playback session is closed");
       const trackId = yield* resolveTrack(input.trackId);
       yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
-      const progress = yield* database.transaction((transaction) =>
+      const result = yield* database.transaction((transaction) =>
         Effect.gen(function* () {
           const sequence = yield* transaction
             .select({ sequence: serverPlaybackSequences.sequence })
@@ -317,39 +317,39 @@ export const makePlaybackService = Effect.gen(function* () {
               },
             })
             .returning();
+          const item = yield* transaction
+            .select({ id: catalogItems.id })
+            .from(catalogItems)
+            .innerJoin(catalogItemSources, eq(catalogItemSources.itemId, catalogItems.id))
+            .innerJoin(tracks, eq(tracks.sourceId, catalogItemSources.sourceId))
+            .where(eq(tracks.id, trackId))
+            .limit(1)
+            .get();
+          if (item != null) {
+            const positionSeconds = Math.round(input.positionMs / 1000);
+            const completed =
+              input.positionMs > 0 &&
+              input.durationMs !== null &&
+              input.positionMs / input.durationMs >= 0.9;
+            yield* transaction
+              .insert(itemWatchStates)
+              .values({
+                userId: principal.user.id,
+                itemId: item.id,
+                positionSeconds,
+                completed,
+                ownershipGeneration: 1,
+                updatedAtMs: nowMs,
+              })
+              .onConflictDoUpdate({
+                target: [itemWatchStates.userId, itemWatchStates.itemId],
+                set: { positionSeconds, completed, updatedAtMs: nowMs },
+              });
+          }
           return updated;
         }),
       );
-      const item = yield* database
-        .select({ id: catalogItems.id })
-        .from(catalogItems)
-        .innerJoin(catalogItemSources, eq(catalogItemSources.itemId, catalogItems.id))
-        .innerJoin(tracks, eq(tracks.sourceId, catalogItemSources.sourceId))
-        .where(eq(tracks.id, trackId))
-        .limit(1)
-        .get();
-      if (item != null) {
-        const positionSeconds = Math.round(input.positionMs / 1000);
-        const completed =
-          input.positionMs > 0 &&
-          input.durationMs !== null &&
-          input.positionMs / input.durationMs >= 0.9;
-        yield* database
-          .insert(itemWatchStates)
-          .values({
-            userId: principal.user.id,
-            itemId: item.id,
-            positionSeconds,
-            completed,
-            ownershipGeneration: 1,
-            updatedAtMs: nowMs,
-          })
-          .onConflictDoUpdate({
-            target: [itemWatchStates.userId, itemWatchStates.itemId],
-            set: { positionSeconds, completed, updatedAtMs: nowMs },
-          });
-      }
-      return progress;
+      return result;
     },
   );
 

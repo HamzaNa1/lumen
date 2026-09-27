@@ -54,10 +54,13 @@ const withPlayback = async (
     properties: Map<string, unknown>;
     heartbeat: ReturnType<typeof mock>;
     progress: ReturnType<typeof mock>;
+    request: ReturnType<typeof mock>;
+    stopProcess: ReturnType<typeof mock>;
   }) => Promise<void>,
 ): Promise<void> => {
+  const stopProcess = mock(async () => undefined);
   const startProcess = spyOn(MpvProcess, "start").mockReturnValue({
-    stop: async () => undefined,
+    stop: stopProcess,
   } as unknown as MpvProcess);
   const connect = spyOn(MpvIpc.prototype, "connect").mockResolvedValue(undefined);
   const properties = new Map<string, unknown>([
@@ -70,13 +73,21 @@ const withPlayback = async (
   const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
     this: InstanceType<typeof MpvIpc>,
     args: ReadonlyArray<string | number>,
+    timeoutMs = 5_000,
   ): Promise<unknown> {
     if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
-    return Promise.resolve(args[0] === "get_property" ? properties.get(String(args[1])) : null);
+    const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
+    if (value instanceof Promise)
+      return Promise.race([
+        value,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("MPV command timed out")), timeoutMs)),
+      ]);
+    return Promise.resolve(value);
   });
   const states: IpcPlayerState[] = [];
   const heartbeat = mock(async () => undefined);
   const progress = mock(async () => undefined);
+  const request = mock(async () => undefined);
   let sessionNumber = 0;
   const client = {
     serverOrigin: "http://localhost:3000",
@@ -88,7 +99,7 @@ const withPlayback = async (
       durationSeconds: 60,
       streams: [],
     }),
-    request: async () => undefined,
+    request,
     heartbeat,
     progress,
   };
@@ -108,7 +119,7 @@ const withPlayback = async (
   try {
     await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
     states.length = 0;
-    await run({ controller, states, properties, heartbeat, progress });
+    await run({ controller, states, properties, heartbeat, progress, request, stopProcess });
   } finally {
     await controller.stop();
     startProcess.mockRestore();
@@ -118,6 +129,146 @@ const withPlayback = async (
 };
 
 describe("playback progress updates", () => {
+  test("pausing saves the current MPV position without waiting for the reporting timer", async () => {
+    await withPlayback(async ({ controller, properties, progress }) => {
+      properties.set("time-pos", 27.5);
+      await controller.pause("session-1", true);
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(progress).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ paused: true, positionSeconds: 27.5 }),
+        1,
+      );
+      await controller.pause("session-1", false);
+      expect(progress).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("a failed progress request does not undo a successful pause", async () => {
+    await withPlayback(async ({ controller, progress }) => {
+      progress.mockRejectedValueOnce(new Error("server unavailable"));
+      await expect(controller.pause("session-1", true)).resolves.toMatchObject({ paused: true });
+      expect(controller.getState()?.paused).toBe(true);
+    });
+  });
+
+  test("a delayed pause sample cannot overwrite a newer seek", async () => {
+    await withPlayback(async ({ controller, properties }) => {
+      const pending = Promise.withResolvers<number>();
+      properties.set("time-pos", pending.promise);
+      const pausing = controller.pause("session-1", true);
+      await Promise.resolve();
+      controller.seek("session-1", 40);
+      pending.resolve(12.25);
+      await pausing;
+      expect(controller.getState()?.positionSeconds).toBe(40);
+    });
+  });
+
+  test("a slow heartbeat cannot reuse the sequence of a pause save", async () => {
+    await withPlayback(async ({ controller, properties, heartbeat, progress }) => {
+      for (let tick = 0; tick < 5; tick++) await controller.tick();
+      const pending = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      heartbeat.mockImplementationOnce(() => {
+        started.resolve();
+        return pending.promise;
+      });
+      const reporting = controller.tick();
+      await started.promise;
+      properties.set("time-pos", 30);
+      await controller.pause("session-1", true);
+      pending.resolve();
+      await reporting;
+      expect(progress).toHaveBeenNthCalledWith(
+        1,
+        "session-1",
+        expect.objectContaining({ paused: true, positionSeconds: 30 }),
+        7,
+      );
+      expect(progress).toHaveBeenNthCalledWith(2, "session-1", expect.anything(), 6);
+    });
+  });
+
+  test("leaving the player saves its last position before closing the server session", async () => {
+    await withPlayback(async ({ controller, properties, progress, request }) => {
+      const calls: string[] = [];
+      progress.mockImplementation(async () => { calls.push("progress"); });
+      request.mockImplementation(async () => { calls.push("delete"); });
+      properties.set("time-pos", 41.75);
+      await controller.stop();
+      expect(progress).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ positionSeconds: 41.75 }),
+        1,
+      );
+      expect(calls).toEqual(["progress", "delete"]);
+    });
+  });
+
+  test("a slow MPV shutdown does not delay the final save", async () => {
+    await withPlayback(async ({ controller, progress, request, stopProcess }) => {
+      const pending = Promise.withResolvers<void>();
+      const saved = Promise.withResolvers<void>();
+      stopProcess.mockImplementation(() => pending.promise);
+      progress.mockImplementation(async () => { saved.resolve(); });
+      const stopping = controller.stop();
+      try {
+        await saved.promise;
+        expect(progress).toHaveBeenCalledTimes(1);
+        expect(request).not.toHaveBeenCalled();
+      } finally {
+        pending.resolve();
+        await stopping;
+      }
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("an unresponsive MPV position query falls back to the last sampled position", async () => {
+    await withPlayback(async ({ controller, properties, progress }) => {
+      await controller.refreshState();
+      properties.set("time-pos", new Promise(() => undefined));
+      await controller.stop();
+      expect(progress).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ positionSeconds: 12.25 }),
+        1,
+      );
+    });
+  });
+
+  test("final progress starts even when a periodic write is stalled", async () => {
+    await withPlayback(async ({ controller, properties, progress, request }) => {
+      const pending = Promise.withResolvers<void>();
+      const started = Promise.withResolvers<void>();
+      const saved = Promise.withResolvers<void>();
+      progress.mockImplementationOnce(() => {
+        started.resolve();
+        return pending.promise;
+      });
+      progress.mockImplementation(async () => { saved.resolve(); });
+      for (let tick = 0; tick < 5; tick++) await controller.tick();
+      const reporting = controller.tick();
+      await started.promise;
+      properties.set("time-pos", 30);
+      const stopping = controller.stop();
+      try {
+        await saved.promise;
+        expect(progress).toHaveBeenCalledTimes(2);
+      } finally {
+        pending.resolve();
+        await Promise.all([reporting, stopping]);
+      }
+      expect(progress).toHaveBeenLastCalledWith(
+        "session-1",
+        expect.objectContaining({ positionSeconds: 30 }),
+        7,
+      );
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+  });
+
   test("publishes multiple position samples within one second without server requests", async () => {
     await withPlayback(async ({ controller, states, heartbeat, progress }) => {
       const stopUpdates = startNativePlayer(controller);

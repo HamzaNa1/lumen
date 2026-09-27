@@ -295,7 +295,7 @@ async function run(): Promise<void> {
       syncSurface();
       visible.push(await inspect("windowed"));
     }
-    controller.pause(state.sessionId, true);
+    await controller.pause(state.sessionId, true);
     controller.seek(state.sessionId, 5);
     visible.push(await inspect(`seek-${iteration}`));
     const { ipc } = Reflect.get(controller, "active") as { ipc: MpvIpc };
@@ -306,7 +306,7 @@ async function run(): Promise<void> {
     assert.equal(await ipc.command(["get_property", "mute"]), true);
     assert.equal(await ipc.command(["get_property", "volume"]), 35);
     controller.volume(state.sessionId, 100, false);
-    controller.pause(state.sessionId, false);
+    await controller.pause(state.sessionId, false);
     visible.push(await inspect(`resume-${iteration}`));
     await controller.stop();
     assert.equal(controller.getState(), null);
@@ -352,7 +352,7 @@ async function run(): Promise<void> {
   await controller.start({ client, connectionId: "test", itemId: "test-item", startAtSeconds: 5 });
   const state = controller.getState();
   assert(state);
-  controller.pause(state.sessionId, true);
+  await controller.pause(state.sessionId, true);
   for (const output of ["auto-safe", "stereo"]) {
     const result = await overlay.window.webContents.executeJavaScript(
       `window.lumen.player.audioOutput(${JSON.stringify(state.sessionId)}, ${JSON.stringify(output)})`,
@@ -363,7 +363,7 @@ async function run(): Promise<void> {
   assert.equal(diagnostics.properties["audio-channels"], "stereo");
   assert.equal(diagnostics.properties.pause, true);
   assert.equal(controller.getState()?.selectedAudioStreamId, "audio-1");
-  controller.pause(state.sessionId, false);
+  await controller.pause(state.sessionId, false);
   visible.push(await inspect("audio-output-changed"));
   await overlay.window.webContents.executeJavaScript(
     `document.querySelector('[aria-label="Playback settings"]').click()`,
@@ -455,7 +455,7 @@ async function run(): Promise<void> {
     await closingPlayer.start({ client, connectionId: "test", itemId: "test-item" });
     const closingState = closingPlayer.getState();
     assert(closingState);
-    if (paused) closingPlayer.pause(closingState.sessionId, true);
+    if (paused) await closingPlayer.pause(closingState.sessionId, true);
     await delay(100);
     await closePlayerWindow(
       paused ? "close-while-paused" : "close-while-playing",

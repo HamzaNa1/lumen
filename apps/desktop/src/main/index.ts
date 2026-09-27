@@ -13,6 +13,28 @@ import { createMainWindow } from "./windows";
 let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
+let quitting = false;
+let closingPlayback: Promise<void> | null = null;
+
+const stopPlayerBeforeClose = (): Promise<void> => {
+  if (closingPlayback !== null) return closingPlayback;
+  const stopping = player?.stop().catch((cause: unknown) => {
+    console.error("Failed to stop playback during app close", cause);
+  });
+  if (stopping === undefined) return Promise.resolve();
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const waiting = Promise.race([
+    stopping,
+    new Promise<void>((resolve) => {
+      timeout = setTimeout(resolve, 1_000);
+    }),
+  ]).finally(() => {
+    if (timeout !== undefined) clearTimeout(timeout);
+    closingPlayback = null;
+  });
+  closingPlayback = waiting;
+  return waiting;
+};
 
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 const rendererPath = join(import.meta.dirname, "../renderer/index.html");
@@ -39,8 +61,19 @@ const bootstrap = async (): Promise<void> => {
       if (!overlay.window.isDestroyed()) overlay.window.webContents.send("player:state", state);
     },
   });
+  let closingWindow = false;
+  mainWindow.on("close", (event) => {
+    if (closingWindow) {
+      event.preventDefault();
+      return;
+    }
+    if (player?.getState() == null) return;
+    event.preventDefault();
+    closingWindow = true;
+    void stopPlayerBeforeClose().finally(() => mainWindow?.destroy());
+  });
   mainWindow.once("closed", () => {
-    void player?.stop();
+    void player?.stop().catch((cause: unknown) => console.error("Failed to stop playback", cause));
   });
   const clients = new Map<string, ServerClient>();
   registerIpcHandlers({
@@ -65,9 +98,19 @@ const bootstrap = async (): Promise<void> => {
   mainWindow.once("closed", stopUpdates);
 };
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (quitting && closingPlayback !== null) {
+    event.preventDefault();
+    return;
+  }
+  if (!quitting && (player?.getState() != null || closingPlayback !== null)) {
+    event.preventDefault();
+    quitting = true;
+    void stopPlayerBeforeClose().finally(() => app.quit());
+    return;
+  }
   unregisterIpcHandlers();
-  void player?.stop();
+  void player?.stop().catch((cause: unknown) => console.error("Failed to stop playback", cause));
   void bridge?.close();
 });
 
