@@ -122,7 +122,7 @@ export class WatchPlaybackController {
   }
 
   get grouped(): boolean {
-    return this.status.group !== null;
+    return this.status.group !== null || this.client?.rejoining === true;
   }
 
   private async setSpeed(speed: number): Promise<void> {

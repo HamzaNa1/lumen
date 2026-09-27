@@ -53,15 +53,17 @@ export const App = (): React.ReactElement => {
   }, []);
 
   useEffect(() => bridge.watch.onState((status) => {
+    const previous = watchRef.current;
     watchRef.current = status;
     setWatchStatus(status);
-    if (status.group?.playback == null) leavingWatch.current = false;
+    if (status.group?.playback == null || status.group.id !== previous?.group?.id || status.group.revision !== previous?.group?.revision) leavingWatch.current = false;
     if (status.group?.playback != null && status.connection === "connected" && !leavingWatch.current) {
       setPlayingItem(null);
       if (status.error !== null) {
         setPlaybackError(status.error);
         setPlaybackLoading(false);
       } else if (activePlayer.current?.itemId !== status.group.playback.itemId) setPlaybackLoading(true);
+      if (activePlayer.current?.itemId !== status.group.playback.itemId) updatePlayer(null);
       if (!onPlayerRouteRef.current) {
         returnTo.current = router.state.location.href;
         void router.navigate({ to: "/player" });
@@ -70,10 +72,12 @@ export const App = (): React.ReactElement => {
     if (status.group !== null && status.group.playback === null && status.group.revision > 0 && onPlayerRouteRef.current) {
       void router.navigate({ href: returnTo.current, replace: true });
     }
-  }), [router]);
+  }), [router, updatePlayer]);
 
   useEffect(() => {
     const receivePlayer = (state: IpcPlayerState | null): void => {
+      const sharedPlayback = watchRef.current?.group?.playback;
+      if (sharedPlayback != null && state !== null && state.itemId !== sharedPlayback.itemId) return;
       if (state !== null && watchRef.current?.group?.playback?.itemId === state.itemId) {
         setPlayingItem(null);
         setPlaybackLoading(false);

@@ -27,6 +27,15 @@ const Authentication = Schema.Struct({
   token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
 });
 
+class WatchGroupsBusy extends Error {
+  constructor(
+    message: string,
+    readonly retryAfterMs = 1000,
+  ) {
+    super(message);
+  }
+}
+
 export class WatchGroups {
   private readonly sockets = new Set<ServerWebSocket<WatchSocketData>>();
   private readonly groups = new Map<string, Group>();
@@ -156,7 +165,8 @@ export class WatchGroups {
   }
 
   private async passwordWork<A>(operation: () => Promise<A>): Promise<A> {
-    if (this.passwordOperations >= 4) throw new Error("Watch groups are busy. Try again shortly.");
+    if (this.passwordOperations >= 4)
+      throw new WatchGroupsBusy("Watch groups are busy. Try again shortly.");
     this.passwordOperations += 1;
     try {
       return await operation();
@@ -199,7 +209,21 @@ export class WatchGroups {
       } else if (action.type === "list") this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
-        await Effect.runPromise(this.attempts.check(principal.user.id, Date.now()));
+        const retrySeconds = await Effect.runPromise(
+          this.attempts
+            .check(principal.user.id, Date.now())
+            .pipe(
+              Effect.match({
+                onFailure: (failure) => failure.retryAfterSeconds,
+                onSuccess: () => 0,
+              }),
+            ),
+        );
+        if (retrySeconds > 0)
+          throw new WatchGroupsBusy(
+            "Too many attempts. Try again shortly.",
+            Math.min(60000, retrySeconds * 1000),
+          );
         let group: Group;
         if (action.type === "create") {
           if (this.groups.size >= 64) throw new Error("Too many watch groups. Try again later.");
@@ -236,7 +260,7 @@ export class WatchGroups {
             throw new Error("This group is no longer available");
         }
         if (socket.data.closed) return;
-        if (group.state.members.length >= 32) throw new Error("This group is full");
+        if (group.state.members.length >= 32) throw new WatchGroupsBusy("This group is full", 5000);
         if (action.type === "create" && this.groups.size >= 64)
           throw new Error("Too many watch groups. Try again later.");
         this.leave(socket);
@@ -311,6 +335,7 @@ export class WatchGroups {
       this.send(socket, {
         type: "reply",
         requestId,
+        ...(cause instanceof WatchGroupsBusy ? { retryAfterMs: cause.retryAfterMs } : {}),
         error:
           cause instanceof Error && !cause.message.includes("\n")
             ? cause.message
