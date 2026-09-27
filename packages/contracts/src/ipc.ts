@@ -179,12 +179,19 @@ export type IpcPlayerSession = Schema.Schema.Type<typeof IpcPlayerSession>;
 export const IpcAudioOutput = Schema.Literals(["stereo", "auto-safe"]);
 export type IpcAudioOutput = Schema.Schema.Type<typeof IpcAudioOutput>;
 
+export const IpcBufferedRange = Schema.Struct({
+  startSeconds: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+  endSeconds: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type IpcBufferedRange = Schema.Schema.Type<typeof IpcBufferedRange>;
+
 export const IpcPlayerState = Schema.Struct({
   sessionId: Uuid,
   itemId: Uuid,
   paused: Schema.Boolean,
   positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  bufferedRanges: Schema.Array(IpcBufferedRange),
   volume: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   muted: Schema.Boolean,
   ended: Schema.Boolean,

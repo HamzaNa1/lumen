@@ -2256,11 +2256,22 @@ body:has(.app-shell) {
   height: 6px;
 }
 .media-slider-indicator {
+  position: relative;
+  z-index: 1;
   height: 100%;
   border-radius: inherit;
   background: var(--accent);
 }
+.media-slider-buffered {
+  position: absolute;
+  top: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: rgba(255, 255, 255, 0.58);
+  pointer-events: none;
+}
 .media-slider-thumb {
+  z-index: 2;
   width: 13px;
   height: 13px;
   border: 0;
