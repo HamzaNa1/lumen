@@ -1,3 +1,4 @@
+import { WatchGroups, type WatchSocketData } from "./watch-groups/WatchGroups";
 import { createLogger, ServerLogger, type Logger } from "./core/Logger";
 import { Database, RepositoriesLive, serverIdentity } from "@lumen/database";
 import { Cause, Effect, Exit, Fiber, Layer } from "effect";
@@ -139,7 +140,7 @@ const makeServices = Effect.gen(function* () {
 });
 
 export interface RunningServer {
-  readonly server: Bun.Server<unknown>;
+  readonly server: Bun.Server<WatchSocketData>;
   readonly stop: () => Promise<void>;
 }
 
@@ -189,7 +190,7 @@ const startConfiguredServer = async (
     if (Exit.isFailure(exit)) rejectServices(Cause.squash(exit.cause));
   });
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
-  let server: Bun.Server<unknown> | undefined;
+  let server: Bun.Server<WatchSocketData> | undefined;
   try {
     const services = await Promise.race([
       servicesPromise,
@@ -240,7 +241,13 @@ const startConfiguredServer = async (
       },
     };
     const handler = makeHttpHandler(httpServices, config, logger);
-    const listeningServer = Bun.serve({ hostname: config.host, port: config.port, fetch: handler });
+    const watchGroups = new WatchGroups(httpServices);
+    const listeningServer = Bun.serve<WatchSocketData>({
+      hostname: config.host, port: config.port,
+      fetch: (request, server) => new URL(request.url).pathname === "/api/v1/watch-groups"
+        ? watchGroups.upgrade(request, server) : handler(request),
+      websocket: watchGroups.websocket,
+    });
     server = listeningServer;
     logger.info("server_listening", {
       host: config.host,
@@ -257,6 +264,7 @@ const startConfiguredServer = async (
         const shutdownStartedAt = performance.now();
         logger.info("server_stopping");
         abort.abort();
+        watchGroups.close();
         try {
           const outcomes = await Promise.allSettled([
             listeningServer.stop(true),

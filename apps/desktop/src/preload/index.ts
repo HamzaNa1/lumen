@@ -1,5 +1,7 @@
 import type {
   EpisodeOrderSelection,
+  WatchAction,
+  WatchStatus,
   IpcPlayerDisplay,
   IpcPlayerSurfaceBounds,
 } from "@lumen/contracts";
@@ -9,6 +11,16 @@ const invoke = <T>(channel: string, ...args: ReadonlyArray<unknown>): Promise<T>
   ipcRenderer.invoke(channel, ...args) as Promise<T>;
 
 const api = {
+  watch: {
+    retry: () => invoke<void>("watch:retry"),
+    state: () => invoke<WatchStatus>("watch:state"),
+    action: (action: WatchAction) => invoke<WatchStatus>("watch:action", action),
+    onState: (callback: (status: WatchStatus) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, status: WatchStatus): void => callback(status);
+      ipcRenderer.on("watch:state", listener);
+      return () => ipcRenderer.removeListener("watch:state", listener);
+    },
+  },
   accounts: {
     list: () => invoke<unknown>("accounts:list"),
     setup: (origin: string) => invoke<unknown>("accounts:setup", { origin }),

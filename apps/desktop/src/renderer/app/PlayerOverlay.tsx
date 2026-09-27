@@ -1,3 +1,4 @@
+import { WatchGroups } from "./WatchGroups";
 import type { IpcPlayerDisplay, IpcPlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -89,6 +90,7 @@ export const PlayerOverlay = (): React.ReactElement => {
   return (
     <div className="player-overlay">
       <MediaPlayer
+        headerActions={<WatchGroups compact />}
         title={display.title}
         subtitle={display.context}
         paused={player?.paused ?? true}

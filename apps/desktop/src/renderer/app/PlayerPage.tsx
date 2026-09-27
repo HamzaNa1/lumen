@@ -4,11 +4,11 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import { bridge, useWorkspace } from "./Workspace";
 
 export const PlayerPage = (): React.ReactElement => {
-  const { playingItem, player, playbackLoading, playbackError, beginPlayback, reportPlaybackError } =
+  const { watchPlayback, playingItem, player, playbackLoading, playbackError, beginPlayback, reportPlaybackError } =
     useWorkspace();
   const navigate = useNavigate();
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const hasPlayback = playingItem !== null || player !== null;
+  const hasPlayback = watchPlayback !== null || playingItem !== null || player !== null;
 
   usePlayerShortcuts({
     enabled: player !== null && !playbackLoading && playbackError === null,
@@ -64,7 +64,7 @@ export const PlayerPage = (): React.ReactElement => {
     };
   }, [beginPlayback, hasPlayback, playingItem, reportPlaybackError]);
 
-  if (playingItem === null && player === null) {
+  if (!hasPlayback) {
     return <div className="watch-page" />;
   }
 

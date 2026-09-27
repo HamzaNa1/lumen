@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
+import type { IpcAccount, IpcItem, IpcPlayerState, WatchStatus } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
@@ -40,6 +40,9 @@ export const App = (): React.ReactElement => {
   const startingItemId = useRef<string | null>(null);
   // Where to go when the viewer leaves the player.
   const returnTo = useRef("/");
+  const leavingWatch = useRef(false);
+  const watchRef = useRef<WatchStatus | null>(null);
+  const [watchStatus, setWatchStatus] = useState<WatchStatus | null>(null);
   const activePlayer = useRef<IpcPlayerState | null>(null);
   const wasOnPlayerRoute = useRef(onPlayerRoute);
   const onPlayerRouteRef = useRef(onPlayerRoute);
@@ -49,9 +52,38 @@ export const App = (): React.ReactElement => {
     setPlayer(state);
   }, []);
 
+  useEffect(() => bridge.watch.onState((status) => {
+    const previous = watchRef.current;
+    watchRef.current = status;
+    setWatchStatus(status);
+    if (status.group?.playback == null || status.group.id !== previous?.group?.id || status.group.revision !== previous?.group?.revision) leavingWatch.current = false;
+    if (status.group?.playback != null && status.connection === "connected" && !leavingWatch.current) {
+      setPlayingItem(null);
+      if (status.error !== null) {
+        setPlaybackError(status.error);
+        setPlaybackLoading(false);
+      } else if (activePlayer.current?.itemId !== status.group.playback.itemId) setPlaybackLoading(true);
+      if (activePlayer.current?.itemId !== status.group.playback.itemId) updatePlayer(null);
+      if (!onPlayerRouteRef.current) {
+        returnTo.current = router.state.location.href;
+        void router.navigate({ to: "/player" });
+      }
+    }
+    if (status.group !== null && status.group.playback === null && status.group.revision > 0 && onPlayerRouteRef.current) {
+      void router.navigate({ href: returnTo.current, replace: true });
+    }
+  }), [router, updatePlayer]);
+
   useEffect(() => {
     const receivePlayer = (state: IpcPlayerState | null): void => {
-      if (state !== null && !onPlayerRouteRef.current) {
+      const sharedPlayback = watchRef.current?.group?.playback;
+      if (sharedPlayback != null && state !== null && state.itemId !== sharedPlayback.itemId) return;
+      if (state !== null && watchRef.current?.group?.playback?.itemId === state.itemId) {
+        setPlayingItem(null);
+        setPlaybackLoading(false);
+        setPlaybackError(null);
+        updatePlayer(state);
+      } else if (state !== null && !onPlayerRouteRef.current) {
         void bridge.player.stop().catch(() => undefined);
         updatePlayer(null);
       } else updatePlayer(state);
@@ -72,6 +104,7 @@ export const App = (): React.ReactElement => {
       updatePlayer(null);
       try {
         await bridge.player.start(item.id, item.resumePositionSeconds ?? undefined);
+        if (watchRef.current?.group !== null && watchRef.current?.group !== undefined) return;
         if (!onPlayerRouteRef.current) {
           await bridge.player.stop();
           updatePlayer(null);
@@ -137,6 +170,7 @@ export const App = (): React.ReactElement => {
     const leavingPlayer = wasOnPlayerRoute.current && !onPlayerRoute;
     wasOnPlayerRoute.current = onPlayerRoute;
     if (!leavingPlayer) return;
+    leavingWatch.current = true;
     updatePlayer(null);
     setPlayingItem(null);
     setPlaybackLoading(false);
@@ -158,22 +192,28 @@ export const App = (): React.ReactElement => {
   useEffect(() => {
     if (!onPlayerRoute) return;
     void bridge.player.display({
-      title: playingItem?.title ?? "Now playing",
+      title: playingItem?.title ?? watchStatus?.group?.playback?.title ?? "Now playing",
       context: `${active?.serverLabel ?? "Lumen"} · Original quality`,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
     });
-  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError]);
+  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError, watchStatus]);
   useEffect(
     () =>
       bridge.player.onOverlayAction((action) => {
         // Leaving the player route stops playback and clears its state.
-        if (action === "back" || action === "stop")
+        if (action === "back" || action === "stop") {
+          leavingWatch.current = true;
           void router.navigate({ href: returnTo.current, replace: true });
-        else if (playingItem !== null) void beginPlayback(playingItem);
+        } else if (playingItem !== null) void beginPlayback(playingItem);
+        else if (watchRef.current?.group?.playback != null) {
+          setPlaybackLoading(true);
+          setPlaybackError(null);
+          void bridge.watch.retry().catch(reportPlaybackError);
+        }
       }),
-    [beginPlayback, playingItem, router],
+    [beginPlayback, playingItem, reportPlaybackError, router],
   );
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -263,6 +303,7 @@ export const App = (): React.ReactElement => {
       setSignInAccount(null);
       setConnectionsView(view);
     },
+    watchPlayback: watchStatus?.group?.playback ?? null,
     playingItem,
     player,
     playbackLoading,

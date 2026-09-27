@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState } from "@lumen/contracts";
+import type { IpcAccount, IpcItem, IpcPlayerState, WatchPlayback } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import {
   type QueryClient,
@@ -19,6 +19,7 @@ export interface WorkspaceValue {
   readonly openItem: (item: IpcItem) => void;
   readonly playItem: (item: IpcItem) => void;
   readonly openConnections: (view: "saved" | "add") => void;
+  readonly watchPlayback: WatchPlayback | null;
   readonly playingItem: IpcItem | null;
   readonly player: IpcPlayerState | null;
   readonly playbackLoading: boolean;
