@@ -74,6 +74,7 @@ interface PlaybackFixture {
   readonly streamUrl: URL;
   readonly grantHeaders: Record<string, string>;
   readonly advanceTo: (elapsedMs: number) => void;
+  readonly restartServer: () => Promise<void>;
 }
 
 const withPlaybackSession = async (
@@ -84,7 +85,7 @@ const withPlaybackSession = async (
   paths.push(root);
   const databasePath = join(root, "server.sqlite");
   const seeded = await seed(root, databasePath, 7_200_000);
-  const running = await startServer({ databasePath, host: "127.0.0.1", port: 0 });
+  let running = await startServer({ databasePath, host: "127.0.0.1", port: 0 });
   runningServers.push(running);
   const base = new URL(running.server.url);
   const startedAtMs = Date.now();
@@ -151,6 +152,13 @@ const withPlaybackSession = async (
       advanceTo: (elapsedMs) => {
         clock.mockReturnValue(startedAtMs + elapsedMs);
       },
+      restartServer: async () => {
+        const port = running.server.port;
+        await running.stop();
+        runningServers.splice(runningServers.indexOf(running), 1);
+        running = await startServer({ databasePath, host: "127.0.0.1", port });
+        runningServers.push(running);
+      },
     });
   } finally {
     clock.mockRestore();
@@ -158,6 +166,90 @@ const withPlaybackSession = async (
 };
 
 describe("direct-play HTTP delivery", () => {
+  test("preserves manual watch-state changes against paused reports and allows a new session", async () => {
+    await withPlaybackSession(async ({ base, seeded, headers, sessionUrl, restartServer }) => {
+      const itemUrl = new URL(`/api/v1/items/${seeded.itemId}`, base);
+      const report = async (url: URL, sequence: number, positionMs = 4_000) => {
+        const response = await fetch(`${url}/progress`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ trackId: seeded.itemId, positionMs, durationMs: 10_000, sequence }),
+        });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ positionMs });
+      };
+      const expectWatchState = async (positionSeconds: number, completed: boolean) => {
+        const response = await fetch(itemUrl, { headers });
+        expect(response.status).toBe(200);
+        expect(await response.json()).toMatchObject({ watchState: { positionSeconds, completed } });
+      };
+      const heartbeat = await fetch(`${sessionUrl}/heartbeat`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ state: "paused", activeTrackId: seeded.itemId, errorCode: null }),
+      });
+      expect(heartbeat.status).toBe(200);
+      await heartbeat.arrayBuffer();
+      await report(sessionUrl, 1);
+      await expectWatchState(4, false);
+      const manual = await fetch(`${itemUrl}/watch-state`, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ positionSeconds: 0, completed: true }),
+      });
+      expect(manual.status).toBe(200);
+      await manual.arrayBuffer();
+      await expectWatchState(0, true);
+      await restartServer();
+      await report(sessionUrl, 2);
+      await expectWatchState(0, true);
+      const home = await fetch(new URL("/api/v1/home", base), { headers });
+      expect(home.status).toBe(200);
+      expect(await home.json()).toMatchObject({ continueWatching: [] });
+      const started = await fetch(new URL("/api/v1/playback/sessions", base), {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ trackId: seeded.itemId }),
+      });
+      expect(started.status).toBe(201);
+      const playback = await started.json() as { sessionId: string };
+      await report(new URL(`/api/v1/playback/sessions/${playback.sessionId}`, base), 1);
+      await expectWatchState(4, false);
+      await report(sessionUrl, 3, 2_000);
+      await expectWatchState(4, false);
+    });
+  });
+
+  for (const completed of [true, false]) {
+    test(`preserves a manual completed=${completed} change before the first progress report`, async () => {
+      await withPlaybackSession(async ({ base, seeded, headers, sessionUrl }) => {
+        const itemUrl = new URL(`/api/v1/items/${seeded.itemId}`, base);
+        const manual = await fetch(`${itemUrl}/watch-state`, {
+          method: "PUT",
+          headers,
+          body: JSON.stringify({ positionSeconds: 0, completed }),
+        });
+        expect(manual.status).toBe(200);
+        await manual.arrayBuffer();
+        const progress = await fetch(`${sessionUrl}/progress`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            trackId: seeded.trackId,
+            positionMs: completed ? 4_000 : 9_500,
+            durationMs: 10_000,
+            sequence: 0,
+          }),
+        });
+        expect(progress.status).toBe(200);
+        await progress.arrayBuffer();
+        const details = await fetch(itemUrl, { headers });
+        expect(details.status).toBe(200);
+        expect(await details.json()).toMatchObject({ watchState: { positionSeconds: 0, completed } });
+      });
+    });
+  }
+
   test("cannot renew media access with a null active track after library access expires", async () => {
     await withPlaybackSession(
       async ({ headers, sessionUrl, streamUrl, grantHeaders, advanceTo }) => {
