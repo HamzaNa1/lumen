@@ -30,6 +30,8 @@ type PlaybackInput = Schema.Schema.Type<typeof StartPlaybackBody>;
 type HeartbeatInput = Schema.Schema.Type<typeof HeartbeatBody>;
 type ProgressInput = Schema.Schema.Type<typeof ProgressBody>;
 
+const playbackLifetimeMs = 3_600_000;
+
 export type PlaybackStream = IpcPlayableStream;
 
 export interface PlaybackStartResponse {
@@ -116,7 +118,7 @@ export const makePlaybackService = Effect.gen(function* () {
           grantTokenHash: hashToken(grantToken),
           activeTrackId: trackId,
           nowMs,
-          expiresAtMs: nowMs + 3_600_000,
+          expiresAtMs: nowMs + playbackLifetimeMs,
         })
         .pipe(
           Effect.mapError((cause) =>
@@ -131,7 +133,7 @@ export const makePlaybackService = Effect.gen(function* () {
           canSeek: true,
           canSkip: false,
           maxBitrateKbps: null,
-          expiresAtMs: nowMs + 3_600_000,
+          expiresAtMs: nowMs + playbackLifetimeMs,
         })
         .pipe(
           Effect.mapError((cause) =>
@@ -177,7 +179,7 @@ export const makePlaybackService = Effect.gen(function* () {
         streamPath: `/api/v1/media/${encodeURIComponent(trackId)}`,
         durationSeconds: source.durationMs === null ? null : Math.round(source.durationMs / 1000),
         streams,
-        grantExpiresInSeconds: 3_600,
+        grantExpiresInSeconds: playbackLifetimeMs / 1000,
       };
     },
   );
@@ -196,31 +198,50 @@ export const makePlaybackService = Effect.gen(function* () {
         return yield* conflict("Playback session is closed");
       const activeTrackId =
         input.activeTrackId === null ? null : yield* resolveTrack(input.activeTrackId);
-      if (activeTrackId !== null)
-        yield* access.requireTrack(principal, activeTrackId, "playback:control", nowMs);
-      yield* database
-        .update(playbackSessions)
-        .set({
-          state: input.state,
-          activeTrackId,
-          lastSeenAtMs: nowMs,
-          errorCode: input.errorCode ?? null,
-        })
+      const grants = yield* database
+        .select({ id: playbackGrants.id, trackId: playbackGrants.trackId })
+        .from(playbackGrants)
         .where(
-          and(
-            eq(playbackSessions.id, sessionId),
-            eq(playbackSessions.userId, principal.user.id),
-            isNull(playbackSessions.closedAtMs),
-            gt(playbackSessions.expiresAtMs, nowMs),
-          ),
+          and(eq(playbackGrants.sessionId, sessionId), gt(playbackGrants.expiresAtMs, nowMs)),
         );
-      return {
-        ...session,
-        state: input.state,
-        activeTrackId,
-        lastSeenAtMs: nowMs,
-        errorCode: input.errorCode ?? null,
-      };
+      const trackIds = new Set(grants.map((grant) => grant.trackId));
+      if (activeTrackId !== null) trackIds.add(activeTrackId);
+      for (const trackId of trackIds)
+        yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
+      return yield* database.transaction((transaction) =>
+        Effect.gen(function* () {
+          const [updated] = yield* transaction
+            .update(playbackSessions)
+            .set({
+              state: input.state,
+              activeTrackId,
+              lastSeenAtMs: nowMs,
+              expiresAtMs: sql`max(${playbackSessions.expiresAtMs}, ${nowMs + playbackLifetimeMs})`,
+              errorCode: input.errorCode ?? null,
+            })
+            .where(
+              and(
+                eq(playbackSessions.id, sessionId),
+                eq(playbackSessions.userId, principal.user.id),
+                isNull(playbackSessions.closedAtMs),
+                gt(playbackSessions.expiresAtMs, nowMs),
+              ),
+            )
+            .returning();
+          if (updated == null) return yield* conflict("Playback session is closed");
+          yield* transaction
+            .update(playbackGrants)
+            .set({ expiresAtMs: updated.expiresAtMs })
+            .where(
+              and(
+                eq(playbackGrants.sessionId, sessionId),
+                inArray(playbackGrants.id, grants.map((grant) => grant.id)),
+                gt(playbackGrants.expiresAtMs, nowMs),
+              ),
+            );
+          return { ...updated, state: input.state };
+        }),
+      );
     },
   );
 

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
 import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
 import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
@@ -17,7 +17,7 @@ afterEach(async () => {
   for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true });
 });
 
-const seed = async (root: string, databasePath: string): Promise<{ readonly userId: string; readonly libraryId: string; readonly trackId: string; readonly itemId: string; readonly audioStreamId: string; readonly subtitleStreamId: string }> => {
+const seed = async (root: string, databasePath: string, durationMs = 10_000): Promise<{ readonly userId: string; readonly libraryId: string; readonly trackId: string; readonly itemId: string; readonly audioStreamId: string; readonly subtitleStreamId: string }> => {
   const mediaPath = join(root, "clip.mkv");
   await Bun.write(mediaPath, "0123456789");
   const databaseLayer = makeDatabaseLayers({ databasePath } as never);
@@ -54,11 +54,11 @@ const seed = async (root: string, databasePath: string): Promise<{ readonly user
       yield* database.run(sql`INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (${subtitleStreamId}, ${source.id}, 'subtitle', 'matroska', 'subrip', 'eng', 'English', 2, 1)`);
       yield* database.run(sql`
         INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
-        VALUES (${trackId}, ${libraryId}, ${source.id}, ${streamId}, 'Clip', 'clip', 10000, 0, unixepoch() * 1000, unixepoch() * 1000)
+        VALUES (${trackId}, ${libraryId}, ${source.id}, ${streamId}, 'Clip', 'clip', ${durationMs}, 0, unixepoch() * 1000, unixepoch() * 1000)
       `);
       yield* database.run(sql`
         INSERT INTO catalog_items(id, library_id, kind, title, sort_title, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
-        VALUES (${itemId}, ${libraryId}, 'movie', 'Clip', 'clip', 10, 'local', unixepoch() * 1000, unixepoch() * 1000)
+        VALUES (${itemId}, ${libraryId}, 'movie', 'Clip', 'clip', ${durationMs / 1000}, 'local', unixepoch() * 1000, unixepoch() * 1000)
       `);
       yield* database.run(sql`INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (${itemId}, ${source.id}, 1, 1)`);
     }
@@ -66,7 +66,286 @@ const seed = async (root: string, databasePath: string): Promise<{ readonly user
   }).pipe(Effect.provide(layer)));
 };
 
+interface PlaybackFixture {
+  readonly base: URL;
+  readonly seeded: Awaited<ReturnType<typeof seed>>;
+  readonly headers: Record<string, string>;
+  readonly sessionUrl: URL;
+  readonly streamUrl: URL;
+  readonly grantHeaders: Record<string, string>;
+  readonly advanceTo: (elapsedMs: number) => void;
+}
+
+const withPlaybackSession = async (
+  run: (fixture: PlaybackFixture) => Promise<void>,
+  libraryAccessExpiresInMs?: number,
+) => {
+  const root = await mkdtemp(join(tmpdir(), "lumen-playback-lifetime-test-"));
+  paths.push(root);
+  const databasePath = join(root, "server.sqlite");
+  const seeded = await seed(root, databasePath, 7_200_000);
+  const running = await startServer({ databasePath, host: "127.0.0.1", port: 0 });
+  runningServers.push(running);
+  const base = new URL(running.server.url);
+  const startedAtMs = Date.now();
+  const clock = spyOn(Date, "now").mockReturnValue(startedAtMs);
+  try {
+    if (libraryAccessExpiresInMs !== undefined) {
+      const sqlite = new SqliteDatabase(databasePath);
+      try {
+        sqlite.run("UPDATE users SET role = 'user' WHERE id = ?", [seeded.userId]);
+        sqlite.run(
+          `INSERT INTO library_grants(id, library_id, user_id, role, capabilities_json, expires_at_ms, created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, 'user', '["library:read","playback:control"]', ?, ?, ?)`,
+          [
+            newUuid(),
+            seeded.libraryId,
+            seeded.userId,
+            startedAtMs + libraryAccessExpiresInMs,
+            startedAtMs,
+            startedAtMs,
+          ],
+        );
+      } finally {
+        sqlite.close();
+      }
+    }
+    const deviceId = newUuid();
+    const login = await fetch(new URL("/api/v1/auth/login", base), {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        username: "admin",
+        password: "correct horse battery staple",
+        deviceId,
+        deviceName: "Playback test",
+        platform: "desktop",
+        platformDeviceId: deviceId,
+      }),
+    });
+    expect(login.status).toBe(200);
+    const auth = (await login.json()) as { accessToken: string };
+    const headers = {
+      "content-type": "application/json",
+      authorization: `Bearer ${auth.accessToken}`,
+    };
+    const started = await fetch(new URL("/api/v1/playback/sessions", base), {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ trackId: seeded.itemId }),
+    });
+    expect(started.status).toBe(201);
+    const playback = (await started.json()) as {
+      sessionId: string;
+      grantToken: string;
+      streamUrl: string;
+    };
+    const sessionUrl = new URL(`/api/v1/playback/sessions/${playback.sessionId}`, base);
+    await run({
+      base,
+      seeded,
+      headers,
+      sessionUrl,
+      streamUrl: new URL(playback.streamUrl, base),
+      grantHeaders: { authorization: `Bearer ${playback.grantToken}`, range: "bytes=2-5" },
+      advanceTo: (elapsedMs) => {
+        clock.mockReturnValue(startedAtMs + elapsedMs);
+      },
+    });
+  } finally {
+    clock.mockRestore();
+  }
+};
+
 describe("direct-play HTTP delivery", () => {
+  test("cannot renew media access with a null active track after library access expires", async () => {
+    await withPlaybackSession(
+      async ({ headers, sessionUrl, streamUrl, grantHeaders, advanceTo }) => {
+        advanceTo(20_000);
+        const heartbeat = await fetch(`${sessionUrl}/heartbeat`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ state: "paused", activeTrackId: null, errorCode: null }),
+        });
+        expect(heartbeat.status).toBe(200);
+        await heartbeat.arrayBuffer();
+        advanceTo(60_000);
+        const denied = await fetch(`${sessionUrl}/heartbeat`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ state: "paused", activeTrackId: null, errorCode: null }),
+        });
+        expect(denied.status).toBe(403);
+        await denied.arrayBuffer();
+        advanceTo(3_620_000);
+        const expired = await fetch(`${sessionUrl}/heartbeat`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ state: "paused", activeTrackId: null, errorCode: null }),
+        });
+        expect(expired.status).toBe(409);
+        await expired.arrayBuffer();
+        const media = await fetch(streamUrl, { headers: grantHeaders });
+        expect(media.status).toBe(404);
+        await media.arrayBuffer();
+      },
+      60_000,
+    );
+  });
+
+  test("does not let another user renew a playback session", async () => {
+    await withPlaybackSession(
+      async ({ base, seeded, headers, sessionUrl, streamUrl, grantHeaders, advanceTo }) => {
+        const deviceId = newUuid();
+        const registration = await fetch(new URL("/api/v1/auth/register", base), {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            username: "other",
+            displayName: "Other",
+            password: "correct horse battery staple",
+            deviceId,
+            deviceName: "Other device",
+            platform: "desktop",
+            platformDeviceId: deviceId,
+          }),
+        });
+        expect(registration.status).toBe(201);
+        const other = (await registration.json()) as { accessToken: string };
+        advanceTo(3_580_000);
+        const denied = await fetch(`${sessionUrl}/heartbeat`, {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${other.accessToken}`,
+          },
+          body: JSON.stringify({ state: "playing", activeTrackId: seeded.itemId, errorCode: null }),
+        });
+        expect(denied.status).toBe(403);
+        await denied.arrayBuffer();
+        advanceTo(3_600_000);
+        const heartbeat = await fetch(`${sessionUrl}/heartbeat`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ state: "playing", activeTrackId: seeded.itemId, errorCode: null }),
+        });
+        expect(heartbeat.status).toBe(409);
+        await heartbeat.arrayBuffer();
+        const media = await fetch(streamUrl, { headers: grantHeaders });
+        expect(media.status).toBe(404);
+        await media.arrayBuffer();
+      },
+    );
+  });
+
+  for (const ending of ["abandoned", "stopped"] as const) {
+    test(`rejects heartbeats, progress, and media for ${ending} sessions`, async () => {
+      await withPlaybackSession(
+        async ({ seeded, headers, sessionUrl, streamUrl, grantHeaders, advanceTo }) => {
+          if (ending === "stopped") {
+            advanceTo(20_000);
+            const heartbeat = await fetch(`${sessionUrl}/heartbeat`, {
+              method: "POST",
+              headers,
+              body: JSON.stringify({
+                state: "playing",
+                activeTrackId: seeded.itemId,
+                errorCode: null,
+              }),
+            });
+            expect(heartbeat.status).toBe(200);
+            await heartbeat.arrayBuffer();
+            const stopped = await fetch(sessionUrl, { method: "DELETE", headers });
+            expect(stopped.status).toBe(200);
+            await stopped.arrayBuffer();
+            advanceTo(40_000);
+          } else {
+            advanceTo(3_600_000);
+          }
+          const heartbeat = await fetch(`${sessionUrl}/heartbeat`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              state: "playing",
+              activeTrackId: seeded.itemId,
+              errorCode: null,
+            }),
+          });
+          expect(heartbeat.status).toBe(409);
+          expect(await heartbeat.json()).toMatchObject({ message: "Playback session is closed" });
+          const progress = await fetch(`${sessionUrl}/progress`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              trackId: seeded.itemId,
+              positionMs: 4_000,
+              durationMs: 7_200_000,
+              sequence: 1,
+            }),
+          });
+          expect(progress.status).toBe(409);
+          await progress.arrayBuffer();
+          const media = await fetch(streamUrl, { headers: grantHeaders });
+          expect(media.status).toBe(404);
+          expect(await media.json()).toMatchObject({
+            message: "Playback grant is invalid or expired",
+          });
+        },
+      );
+    });
+  }
+
+  test("keeps progress and the original media grant usable beyond one hour with heartbeats", async () => {
+    await withPlaybackSession(
+      async ({ base, seeded, headers, sessionUrl, streamUrl, grantHeaders, advanceTo }) => {
+        for (let elapsedMs = 20_000; elapsedMs <= 4_000_000; elapsedMs += 20_000) {
+          advanceTo(elapsedMs);
+          const heartbeat = await fetch(`${sessionUrl}/heartbeat`, {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              state: "playing",
+              activeTrackId: seeded.itemId,
+              errorCode: null,
+            }),
+          });
+          expect(heartbeat.status).toBe(200);
+          await heartbeat.arrayBuffer();
+        }
+        const progress = await fetch(`${sessionUrl}/progress`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            trackId: seeded.itemId,
+            positionMs: 4_000_000,
+            durationMs: 7_200_000,
+            sequence: 1,
+          }),
+        });
+        expect(progress.status).toBe(200);
+        expect(await progress.json()).toMatchObject({ positionMs: 4_000_000 });
+        const details = await fetch(new URL(`/api/v1/items/${seeded.itemId}`, base), { headers });
+        expect(details.status).toBe(200);
+        expect(await details.json()).toMatchObject({ watchState: { positionSeconds: 4_000 } });
+        const partial = await fetch(streamUrl, { headers: grantHeaders });
+        expect(partial.status).toBe(206);
+        expect(partial.headers.get("content-range")).toBe("bytes 2-5/10");
+        expect(await partial.text()).toBe("2345");
+        advanceTo(7_600_000);
+        const expired = await fetch(`${sessionUrl}/heartbeat`, {
+          method: "POST",
+          headers,
+          body: JSON.stringify({ state: "playing", activeTrackId: seeded.itemId, errorCode: null }),
+        });
+        expect(expired.status).toBe(409);
+        await expired.arrayBuffer();
+        const expiredMedia = await fetch(streamUrl, { headers: grantHeaders });
+        expect(expiredMedia.status).toBe(404);
+        await expiredMedia.arrayBuffer();
+      },
+    );
+  });
+
   test("authorizes a scoped grant, supports ranges, and handles HEAD without range", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-playback-test-"));
     paths.push(root);
