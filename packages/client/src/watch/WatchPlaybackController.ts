@@ -154,7 +154,9 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.generation += 1;
     const client = this.client;
     const group = this.status.group;
-    const playback = this.status.group?.playback;
+    // A viewer whose own player failed is only giving up locally. Everyone else is still
+    // watching, so the group is not asked to stop.
+    const playback = this.playbackError === null ? this.status.group?.playback : null;
     if (this.pendingStop === null && group?.playback != null)
       this.stoppedPlayback = { groupId: group.id, revision: group.revision };
     this.playbackError = null;

@@ -445,8 +445,10 @@ export class HtmlMediaPlayer {
     try {
       await this.open(generation, active.session.itemId, positionSeconds, wasPaused);
     } catch (cause) {
-      if (generation === this.generation)
-        await this.fail(cause instanceof Error ? cause.message : "Playback could not resume.");
+      if (generation !== this.generation) return;
+      // The old session was retired quietly; now that nothing replaces it, say that it is gone.
+      this.onState(null);
+      await this.fail(cause instanceof Error ? cause.message : "Playback could not resume.");
     }
   }
 

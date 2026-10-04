@@ -181,7 +181,7 @@ export const makeHttpHandler = (
     status: number,
   ): Promise<Response> => {
     const nowMs = Date.now();
-    const session = await call(services.auth.authenticateSession(token, nowMs));
+    const session = await authenticateCookie(request, token);
     cookies.set(request, sessionCookie(request, config, token, session.expiresAtMs, nowMs));
     return json(
       BrowserSession,
@@ -264,32 +264,26 @@ export const makeHttpHandler = (
     if (method === "GET" && url.pathname === "/api/v1/auth/browser/session") {
       const token = sessionCookieToken(request);
       if (token === null) throw unauthorized();
-      const nowMs = Date.now();
-      const session = await authenticateCookie(request, token);
-      cookies.set(request, sessionCookie(request, config, token, session.expiresAtMs, nowMs));
-      return json(
-        BrowserSession,
-        { user: session.principal.user, expiresAtMs: session.expiresAtMs },
-        200,
-        { "cache-control": "no-store" },
-      );
+      return browserSession(request, token, 200);
     }
     if (method === "POST" && url.pathname === "/api/v1/auth/browser/logout") {
       assertBrowserMutation(request, config);
       const token = sessionCookieToken(request);
-      cookies.set(request, clearedSessionCookie(request, config));
       if (token !== null) {
-        // A session that already ended has nothing left to revoke.
-        const session = await call(
-          services.auth
-            .authenticateSession(token, Date.now())
-            .pipe(Effect.catch(() => Effect.succeed(null))),
+        // A session that already ended has nothing left to revoke. Any other failure leaves the
+        // session alive, so it is reported and the cookie is kept rather than cleared.
+        const session = await call(services.auth.authenticateSession(token, Date.now())).catch(
+          (cause: unknown) => {
+            if (cause instanceof ServerError && cause.code === "unauthorized") return null;
+            throw cause;
+          },
         );
         if (session !== null)
           await call(
             services.auth.logout(session.principal, session.principal.sessionId, Date.now()),
           );
       }
+      cookies.set(request, clearedSessionCookie(request, config));
       return ack();
     }
     if (method === "POST" && url.pathname === "/api/v1/auth/migrate-session") {

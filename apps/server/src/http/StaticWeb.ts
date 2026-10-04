@@ -1,4 +1,4 @@
-import { realpath, stat } from "node:fs/promises";
+import { readdir, realpath, stat } from "node:fs/promises";
 import { extname, join, resolve } from "node:path";
 import { Effect } from "effect";
 import type { ServerConfig } from "../config/Config";
@@ -99,6 +99,12 @@ export const assertWebBuild = async (root: string): Promise<void> => {
   if (entry?.isFile() !== true)
     throw new Error(
       `The web app is missing: ${join(root, ENTRY)} does not exist. Build it with "bun run build:web", or point LUMEN_WEB_ROOT at a built copy.`,
+    );
+  // A page without its scripts and styles would load and then show nothing.
+  const assets = await readdir(join(root, HASHED_ASSETS)).catch(() => []);
+  if (assets.length === 0)
+    throw new Error(
+      `The web app is incomplete: ${join(root, HASHED_ASSETS)} has no built files. Build it again with "bun run build:web".`,
     );
 };
 

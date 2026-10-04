@@ -230,6 +230,17 @@ describe("browser playback lifecycle", () => {
     expect(player.getState()?.sessionId).toBe("session-2");
   });
 
+  test("a session that cannot be reopened ends visibly instead of freezing", async () => {
+    const { element, api, player, states, failures } = setup();
+    await player.start({ itemId: "item-1" });
+    api.heartbeatFailure = new ServerHttpError("Playback session has ended", 404);
+    element.loadOutcome = "unsupported";
+    await player.reconcile();
+    expect(states.at(-1)).toBeNull();
+    expect(failures).toHaveLength(1);
+    expect(player.getState()).toBeNull();
+  });
+
   test("leaving the page saves progress with requests that can outlive it", async () => {
     const { element, player, calls } = setup();
     await player.start({ itemId: "item-1" });

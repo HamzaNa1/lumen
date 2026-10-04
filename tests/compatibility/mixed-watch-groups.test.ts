@@ -145,6 +145,12 @@ test("a browser that cannot play the file leaves the group's playback untouched"
     expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
     expect(desktop.status.group?.members).toHaveLength(2);
 
+    // Leaving the player after the failure, as Back does, is not a request to stop for everyone.
+    await browser.stop();
+    await Bun.sleep(200);
+    expect(desktop.status.group?.revision).toBe(before?.revision);
+    expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
+
     // The viewer stays in the group, and plays along once the group moves to something else.
     player.unsupported = false;
     await desktop.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 30 });

@@ -5,6 +5,8 @@ import { forbidden } from "../core/Errors";
 type OriginPolicy = Pick<ServerConfig, "allowedOrigins">;
 type CookiePolicy = Pick<ServerConfig, "cookieSecure">;
 
+const HOST = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/u;
+
 const firstValue = (header: string | null): string | null =>
   header?.split(",")[0]?.trim() || null;
 
@@ -19,7 +21,10 @@ export const requestOrigin = (request: Request): string => {
     forwardedProtocol === "https" || forwardedProtocol === "http"
       ? `${forwardedProtocol}:`
       : url.protocol;
-  const host = firstValue(request.headers.get("x-forwarded-host")) ?? url.host;
+  const forwardedHost = firstValue(request.headers.get("x-forwarded-host"));
+  // The result is compared with Origin headers and written into response headers, so a forwarded
+  // host is used only when it is nothing but a host name and port.
+  const host = forwardedHost !== null && HOST.test(forwardedHost) ? forwardedHost : url.host;
   return `${protocol}//${host}`;
 };
 

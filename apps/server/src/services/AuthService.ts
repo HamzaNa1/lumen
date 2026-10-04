@@ -267,7 +267,7 @@ export const makeAuthService = Effect.gen(function* () {
   });
 
   const authenticateSession: AuthServiceShape["authenticateSession"] = Effect.fn(
-    "AuthService.authenticate",
+    "AuthService.authenticateSession",
   )(
     function* (token, nowMs) {
       const sessionId = sessionIdFromToken(token);

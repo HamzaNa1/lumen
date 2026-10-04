@@ -63,11 +63,19 @@ describe("static web app", () => {
       expect(policy).toContain("default-src 'self'");
       expect(policy).toContain("script-src 'self'");
       expect(policy).toContain("frame-ancestors 'none'");
-      expect(policy).toContain("connect-src 'self' ws://lumen.test");
+      expect(policy).toContain("connect-src 'self' ws://lumen.test;");
       expect(response.headers.get("referrer-policy")).toBe("no-referrer");
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     },
   );
+
+  test("a forged forwarded host cannot rewrite the page's policy", async () => {
+    const { get } = await handler();
+    const response = await get("/web/", { headers: { "x-forwarded-host": "x; script-src *" } });
+    const policy = response.headers.get("content-security-policy") ?? "";
+    expect(policy).not.toContain("script-src *");
+    expect(policy).toContain("connect-src 'self' ws://lumen.test;");
+  });
 
   test("hashed assets are served with their type and cached immutably", async () => {
     const { get } = await handler();

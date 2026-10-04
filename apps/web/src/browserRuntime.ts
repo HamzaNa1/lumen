@@ -84,11 +84,11 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     watch.disconnect();
     await player.stop();
   });
-  const signedIn = accounts;
+  const browserAccounts = accounts;
 
-  /** Opens the watch-group connection for the signed-in account, once. */
+  /** Makes sure the watch-group connection belongs to the signed-in account. */
   const connectWatch = async (): Promise<void> => {
-    const { activeConnectionId } = await signedIn.list();
+    const { activeConnectionId } = await browserAccounts.list();
     if (activeConnectionId === null) throw new Error("Sign-in required");
     watch.connect(watchServer, activeConnectionId);
   };
@@ -98,7 +98,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
   // Timers stop while a page is hidden or the device sleeps, and the network may have gone away.
   // Before carrying on, find out what the server still knows about this session and playback.
   const resume = (): void => {
-    void signedIn
+    void browserAccounts
       .revalidate()
       .then(() => player.reconcile())
       .then(() => watch.resume())
@@ -157,7 +157,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       },
       signInStorage: "cookie",
     },
-    accounts: signedIn,
+    accounts: browserAccounts,
     catalog: {
       home: () => api.home(),
       libraries: () => api.libraries(),
@@ -259,7 +259,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       window.removeEventListener("pagehide", onPageHide);
       watch.close();
       void player.stop();
-      signedIn.dispose();
+      browserAccounts.dispose();
       api.cancelPending();
     },
   };
