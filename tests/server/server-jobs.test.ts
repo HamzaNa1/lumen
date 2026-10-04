@@ -14,7 +14,7 @@ import {
   Layer,
 } from "../../packages/database/node_modules/effect/dist/index.js";
 import { TestClock } from "../../packages/database/node_modules/effect/dist/testing/index.js";
-import { mkdir, mkdtemp, rm, utimes } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { newUuid } from "../../apps/server/src/core/Security";
@@ -140,6 +140,8 @@ describe("durable jobs and scanner reconciliation", () => {
     paths.push(workspace);
     const root = join(workspace, "media");
     await mkdir(root);
+    const season = join(root, "Example Show", "Season 1");
+    await mkdir(season, { recursive: true });
     await utimes(root, new Date(1_000), new Date(1_000));
     const databaseLayer = makeDatabaseLayers({
       databasePath: join(workspace, "server.sqlite"),
@@ -176,8 +178,9 @@ describe("durable jobs and scanner reconciliation", () => {
           mode: "full",
           startedAtMs: 150,
         });
-        yield* Effect.promise(() => mkdir(join(root, "new-show")));
+        yield* Effect.promise(() => Bun.write(join(season, "Example Show S01E02.mkv"), "episode"));
         const deferred = yield* libraryWatcher.check(200);
+        const deferredAgain = yield* libraryWatcher.check(225);
         yield* repos.scanning.finishRun({
           runId: active.id,
           status: "succeeded",
@@ -189,13 +192,15 @@ describe("durable jobs and scanner reconciliation", () => {
         const runCount = yield* database.get<{ count: number }>(
           sql`SELECT count(*) AS count FROM scan_runs WHERE library_id = ${libraryId}`,
         );
-        return { deferred, started, runCount: runCount?.count ?? 0 };
+        return { deferred, deferredAgain, started, runCount: runCount?.count ?? 0 };
       }).pipe(Effect.provide(layer)),
     );
 
     expect(result.deferred).toBe(0);
+    expect(result.deferredAgain).toBe(0);
     expect(result.started).toBe(1);
     expect(result.runCount).toBe(2);
+    expect((await stat(root)).mtimeMs).toBe(1_000);
   });
 });
 
@@ -237,7 +242,7 @@ const makeWatcherLayer = (
   return Layer.mergeAll(dependencies, libraries, watcher, jobs, scheduler);
 };
 
-const insertWatchedLibrary = (root: string) =>
+const insertWatchedLibrary = (root: string, kind: "movies" | "shows" = "movies") =>
   Effect.gen(function* () {
     const database = yield* Database;
     const libraryId = newUuid();
@@ -246,7 +251,7 @@ const insertWatchedLibrary = (root: string) =>
       sql`INSERT INTO libraries(id, name, slug, is_enabled, created_at_ms, updated_at_ms) VALUES (${libraryId}, 'Movies', 'movies', 1, 1, 1)`,
     );
     yield* database.run(
-      sql`INSERT INTO library_profiles(library_id, kind, scan_mode) VALUES (${libraryId}, 'movies', 'full')`,
+      sql`INSERT INTO library_profiles(library_id, kind, scan_mode) VALUES (${libraryId}, ${kind}, 'full')`,
     );
     yield* database.run(
       sql`INSERT INTO library_roots(id, library_id, path, is_enabled, priority, created_at_ms, updated_at_ms) VALUES (${rootId}, ${libraryId}, ${root}, 1, 0, 1, 1)`,
@@ -285,6 +290,56 @@ const countWatchState = Effect.gen(function* () {
     sql`SELECT count(*) AS count FROM server_library_watch_state`,
   );
   return row?.count ?? 0;
+});
+
+describe("library watcher reconciliation", () => {
+  test.each([
+    ["shows", "addition"],
+    ["shows", "deletion"],
+    ["shows", "replacement"],
+    ["movies", "addition"],
+    ["movies", "deletion"],
+    ["movies", "replacement"],
+  ] as const)("queues a scan for a %s library's nested media %s", async (kind, change) => {
+    const { root, databasePath } = await makeWatcherWorkspace();
+    const folder = kind === "shows"
+      ? join(root, "Example Show", "Season 1")
+      : join(root, "Example Movie (2026)");
+    const existing = join(folder, kind === "shows" ? "Example Show S01E01.mkv" : "movie.mkv");
+    await mkdir(folder, { recursive: true });
+    await Bun.write(existing, "original media");
+    await utimes(root, new Date(1_000), new Date(1_000));
+    await utimes(folder, new Date(1_000), new Date(1_000));
+    const rootModifiedAtMs = (await stat(root)).mtimeMs;
+
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        const watcher = yield* LibraryWatcher;
+        yield* insertWatchedLibrary(root, kind);
+        const baseline = yield* watcher.check(1_000);
+        yield* Effect.promise(async () => {
+          switch (change) {
+            case "addition":
+              await Bun.write(join(folder, "new-media.mkv"), "new media");
+              break;
+            case "deletion":
+              await rm(existing);
+              break;
+            case "replacement":
+              await Bun.write(existing, "replacement media with different content and size");
+              break;
+          }
+        });
+        const started = yield* watcher.check(61_000);
+        const duringScan = yield* watcher.check(121_000);
+        const stillDuringScan = yield* watcher.check(181_000);
+        return { baseline, started, duringScan, stillDuringScan };
+      }).pipe(Effect.provide(makeWatcherLayer(databasePath))),
+    );
+
+    expect((await stat(root)).mtimeMs).toBe(rootModifiedAtMs);
+    expect(result).toEqual({ baseline: 0, started: 1, duringScan: 0, stillDuringScan: 0 });
+  });
 });
 
 describe("library watcher background job", () => {

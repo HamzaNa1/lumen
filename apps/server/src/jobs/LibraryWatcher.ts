@@ -17,7 +17,7 @@ interface RootRow {
   readonly observedModifiedAtMs: number | null;
 }
 
-type ChangedRoots = Array<{ readonly id: string; readonly modifiedAtMs: number }>;
+type RootObservations = Array<{ readonly id: string; readonly modifiedAtMs: number }>;
 
 export interface LibraryWatcherShape {
   readonly check: (nowMs: number) => Effect.Effect<number, unknown>;
@@ -44,7 +44,7 @@ export const makeLibraryWatcher = Effect.gen(function* () {
         asc(libraryRoots.priority),
         asc(libraryRoots.path),
       )) as ReadonlyArray<RootRow>;
-    const changed = new Map<string, ChangedRoots>();
+    const pending = new Map<string, RootObservations>();
 
     for (const root of roots) {
       const details = yield* Effect.tryPromise(() => stat(root.path)).pipe(Effect.option);
@@ -65,27 +65,21 @@ export const makeLibraryWatcher = Effect.gen(function* () {
           });
         continue;
       }
-      if (root.observedModifiedAtMs === modifiedAtMs) {
-        yield* database
-          .update(serverLibraryWatchState)
-          .set({ checkedAtMs: nowMs })
-          .where(eq(serverLibraryWatchState.rootId, root.id));
-        continue;
-      }
-
-      const changedRoots = changed.get(root.libraryId) ?? [];
-      changedRoots.push({ id: root.id, modifiedAtMs });
-      changed.set(root.libraryId, changedRoots);
+      // A root's mtime cannot reveal nested changes or file overwrites. Reconcile
+      // on every scheduled check; incremental discovery skips unchanged probes.
+      const observations = pending.get(root.libraryId) ?? [];
+      observations.push({ id: root.id, modifiedAtMs });
+      pending.set(root.libraryId, observations);
     }
 
     let scansStarted = 0;
-    for (const [libraryId, changedRoots] of changed) {
+    for (const [libraryId, observations] of pending) {
       // A conflict means the library cannot be scanned right now: a scan is already
       // active, or it was disabled or lost its roots since the roots were loaded.
-      // The change stays unrecorded, so a later check picks it up again.
+      // A later scheduled check retries reconciliation.
       // Watcher scans reconcile changes only; unchanged media is not re-probed.
       const started = yield* libraries
-        .startWatchedScan({ libraryId, mode: "incremental" }, changedRoots, nowMs)
+        .startWatchedScan({ libraryId, mode: "incremental" }, observations, nowMs)
         .pipe(
           Effect.as(true),
           Effect.catchIf(
