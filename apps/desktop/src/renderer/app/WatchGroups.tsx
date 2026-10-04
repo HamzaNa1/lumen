@@ -1,31 +1,266 @@
-import { initialWatchStatus, type WatchAction, type WatchGroup } from "@lumen/contracts";
-import { Button, Modal, TextField } from "@lumen/ui";
 import {
-  Check,
-  ChevronRight,
-  CirclePlay,
-  LockKeyhole,
-  LogOut,
-  Plus,
-  Radio,
-  RefreshCw,
-  Users,
-} from "lucide-react";
+  initialWatchStatus,
+  type WatchAction,
+  type WatchGroup,
+  type WatchPlayback,
+  type WatchStatus,
+} from "@lumen/contracts";
+import { Avatar, Button, formatPlayerTime, Popover, PopoverTitle, TextField } from "@lumen/ui";
+import { CircleAlert, LoaderCircle, Lock, LogOut, Pause, Play, Plus, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { errorMessage } from "./format";
 import "./watch-groups.css";
 
-export const WatchGroups = ({
-  compact = false,
+const visibleMemberNames = 3;
+
+const playbackSummary = (playback: WatchPlayback | null): string =>
+  playback === null
+    ? "Nothing playing"
+    : playback.paused
+      ? `Paused on ${playback.title}`
+      : `Watching ${playback.title}`;
+
+const memberNames = (members: WatchGroup["members"]): string => {
+  if (members.length === 0) return "Empty";
+  const names = members
+    .slice(0, visibleMemberNames)
+    .map((member) => member.displayName)
+    .join(", ");
+  return members.length > visibleMemberNames
+    ? `${names} +${members.length - visibleMemberNames}`
+    : names;
+};
+
+const peopleCount = (count: number): string => (count === 1 ? "1 person" : `${count} people`);
+
+const PanelHeader = ({
+  title,
+  locked = false,
+  connection,
 }: {
-  readonly compact?: boolean;
+  readonly title: string;
+  readonly locked?: boolean;
+  readonly connection: WatchStatus["connection"];
+}): React.ReactElement => (
+  <header className="watch-group-header">
+    <PopoverTitle>{title}</PopoverTitle>
+    {locked ? <Lock aria-label="Password protected" size={13} /> : null}
+    {connection === "connected" ? null : (
+      <span className="watch-group-connection" role="status">
+        <LoaderCircle className="spinner" aria-hidden="true" size={13} />
+        {connection === "connecting" ? "Connecting…" : "Reconnecting…"}
+      </span>
+    )}
+  </header>
+);
+
+const GroupList = ({
+  groups,
+  connected,
+  disabled,
+  onJoin,
+  onCreate,
+}: {
+  readonly groups: ReadonlyArray<WatchGroup>;
+  readonly connected: boolean;
+  readonly disabled: boolean;
+  readonly onJoin: (groupId: string, password: string) => void;
+  readonly onCreate: () => void;
+}): React.ReactElement => {
+  const [unlockingId, setUnlockingId] = useState<string | null>(null);
+  const [password, setPassword] = useState("");
+  return (
+    <>
+      {groups.length > 0 ? (
+        <ul className="watch-group-list">
+          {groups.map((group) => {
+            const unlocking = unlockingId === group.id;
+            return (
+              <li key={group.id}>
+                <button
+                  className="watch-group-row"
+                  type="button"
+                  disabled={disabled}
+                  aria-expanded={group.hasPassword ? unlocking : undefined}
+                  onClick={() => {
+                    if (!group.hasPassword) onJoin(group.id, "");
+                    else {
+                      setPassword("");
+                      setUnlockingId(unlocking ? null : group.id);
+                    }
+                  }}
+                >
+                  <span className="watch-group-row-text">
+                    <strong>
+                      <span>{group.name}</span>
+                      {group.hasPassword ? (
+                        <Lock aria-label="Password protected" size={12} />
+                      ) : null}
+                    </strong>
+                    <span>
+                      {memberNames(group.members)}
+                      {group.playback === null ? null : ` · ${playbackSummary(group.playback)}`}
+                    </span>
+                  </span>
+                  {unlocking ? null : <span className="watch-group-row-action">Join</span>}
+                </button>
+                {unlocking ? (
+                  <form
+                    className="watch-group-unlock"
+                    onSubmit={(event) => {
+                      event.preventDefault();
+                      onJoin(group.id, password);
+                    }}
+                  >
+                    <TextField
+                      label={`Password for ${group.name}`}
+                      hideLabel
+                      type="password"
+                      placeholder="Password"
+                      autoComplete="off"
+                      autoFocus
+                      required
+                      maxLength={128}
+                      value={password}
+                      onValueChange={setPassword}
+                    />
+                    <Button type="submit" variant="primary" disabled={disabled || password === ""}>
+                      Join
+                    </Button>
+                  </form>
+                ) : null}
+              </li>
+            );
+          })}
+        </ul>
+      ) : connected ? (
+        <div className="watch-group-empty">
+          <strong>No groups yet</strong>
+          <p>Start one and anyone on this server can join.</p>
+        </div>
+      ) : null}
+      <footer className="watch-group-footer">
+        <Button className="button-wide" disabled={disabled} onClick={onCreate}>
+          <Plus aria-hidden="true" size={15} />
+          New group
+        </Button>
+      </footer>
+    </>
+  );
+};
+
+const CreateGroupForm = ({
+  disabled,
+  onCreate,
+  onCancel,
+}: {
+  readonly disabled: boolean;
+  readonly onCreate: (name: string, password: string) => void;
+  readonly onCancel: () => void;
+}): React.ReactElement => {
+  const [name, setName] = useState("");
+  const [password, setPassword] = useState("");
+  return (
+    <form
+      className="watch-group-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        onCreate(name.trim(), password);
+      }}
+    >
+      <TextField
+        label="Name"
+        placeholder="Movie night"
+        autoFocus
+        required
+        maxLength={80}
+        value={name}
+        onValueChange={setName}
+      />
+      <TextField
+        label="Password"
+        description="Optional. Leave empty to let anyone join."
+        type="password"
+        autoComplete="new-password"
+        maxLength={128}
+        value={password}
+        onValueChange={setPassword}
+      />
+      <div className="dialog-actions">
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+        <Button type="submit" variant="primary" disabled={disabled || name.trim() === ""}>
+          Create group
+        </Button>
+      </div>
+    </form>
+  );
+};
+
+const ActiveGroup = ({
+  group,
+  memberId,
+  disabled,
+  onLeave,
+}: {
+  readonly group: WatchGroup;
+  readonly memberId: string | null;
+  readonly disabled: boolean;
+  readonly onLeave: () => void;
+}): React.ReactElement => {
+  const playback = group.playback;
+  const playing = playback !== null && !playback.paused;
+  return (
+    <>
+      <div className={`watch-group-now${playing ? " is-playing" : ""}`}>
+        <span className="watch-group-now-icon">
+          {playback?.paused ? (
+            <Pause aria-hidden="true" size={15} fill="currentColor" />
+          ) : (
+            <Play aria-hidden="true" size={15} fill="currentColor" />
+          )}
+        </span>
+        <span className="watch-group-now-text">
+          <strong>{playback?.title ?? "Nothing playing"}</strong>
+          <span>
+            {playback === null
+              ? "Play a movie or episode and it starts for everyone."
+              : playback.paused
+                ? `Paused at ${formatPlayerTime(playback.positionSeconds)}`
+                : "Playing for everyone"}
+          </span>
+        </span>
+      </div>
+      <h3 className="watch-group-label">{peopleCount(group.members.length)}</h3>
+      <ul className="watch-group-members">
+        {group.members.map((member) => (
+          <li key={member.id}>
+            <Avatar name={member.displayName} size="sm" />
+            <span>{member.displayName}</span>
+            {member.id === memberId ? <small>You</small> : null}
+          </li>
+        ))}
+      </ul>
+      <footer className="watch-group-footer">
+        <p>Playback controls are shared.</p>
+        <Button variant="ghost" size="sm" disabled={disabled} onClick={onLeave}>
+          <LogOut aria-hidden="true" size={14} />
+          Leave
+        </Button>
+      </footer>
+    </>
+  );
+};
+
+export const WatchGroups = ({
+  placement,
+}: {
+  readonly placement: "sidebar" | "player";
 }): React.ReactElement | null => {
   const [status, setStatus] = useState(initialWatchStatus);
   const [open, setOpen] = useState(false);
-  const [view, setView] = useState<"groups" | "create" | "password">("groups");
-  const [selected, setSelected] = useState<WatchGroup | null>(null);
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
+  const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -41,20 +276,16 @@ export const WatchGroups = ({
     setError(null);
     try {
       setStatus(await window.lumen.watch.action(action));
-      setPassword("");
-      setView("groups");
+      setCreating(false);
     } catch (cause) {
-      setError(errorMessage(cause, "Could not update watch group"));
+      setError(errorMessage(cause, "Could not update the group"));
     } finally {
       setBusy(false);
     }
   };
-  const group = status.group;
-  const disabled = busy || status.connection !== "connected";
   const changeOpen = (next: boolean): void => {
     setOpen(next);
-    setView("groups");
-    setPassword("");
+    setCreating(false);
     setError(null);
     if (next)
       void window.lumen.watch
@@ -63,216 +294,89 @@ export const WatchGroups = ({
         .catch((cause: unknown) => setError(errorMessage(cause, "Could not connect")));
   };
   if (status.connection === "unavailable") return null;
+  const group = status.group;
+  const connected = status.connection === "connected";
+  const disabled = busy || !connected;
+  const visibleError = error ?? status.error;
   return (
-    <>
-      <Button
-        variant={compact ? "icon" : "ghost"}
-        className={`watch-trigger${group === null ? "" : " is-active"}`}
-        aria-label="Watch groups"
-        title={group?.name ?? "Watch groups"}
-        onClick={() => changeOpen(true)}
-      >
-        <Users size={compact ? 21 : 17} aria-hidden="true" />
-        {compact ? null : <span>{group?.name ?? "Watch groups"}</span>}
-        {group === null ? null : <span className="watch-active-dot" />}
-      </Button>
-      <Modal
-        open={open}
-        onOpenChange={changeOpen}
-        title={
-          view === "create"
-            ? "New group"
-            : view === "password"
-              ? "Join protected group"
-              : (group?.name ?? "Join a group")
-        }
-        description="Watch together, wherever you are."
-        className="watch-dialog"
-      >
-        <div className="watch-connection">
-          <Radio size={13} aria-hidden="true" />
-          <span>
-            {status.connection === "connected"
-              ? "SyncPlay · Connected"
-              : status.connection === "connecting"
-                ? "Connecting…"
-                : "Reconnecting…"}
-          </span>
-          {group?.hasPassword ? <LockKeyhole size={13} aria-label="Password protected" /> : null}
-        </div>
-        {error !== null || status.error !== null ? (
-          <p className="watch-error" role="alert">
-            {error ?? status.error}
-          </p>
-        ) : null}
-        {view === "create" || view === "password" ? (
-          <form
-            className="watch-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              if (view === "create") void perform({ type: "create", name: name.trim(), password });
-              else if (selected !== null)
-                void perform({ type: "join", groupId: selected.id, password });
-            }}
+    <Popover
+      open={open}
+      onOpenChange={changeOpen}
+      side={placement === "sidebar" ? "top" : "bottom"}
+      align={placement === "sidebar" ? "start" : "end"}
+      className="watch-group-panel"
+      trigger={
+        placement === "sidebar" ? (
+          <button
+            type="button"
+            className={`watch-group-trigger${group === null ? "" : " is-active"}`}
           >
-            {view === "create" ? (
-              <TextField
-                label="Group name"
-                placeholder="Friday movie night"
-                value={name}
-                onValueChange={setName}
-                maxLength={80}
-                required
-              />
-            ) : (
-              <div className="watch-selected">
-                <Users size={20} />
-                <strong>{selected?.name}</strong>
-              </div>
+            <Users aria-hidden="true" size={16} strokeWidth={1.85} />
+            <span className="watch-group-trigger-text">
+              <strong>{group?.name ?? "Watch together"}</strong>
+              {group === null ? null : (
+                <span>{connected ? playbackSummary(group.playback) : "Reconnecting…"}</span>
+              )}
+            </span>
+            {group === null ? null : (
+              <span className="watch-group-trigger-count">{group.members.length}</span>
             )}
-            <TextField
-              label={view === "create" ? "Password (optional)" : "Group password"}
-              description={
-                view === "create"
-                  ? "Leave blank to let anyone on this server join."
-                  : "Ask someone in the group for the password."
-              }
-              type="password"
-              autoComplete="new-password"
-              value={password}
-              onValueChange={setPassword}
-              maxLength={128}
-              required={view === "password"}
-            />
-            <div className="dialog-actions">
-              <Button
-                variant="ghost"
-                onClick={() => {
-                  setView("groups");
-                  setPassword("");
-                  setError(null);
-                }}
-              >
-                Back
-              </Button>
-              <Button type="submit" disabled={disabled || (view === "create" && !name.trim())}>
-                {busy ? "Please wait…" : view === "create" ? "Create group" : "Join group"}
-              </Button>
-            </div>
-          </form>
-        ) : group !== null ? (
-          <>
-            <div className="watch-now-playing">
-              <CirclePlay size={28} aria-hidden="true" />
-              <div>
-                <span className="watch-eyebrow">
-                  {group.playback === null
-                    ? "READY TO WATCH"
-                    : group.playback.paused
-                      ? "PAUSED TOGETHER"
-                      : "WATCHING TOGETHER"}
-                </span>
-                <strong>{group.playback?.title ?? "Choose something to play"}</strong>
-                <p>
-                  {group.playback === null
-                    ? "Play a movie or episode to start for everyone."
-                    : "Everyone can play, pause, and seek."}
-                </p>
-              </div>
-            </div>
-            <div className="watch-section-label">
-              Group members <span>{group.members.length}</span>
-            </div>
-            <div className="watch-members">
-              {group.members.map((member) => (
-                <div className="watch-member" key={member.id}>
-                  <span className="watch-avatar">
-                    {member.displayName.slice(0, 1).toUpperCase()}
-                  </span>
-                  <span>
-                    {member.displayName}
-                    {member.id === status.memberId ? <small> (you)</small> : null}
-                  </span>
-                  <Check size={15} aria-label="Connected" />
-                </div>
-              ))}
-            </div>
-            <div className="watch-footer">
-              <span>
-                <RefreshCw size={13} aria-hidden="true" /> Automatic synchronization
-              </span>
-              <Button
-                variant="ghost"
-                disabled={disabled}
-                onClick={() => void perform({ type: "leave" })}
-              >
-                <LogOut size={16} aria-hidden="true" />
-                Leave group
-              </Button>
-            </div>
-          </>
+          </button>
         ) : (
-          <>
-            <div className="watch-section-label">
-              Available groups <span>{status.groups.length}</span>
-            </div>
-            <div className="watch-group-list">
-              {status.groups.map((entry) => (
-                <button
-                  className="watch-group-row"
-                  type="button"
-                  key={entry.id}
-                  disabled={disabled}
-                  onClick={() => {
-                    if (entry.hasPassword) {
-                      setSelected(entry);
-                      setPassword("");
-                      setError(null);
-                      setView("password");
-                    } else void perform({ type: "join", groupId: entry.id, password: "" });
-                  }}
-                >
-                  <span className="watch-group-icon">
-                    <Users size={22} aria-hidden="true" />
-                  </span>
-                  <span className="watch-group-info">
-                    <strong>{entry.name}</strong>
-                    <span>{entry.members.map((member) => member.displayName).join(", ")}</span>
-                  </span>
-                  {entry.hasPassword ? (
-                    <LockKeyhole size={16} aria-label="Password protected" />
-                  ) : null}
-                  <ChevronRight size={17} aria-hidden="true" />
-                </button>
-              ))}
-              {status.groups.length === 0 ? (
-                <div className="watch-empty">
-                  <Users size={30} aria-hidden="true" />
-                  <strong>No groups yet</strong>
-                  <p>Create a group and invite others to join.</p>
-                </div>
-              ) : null}
-            </div>
-            <button
-              className="watch-new-group"
-              type="button"
-              disabled={disabled}
-              onClick={() => {
-                setView("create");
-                setPassword("");
-                setError(null);
-              }}
-            >
-              <Plus size={23} aria-hidden="true" />
-              <span>
-                <strong>New group</strong>
-                <span>Start a shared watching session</span>
-              </span>
-            </button>
-            <p className="watch-hint">Playback stays in sync for everyone in the group.</p>
-          </>
-        )}
-      </Modal>
-    </>
+          <Button
+            variant="icon"
+            className={`watch-group-chip${group === null ? "" : " is-active"}`}
+            aria-label={
+              group === null
+                ? "Watch together"
+                : `${group.name}, ${peopleCount(group.members.length)}`
+            }
+          >
+            <Users aria-hidden="true" size={19} />
+            {group === null ? null : <span>{group.members.length}</span>}
+          </Button>
+        )
+      }
+    >
+      <PanelHeader
+        title={group?.name ?? (creating ? "New group" : "Watch together")}
+        locked={group?.hasPassword}
+        connection={status.connection}
+      />
+      {visibleError === null ? null : (
+        <p className="form-error watch-group-error" role="alert">
+          <CircleAlert aria-hidden="true" size={15} />
+          {visibleError}
+        </p>
+      )}
+      {group !== null ? (
+        <ActiveGroup
+          group={group}
+          memberId={status.memberId}
+          disabled={disabled}
+          onLeave={() => void perform({ type: "leave" })}
+        />
+      ) : creating ? (
+        <CreateGroupForm
+          disabled={disabled}
+          onCreate={(name, password) => void perform({ type: "create", name, password })}
+          onCancel={() => {
+            setCreating(false);
+            setError(null);
+          }}
+        />
+      ) : (
+        <GroupList
+          groups={status.groups}
+          connected={connected}
+          disabled={disabled}
+          onJoin={(groupId, password) => void perform({ type: "join", groupId, password })}
+          onCreate={() => {
+            setCreating(true);
+            setError(null);
+          }}
+        />
+      )}
+    </Popover>
   );
 };

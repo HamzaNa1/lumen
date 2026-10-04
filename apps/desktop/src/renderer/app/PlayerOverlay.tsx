@@ -18,7 +18,7 @@ export const PlayerOverlay = (): React.ReactElement => {
     if (hideTimer.current !== null) clearTimeout(hideTimer.current);
     const hideWhenIdle = (): void => {
       const controlsInUse = document.querySelector(
-        ".media-player-header:hover, .media-player-console:hover, .media-player-header:focus-within, .media-player-console:focus-within",
+        ".media-player-header:hover, .media-player-console:hover, .media-player-header:focus-within, .media-player-console:focus-within, .media-player-header:has([data-popup-open])",
       );
       if (controlsInUse !== null) hideTimer.current = setTimeout(hideWhenIdle, 1_000);
       else setControlsVisible(false);
@@ -90,7 +90,7 @@ export const PlayerOverlay = (): React.ReactElement => {
   return (
     <div className="player-overlay">
       <MediaPlayer
-        headerActions={<WatchGroups compact />}
+        headerActions={<WatchGroups placement="player" />}
         title={display.title}
         subtitle={display.context}
         paused={player?.paused ?? true}

@@ -102,7 +102,7 @@ export const Sidebar = ({
         ) : null}
       </nav>
       <div className="sidebar-footer">
-        <WatchGroups />
+        <WatchGroups placement="sidebar" />
         <AccountMenu
           accounts={accounts}
           active={account}
