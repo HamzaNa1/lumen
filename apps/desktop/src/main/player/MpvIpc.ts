@@ -5,6 +5,8 @@ import type { MpvProcess } from "./MpvProcess";
 const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_RETRY_MS = 50;
 
+export class MpvIpcFailure extends Error {}
+
 export type MpvEvent = { readonly event: string } & Record<string, unknown>;
 type Pending = {
   readonly resolve: (value: unknown) => void;
@@ -24,18 +26,19 @@ export class MpvIpc extends EventEmitter {
     this.socket = await this.connectWithRetry(process, socketPath);
     this.socket.setEncoding("utf8");
     this.socket.on("data", (chunk: string) => this.consume(chunk));
-    this.socket.on("error", () => this.rejectAll(new Error("MPV IPC disconnected")));
-    this.socket.on("close", () => this.rejectAll(new Error("MPV IPC closed")));
+    const socket = this.socket;
+    socket.on("error", () => this.disconnect(socket, new MpvIpcFailure("MPV IPC disconnected")));
+    socket.on("close", () => this.disconnect(socket, new MpvIpcFailure("MPV IPC closed")));
   }
 
   command(args: ReadonlyArray<string | number>, timeoutMs = 5_000): Promise<unknown> {
-    if (this.socket === null) return Promise.reject(new Error("MPV IPC is not connected"));
+    if (this.socket === null) return Promise.reject(new MpvIpcFailure("MPV IPC is not connected"));
     const requestId = this.nextId++;
     const message = `${JSON.stringify({ command: args, request_id: requestId })}\n`;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new Error("MPV command timed out"));
+        reject(new MpvIpcFailure("MPV command timed out"));
       }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       this.socket?.write(message, "utf8");
@@ -47,10 +50,22 @@ export class MpvIpc extends EventEmitter {
   }
 
   close(): void {
-    this.rejectAll(new Error("MPV IPC closed"));
-    this.socket?.end();
-    this.socket?.destroy();
+    const socket = this.socket;
     this.socket = null;
+    this.rejectAll(new MpvIpcFailure("MPV IPC closed"));
+    socket?.end();
+    socket?.destroy();
+  }
+
+  private disconnect(socket: Socket, cause: MpvIpcFailure): void {
+    if (this.socket !== socket) return;
+    this.close();
+    this.emit("disconnected", cause);
+  }
+
+  private failProtocol(): void {
+    if (this.socket !== null)
+      this.disconnect(this.socket, new MpvIpcFailure("Invalid MPV IPC response"));
   }
 
   private connectWithRetry(process: MpvProcess, socketPath: string): Promise<Socket> {
@@ -90,7 +105,7 @@ export class MpvIpc extends EventEmitter {
   private consume(chunk: string): void {
     this.buffer += chunk;
     if (this.buffer.length > 2_000_000) {
-      this.close();
+      this.failProtocol();
       return;
     }
     let newline = this.buffer.indexOf("\n");
@@ -130,7 +145,7 @@ export class MpvIpc extends EventEmitter {
         else pending.resolve(message.data ?? null);
       }
     } catch {
-      this.close();
+      this.failProtocol();
     }
   }
 

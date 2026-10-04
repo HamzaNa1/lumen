@@ -353,8 +353,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("player:pause", async (_event, raw) => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, paused: Schema.Boolean }), raw);
     if (watch.grouped) {
-      const state = dependencies.player.getState();
-      if (state === null || state.sessionId !== input.sessionId) throw new Error("Playback session is not active");
+      const state = dependencies.player.getActiveState(input.sessionId);
       await watch.action({ type: "pause", itemId: state.itemId, paused: input.paused, positionSeconds: state.positionSeconds });
       return state;
     }
@@ -366,8 +365,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       raw,
     );
     if (watch.grouped) {
-      const state = dependencies.player.getState();
-      if (state === null || state.sessionId !== input.sessionId) throw new Error("Playback session is not active");
+      const state = dependencies.player.getActiveState(input.sessionId);
       await watch.action({ type: "seek", itemId: state.itemId, positionSeconds: input.positionSeconds });
       return state;
     }

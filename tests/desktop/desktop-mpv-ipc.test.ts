@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { createServer, type Socket } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
 import { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 
 const createIpc = (): { readonly ipc: MpvIpc; readonly requestId: () => number } => {
@@ -67,4 +71,38 @@ describe("MpvIpc command responses", () => {
     await expect(result).rejects.toThrow("file not found");
     ipc.close();
   });
+});
+
+
+test("a real IPC socket disconnect rejects pending and subsequent commands and reports failure once", async () => {
+  const connected = Promise.withResolvers<Socket>();
+  const server = createServer((socket) => connected.resolve(socket));
+  const socketPath = process.platform === "win32"
+    ? `\\\\.\\pipe\\lumen-test-${crypto.randomUUID()}`
+    : join(tmpdir(), `lumen-test-${crypto.randomUUID()}.sock`);
+  const ipc = new MpvIpc();
+  let failures = 0;
+  const disconnected = Promise.withResolvers<void>();
+  ipc.on("disconnected", () => {
+    failures += 1;
+    disconnected.resolve();
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    });
+    await ipc.connect({ socketPath } as MpvProcess);
+    const socket = await connected.promise;
+    socket.once("data", () => socket.destroy());
+    const pending = expect(ipc.command(["get_property", "time-pos"])).rejects.toThrow("MPV IPC closed");
+    await disconnected.promise;
+    await pending;
+    await expect(ipc.command(["get_property", "time-pos"])).rejects.toThrow("not connected");
+    ipc.close();
+    expect(failures).toBe(1);
+  } finally {
+    ipc.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
 });

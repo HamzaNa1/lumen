@@ -28,6 +28,11 @@ interface StateDelivery {
   sentState: WatchGroup | null;
   promise: Promise<void>;
 }
+interface DirectoryDelivery {
+  revision: number;
+  sentRevision: number;
+  promise: Promise<void>;
+}
 type WatchServices = {
   readonly auth: Pick<HttpServices["auth"], "authenticate">;
   readonly catalog: Pick<HttpServices["catalog"], "itemDetails">;
@@ -50,6 +55,7 @@ export class WatchGroups {
   private readonly sockets = new Set<ServerWebSocket<WatchSocketData>>();
   private readonly groups = new Map<string, Group>();
   private readonly deliveries = new Map<ServerWebSocket<WatchSocketData>, StateDelivery>();
+  private readonly directories = new Map<ServerWebSocket<WatchSocketData>, DirectoryDelivery>();
   private passwordOperations = 0;
   private readonly attempts = new RequestLimiter({
     maxRequests: 10,
@@ -139,14 +145,82 @@ export class WatchGroups {
     if (!socket.data.closed) socket.send(JSON.stringify(message));
   }
 
-  private list(socket: ServerWebSocket<WatchSocketData>): void {
-    // The directory contains names and participants, never a group's media state.
-    this.send(socket, {
-      type: "groups",
-      groups: [...this.groups.values()]
-        .filter((group) => group.state.members.length > 0)
-        .map(({ state }) => ({ ...state, playback: null })),
-    });
+  private list(socket: ServerWebSocket<WatchSocketData>): Promise<void> {
+    const running = this.directories.get(socket);
+    if (running !== undefined) {
+      running.revision += 1;
+      return running.promise;
+    }
+    const delivery: DirectoryDelivery = { revision: 0, sentRevision: -1, promise: Promise.resolve() };
+    delivery.promise = this.visibleDirectory(socket, delivery)
+      .then(() => {
+        this.directories.delete(socket);
+        if (!socket.data.closed && socket.data.token !== null && delivery.sentRevision !== delivery.revision)
+          void this.list(socket);
+      })
+      .catch(() => {
+        this.directories.delete(socket);
+        socket.close(1011, "Could not check media access");
+      });
+    this.directories.set(socket, delivery);
+    return delivery.promise;
+  }
+
+  private async authenticate(socket: ServerWebSocket<WatchSocketData>): Promise<AuthPrincipal | null> {
+    const token = socket.data.token;
+    if (token === null || socket.data.closed) return null;
+    try {
+      const principal = await Effect.runPromise(this.services.auth.authenticate(token, Date.now()));
+      if (socket.data.closed || socket.data.token !== token) return null;
+      socket.data.principal = principal;
+      return principal;
+    } catch {
+      socket.data.token = null;
+      this.leave(socket);
+      socket.data.principal = null;
+      socket.close(1008, "Sign-in required");
+      return null;
+    }
+  }
+
+  private mediaVisible(principal: AuthPrincipal, itemId: string): Promise<boolean> {
+    return Effect.runPromise(
+      this.services.catalog.itemDetails(principal, itemId, false, Date.now())
+        .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })),
+    );
+  }
+
+  private async visibleGroup(principal: AuthPrincipal, state: WatchGroup): Promise<WatchGroup> {
+    if (state.playback === null) return state;
+    return await this.mediaVisible(principal, state.playback.itemId)
+      ? state
+      : { ...state, playback: null };
+  }
+
+  private async visibleDirectory(
+    socket: ServerWebSocket<WatchSocketData>,
+    delivery: DirectoryDelivery,
+  ): Promise<void> {
+    const revision = delivery.revision;
+    const principal = await this.authenticate(socket);
+    if (principal === null) return;
+    const itemIds = new Set([...this.groups.values()]
+      .filter(({ state }) => state.members.length > 0)
+      .flatMap(({ state }) => state.playback === null ? [] : [state.playback.itemId]));
+    const visibility = new Map<string, boolean>();
+    for (const itemId of itemIds) {
+      visibility.set(itemId, await this.mediaVisible(principal, itemId));
+      if (socket.data.closed || socket.data.token === null) return;
+    }
+    if (socket.data.closed || socket.data.token === null) return;
+    const groups = [...this.groups.values()]
+      .map(({ state }) => state)
+      .filter((state) => state.members.length > 0)
+      .map((state) => state.playback === null || visibility.get(state.playback.itemId) === true
+        ? state
+        : { ...state, playback: null });
+    this.send(socket, { type: "groups", groups });
+    delivery.sentRevision = revision;
   }
 
   private async publish(group: Group): Promise<void> {
@@ -189,36 +263,20 @@ export class WatchGroups {
     while (!socket.data.closed && socket.data.groupId === delivery.group.state.id) {
       const group = delivery.group;
       const state = group.state;
-      const token = socket.data.token;
-      if (token === null) return;
-      let principal: AuthPrincipal;
-      try {
-        principal = await Effect.runPromise(this.services.auth.authenticate(token, Date.now()));
-      } catch {
-        this.leave(socket);
-        socket.data.principal = null;
-        socket.close(1008, "Sign-in required");
-        return;
-      }
-      let visible = true;
-      if (state.playback !== null) {
-        visible = await Effect.runPromise(
-          this.services.catalog
-            .itemDetails(principal, state.playback.itemId, false, Date.now())
-            .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })),
-        );
-      }
+      const principal = await this.authenticate(socket);
+      if (principal === null) return;
+      const visible = await this.visibleGroup(principal, state);
       if (socket.data.closed || socket.data.groupId !== delivery.group.state.id) return;
       // Coalesce publications while access checks run; never send a superseded snapshot.
       if (delivery.group !== group || group.state !== state) continue;
-      this.send(socket, { type: "state", group: visible ? state : { ...state, playback: null } });
+      this.send(socket, { type: "state", group: visible });
       delivery.sentState = state;
       return;
     }
   }
 
   private directory(): void {
-    for (const socket of this.sockets) if (socket.data.principal !== null) this.list(socket);
+    for (const socket of this.sockets) if (socket.data.token !== null) void this.list(socket);
   }
 
   private leave(socket: ServerWebSocket<WatchSocketData>): void {
@@ -258,29 +316,19 @@ export class WatchGroups {
       socket.data.principal = principal;
       clearTimeout(socket.data.authTimer);
       this.send(socket, { type: "ready", memberId: socket.data.id });
-      this.list(socket);
+      void this.list(socket);
       return;
     }
     const { requestId, action } = Schema.decodeUnknownSync(WatchRequest)(value);
     try {
-      let principal: AuthPrincipal;
-      try {
-        principal = await Effect.runPromise(
-          this.services.auth.authenticate(socket.data.token, Date.now()),
-        );
-      } catch {
-        this.leave(socket);
-        socket.data.principal = null;
-        socket.close(1008, "Sign-in required");
-        return;
-      }
-      if (socket.data.closed) return;
-      socket.data.principal = principal;
+      const principal = await this.authenticate(socket);
+      if (principal === null) return;
       if (action.type === "ping") {
         const group = this.groups.get(socket.data.groupId ?? "");
-        if (group !== undefined) await this.deliverState(socket, group);
+        void this.list(socket);
+        if (group !== undefined) void this.deliverState(socket, group);
         this.send(socket, { type: "pong", sentAtMs: action.sentAtMs, serverTimeMs: Date.now() });
-      } else if (action.type === "list") this.list(socket);
+      } else if (action.type === "list") await this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
         const retrySeconds = await Effect.runPromise(
@@ -346,8 +394,8 @@ export class WatchGroups {
             { id: socket.data.id, displayName: principal.user.displayName },
           ],
         };
-        await this.publish(group);
         this.directory();
+        await this.publish(group);
       } else {
         const group = this.groups.get(socket.data.groupId ?? "");
         if (group === undefined) throw new Error("Join a watch group first");
@@ -400,6 +448,7 @@ export class WatchGroups {
                   },
           };
         }
+        this.directory();
         await this.publish(group);
       }
       this.send(socket, { type: "reply", requestId, error: null });

@@ -10,7 +10,7 @@ import type {
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
-import { MpvIpc } from "./MpvIpc";
+import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
 import type { PlaybackBridge } from "./PlaybackBridge";
@@ -49,7 +49,9 @@ interface ActiveSession {
   readonly process: MpvProcess;
   readonly ipc: MpvIpc;
   readonly capability: string;
-  readonly trackIds: ReadonlyMap<string, number>;
+  readonly cancellation: AbortController;
+  trackIds: ReadonlyMap<string, number>;
+  stopping: Promise<void> | null;
   tickCount: number;
   sequence: number;
 }
@@ -138,13 +140,18 @@ export class PlayerController extends EventEmitter {
     let playerProcess: MpvProcess | null = null;
     let ipc: MpvIpc | null = null;
     let capability: string | null = null;
+    let startedActive: ActiveSession | null = null;
     try {
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       playerProcess = MpvProcess.start({
         cwd: process.cwd(),
         resourcesPath: process.resourcesPath,
         videoOutputArguments: this.surface.prepare(),
-        onExit: () => this.emit("ended"),
+        onExit: () => {
+          const active = this.active;
+          if (active?.process === playerProcess && active?.session === session)
+            this.failActive(active, new Error("MPV has exited"));
+        },
       });
       ipc = new MpvIpc();
       await ipc.connect(playerProcess);
@@ -165,11 +172,19 @@ export class PlayerController extends EventEmitter {
         process: playerProcess,
         ipc,
         capability,
+        cancellation: new AbortController(),
         trackIds: new Map(),
+        stopping: null,
         tickCount: 0,
         sequence: 0,
       };
+      startedActive = active;
       this.active = active;
+      ipc.on("disconnected", (cause: Error) => this.failActive(active, cause));
+      ipc.on("end-file", (event: { readonly reason?: string; readonly file_error?: string }) => {
+        if (event.reason === "error")
+          this.failActive(active, new Error(`Playback failed: ${event.file_error ?? "media error"}`));
+      });
       // The loadfile ack only means mpv accepted the command, not that the
       // file demuxed. Wait for file-loaded and fail fast on end-file/error
       // (e.g. "unrecognized file format") so callers surface the real cause
@@ -181,32 +196,24 @@ export class PlayerController extends EventEmitter {
           detachLoadListeners();
           reject(new Error("Timed out waiting for media to load"));
         }, FILE_LOADED_TIMEOUT_MS);
+        const onEnded = (cause: unknown): void => {
+          detachLoadListeners();
+          reject(cause instanceof Error ? cause : new Error("MPV has exited"));
+        };
         const onLoaded = (): void => {
           detachLoadListeners();
           resolve();
         };
-        const onEndFile = (event: unknown): void => {
-          const reason = (event as { readonly reason?: unknown } | null)?.reason;
-          const fileError = (event as { readonly file_error?: unknown } | null)?.file_error;
-          if (reason === "error") {
-            detachLoadListeners();
-            reject(
-              new Error(
-                typeof fileError === "string" && fileError.length > 0
-                  ? `Playback failed: ${fileError}`
-                  : "Playback failed",
-              ),
-            );
-          }
-        };
+        const onCancelled = (): void => onEnded(active.cancellation.signal.reason);
         detachLoadListeners = (): void => {
           clearTimeout(timer);
+          active.cancellation.signal.removeEventListener("abort", onCancelled);
           mpv.off("file-loaded", onLoaded);
-          mpv.off("end-file", onEndFile);
         };
+        active.cancellation.signal.addEventListener("abort", onCancelled, { once: true });
         mpv.on("file-loaded", onLoaded);
-        mpv.on("end-file", onEndFile);
       });
+      void loaded.catch(() => undefined);
       try {
         await ipc.command(["set_property", "audio-channels", this.audioOutput]);
         await ipc.command(["set_property", "pause", "yes"]);
@@ -226,7 +233,7 @@ export class PlayerController extends EventEmitter {
       }
       const trackIds = await resolveTrackIds(ipc, session.streams);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      this.active = { ...active, trackIds };
+      active.trackIds = trackIds;
       const streams = session.streams.filter((stream) => trackIds.has(stream.id));
       const selectedAudioStream =
         streams.find((stream) => stream.kind === "audio" && stream.isDefault) ??
@@ -269,9 +276,9 @@ export class PlayerController extends EventEmitter {
       this.publish();
       return this.sanitized(session);
     } catch (cause) {
-      const current = this.active;
-      if (current !== null && current.session.sessionId === session.sessionId) {
-        await this.stopActive();
+      if (startedActive !== null) {
+        if (this.active === startedActive) await this.stopActive();
+        else await startedActive.stopping;
       } else {
         if (this.active === null && generation === this.startGeneration) this.surface.hide();
         await this.cleanup({
@@ -287,50 +294,48 @@ export class PlayerController extends EventEmitter {
   }
 
   async pause(sessionId: string, paused: boolean): Promise<IpcPlayerState> {
-    this.assertActive(sessionId);
-    const active = this.active;
-    if (active === null) throw new Error("Playback session is not active");
+    const active = this.requireActive(sessionId);
+    const previous = this.requireState();
     try {
-      await active.ipc.command(["set_property", "pause", paused ? "yes" : "no"]);
+      await this.command(active, ["set_property", "pause", paused ? "yes" : "no"]);
     } catch (cause) {
       this.emitError(cause);
       throw cause;
     }
     this.assertActive(sessionId);
+    const sample = this.state === previous;
     this.state = { ...this.requireState(), paused };
     this.publish();
     if (paused) {
-      const state = await this.samplePosition(active, this.requireState());
+      const state = sample ? await this.samplePosition(active, this.requireState()) : this.requireState();
       await this.saveProgress(active, state);
     }
     return this.requireState();
   }
 
   async seek(sessionId: string, positionSeconds: number): Promise<IpcPlayerState> {
-    this.assertActive(sessionId);
+    const active = this.requireActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
     this.state = { ...this.requireState(), positionSeconds, ended: false };
-    await this.active?.ipc.command(["seek", positionSeconds, "absolute+exact"]);
+    await this.command(active, ["seek", positionSeconds, "absolute+exact"]);
     this.assertActive(sessionId);
     this.publish();
     return this.requireState();
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {
-    this.assertActive(sessionId);
+    const active = this.requireActive(sessionId);
     if (!Number.isFinite(speed) || speed < 0.9 || speed > 1.1) throw new Error("Invalid playback speed");
-    await this.active?.ipc.command(["set_property", "speed", speed]);
+    await this.command(active, ["set_property", "speed", speed]);
   }
 
   volume(sessionId: string, volume: number, muted = false): IpcPlayerState {
-    this.assertActive(sessionId);
+    const active = this.requireActive(sessionId);
     const bounded = Math.max(0, Math.min(100, Math.round(volume)));
-    this.active?.ipc
-      .command(["set_property", "volume", bounded])
+    this.command(active, ["set_property", "volume", bounded])
       .catch((cause: unknown) => this.emitError(cause));
-    this.active?.ipc
-      .command(["set_property", "mute", muted ? "yes" : "no"])
+    this.command(active, ["set_property", "mute", muted ? "yes" : "no"])
       .catch((cause: unknown) => this.emitError(cause));
     this.state = { ...this.requireState(), volume: bounded, muted };
     this.publish();
@@ -343,9 +348,7 @@ export class PlayerController extends EventEmitter {
   }
 
   async selectAudioStream(sessionId: string, streamId: string): Promise<IpcPlayerState> {
-    this.assertActive(sessionId);
-    const active = this.active;
-    if (active === null) throw new Error("Playback session is not active");
+    const active = this.requireActive(sessionId);
     const state = this.requireState();
     const stream = state.streams.find(
       (candidate) => candidate.id === streamId && candidate.kind === "audio",
@@ -353,7 +356,7 @@ export class PlayerController extends EventEmitter {
     const trackId = stream === undefined ? undefined : active.trackIds.get(streamId);
     if (stream === undefined || trackId === undefined)
       throw new Error("Audio stream is unavailable");
-    await active.ipc.command(["set_property", "aid", trackId]);
+    await this.command(active, ["set_property", "aid", trackId]);
     this.assertActive(sessionId);
     const currentState = this.requireState();
     this.state = { ...currentState, selectedAudioStreamId: streamId };
@@ -362,9 +365,7 @@ export class PlayerController extends EventEmitter {
   }
 
   async selectSubtitleStream(sessionId: string, streamId: string | null): Promise<IpcPlayerState> {
-    this.assertActive(sessionId);
-    const active = this.active;
-    if (active === null) throw new Error("Playback session is not active");
+    const active = this.requireActive(sessionId);
     const state = this.requireState();
     const stream =
       streamId === null
@@ -376,7 +377,7 @@ export class PlayerController extends EventEmitter {
       stream === null || stream === undefined ? null : active.trackIds.get(streamId ?? "");
     if (streamId !== null && (stream === undefined || trackId === undefined))
       throw new Error("Subtitle stream is unavailable");
-    await active.ipc.command(["set_property", "sid", trackId ?? "no"]);
+    await this.command(active, ["set_property", "sid", trackId ?? "no"]);
     this.assertActive(sessionId);
     const currentState = this.requireState();
     this.state = { ...currentState, selectedSubtitleStreamId: stream?.id ?? null };
@@ -385,12 +386,10 @@ export class PlayerController extends EventEmitter {
   }
 
   async setAudioOutput(sessionId: string, output: IpcAudioOutput): Promise<IpcPlayerState> {
+    const active = this.requireActive(sessionId);
+    const position = await this.command(active, ["get_property", "time-pos"]);
     this.assertActive(sessionId);
-    const active = this.active;
-    if (active === null) throw new Error("Playback session is not active");
-    const position = await active.ipc.command(["get_property", "time-pos"]);
-    this.assertActive(sessionId);
-    await active.ipc.command(["set_property", "audio-channels", output]);
+    await this.command(active, ["set_property", "audio-channels", output]);
     this.assertActive(sessionId);
     // MPV rebuilds the audio filter/output asynchronously. A second change
     // during an outstanding seek can leave it without output. Explicitly
@@ -410,8 +409,7 @@ export class PlayerController extends EventEmitter {
         reject(new Error("Timed out restarting audio output"));
       }, FILE_LOADED_TIMEOUT_MS);
       active.ipc.on("playback-restart", onRestart);
-      void active.ipc
-        .command([
+      void this.command(active, [
           "seek",
           typeof position === "number" ? position : this.requireState().positionSeconds,
           "absolute+exact",
@@ -429,9 +427,7 @@ export class PlayerController extends EventEmitter {
   }
 
   async audioDiagnostics(sessionId: string): Promise<string> {
-    this.assertActive(sessionId);
-    const active = this.active;
-    if (active === null) throw new Error("Playback session is not active");
+    const active = this.requireActive(sessionId);
     const state = this.requireState();
     const trackId =
       state.selectedAudioStreamId === null
@@ -457,20 +453,44 @@ export class PlayerController extends EventEmitter {
     return this.state;
   }
 
+  getActiveState(sessionId: string): IpcPlayerState {
+    this.assertActive(sessionId);
+    return this.requireState();
+  }
+
+  private failActive(active: ActiveSession, cause: unknown): void {
+    if (this.active !== active) return;
+    this.startGeneration += 1;
+    void this.stopActive(cause);
+    this.emitError(cause);
+    this.emit("ended", cause);
+  }
+
+  private async command(active: ActiveSession, args: ReadonlyArray<string | number>): Promise<unknown> {
+    try {
+      return await active.ipc.command(args);
+    } catch (cause) {
+      if (cause instanceof MpvIpcFailure) this.failActive(active, cause);
+      throw cause;
+    }
+  }
+
   async stop(): Promise<void> {
     this.startGeneration += 1;
     await this.stopActive();
   }
 
-  private stopActive(): Promise<void> {
+  private stopActive(cause: unknown = new Error("Playback was cancelled")): Promise<void> {
     if (this.stopping !== null) return this.stopping;
     const active = this.active;
     const state = this.state;
     this.active = null;
     this.state = null;
+    active?.cancellation.abort(cause);
     this.surface.hide();
     if (active === null) return Promise.resolve();
     const stopping = this.cleanup(active, state === null ? null : { active, state });
+    active.stopping = stopping;
     this.stopping = stopping;
     const clearStopping = (): void => {
       if (this.stopping === stopping) this.stopping = null;
@@ -488,10 +508,10 @@ export class PlayerController extends EventEmitter {
       const cacheState = active.ipc
         .command(["get_property", "demuxer-cache-state"], CACHE_STATE_TIMEOUT_MS)
         .catch(() => null);
-      const value = await active.ipc.command(["get_property", "time-pos"]);
-      const duration = await active.ipc.command(["get_property", "duration"]);
-      const paused = await active.ipc.command(["get_property", "pause"]);
-      const ended = await active.ipc.command(["get_property", "eof-reached"]);
+      const value = await this.command(active, ["get_property", "time-pos"]);
+      const duration = await this.command(active, ["get_property", "duration"]);
+      const paused = await this.command(active, ["get_property", "pause"]);
+      const ended = await this.command(active, ["get_property", "eof-reached"]);
       const cache = await cacheState;
       // A stop, replacement session, or user action makes this sample stale.
       if (this.active !== active || this.state !== state) return;
@@ -586,9 +606,14 @@ export class PlayerController extends EventEmitter {
     } catch {}
   }
 
-  private assertActive(sessionId: string): void {
+  private requireActive(sessionId: string): ActiveSession {
     if (this.active === null || this.active.session.sessionId !== sessionId)
       throw new Error("Playback session is not active");
+    return this.active;
+  }
+
+  private assertActive(sessionId: string): void {
+    this.requireActive(sessionId);
   }
 
   private requireState(): IpcPlayerState {
