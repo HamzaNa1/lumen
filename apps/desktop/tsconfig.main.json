@@ -29,11 +29,8 @@
   },
   "include": [
     "src/main/**/*.ts",
-    "src/preload/**/*.ts",
-    "src/shared/**/*.ts",
     "scripts/**/*.ts",
     "electron.vite.config.ts",
-    "../../tests/native/**/*.ts",
-    "../../packages/contracts/src/**/*.ts"
+    "../../tests/native/**/*.ts"
   ]
 }

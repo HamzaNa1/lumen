@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Settings2 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { errorMessage } from "./format";
-import { bridge, useWorkspace } from "./Workspace";
+import { useWorkspace } from "./Workspace";
+import { useRuntime } from "./Runtime";
 
 const defaultOrder = "default";
 
@@ -17,6 +18,7 @@ export const ShowSettings = ({
   readonly title: string;
   readonly metadataProviderConfigured: boolean;
 }): React.ReactElement => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   const client = useQueryClient();
   const refreshedRun = useRef<string | null>(null);
@@ -24,14 +26,14 @@ export const ShowSettings = ({
   const [chosen, setChosen] = useState<string>();
   const order = useQuery({
     queryKey: [...scope, "episode-order", itemId],
-    queryFn: () => bridge.library.episodeOrder(itemId),
+    queryFn: () => runtime.catalog.episodeOrder(itemId),
     enabled: open && metadataProviderConfigured,
   });
   const save = useMutation({
     mutationFn: async () => {
       if (order.data === undefined) throw new Error("Episode orders have not loaded");
       const groupId = chosen ?? order.data.groupId ?? defaultOrder;
-      return bridge.library.setEpisodeOrder(itemId, {
+      return runtime.catalog.setEpisodeOrder(itemId, {
         tmdbSeriesId: order.data.tmdbSeriesId,
         groupId: groupId === defaultOrder ? null : groupId,
       });
@@ -43,7 +45,7 @@ export const ShowSettings = ({
   // The refresh keeps running, and the page updates when it finishes, after the dialog closes.
   const refresh = useQuery({
     queryKey: [...scope, "episode-order-refresh", save.data?.runId],
-    queryFn: () => bridge.admin.scanStatus(save.data?.runId ?? ""),
+    queryFn: () => runtime.admin.scanStatus(save.data?.runId ?? ""),
     enabled: save.data !== undefined,
     refetchInterval: (query) =>
       query.state.data === undefined || ["queued", "running"].includes(query.state.data.status)

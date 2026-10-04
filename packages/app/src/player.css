@@ -1,0 +1,21 @@
+/* A player whose controls share the page with its video, as in a browser. */
+.watch-page.has-inline-controls {
+  position: relative;
+}
+.watch-page.has-inline-controls > .player-overlay {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.watch-surface > video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  object-fit: contain;
+}
+.player-overlay .media-player[data-status="blocked"] .media-player-placeholder,
+.player-overlay .media-player[data-status="buffering"] .media-player-placeholder {
+  color: #fff;
+}

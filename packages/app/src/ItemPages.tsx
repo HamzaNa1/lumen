@@ -15,7 +15,6 @@ import {
 } from "./format";
 import { ShowSettings } from "./ShowSettings";
 import {
-  bridge,
   CatalogCard,
   itemPage,
   PosterGridSkeleton,
@@ -23,23 +22,26 @@ import {
   useWorkspace,
   WatchedButton,
 } from "./Workspace";
+import { useRuntime } from "./Runtime";
 
 const playableKinds = new Set(["movie", "episode", "track"]);
 
 const useItemDetails = (itemId: string | null | undefined) => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   return useQuery({
     queryKey: [...scope, "item", itemId],
-    queryFn: () => bridge.library.itemDetails(itemId ?? ""),
+    queryFn: () => runtime.catalog.itemDetails(itemId ?? ""),
     enabled: itemId != null,
   });
 };
 
 const useChildren = (parentId: string) => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   return useInfiniteQuery({
     queryKey: [...scope, "children", parentId],
-    queryFn: ({ pageParam }) => bridge.library.itemChildren(parentId, pageParam),
+    queryFn: ({ pageParam }) => runtime.catalog.itemChildren(parentId, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
@@ -329,12 +331,13 @@ const MovieDetails = ({ itemId }: { readonly itemId: string }): React.ReactEleme
 };
 
 const ShowDetails = ({ itemId }: { readonly itemId: string }): React.ReactElement => {
+  const runtime = useRuntime();
   const { account, scope } = useWorkspace();
   const navigate = useNavigate();
   const details = useItemDetails(itemId);
   const nextUp = useQuery({
     queryKey: [...scope, "next-up", itemId],
-    queryFn: () => bridge.library.nextUp(itemId),
+    queryFn: () => runtime.catalog.nextUp(itemId),
   });
   const children = useChildren(itemId);
   if (details.data === undefined) return <DetailsPending query={details} />;

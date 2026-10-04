@@ -32,6 +32,7 @@ export const AccountMenu = ({
   onRemove,
   onAddServer,
   onOpenSettings,
+  canSwitchServers = true,
 }: {
   readonly accounts: ReadonlyArray<AccountSummary>;
   readonly active: AccountSummary;
@@ -39,6 +40,8 @@ export const AccountMenu = ({
   readonly onRemove: (id: string) => void;
   readonly onAddServer: () => void;
   readonly onOpenSettings: () => void;
+  /** False where the app is tied to one server, so there is nothing to list, add or forget. */
+  readonly canSwitchServers?: boolean;
 }): React.ReactElement => {
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   return (
@@ -55,43 +58,47 @@ export const AccountMenu = ({
         <Menu.Portal>
           <Menu.Positioner className="menu-positioner" side="top" align="start" sideOffset={6}>
             <Menu.Popup className="menu-popup account-menu">
-              <Menu.Group>
-                <Menu.GroupLabel className="menu-label">Servers</Menu.GroupLabel>
-                {accounts.map((account) => {
-                  const current = account.connectionId === active.connectionId;
-                  return (
-                    <Menu.Item
-                      key={account.connectionId}
-                      className="menu-item account-menu-item"
-                      onClick={() => {
-                        if (!current) onActivate(account.connectionId);
-                      }}
-                    >
-                      <span className="menu-item-icon">
-                        <Server aria-hidden="true" size={15} />
-                      </span>
-                      <span className="menu-item-label">
-                        {account.serverLabel}
-                        <small>
-                          {account.username} · {hostOf(account.origin)}
-                        </small>
-                      </span>
-                      {current ? (
-                        <span className="menu-item-trailing">
-                          <Check aria-label="Current server" size={15} />
-                        </span>
-                      ) : null}
-                    </Menu.Item>
-                  );
-                })}
-              </Menu.Group>
-              <Menu.Item className="menu-item" onClick={onAddServer}>
-                <span className="menu-item-icon">
-                  <Plus aria-hidden="true" size={15} />
-                </span>
-                <span className="menu-item-label">Add server…</span>
-              </Menu.Item>
-              <Menu.Separator className="menu-separator" />
+              {canSwitchServers ? (
+                <>
+                  <Menu.Group>
+                    <Menu.GroupLabel className="menu-label">Servers</Menu.GroupLabel>
+                    {accounts.map((account) => {
+                      const current = account.connectionId === active.connectionId;
+                      return (
+                        <Menu.Item
+                          key={account.connectionId}
+                          className="menu-item account-menu-item"
+                          onClick={() => {
+                            if (!current) onActivate(account.connectionId);
+                          }}
+                        >
+                          <span className="menu-item-icon">
+                            <Server aria-hidden="true" size={15} />
+                          </span>
+                          <span className="menu-item-label">
+                            {account.serverLabel}
+                            <small>
+                              {account.username} · {hostOf(account.origin)}
+                            </small>
+                          </span>
+                          {current ? (
+                            <span className="menu-item-trailing">
+                              <Check aria-label="Current server" size={15} />
+                            </span>
+                          ) : null}
+                        </Menu.Item>
+                      );
+                    })}
+                  </Menu.Group>
+                  <Menu.Item className="menu-item" onClick={onAddServer}>
+                    <span className="menu-item-icon">
+                      <Plus aria-hidden="true" size={15} />
+                    </span>
+                    <span className="menu-item-label">Add server…</span>
+                  </Menu.Item>
+                  <Menu.Separator className="menu-separator" />
+                </>
+              ) : null}
               <Menu.Item className="menu-item" onClick={onOpenSettings}>
                 <span className="menu-item-icon">
                   <Settings aria-hidden="true" size={15} />
@@ -116,7 +123,11 @@ export const AccountMenu = ({
         open={confirmingRemove}
         onOpenChange={setConfirmingRemove}
         title={`Sign out of ${active.serverLabel}?`}
-        description="This removes the server and its saved sign-in from this device. Nothing on the server is deleted."
+        description={
+          canSwitchServers
+            ? "This removes the server and its saved sign-in from this device. Nothing on the server is deleted."
+            : "You will need to sign in again to keep watching in this browser."
+        }
       >
         <div className="dialog-actions">
           <Button variant="ghost" onClick={() => setConfirmingRemove(false)}>

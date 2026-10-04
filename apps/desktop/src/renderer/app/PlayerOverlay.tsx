@@ -1,64 +1,27 @@
-import { WatchGroups } from "./WatchGroups";
-import type { PlayerDisplay, PlayerState } from "@lumen/contracts";
-import { MediaPlayer } from "@lumen/ui";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { PlayerView } from "@lumen/app";
+import type { PlayerDisplay } from "@lumen/contracts";
+import { useEffect, useState } from "react";
+import type { DesktopBridge } from "../../shared/bridge";
 
-const bridge = window.lumen;
-
-export const PlayerOverlay = (): React.ReactElement => {
-  const [player, setPlayer] = useState<PlayerState | null>(null);
+/**
+ * The controls window that floats above the native video. The main window decides what is
+ * playing and hears about the viewer's actions; both travel through the main process.
+ */
+export const PlayerOverlay = ({
+  bridge,
+}: {
+  readonly bridge: DesktopBridge;
+}): React.ReactElement => {
   const [display, setDisplay] = useState<PlayerDisplay | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
-  const [controlsVisible, setControlsVisible] = useState(true);
-  const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const surfaceRef = useRef<HTMLDivElement>(null);
-
-  const revealControls = useCallback((): void => {
-    setControlsVisible(true);
-    if (hideTimer.current !== null) clearTimeout(hideTimer.current);
-    const hideWhenIdle = (): void => {
-      const controlsInUse = document.querySelector(
-        ".media-player-header:hover, .media-player-console:hover, .media-player-header:focus-within, .media-player-console:focus-within, .media-player-header:has([data-popup-open])",
-      );
-      if (controlsInUse !== null) hideTimer.current = setTimeout(hideWhenIdle, 1_000);
-      else setControlsVisible(false);
-    };
-    hideTimer.current = setTimeout(hideWhenIdle, 3_000);
-  }, []);
 
   useEffect(() => {
-    const onMove = (): void => revealControls();
-    window.addEventListener("mousemove", onMove);
-    const unsubscribeState = bridge.player.onState(setPlayer);
-    const unsubscribeDisplay = bridge.player.onDisplay((next) => {
-      setDisplay(next);
-      if (next.loading) setPlayer(null);
-      revealControls();
-    });
-    const unsubscribeFullscreen = bridge.player.onFullscreenChange(setFullscreen);
-    void bridge.player
-      .state()
-      .then(setPlayer)
-      .catch(() => undefined);
+    const unsubscribe = bridge.player.onDisplay(setDisplay);
     void bridge.player
       .displayState()
-      .then((initial) => {
-        setDisplay(initial);
-        if (initial !== null) revealControls();
-      })
+      .then(setDisplay)
       .catch(() => undefined);
-    void bridge.player
-      .fullscreenState()
-      .then(setFullscreen)
-      .catch(() => undefined);
-    return () => {
-      window.removeEventListener("mousemove", onMove);
-      unsubscribeState();
-      unsubscribeDisplay();
-      unsubscribeFullscreen();
-      if (hideTimer.current !== null) clearTimeout(hideTimer.current);
-    };
-  }, [revealControls]);
+    return unsubscribe;
+  }, [bridge]);
 
   useEffect(() => {
     // When macOS makes the overlay the key window, Chromium focuses its first control (Back) as if
@@ -85,69 +48,7 @@ export const PlayerOverlay = (): React.ReactElement => {
     };
   }, []);
 
-  if (display === null) return <div className="player-overlay" />;
-
   return (
-    <div className="player-overlay">
-      <MediaPlayer
-        headerActions={<WatchGroups placement="player" />}
-        title={display.title}
-        subtitle={display.context}
-        paused={player?.paused ?? true}
-        loading={display.loading}
-        error={display.error}
-        position={player?.positionSeconds ?? 0}
-        duration={player?.durationSeconds ?? display.duration}
-        bufferedRanges={player?.bufferedRanges ?? []}
-        volume={player?.volume ?? 100}
-        muted={player?.muted ?? false}
-        streams={player?.streams ?? []}
-        selectedAudioStreamId={player?.selectedAudioStreamId ?? null}
-        selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
-        audioOutput={player?.audioOutput ?? "stereo"}
-        onAudioOutput={async (output) => {
-          if (player === null) throw new Error("Playback is not active");
-          setPlayer(await bridge.player.audioOutput(player.sessionId, output));
-        }}
-        onCopyAudioDiagnostics={async () => {
-          if (player === null) throw new Error("Playback is not active");
-          await bridge.player.copyAudioDiagnostics(player.sessionId);
-        }}
-        surfaceRef={surfaceRef}
-        controlsVisible={controlsVisible || display.loading || display.error !== null}
-        fullscreen={fullscreen}
-        onBack={() => {
-          void bridge.player
-            .stop()
-            .catch(() => undefined)
-            .then(() => {
-              setPlayer(null);
-              return bridge.player.overlayAction("back");
-            });
-        }}
-        onRetry={() => void bridge.player.overlayAction("retry")}
-        onFullscreen={() => void bridge.player.fullscreen(!fullscreen).then(setFullscreen)}
-        onPause={() => {
-          if (player !== null)
-            void bridge.player.pause(player.sessionId, !player.paused).then(setPlayer).catch(() => undefined);
-        }}
-        onSeek={(positionSeconds) => {
-          if (player !== null)
-            void bridge.player.seek(player.sessionId, positionSeconds).then(setPlayer);
-        }}
-        onVolume={(volume, muted) => {
-          if (player !== null)
-            void bridge.player.volume(player.sessionId, volume, muted).then(setPlayer);
-        }}
-        onSelectAudio={(streamId) => {
-          if (player !== null)
-            void bridge.player.selectAudio(player.sessionId, streamId).then(setPlayer);
-        }}
-        onSelectSubtitle={(streamId) => {
-          if (player !== null)
-            void bridge.player.selectSubtitle(player.sessionId, streamId).then(setPlayer);
-        }}
-      />
-    </div>
+    <PlayerView display={display} onAction={(action) => void bridge.player.overlayAction(action)} />
   );
 };

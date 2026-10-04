@@ -1,0 +1,17 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "jsx": "react-jsx",
+    "types": ["react"],
+    "paths": {
+      "@lumen/contracts": ["../contracts/src/index.ts"],
+      "@lumen/contracts/*": ["../contracts/src/*"],
+      "@lumen/client": ["../client/src/index.ts"],
+      "@lumen/client/runtime": ["../client/src/runtime.ts"],
+      "@lumen/ui": ["../ui/src/index.ts"],
+      "@lumen/ui/*": ["../ui/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

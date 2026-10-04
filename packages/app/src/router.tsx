@@ -1,4 +1,4 @@
-import { createHashHistory } from "@tanstack/history";
+import type { RouterHistory } from "@tanstack/history";
 import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
 import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
 import { App } from "./App";
@@ -90,18 +90,30 @@ const routeTree = rootRoute.addChildren([
   jobLogRoute,
 ]);
 
-export const router = createRouter({
-  routeTree,
-  history: createHashHistory(),
-  defaultPreload: "intent",
-  scrollRestoration: true,
-  // Pages scroll inside the shell, not the window: start new pages at the top and let
-  // Back restore where the viewer was.
-  scrollToTopSelectors: [".main-content"],
-});
+export interface AppRouterOptions {
+  /** How locations are stored: the URL hash in a desktop window, the address bar in a browser. */
+  readonly history: RouterHistory;
+  /** The path the application is served under, when it is not the root. */
+  readonly basepath?: string;
+}
+
+/** A new router. Every application root creates its own, so no navigation state is shared. */
+export const createAppRouter = ({ history, basepath }: AppRouterOptions) =>
+  createRouter({
+    routeTree,
+    history,
+    ...(basepath === undefined ? {} : { basepath }),
+    defaultPreload: "intent",
+    scrollRestoration: true,
+    // Pages scroll inside the shell, not the window: start new pages at the top and let
+    // Back restore where the viewer was.
+    scrollToTopSelectors: [".main-content"],
+  });
+
+export type AppRouter = ReturnType<typeof createAppRouter>;
 
 declare module "@tanstack/react-router" {
   interface Register {
-    router: typeof router;
+    router: AppRouter;
   }
 }

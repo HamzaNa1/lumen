@@ -1,26 +1,37 @@
-import type { AccountSummary, CatalogItem, PlayerState, WatchStatus } from "@lumen/contracts";
+import type { PlayerAction } from "@lumen/client/runtime";
+import type {
+  AccountSummary,
+  CatalogItem,
+  PlayerDisplay,
+  PlayerState,
+  WatchStatus,
+} from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
 import { CircleAlert, LoaderCircle, X } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
 import { errorMessage } from "./format";
 import { LumenMark } from "./LumenMark";
+import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
 import {
-  bridge,
   itemPage,
   refreshWatchProgress,
   WorkspaceContext,
   type WorkspaceValue,
 } from "./Workspace";
 
-const useAccounts = () =>
-  useQuery({ queryKey: ["accounts"], queryFn: () => bridge.accounts.list() });
+const ACCOUNTS_KEY = ["accounts"] as const;
 
 export const App = (): React.ReactElement => {
-  const accountsQuery = useAccounts();
+  const runtime = useRuntime();
+  const presentation = runtime.playback.presentation;
+  const accountsQuery = useQuery({
+    queryKey: ACCOUNTS_KEY,
+    queryFn: () => runtime.accounts.list(),
+  });
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const router = useRouter();
@@ -52,7 +63,7 @@ export const App = (): React.ReactElement => {
     setPlayer(state);
   }, []);
 
-  useEffect(() => bridge.watch.onState((status) => {
+  useEffect(() => runtime.watch.onState((status) => {
     const previous = watchRef.current;
     watchRef.current = status;
     setWatchStatus(status);
@@ -72,7 +83,23 @@ export const App = (): React.ReactElement => {
     if (status.group !== null && status.group.playback === null && status.group.revision > 0 && onPlayerRouteRef.current) {
       void router.navigate({ href: returnTo.current, replace: true });
     }
-  }), [router, updatePlayer]);
+  }), [router, updatePlayer, runtime]);
+
+  useEffect(
+    () =>
+      runtime.accounts.onChange(() => void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY })),
+    [queryClient, runtime],
+  );
+
+  useEffect(
+    () =>
+      runtime.playback.onFailure((message) => {
+        if (!onPlayerRouteRef.current) return;
+        setPlaybackLoading(false);
+        setPlaybackError(message);
+      }),
+    [runtime],
+  );
 
   useEffect(() => {
     const receivePlayer = (state: PlayerState | null): void => {
@@ -84,17 +111,17 @@ export const App = (): React.ReactElement => {
         setPlaybackError(null);
         updatePlayer(state);
       } else if (state !== null && !onPlayerRouteRef.current) {
-        void bridge.player.stop().catch(() => undefined);
+        void runtime.playback.stop().catch(() => undefined);
         updatePlayer(null);
       } else updatePlayer(state);
     };
-    const unsubscribe = bridge.player.onState(receivePlayer);
-    void bridge.player
+    const unsubscribe = runtime.playback.onState(receivePlayer);
+    void runtime.playback
       .state()
       .then(receivePlayer)
       .catch(() => undefined);
     return unsubscribe;
-  }, [updatePlayer]);
+  }, [updatePlayer, runtime]);
   const beginPlayback = useCallback(
     async (item: CatalogItem): Promise<void> => {
       if (startingItemId.current === item.id || activePlayer.current?.itemId === item.id) return;
@@ -103,16 +130,16 @@ export const App = (): React.ReactElement => {
       setPlaybackError(null);
       updatePlayer(null);
       try {
-        await bridge.player.start(item.id, item.resumePositionSeconds ?? undefined);
+        await runtime.playback.start(item.id, item.resumePositionSeconds ?? undefined);
         if (watchRef.current?.group !== null && watchRef.current?.group !== undefined) return;
         if (!onPlayerRouteRef.current) {
-          await bridge.player.stop();
+          await runtime.playback.stop();
           updatePlayer(null);
           return;
         }
-        const state = await bridge.player.state();
+        const state = await runtime.playback.state();
         if (!onPlayerRouteRef.current) {
-          await bridge.player.stop();
+          await runtime.playback.stop();
           updatePlayer(null);
           return;
         }
@@ -125,7 +152,7 @@ export const App = (): React.ReactElement => {
         if (onPlayerRouteRef.current) setPlaybackLoading(false);
       }
     },
-    [updatePlayer],
+    [updatePlayer, runtime],
   );
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
@@ -154,17 +181,36 @@ export const App = (): React.ReactElement => {
       setConnectionsView("saved");
       return;
     }
-    void bridge.accounts
+    void runtime.accounts
       .activate(active.connectionId)
       .then((result) => {
-        queryClient.setQueryData(["accounts"], result);
+        queryClient.setQueryData(ACCOUNTS_KEY, result);
         setConnectionsView(null);
       })
       .catch((cause) => {
         setStartupError(errorMessage(cause, "Could not open server"));
         setConnectionsView("saved");
       });
-  }, [accountsQuery.isSuccess, active, connectionsView, queryClient]);
+  }, [accountsQuery.isSuccess, active, connectionsView, queryClient, runtime]);
+  // Everything cached or playing belongs to one account on one server. When that changes, none
+  // of it may carry over: stop playback, drop requests still in flight, and forget the data.
+  const scopeKey =
+    active === null ? null : `${active.connectionId}\n${active.serverId}\n${active.userId}`;
+  const previousScopeKey = useRef(scopeKey);
+  useEffect(() => {
+    const previous = previousScopeKey.current;
+    previousScopeKey.current = scopeKey;
+    if (previous === null || previous === scopeKey) return;
+    void queryClient.cancelQueries({ predicate: (query) => query.queryKey[0] !== "accounts" });
+    queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "accounts" });
+    queryClient.getMutationCache().clear();
+    updatePlayer(null);
+    setPlayingItem(null);
+    setPlaybackLoading(false);
+    setPlaybackError(null);
+    void runtime.playback.stop().catch(() => undefined);
+    if (onPlayerRouteRef.current) void router.navigate({ to: "/", replace: true });
+  }, [queryClient, router, runtime, scopeKey, updatePlayer]);
   const playerUnavailable = player === null;
   useEffect(() => {
     const leavingPlayer = wasOnPlayerRoute.current && !onPlayerRoute;
@@ -177,7 +223,7 @@ export const App = (): React.ReactElement => {
     setPlaybackError(null);
     // The page playback started from can mount while the session is still stopping.
     // Refresh progress and next up once the stop request has finished.
-    void bridge.player
+    void runtime.playback
       .stop()
       .catch(() => undefined)
       .then(() => {
@@ -188,32 +234,40 @@ export const App = (): React.ReactElement => {
             active.userId,
           ]);
       });
-  }, [active, onPlayerRoute, queryClient, updatePlayer]);
-  useEffect(() => {
-    if (!onPlayerRoute) return;
-    void bridge.player.display({
-      title: playingItem?.title ?? watchStatus?.group?.playback?.title ?? "Now playing",
-      context: `${active?.serverLabel ?? "Lumen"} · Original quality`,
+  }, [active, onPlayerRoute, queryClient, updatePlayer, runtime]);
+  const watchTitle = watchStatus?.group?.playback?.title;
+  const serverLabel = active?.serverLabel;
+  const playerDisplay = useMemo<PlayerDisplay>(
+    () => ({
+      title: playingItem?.title ?? watchTitle ?? "Now playing",
+      context: `${serverLabel ?? "Lumen"} · Original quality`,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
-    });
-  }, [active, onPlayerRoute, playingItem, playerUnavailable, playbackLoading, playbackError, watchStatus]);
+    }),
+    [serverLabel, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
+  );
+  useEffect(() => {
+    if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
+  }, [onPlayerRoute, playerDisplay, presentation]);
+  const onPlayerAction = useCallback(
+    (action: PlayerAction): void => {
+      // Leaving the player route stops playback and clears its state.
+      if (action === "back" || action === "stop") {
+        leavingWatch.current = true;
+        void router.navigate({ href: returnTo.current, replace: true });
+      } else if (playingItem !== null) void beginPlayback(playingItem);
+      else if (watchRef.current?.group?.playback != null) {
+        setPlaybackLoading(true);
+        setPlaybackError(null);
+        void runtime.watch.retry().catch(reportPlaybackError);
+      }
+    },
+    [beginPlayback, playingItem, reportPlaybackError, router, runtime],
+  );
   useEffect(
-    () =>
-      bridge.player.onOverlayAction((action) => {
-        // Leaving the player route stops playback and clears its state.
-        if (action === "back" || action === "stop") {
-          leavingWatch.current = true;
-          void router.navigate({ href: returnTo.current, replace: true });
-        } else if (playingItem !== null) void beginPlayback(playingItem);
-        else if (watchRef.current?.group?.playback != null) {
-          setPlaybackLoading(true);
-          setPlaybackError(null);
-          void bridge.watch.retry().catch(reportPlaybackError);
-        }
-      }),
-    [beginPlayback, playingItem, reportPlaybackError, router],
+    () => (presentation.kind === "external" ? presentation.onAction(onPlayerAction) : undefined),
+    [onPlayerAction, presentation],
   );
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent): void => {
@@ -238,7 +292,7 @@ export const App = (): React.ReactElement => {
     return (
       <ConnectPage
         initialError="Saved servers could not be loaded. Connect to a server to continue."
-        onChanged={() => void queryClient.invalidateQueries({ queryKey: ["accounts"] })}
+        onChanged={() => void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY })}
       />
     );
   if (connectionsView === "starting")
@@ -267,7 +321,7 @@ export const App = (): React.ReactElement => {
         onChanged={() => {
           setStartupError(null);
           setConnectionsView(null);
-          void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+          void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
         }}
       />
     );
@@ -288,7 +342,7 @@ export const App = (): React.ReactElement => {
           setStartupError(null);
           setSignInAccount(null);
           setConnectionsView(null);
-          void queryClient.invalidateQueries({ queryKey: ["accounts"] });
+          void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
         }}
       />
     );
@@ -308,6 +362,8 @@ export const App = (): React.ReactElement => {
     player,
     playbackLoading,
     playbackError,
+    playerDisplay,
+    onPlayerAction,
     beginPlayback,
     reportPlaybackError,
   } satisfies WorkspaceValue;
@@ -324,7 +380,7 @@ export const App = (): React.ReactElement => {
               accounts={accounts}
               scope={scope}
               onActivate={(id) => {
-                void bridge.accounts
+                void runtime.accounts
                   .activate(id)
                   .then(() => queryClient.invalidateQueries())
                   .catch((cause) => {
@@ -335,7 +391,7 @@ export const App = (): React.ReactElement => {
                   });
               }}
               onRemove={(id) => {
-                void bridge.accounts
+                void runtime.accounts
                   .remove(id)
                   .then(() => queryClient.invalidateQueries())
                   .catch(() => undefined);

@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import type { ReactNode } from "react";
 import { LumenMark } from "./LumenMark";
+import { useRuntime } from "./Runtime";
 import { useLibraries } from "./Workspace";
 
 export const libraryIcon = (kind: LibrarySummary["kind"]): LucideIcon =>
@@ -52,6 +53,7 @@ export const Sidebar = ({
   readonly onAddServer: () => void;
 }): React.ReactElement => {
   const navigate = useNavigate();
+  const runtime = useRuntime();
   const libraries = useLibraries(scope);
   return (
     <>
@@ -110,6 +112,7 @@ export const Sidebar = ({
           onRemove={onRemove}
           onAddServer={onAddServer}
           onOpenSettings={() => void navigate({ to: "/settings" })}
+          canSwitchServers={runtime.capabilities.serverSwitching}
         />
       </div>
     </>

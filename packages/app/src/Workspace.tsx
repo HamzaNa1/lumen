@@ -1,4 +1,11 @@
-import type { AccountSummary, CatalogItem, PlayerState, WatchPlayback } from "@lumen/contracts";
+import type { PlayerAction } from "@lumen/client/runtime";
+import type {
+  AccountSummary,
+  CatalogItem,
+  PlayerDisplay,
+  PlayerState,
+  WatchPlayback,
+} from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import {
   type QueryClient,
@@ -10,8 +17,7 @@ import {
 import { Check, CircleCheck, LoaderCircle } from "lucide-react";
 import { createContext, type ReactNode, useContext } from "react";
 import { errorMessage } from "./format";
-
-export const bridge = window.lumen;
+import { useRuntime } from "./Runtime";
 
 export interface WorkspaceValue {
   readonly account: AccountSummary;
@@ -24,6 +30,9 @@ export interface WorkspaceValue {
   readonly player: PlayerState | null;
   readonly playbackLoading: boolean;
   readonly playbackError: string | null;
+  /** What the player controls show, wherever the platform draws them. */
+  readonly playerDisplay: PlayerDisplay;
+  readonly onPlayerAction: (action: PlayerAction) => void;
   readonly beginPlayback: (item: CatalogItem) => Promise<void>;
   readonly reportPlaybackError: (cause: unknown) => void;
 }
@@ -51,16 +60,20 @@ export const itemPage = (item: Pick<CatalogItem, "id" | "kind">) => {
   }
 };
 
-export const useLibraries = (scope: readonly unknown[]) =>
-  useQuery({ queryKey: [...scope, "libraries"], queryFn: () => bridge.library.list() });
+export const useLibraries = (scope: readonly unknown[]) => {
+  const runtime = useRuntime();
+  return useQuery({ queryKey: [...scope, "libraries"], queryFn: () => runtime.catalog.libraries() });
+};
 
-export const useArtwork = (artworkId: string | null | undefined, scope: readonly unknown[]) =>
-  useQuery({
+export const useArtwork = (artworkId: string | null | undefined, scope: readonly unknown[]) => {
+  const runtime = useRuntime();
+  return useQuery({
     queryKey: [...scope, "artwork", artworkId],
-    queryFn: () => bridge.library.artwork(artworkId ?? ""),
+    queryFn: () => runtime.artwork.url(artworkId ?? ""),
     enabled: artworkId != null,
     staleTime: Number.POSITIVE_INFINITY,
   });
+};
 
 /** Refetches everything that shows watch progress, after it changes. */
 export const refreshWatchProgress = (client: QueryClient, scope: readonly unknown[]) =>
@@ -80,12 +93,13 @@ export const WatchedButton = ({
   readonly compact?: boolean;
 }): React.ReactElement => {
   const { scope } = useWorkspace();
+  const runtime = useRuntime();
   const queryClient = useQueryClient();
   const mutationKey = [...scope, "watch-state"];
   const pending = useIsMutating({ mutationKey }) > 0;
   const update = useMutation({
     mutationKey,
-    mutationFn: (completed: boolean) => bridge.library.setWatched(item.id, completed),
+    mutationFn: (completed: boolean) => runtime.catalog.setWatched(item.id, completed),
     onSuccess: () => refreshWatchProgress(queryClient, scope),
   });
   const completed = item.completed === true;

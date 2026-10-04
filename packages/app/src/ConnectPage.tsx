@@ -1,11 +1,19 @@
 import type { AccountSummary, ServerDiscovery } from "@lumen/contracts";
 import { Button, Form, Modal, TextField } from "@lumen/ui";
 import { useMutation } from "@tanstack/react-query";
-import { ArrowLeft, ChevronRight, CircleAlert, Plus, Server, Trash2 } from "lucide-react";
+import {
+  ArrowLeft,
+  ChevronRight,
+  CircleAlert,
+  LoaderCircle,
+  Plus,
+  Server,
+  Trash2,
+} from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { errorMessage, hostOf } from "./format";
 import { LumenMark } from "./LumenMark";
-import { bridge } from "./Workspace";
+import { useRuntime } from "./Runtime";
 
 export const ConnectPage = ({
   accounts = [],
@@ -24,7 +32,10 @@ export const ConnectPage = ({
   readonly onClose?: () => void;
   readonly onChanged?: () => void;
 }): React.ReactElement => {
-  const [origin, setOrigin] = useState("http://127.0.0.1:3210");
+  const runtime = useRuntime();
+  // A platform tied to one server skips the address step and goes straight to signing in.
+  const fixedOrigin = runtime.accounts.fixedOrigin;
+  const [origin, setOrigin] = useState(fixedOrigin ?? "http://127.0.0.1:3210");
   const [serverLabel, setServerLabel] = useState("Home server");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
@@ -40,9 +51,10 @@ export const ConnectPage = ({
   const creatingAccount = server?.setupRequired === true || signUp;
   const showingSaved = accounts.length > 0 && !showAddServer;
   const discoverServer = useMutation({
-    mutationFn: () => bridge.accounts.discoverServer(origin),
+    mutationFn: () => runtime.accounts.discoverServer(origin),
     onSuccess: (result) => {
       setServer(result);
+      if (fixedOrigin !== null) setServerLabel(result.identity.displayName);
       setError(null);
     },
     onError: (cause) => setError(errorMessage(cause, "Could not reach that server")),
@@ -50,7 +62,7 @@ export const ConnectPage = ({
   const connect = useMutation({
     mutationFn: () => {
       if (server === null) throw new Error("Connect to a server first");
-      return bridge.accounts.connect({
+      return runtime.accounts.connect({
         origin: server.origin,
         serverLabel,
         username,
@@ -79,7 +91,7 @@ export const ConnectPage = ({
   const activateAccount = (account: AccountSummary): void => {
     setOpeningId(account.connectionId);
     setError(null);
-    void bridge.accounts
+    void runtime.accounts
       .activate(account.connectionId)
       .then(() => onChanged?.())
       .catch(async (cause) => {
@@ -92,7 +104,7 @@ export const ConnectPage = ({
       .finally(() => setOpeningId(null));
   };
   const removeAccount = (connectionId: string): void => {
-    void bridge.accounts
+    void runtime.accounts
       .remove(connectionId)
       .then(() => onChanged?.())
       .catch((cause) => setError(errorMessage(cause, "Could not remove server")));
@@ -104,23 +116,31 @@ export const ConnectPage = ({
     setSignUp(false);
     setError(null);
     try {
-      setServer(await bridge.accounts.discoverServer(account.origin));
+      setServer(await runtime.accounts.discoverServer(account.origin));
       setShowAddServer(true);
     } catch (cause) {
       setError(errorMessage(cause, "Could not reach that server"));
     }
-  }, []);
+  }, [runtime]);
   useEffect(() => {
     if (initialSignInAccount != null) void signInAgain(initialSignInAccount);
   }, [initialSignInAccount, signInAgain]);
+  const discoverFixedServer = discoverServer.mutate;
+  useEffect(() => {
+    if (fixedOrigin !== null) discoverFixedServer();
+  }, [fixedOrigin, discoverFixedServer]);
 
   const heading = showingSaved
     ? { title: "Choose a server", body: "Select a server to continue." }
     : server === null
-      ? {
-          title: "Connect to a server",
-          body: "Enter the address of a Lumen server on your network.",
-        }
+      ? fixedOrigin === null
+        ? {
+            title: "Connect to a server",
+            body: "Enter the address of a Lumen server on your network.",
+          }
+        : discoverServer.isError
+          ? { title: "Can’t reach the server", body: "Lumen could not load from this address." }
+          : { title: "Connecting…", body: "Checking this server." }
       : server.setupRequired
         ? {
             title: "Create the admin account",
@@ -208,6 +228,22 @@ export const ConnectPage = ({
                 Add server
               </Button>
             </>
+          ) : server === null && fixedOrigin !== null ? (
+            <div className="connect-form">
+              {errorBanner}
+              {discoverServer.isError ? (
+                <Button
+                  className="button-wide"
+                  variant="primary"
+                  size="lg"
+                  onClick={() => discoverServer.mutate()}
+                >
+                  Try again
+                </Button>
+              ) : (
+                <LoaderCircle className="spinner" aria-hidden="true" size={22} />
+              )}
+            </div>
           ) : server === null ? (
             <Form
               className="connect-form"
@@ -274,9 +310,11 @@ export const ConnectPage = ({
                   <strong>{serverLabel}</strong>
                   <span>{hostOf(server.origin)}</span>
                 </span>
-                <Button variant="ghost" size="sm" onClick={changeServer}>
-                  Change
-                </Button>
+                {fixedOrigin === null ? (
+                  <Button variant="ghost" size="sm" onClick={changeServer}>
+                    Change
+                  </Button>
+                ) : null}
               </div>
               <TextField
                 label="Username"

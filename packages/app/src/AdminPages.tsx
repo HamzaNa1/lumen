@@ -31,7 +31,9 @@ import {
 import { useState } from "react";
 import { errorMessage, libraryKindLabels, plural, roleLabels, slugify } from "./format";
 import { libraryIcon } from "./Sidebar";
-import { bridge, PageHeader, useWorkspace } from "./Workspace";
+import { PageHeader, useWorkspace } from "./Workspace";
+import { useRuntime } from "./Runtime";
+import { randomId } from "@lumen/client";
 
 const roleOptions = [
   { value: "user", label: roleLabels.user },
@@ -72,11 +74,12 @@ const MetadataPanel = ({
   readonly configured: boolean;
   readonly scope: readonly unknown[];
 }): React.ReactElement => {
+  const runtime = useRuntime();
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const [key, setKey] = useState("");
   const update = useMutation({
-    mutationFn: (tmdbApiKey: string | null) => bridge.admin.updateMetadataSettings({ tmdbApiKey }),
+    mutationFn: (tmdbApiKey: string | null) => runtime.admin.updateMetadataSettings({ tmdbApiKey }),
     onSuccess: async () => {
       setKey("");
       setOpen(false);
@@ -170,6 +173,7 @@ const LibraryDialog = ({
   readonly onOpenChange: (open: boolean) => void;
   readonly scope: readonly unknown[];
 }): React.ReactElement => {
+  const runtime = useRuntime();
   const queryClient = useQueryClient();
   const [name, setName] = useState(library?.name ?? "");
   const [slug, setSlug] = useState(library?.slug ?? "");
@@ -178,9 +182,9 @@ const LibraryDialog = ({
   const save = useMutation({
     mutationFn: async () => {
       if (library === null) {
-        await bridge.admin.createLibrary({ id: crypto.randomUUID(), name, slug, kind });
+        await runtime.admin.createLibrary({ id: randomId(), name, slug, kind });
       } else {
-        await bridge.admin.updateLibrary({ libraryId: library.id, name, slug, kind, isEnabled });
+        await runtime.admin.updateLibrary({ libraryId: library.id, name, slug, kind, isEnabled });
       }
     },
     onSuccess: async () => {
@@ -270,6 +274,7 @@ const LibraryCard = ({
   readonly library: LibrarySummary;
   readonly scope: readonly unknown[];
 }): React.ReactElement => {
+  const runtime = useRuntime();
   const queryClient = useQueryClient();
   const [rootPath, setRootPath] = useState("");
   const [editing, setEditing] = useState(false);
@@ -277,7 +282,7 @@ const LibraryCard = ({
   const Icon = libraryIcon(library.kind);
   const roots = useQuery({
     queryKey: [...scope, "admin", "roots", library.id],
-    queryFn: () => bridge.admin.listRoots(library.id),
+    queryFn: () => runtime.admin.listRoots(library.id),
   });
   const rootList = (roots.data ?? []) as ReadonlyArray<{ id: string; path: string }>;
   const refreshLibraries = async (): Promise<void> => {
@@ -286,13 +291,13 @@ const LibraryCard = ({
   };
   const toggle = useMutation({
     mutationFn: () =>
-      bridge.admin.updateLibrary({ libraryId: library.id, isEnabled: !library.isEnabled }),
+      runtime.admin.updateLibrary({ libraryId: library.id, isEnabled: !library.isEnabled }),
     onSuccess: refreshLibraries,
   });
   const addRoot = useMutation({
     mutationFn: () =>
-      bridge.admin.addRoot({
-        id: crypto.randomUUID(),
+      runtime.admin.addRoot({
+        id: randomId(),
         libraryId: library.id,
         path: rootPath.trim(),
         priority: rootList.length,
@@ -303,16 +308,16 @@ const LibraryCard = ({
     },
   });
   const removeRoot = useMutation({
-    mutationFn: (rootId: string) => bridge.admin.deleteRoot(rootId),
+    mutationFn: (rootId: string) => runtime.admin.deleteRoot(rootId),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "roots", library.id] });
     },
   });
   const scan = useMutation({
     mutationFn: async () => {
-      const { runId } = await bridge.admin.startScan({ libraryId: library.id, mode: "full" });
+      const { runId } = await runtime.admin.startScan({ libraryId: library.id, mode: "full" });
       while (true) {
-        const run = await bridge.admin.scanStatus(runId);
+        const run = await runtime.admin.scanStatus(runId);
         if (run.status === "succeeded") return;
         if (run.status === "failed" || run.status === "cancelled")
           throw new Error(run.errorMessage ?? "Library scan failed");
@@ -325,7 +330,7 @@ const LibraryCard = ({
     },
   });
   const remove = useMutation({
-    mutationFn: () => bridge.admin.deleteLibrary(library.id),
+    mutationFn: () => runtime.admin.deleteLibrary(library.id),
     onSuccess: async () => {
       setConfirmDelete(false);
       await refreshLibraries();
@@ -481,15 +486,16 @@ export const AdminLibrariesPage = (): React.ReactElement => (
 );
 
 const AdminLibraries = (): React.ReactElement => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   const [creating, setCreating] = useState(false);
   const metadata = useQuery({
     queryKey: [...scope, "admin", "metadata"],
-    queryFn: () => bridge.admin.metadataSettings(),
+    queryFn: () => runtime.admin.metadataSettings(),
   });
   const libraries = useQuery({
     queryKey: [...scope, "admin", "libraries"],
-    queryFn: () => bridge.admin.listLibraries(),
+    queryFn: () => runtime.admin.listLibraries(),
   });
   return (
     <div className="page page-narrow">
@@ -557,6 +563,7 @@ const UserDialog = ({
   readonly onOpenChange: (open: boolean) => void;
   readonly scope: readonly unknown[];
 }): React.ReactElement => {
+  const runtime = useRuntime();
   const queryClient = useQueryClient();
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
@@ -566,14 +573,14 @@ const UserDialog = ({
   const save = useMutation({
     mutationFn: async () => {
       if (user === null) {
-        await bridge.admin.createUser({
+        await runtime.admin.createUser({
           username,
           displayName: displayName || username,
           password,
           role,
         });
       } else {
-        await bridge.admin.updateUser({
+        await runtime.admin.updateUser({
           userId: user.id,
           displayName,
           password: password === "" ? undefined : password,
@@ -678,12 +685,13 @@ export const AdminUsersPage = (): React.ReactElement => (
 );
 
 const AdminUsers = (): React.ReactElement => {
+  const runtime = useRuntime();
   const { account, scope } = useWorkspace();
   const [creating, setCreating] = useState(false);
   const [editing, setEditing] = useState<User | null>(null);
   const users = useQuery({
     queryKey: [...scope, "admin", "users"],
-    queryFn: () => bridge.admin.listUsers(),
+    queryFn: () => runtime.admin.listUsers(),
   });
   return (
     <div className="page page-narrow">

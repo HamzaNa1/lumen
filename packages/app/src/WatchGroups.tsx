@@ -9,6 +9,7 @@ import { Avatar, Button, formatPlayerTime, Popover, PopoverTitle, TextField } fr
 import { CircleAlert, LoaderCircle, Lock, LogOut, Pause, Play, Plus, Users } from "lucide-react";
 import { useEffect, useState } from "react";
 import { errorMessage } from "./format";
+import { useRuntime } from "./Runtime";
 import "./watch-groups.css";
 
 const visibleMemberNames = 3;
@@ -258,24 +259,25 @@ export const WatchGroups = ({
 }: {
   readonly placement: "sidebar" | "player";
 }): React.ReactElement | null => {
+  const runtime = useRuntime();
   const [status, setStatus] = useState(initialWatchStatus);
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    const unsubscribe = window.lumen.watch.onState(setStatus);
-    void window.lumen.watch
+    const unsubscribe = runtime.watch.onState(setStatus);
+    void runtime.watch
       .state()
       .then(setStatus)
       .catch(() => undefined);
     return unsubscribe;
-  }, []);
+  }, [runtime]);
   const perform = async (action: WatchAction): Promise<void> => {
     setBusy(true);
     setError(null);
     try {
-      setStatus(await window.lumen.watch.action(action));
+      setStatus(await runtime.watch.action(action));
       setCreating(false);
     } catch (cause) {
       setError(errorMessage(cause, "Could not update the group"));
@@ -288,7 +290,7 @@ export const WatchGroups = ({
     setCreating(false);
     setError(null);
     if (next)
-      void window.lumen.watch
+      void runtime.watch
         .state()
         .then(setStatus)
         .catch((cause: unknown) => setError(errorMessage(cause, "Could not connect")));

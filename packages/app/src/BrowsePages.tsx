@@ -27,7 +27,6 @@ import {
 } from "react";
 import { formatClock, kindLabel, libraryCount, plural } from "./format";
 import {
-  bridge,
   CatalogCard,
   PageHeader,
   PosterGridSkeleton,
@@ -35,6 +34,7 @@ import {
   useLibraries,
   useWorkspace,
 } from "./Workspace";
+import { useRuntime } from "./Runtime";
 
 const yearOf = (item: CatalogItem): string | null => (item.year === null ? null : String(item.year));
 
@@ -156,10 +156,11 @@ const LibraryTile = ({
   readonly library: LibrarySummary;
   readonly artworkId?: string | null;
 }): React.ReactElement => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   const items = useQuery({
     queryKey: [...scope, "items", library.id, "thumbnail"],
-    queryFn: () => bridge.library.items(library.id),
+    queryFn: () => runtime.catalog.items(library.id),
     enabled: artworkId == null,
   });
   const artwork = useArtwork(
@@ -199,10 +200,11 @@ const LibraryTile = ({
 };
 
 export const HomePage = (): React.ReactElement => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   const home = useQuery({
     queryKey: [...scope, "home"],
-    queryFn: () => bridge.library.home(),
+    queryFn: () => runtime.catalog.home(),
     staleTime: 0,
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
@@ -330,11 +332,12 @@ export const LoadMore = ({
 };
 
 const LibraryGrid = ({ library }: { readonly library: LibrarySummary }): React.ReactElement => {
+  const runtime = useRuntime();
   const { account, scope } = useWorkspace();
   const navigate = useNavigate();
   const items = useInfiniteQuery({
     queryKey: [...scope, "items", library.id, "all"],
-    queryFn: ({ pageParam }) => bridge.library.items(library.id, pageParam),
+    queryFn: ({ pageParam }) => runtime.catalog.items(library.id, pageParam),
     initialPageParam: null as string | null,
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
@@ -422,6 +425,7 @@ const extractItems = (value: unknown): ReadonlyArray<CatalogItem> => {
 };
 
 export const SearchPage = (): React.ReactElement => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   const inputRef = useRef<HTMLInputElement>(null);
   const navigate = useNavigate({ from: "/search" });
@@ -446,7 +450,7 @@ export const SearchPage = (): React.ReactElement => {
   }, [query, submit]);
   const results = useQuery({
     queryKey: [...scope, "search", submitted],
-    queryFn: () => bridge.library.search(submitted),
+    queryFn: () => runtime.catalog.search(submitted),
     enabled: submitted !== "",
     placeholderData: keepPreviousData,
   });

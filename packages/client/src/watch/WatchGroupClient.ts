@@ -5,6 +5,7 @@ import {
   type WatchStatus,
 } from "@lumen/contracts";
 import { Schema } from "effect";
+import { randomId } from "../ids.ts";
 
 /** How the socket's first message proves who is connecting. */
 export type WatchAuthentication =
@@ -214,7 +215,7 @@ export class WatchGroupClient {
     if (this.status.connection !== "connected" || socket?.readyState !== WebSocket.OPEN)
       return Promise.reject(new Error("Watch groups are not connected"));
     if (this.pending.size >= 16) return Promise.reject(new Error("Watch groups are busy"));
-    const requestId = crypto.randomUUID();
+    const requestId = randomId();
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);

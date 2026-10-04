@@ -13,7 +13,8 @@ import {
   plural,
   shortId,
 } from "./format";
-import { bridge, PageHeader, useWorkspace } from "./Workspace";
+import { PageHeader, useWorkspace } from "./Workspace";
+import { useRuntime } from "./Runtime";
 
 type RunStatus = JobLogEntry["status"];
 type StatusFilter = "all" | "active" | "failed" | "succeeded" | "cancelled";
@@ -190,11 +191,12 @@ export const JobLogPage = (): React.ReactElement => (
 );
 
 const JobLog = (): React.ReactElement => {
+  const runtime = useRuntime();
   const { scope } = useWorkspace();
   const [filter, setFilter] = useState<StatusFilter>("all");
   const jobs = useQuery({
     queryKey: [...scope, "admin", "jobs"],
-    queryFn: () => bridge.admin.jobLog(),
+    queryFn: () => runtime.admin.jobLog(),
     refetchInterval: 5_000,
   });
   const runs = summarizeRuns(jobs.data ?? []);
