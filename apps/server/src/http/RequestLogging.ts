@@ -8,6 +8,8 @@ const literalSegments = new Set([
   "register",
   "login",
   "migrate-session",
+  "browser",
+  "session",
   "me",
   "logout",
   "sessions",
@@ -84,3 +86,9 @@ const httpMethods = new Set([
 
 export const requestMethod = (method: string): string =>
   httpMethods.has(method) ? method : "OTHER";
+
+/** Whose request this is, for rate limiting. A proxy in front names the client it forwards for. */
+export const clientKey = (request: Request): string =>
+  request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+  request.headers.get("x-real-ip") ??
+  "local";

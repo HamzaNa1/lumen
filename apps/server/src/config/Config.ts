@@ -29,6 +29,11 @@ const Environment = Schema.Struct({
   LUMEN_FFPROBE_MAX_OUTPUT_BYTES: Schema.optional(Numeric),
   LUMEN_SHUTDOWN_GRACE_MS: Schema.optional(Numeric),
   LUMEN_HEARTBEAT_INTERVAL_MS: Schema.optional(Numeric),
+  LUMEN_WEB_ROOT: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+  LUMEN_WEB_APP: Schema.optional(Schema.Literals(["required", "optional"])),
+  LUMEN_COOKIE_SECURE: Schema.optional(Schema.Literals(["auto", "always", "never"])),
+  LUMEN_ALLOWED_ORIGINS: Schema.optional(Schema.String),
+  NODE_ENV: Schema.optional(Schema.String),
 });
 
 export interface ServerConfig {
@@ -49,7 +54,31 @@ export interface ServerConfig {
   readonly ffprobeMaxOutputBytes: number;
   readonly shutdownGraceMs: number;
   readonly heartbeatIntervalMs: number;
+  /** The built browser app, served under /web. */
+  readonly webRoot: string;
+  /** Whether the server refuses to start without the browser app. */
+  readonly webApp: "required" | "optional";
+  /**
+   * When the browser session cookie is marked Secure. "auto" follows the request: Secure over
+   * HTTPS, and not over the plain HTTP of local development or a home network, where a Secure
+   * cookie would never be sent back.
+   */
+  readonly cookieSecure: "auto" | "always" | "never";
+  /** Origins, besides the one a request arrives on, whose pages may use a browser session. */
+  readonly allowedOrigins: ReadonlyArray<string>;
 }
+
+const toOrigins = (raw: string | undefined): string[] =>
+  (raw ?? "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter((value) => value !== "")
+    .map((value) => {
+      const url = new URL(value);
+      if (url.origin === "null" || `${url.origin}/` !== url.href)
+        throw new Error("LUMEN_ALLOWED_ORIGINS must list origins such as https://media.example");
+      return url.origin;
+    });
 
 const toInteger = (name: string, raw: string | undefined, fallback: number): number => {
   if (raw === undefined) return fallback;
@@ -88,5 +117,10 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     ffprobeMaxOutputBytes: toBoundedInteger("LUMEN_FFPROBE_MAX_OUTPUT_BYTES", parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES, 1_048_576, 1_024, 100_000_000),
     shutdownGraceMs: toBoundedInteger("LUMEN_SHUTDOWN_GRACE_MS", parsed.LUMEN_SHUTDOWN_GRACE_MS, 10_000, 100, 600_000),
     heartbeatIntervalMs: toBoundedInteger("LUMEN_HEARTBEAT_INTERVAL_MS", parsed.LUMEN_HEARTBEAT_INTERVAL_MS, 20_000, 1_000, 600_000),
+    webRoot: resolveWorkspacePath(parsed.LUMEN_WEB_ROOT ?? "./apps/web/dist"),
+    // A production server ships with the browser app; a checkout may not have built it yet.
+    webApp: parsed.LUMEN_WEB_APP ?? (parsed.NODE_ENV === "production" ? "required" : "optional"),
+    cookieSecure: parsed.LUMEN_COOKIE_SECURE ?? "auto",
+    allowedOrigins: toOrigins(parsed.LUMEN_ALLOWED_ORIGINS),
   };
 };

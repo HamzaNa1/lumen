@@ -36,7 +36,9 @@ import {
   MetadataSettingsLive,
   type MetadataSettingsShape,
 } from "./services/MetadataSettings";
+import { isTrustedOrigin } from "./http/BrowserSession";
 import { makeHttpHandler, type HttpServices } from "./http/HttpApp";
+import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
 import { sql } from "drizzle-orm";
 import { chmod, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
@@ -166,6 +168,7 @@ const startConfiguredServer = async (
   logger: Logger,
   startedAt: number,
 ): Promise<RunningServer> => {
+  if (config.webApp === "required") await assertWebBuild(config.webRoot);
   await mkdir(dirname(config.databasePath), { recursive: true });
   await mkdir(config.dataDir, { recursive: true });
   const serviceLayer = makeLayers(config, logger) as unknown as Layer.Layer<
@@ -241,11 +244,20 @@ const startConfiguredServer = async (
       },
     };
     const handler = makeHttpHandler(httpServices, config, logger);
-    const watchGroups = new WatchGroups(httpServices);
+    const web = makeStaticWebHandler(config, logger);
+    const watchGroups = new WatchGroups(httpServices, (request, origin) =>
+      isTrustedOrigin(request, origin, config),
+    );
     const listeningServer = Bun.serve<WatchSocketData>({
-      hostname: config.host, port: config.port,
-      fetch: (request, server) => new URL(request.url).pathname === "/api/v1/watch-groups"
-        ? watchGroups.upgrade(request, server) : handler(request),
+      hostname: config.host,
+      port: config.port,
+      fetch: (request, server) => {
+        const { pathname } = new URL(request.url);
+        if (pathname === "/api/v1/watch-groups") return watchGroups.upgrade(request, server);
+        // The app's files are matched by prefix before the API sees the request, and the API
+        // owns every other path, so neither can answer for the other.
+        return isWebPath(pathname) ? web(request) : handler(request);
+      },
       websocket: watchGroups.websocket,
     });
     server = listeningServer;

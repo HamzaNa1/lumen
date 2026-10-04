@@ -31,6 +31,22 @@ export const RegisterBody = Schema.Struct({
   platformDeviceId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(500))),
 });
 
+// A browser never names its platform or receives a token: both are the server's to decide.
+export const BrowserLoginBody = Schema.Struct({
+  username: Text,
+  password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
+  deviceId: Identifier,
+  deviceName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+});
+
+export const BrowserRegisterBody = Schema.Struct({
+  username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  deviceId: Identifier,
+  deviceName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+});
+
 export const LegacySessionBody = Schema.Struct({
   refreshToken: Schema.String.check(Schema.isMinLength(32), Schema.isMaxLength(1024)),
 });
