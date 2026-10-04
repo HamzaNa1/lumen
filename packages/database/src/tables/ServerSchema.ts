@@ -578,6 +578,28 @@ export const serverLibraryWatchState = sqliteTable("server_library_watch_state",
   checkedAtMs: millis("checked_at_ms"),
 });
 
+export const serverPlaybackWatchVersions = sqliteTable(
+  "server_playback_watch_versions",
+  {
+    sessionId: text("session_id")
+      .notNull()
+      .references(() => playbackSessions.id, { onDelete: "cascade" }),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => catalogItems.id, { onDelete: "cascade" }),
+    manualVersion: integer("manual_version").notNull(),
+  },
+  (table) => [
+    primaryKey({
+      name: "server_playback_watch_versions_pk",
+      columns: [table.sessionId, table.trackId],
+    }),
+  ],
+);
+
 export const serverPlaybackSequences = sqliteTable(
   "server_playback_sequences",
   {

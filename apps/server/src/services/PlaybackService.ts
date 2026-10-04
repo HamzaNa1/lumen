@@ -13,6 +13,7 @@ import {
   playbackSessions,
   Repositories,
   serverPlaybackSequences,
+  serverPlaybackWatchVersions,
   streams as streamTable,
   tracks,
 } from "@lumen/database";
@@ -108,6 +109,24 @@ export const makePlaybackService = Effect.gen(function* () {
       if (input.trackId === null) return yield* badRequest("A source is required for direct play");
       const trackId = yield* resolveTrack(input.trackId);
       yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
+      const watchVersion = yield* database
+        .select({
+          itemId: catalogItems.id,
+          manualVersion: sql<number>`coalesce(${itemWatchStates.manualVersion}, 0)`,
+        })
+        .from(catalogItems)
+        .innerJoin(catalogItemSources, eq(catalogItemSources.itemId, catalogItems.id))
+        .innerJoin(tracks, eq(tracks.sourceId, catalogItemSources.sourceId))
+        .leftJoin(
+          itemWatchStates,
+          and(
+            eq(itemWatchStates.itemId, catalogItems.id),
+            eq(itemWatchStates.userId, principal.user.id),
+          ),
+        )
+        .where(eq(tracks.id, trackId))
+        .limit(1)
+        .get();
       const grantToken = newOpaqueToken();
       const sessionId = newUuid();
       const session = yield* repositories.activity
@@ -125,6 +144,13 @@ export const makePlaybackService = Effect.gen(function* () {
             conflict(cause instanceof Error ? cause.message : "Playback could not start"),
           ),
         );
+      if (watchVersion != null) {
+        yield* database.insert(serverPlaybackWatchVersions).values({
+          sessionId,
+          trackId,
+          ...watchVersion,
+        });
+      }
       yield* repositories.activity
         .upsertGrant({
           id: newUuid(),
@@ -338,15 +364,17 @@ export const makePlaybackService = Effect.gen(function* () {
               },
             })
             .returning();
-          const item = yield* transaction
-            .select({ id: catalogItems.id })
-            .from(catalogItems)
-            .innerJoin(catalogItemSources, eq(catalogItemSources.itemId, catalogItems.id))
-            .innerJoin(tracks, eq(tracks.sourceId, catalogItemSources.sourceId))
-            .where(eq(tracks.id, trackId))
-            .limit(1)
+          const watchVersion = yield* transaction
+            .select()
+            .from(serverPlaybackWatchVersions)
+            .where(
+              and(
+                eq(serverPlaybackWatchVersions.sessionId, sessionId),
+                eq(serverPlaybackWatchVersions.trackId, trackId),
+              ),
+            )
             .get();
-          if (item != null) {
+          if (watchVersion != null) {
             const positionSeconds = Math.round(input.positionMs / 1000);
             const completed =
               input.positionMs > 0 &&
@@ -356,15 +384,17 @@ export const makePlaybackService = Effect.gen(function* () {
               .insert(itemWatchStates)
               .values({
                 userId: principal.user.id,
-                itemId: item.id,
+                itemId: watchVersion.itemId,
                 positionSeconds,
                 completed,
                 ownershipGeneration: 1,
+                manualVersion: watchVersion.manualVersion,
                 updatedAtMs: nowMs,
               })
               .onConflictDoUpdate({
                 target: [itemWatchStates.userId, itemWatchStates.itemId],
                 set: { positionSeconds, completed, updatedAtMs: nowMs },
+                setWhere: eq(itemWatchStates.manualVersion, watchVersion.manualVersion),
               });
           }
           return updated;
