@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcServerDiscovery } from "@lumen/contracts";
+import type { AccountSummary, ServerDiscovery } from "@lumen/contracts";
 import { Button, Form, Modal, TextField } from "@lumen/ui";
 import { useMutation } from "@tanstack/react-query";
 import { ArrowLeft, ChevronRight, CircleAlert, Plus, Server, Trash2 } from "lucide-react";
@@ -16,11 +16,11 @@ export const ConnectPage = ({
   onClose,
   onChanged,
 }: {
-  readonly accounts?: ReadonlyArray<IpcAccount>;
+  readonly accounts?: ReadonlyArray<AccountSummary>;
   readonly activeConnectionId?: string;
   readonly initialError?: string;
   readonly initialShowAddServer?: boolean;
-  readonly initialSignInAccount?: IpcAccount | null;
+  readonly initialSignInAccount?: AccountSummary | null;
   readonly onClose?: () => void;
   readonly onChanged?: () => void;
 }): React.ReactElement => {
@@ -30,11 +30,11 @@ export const ConnectPage = ({
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
   const [signUp, setSignUp] = useState(false);
-  const [server, setServer] = useState<IpcServerDiscovery | null>(null);
+  const [server, setServer] = useState<ServerDiscovery | null>(null);
   const [showAddServer, setShowAddServer] = useState(
     accounts.length === 0 || initialShowAddServer || initialSignInAccount != null,
   );
-  const [removing, setRemoving] = useState<IpcAccount | null>(null);
+  const [removing, setRemoving] = useState<AccountSummary | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const creatingAccount = server?.setupRequired === true || signUp;
@@ -76,7 +76,7 @@ export const ConnectPage = ({
     setSignUp(false);
     setError(null);
   };
-  const activateAccount = (account: IpcAccount): void => {
+  const activateAccount = (account: AccountSummary): void => {
     setOpeningId(account.connectionId);
     setError(null);
     void bridge.accounts
@@ -97,7 +97,7 @@ export const ConnectPage = ({
       .then(() => onChanged?.())
       .catch((cause) => setError(errorMessage(cause, "Could not remove server")));
   };
-  const signInAgain = useCallback(async (account: IpcAccount): Promise<void> => {
+  const signInAgain = useCallback(async (account: AccountSummary): Promise<void> => {
     setOrigin(account.origin);
     setServerLabel(account.serverLabel);
     setUsername(account.username);

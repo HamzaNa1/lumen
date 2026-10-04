@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState, WatchStatus } from "@lumen/contracts";
+import type { AccountSummary, CatalogItem, PlayerState, WatchStatus } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
@@ -29,25 +29,25 @@ export const App = (): React.ReactElement => {
   const onPlayerRoute = useMatches({
     select: (matches) => matches.some((match) => match.routeId === "/player"),
   });
-  const [playingItem, setPlayingItem] = useState<IpcItem | null>(null);
-  const [player, setPlayer] = useState<IpcPlayerState | null>(null);
+  const [playingItem, setPlayingItem] = useState<CatalogItem | null>(null);
+  const [player, setPlayer] = useState<PlayerState | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
   const [connectionsView, setConnectionsView] = useState<"starting" | "saved" | "add" | null>("starting");
   const [startupError, setStartupError] = useState<string | null>(null);
   const startupAttempted = useRef(false);
-  const [signInAccount, setSignInAccount] = useState<IpcAccount | null>(null);
+  const [signInAccount, setSignInAccount] = useState<AccountSummary | null>(null);
   const startingItemId = useRef<string | null>(null);
   // Where to go when the viewer leaves the player.
   const returnTo = useRef("/");
   const leavingWatch = useRef(false);
   const watchRef = useRef<WatchStatus | null>(null);
   const [watchStatus, setWatchStatus] = useState<WatchStatus | null>(null);
-  const activePlayer = useRef<IpcPlayerState | null>(null);
+  const activePlayer = useRef<PlayerState | null>(null);
   const wasOnPlayerRoute = useRef(onPlayerRoute);
   const onPlayerRouteRef = useRef(onPlayerRoute);
   onPlayerRouteRef.current = onPlayerRoute;
-  const updatePlayer = useCallback((state: IpcPlayerState | null): void => {
+  const updatePlayer = useCallback((state: PlayerState | null): void => {
     activePlayer.current = state;
     setPlayer(state);
   }, []);
@@ -75,7 +75,7 @@ export const App = (): React.ReactElement => {
   }), [router, updatePlayer]);
 
   useEffect(() => {
-    const receivePlayer = (state: IpcPlayerState | null): void => {
+    const receivePlayer = (state: PlayerState | null): void => {
       const sharedPlayback = watchRef.current?.group?.playback;
       if (sharedPlayback != null && state !== null && state.itemId !== sharedPlayback.itemId) return;
       if (state !== null && watchRef.current?.group?.playback?.itemId === state.itemId) {
@@ -96,7 +96,7 @@ export const App = (): React.ReactElement => {
     return unsubscribe;
   }, [updatePlayer]);
   const beginPlayback = useCallback(
-    async (item: IpcItem): Promise<void> => {
+    async (item: CatalogItem): Promise<void> => {
       if (startingItemId.current === item.id || activePlayer.current?.itemId === item.id) return;
       startingItemId.current = item.id;
       setPlaybackLoading(true);
@@ -130,10 +130,10 @@ export const App = (): React.ReactElement => {
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
-  const openItem = (item: IpcItem): void => {
+  const openItem = (item: CatalogItem): void => {
     void navigate(itemPage(item));
   };
-  const queuePlayback = (item: IpcItem): void => {
+  const queuePlayback = (item: CatalogItem): void => {
     if (item.kind === "show" || item.kind === "season") {
       openItem(item);
       return;

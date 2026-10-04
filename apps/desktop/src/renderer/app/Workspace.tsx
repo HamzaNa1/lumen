@@ -1,4 +1,4 @@
-import type { IpcAccount, IpcItem, IpcPlayerState, WatchPlayback } from "@lumen/contracts";
+import type { AccountSummary, CatalogItem, PlayerState, WatchPlayback } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import {
   type QueryClient,
@@ -14,17 +14,17 @@ import { errorMessage } from "./format";
 export const bridge = window.lumen;
 
 export interface WorkspaceValue {
-  readonly account: IpcAccount;
+  readonly account: AccountSummary;
   readonly scope: readonly unknown[];
-  readonly openItem: (item: IpcItem) => void;
-  readonly playItem: (item: IpcItem) => void;
+  readonly openItem: (item: CatalogItem) => void;
+  readonly playItem: (item: CatalogItem) => void;
   readonly openConnections: (view: "saved" | "add") => void;
   readonly watchPlayback: WatchPlayback | null;
-  readonly playingItem: IpcItem | null;
-  readonly player: IpcPlayerState | null;
+  readonly playingItem: CatalogItem | null;
+  readonly player: PlayerState | null;
   readonly playbackLoading: boolean;
   readonly playbackError: string | null;
-  readonly beginPlayback: (item: IpcItem) => Promise<void>;
+  readonly beginPlayback: (item: CatalogItem) => Promise<void>;
   readonly reportPlaybackError: (cause: unknown) => void;
 }
 
@@ -37,7 +37,7 @@ export const useWorkspace = (): WorkspaceValue => {
 };
 
 /** The page for an item. Movies and other standalone titles share one. */
-export const itemPage = (item: Pick<IpcItem, "id" | "kind">) => {
+export const itemPage = (item: Pick<CatalogItem, "id" | "kind">) => {
   const params = { itemId: item.id };
   switch (item.kind) {
     case "show":
@@ -76,7 +76,7 @@ export const WatchedButton = ({
   item,
   compact = false,
 }: {
-  readonly item: IpcItem;
+  readonly item: CatalogItem;
   readonly compact?: boolean;
 }): React.ReactElement => {
   const { scope } = useWorkspace();
@@ -121,7 +121,7 @@ export const CatalogCard = ({
   subtitle,
   landscape = false,
 }: {
-  readonly item: IpcItem;
+  readonly item: CatalogItem;
   readonly subtitle?: string | null;
   /** Wide artwork, for episode stills. */
   readonly landscape?: boolean;

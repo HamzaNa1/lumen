@@ -17,6 +17,8 @@
     "koffi": "3.3.1"
   },
   "devDependencies": {
+    "@lumen/app": "workspace:*",
+    "@lumen/client": "workspace:*",
     "@lumen/contracts": "workspace:*",
     "@lumen/ui": "workspace:*",
     "@tanstack/history": "1.162.4",

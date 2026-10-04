@@ -1,8 +1,11 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import type { IpcPlayerState } from "@lumen/contracts";
+import type { PlayerState } from "@lumen/contracts";
 import type { BrowserWindow } from "electron";
-import { WatchPlaybackController } from "../../apps/desktop/src/main/watch-groups/WatchPlaybackController";
+import {
+  PlaybackSessionReporter,
+  WatchPlaybackController,
+} from "../../packages/client/src/index.ts";
 import { eventually, watchFixture } from "../helpers/watch-groups";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 
@@ -45,14 +48,14 @@ class FakeBaseWindow {
 
 mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {}, screen: {} }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
-const { PlayerController, startNativePlayer } = await import("../../apps/desktop/src/main/player/PlayerController");
+const { PlayerController, startNativePlayer, watchPlayerFor } = await import("../../apps/desktop/src/main/player/PlayerController");
 const { MpvIpc, MpvIpcFailure } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
 
 const withPlayback = async (
   run: (playback: {
     controller: InstanceType<typeof PlayerController>;
-    states: IpcPlayerState[];
+    states: PlayerState[];
     properties: Map<string, unknown>;
     heartbeat: ReturnType<typeof mock>;
     progress: ReturnType<typeof mock>;
@@ -104,7 +107,7 @@ const withPlayback = async (
       ]);
     return Promise.resolve(value);
   });
-  const states: IpcPlayerState[] = [];
+  const states: PlayerState[] = [];
   const heartbeat = mock(async () => undefined);
   const progress = mock(async () => undefined);
   const request = mock(async () => undefined);
@@ -119,7 +122,7 @@ const withPlayback = async (
       durationSeconds: 60,
       streams: [],
     }),
-    request,
+    stopPlayback: request,
     heartbeat,
     progress,
   };
@@ -134,7 +137,7 @@ const withPlayback = async (
       show: () => undefined,
       hide: () => undefined,
     },
-    onState: (state: IpcPlayerState) => states.push(state),
+    onState: (state: PlayerState) => states.push(state),
   } as unknown as ConstructorParameters<typeof PlayerController>[0]);
   try {
     await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
@@ -637,7 +640,17 @@ describe("macOS MPV window lifecycle", () => {
     calls.length = 0;
     Reflect.set(controller, "active", {
       session: { sessionId: "session-1" },
-      client: { request: async () => calls.push("delete session") },
+      reporter: new PlaybackSessionReporter(
+        {
+          heartbeat: async () => undefined,
+          progress: async () => undefined,
+          stopPlayback: async () => {
+            calls.push("delete session");
+          },
+        },
+        "session-1",
+        () => undefined,
+      ),
       process: {
         stop: async () => {
           calls.push("destroy:start");
@@ -731,7 +744,7 @@ describe("macOS MPV window lifecycle", () => {
             streams: [],
           };
         },
-        request: async () => calls.push("session:delete"),
+        stopPlayback: async () => calls.push("session:delete"),
       };
 
       await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
@@ -823,7 +836,7 @@ describe("native playback failure recovery", () => {
     const fixture = await watchFixture();
     try {
       await withPlayback(async ({ controller, connections }) => {
-        const watch = new WatchPlaybackController(controller, () => undefined);
+        const watch = new WatchPlaybackController(watchPlayerFor(controller), () => undefined);
         try {
           const owner = await fixture.connect(await fixture.login());
           await owner.action({ type: "create", name: "Movie night", password: "" });

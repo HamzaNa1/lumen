@@ -1,13 +1,13 @@
 import { WatchGroups } from "./WatchGroups";
-import type { IpcPlayerDisplay, IpcPlayerState } from "@lumen/contracts";
+import type { PlayerDisplay, PlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 const bridge = window.lumen;
 
 export const PlayerOverlay = (): React.ReactElement => {
-  const [player, setPlayer] = useState<IpcPlayerState | null>(null);
-  const [display, setDisplay] = useState<IpcPlayerDisplay | null>(null);
+  const [player, setPlayer] = useState<PlayerState | null>(null);
+  const [display, setDisplay] = useState<PlayerDisplay | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);

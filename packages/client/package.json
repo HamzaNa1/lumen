@@ -1,24 +1,21 @@
 {
-  "name": "@lumen/contracts",
+  "name": "@lumen/client",
   "version": "0.0.8",
   "private": true,
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./api": "./src/api.ts",
-    "./ipc": "./src/ipc.ts",
-    "./models": "./src/models.ts",
-    "./schemas/*": "./src/schemas/*.ts"
+    "./runtime": "./src/runtime.ts"
   },
   "scripts": {
     "build": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@lumen/contracts": "workspace:*",
     "effect": "4.0.0-beta.83"
   },
   "devDependencies": {
-    "@types/bun": "1.4.2",
     "typescript": "7.0.2"
   }
 }

@@ -1,23 +1,20 @@
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { expect, test } from "bun:test";
-import type { IpcPlayerState } from "@lumen/contracts";
+import type { PlayerState } from "@lumen/contracts";
 import { watchCorrection, watchPosition } from "../../packages/contracts/src/watch-groups";
-import {
-  WatchPlaybackController,
-  type WatchPlayer,
-} from "../../apps/desktop/src/main/watch-groups/WatchPlaybackController";
+import { WatchPlaybackController, type WatchPlayer } from "../../packages/client/src/index.ts";
 import { eventually, watchFixture, watchProxy } from "../helpers/watch-groups";
 
-class NativePlayback implements WatchPlayer {
-  state: IpcPlayerState | null = null;
+class NativePlayback implements WatchPlayer<ServerClient> {
+  state: PlayerState | null = null;
   rate = 1;
   failNextStart = false;
-  async start(input: Parameters<WatchPlayer["start"]>[0]) {
+  async start(input: Parameters<WatchPlayer<ServerClient>["start"]>[0]) {
     if (this.failNextStart) {
       this.failNextStart = false;
       throw new Error("Temporary media failure");
     }
-    const session = await input.client.startPlayback(input.itemId);
+    const session = await input.server.startPlayback(input.itemId);
     this.state = {
       sessionId: session.sessionId,
       itemId: input.itemId,
@@ -334,7 +331,7 @@ test.each([undefined, { watchGroups: false }])(
       playback.setSurfaceReady(true);
       expect(playback.status.connection).toBe("unavailable");
       expect(playback.grouped).toBe(false);
-      await native.start({ client, connectionId: "old", itemId: fixture.itemId });
+      await native.start({ server: client, connectionId: "old", itemId: fixture.itemId });
       await Bun.sleep(550);
       expect(native.state?.itemId).toBe(fixture.itemId);
       expect(upgrades).toBe(0);

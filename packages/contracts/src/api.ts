@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { User } from "./schemas/auth.ts";
 import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 
 export const ApiErrorCode = Schema.Literals([
@@ -50,6 +51,20 @@ export const RegisterRequest = Schema.Struct({
   nowMs: UtcMillis,
 });
 export type RegisterRequest = Schema.Schema.Type<typeof RegisterRequest>;
+
+/**
+ * What a browser learns about its session. The session token itself stays in an HttpOnly cookie,
+ * so it never appears in a response body.
+ */
+export const BrowserSession = Schema.Struct({
+  user: User,
+  expiresAtMs: UtcMillis,
+});
+export type BrowserSession = Schema.Schema.Type<typeof BrowserSession>;
+
+/** The cookie that carries a browser session, and the header that proves a request is ours. */
+export const BROWSER_SESSION_COOKIE = "lumen_session";
+export const BROWSER_CSRF_HEADER = "x-lumen-csrf";
 
 export const RevokeSessionRequest = Schema.Struct({
   sessionId: Uuid,

@@ -2,22 +2,49 @@ import {
   initialWatchStatus,
   watchCorrection,
   watchPosition,
+  type PlayerState,
   type WatchAction,
   type WatchStatus,
 } from "@lumen/contracts";
-import type { ServerClient } from "../api/ServerClient";
-import type { PlayerController } from "../player/PlayerController";
-import { WatchGroupClient } from "./WatchGroupClient";
+import { PlaybackUnsupportedError } from "../errors.ts";
+import { type WatchConnection, WatchGroupClient } from "./WatchGroupClient.ts";
 
-export type WatchPlayer = Pick<
-  PlayerController,
-  "start" | "stop" | "getState" | "seek" | "pause" | "speed"
->;
+export interface WatchServer extends WatchConnection {
+  readonly supportsWatchGroups: boolean;
+}
 
-export class WatchPlaybackController {
+/** The part of a player that watch groups drive. Any platform's player can stand behind it. */
+export interface WatchPlayer<Server extends WatchServer> {
+  readonly start: (input: {
+    readonly server: Server;
+    readonly connectionId: string;
+    readonly itemId: string;
+    readonly startAtSeconds?: number;
+    readonly paused?: boolean;
+  }) => Promise<unknown>;
+  readonly stop: () => Promise<void>;
+  readonly getState: () => Pick<
+    PlayerState,
+    "sessionId" | "itemId" | "positionSeconds" | "durationSeconds" | "paused"
+  > | null;
+  readonly seek: (sessionId: string, positionSeconds: number) => Promise<unknown>;
+  readonly pause: (sessionId: string, paused: boolean) => Promise<unknown>;
+  readonly speed: (sessionId: string, speed: number) => Promise<void>;
+}
+
+const SYNCHRONIZE_INTERVAL_MS = 500;
+
+/**
+ * Keeps one viewer's player in step with their watch group.
+ *
+ * Commands flow one way: the group's shared state is applied to the local player. A local player
+ * that fails or cannot play the file only reports the problem to its own viewer; nothing here
+ * sends the group a pause, seek or stop on the player's behalf.
+ */
+export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private client: WatchGroupClient | null = null;
   private connectionId: string | null = null;
-  private server: ServerClient | null = null;
+  private server: Server | null = null;
   private syncing = false;
   private appliedRevision = -1;
   private appliedGroup: string | null = null;
@@ -33,14 +60,13 @@ export class WatchPlaybackController {
   status: WatchStatus = initialWatchStatus();
 
   constructor(
-    private readonly player: WatchPlayer,
+    private readonly player: WatchPlayer<Server>,
     private readonly onStatus: (status: WatchStatus) => void,
   ) {
-    this.timer = setInterval(() => void this.synchronize(), 500);
-    this.timer.unref();
+    this.timer = setInterval(() => void this.synchronize(), SYNCHRONIZE_INTERVAL_MS);
   }
 
-  connect(server: ServerClient, connectionId: string): void {
+  connect(server: Server, connectionId: string): void {
     if (this.connectionId === connectionId && this.server === server && this.client !== null)
       return;
     this.disconnect();
@@ -164,6 +190,12 @@ export class WatchPlaybackController {
     void this.synchronize();
   }
 
+  /** Call after the device slept or lost its network, to reconnect and catch up immediately. */
+  resume(): void {
+    this.client?.resume();
+    this.retry();
+  }
+
   setSurfaceReady(ready: boolean): void {
     this.surfaceReady = ready;
     if (ready) void this.synchronize();
@@ -225,7 +257,7 @@ export class WatchPlaybackController {
       if (!this.surfaceReady) return;
       if (state === null || state.itemId !== playback.itemId) {
         await this.player.start({
-          client: this.server,
+          server: this.server,
           connectionId: this.connectionId,
           itemId: playback.itemId,
           startAtSeconds: watchPosition(playback, client.serverNow),
@@ -268,7 +300,12 @@ export class WatchPlaybackController {
       }
     } catch (cause) {
       if (current()) {
-        this.retryAt = Date.now() + Math.min(10_000, 1000 * 2 ** this.failures++);
+        // A file this device cannot play will not start working on its own: wait for the group
+        // to move on, or for the viewer to ask again.
+        this.retryAt =
+          cause instanceof PlaybackUnsupportedError
+            ? Number.POSITIVE_INFINITY
+            : Date.now() + Math.min(10_000, 1000 * 2 ** this.failures++);
         this.playbackError =
           cause instanceof Error ? cause.message : "Could not synchronize playback";
         this.status = { ...this.status, error: this.playbackError };

@@ -1,4 +1,4 @@
-import type { IpcPlayableStream, PlaybackProgress, PlaybackSession } from "@lumen/contracts";
+import type { PlayableStream, PlaybackProgress, PlaybackSession } from "@lumen/contracts";
 import {
   catalogItems,
   catalogItemSources,
@@ -33,7 +33,7 @@ type ProgressInput = Schema.Schema.Type<typeof ProgressBody>;
 
 const playbackLifetimeMs = 3_600_000;
 
-export type PlaybackStream = IpcPlayableStream;
+export type PlaybackStream = PlayableStream;
 
 export interface PlaybackStartResponse {
   readonly session: PlaybackSession;

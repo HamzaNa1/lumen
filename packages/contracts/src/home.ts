@@ -1,18 +1,18 @@
 import { Schema } from "effect";
-import { IpcItem, IpcLibrary } from "./ipc";
+import { CatalogItem, LibrarySummary } from "./models.ts";
 import { Uuid } from "./schemas/common";
 
 export const HomeContent = Schema.Struct({
   libraryCount: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-  libraries: Schema.Array(IpcLibrary),
-  continueWatching: Schema.Array(IpcItem),
-  continueListening: Schema.Array(IpcItem),
-  nextUp: Schema.Array(IpcItem),
+  libraries: Schema.Array(LibrarySummary),
+  continueWatching: Schema.Array(CatalogItem),
+  continueListening: Schema.Array(CatalogItem),
+  nextUp: Schema.Array(CatalogItem),
   latest: Schema.Array(
     Schema.Struct({
       libraryId: Uuid,
       libraryName: Schema.String,
-      items: Schema.Array(IpcItem),
+      items: Schema.Array(CatalogItem),
     }),
   ),
 });

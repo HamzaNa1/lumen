@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import type { IpcPlayableStream } from "../../packages/contracts/src/index.ts";
+import type { PlayableStream } from "../../packages/contracts/src/index.ts";
 import { streamLabels } from "../../packages/ui/src/PlayerFormatting.ts";
 
-const stream = (overrides: Partial<IpcPlayableStream>): IpcPlayableStream => ({
+const stream = (overrides: Partial<PlayableStream>): PlayableStream => ({
   id: "00000000-0000-4000-8000-000000000000",
   kind: "audio",
   ordinal: 0,

@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "types": [],
+    "paths": {
+      "@lumen/contracts": ["../contracts/src/index.ts"],
+      "@lumen/contracts/*": ["../contracts/src/*"]
+    }
+  },
+  "include": ["src/**/*.ts", "../contracts/src/**/*.ts"]
+}

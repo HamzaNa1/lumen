@@ -1,4 +1,4 @@
-import type { IpcPlayableStream } from "@lumen/contracts";
+import type { PlayableStream } from "@lumen/contracts";
 
 const languageNames = new Intl.DisplayNames(undefined, { type: "language" });
 
@@ -30,7 +30,7 @@ const audioCodec = (codec: string | null): string | null => {
   return audioCodecs[codec] ?? codec.toUpperCase();
 };
 
-const baseLabel = (stream: IpcPlayableStream, index: number): string => {
+const baseLabel = (stream: PlayableStream, index: number): string => {
   const parts: string[] = [];
   for (const part of [
     languageName(stream.language),
@@ -44,7 +44,7 @@ const baseLabel = (stream: IpcPlayableStream, index: number): string => {
 };
 
 /** Viewer-facing names for a list of audio or subtitle streams, e.g. "English · Commentary · AAC". */
-export const streamLabels = (streams: ReadonlyArray<IpcPlayableStream>): string[] => {
+export const streamLabels = (streams: ReadonlyArray<PlayableStream>): string[] => {
   const labels = streams.map(baseLabel);
   return labels.map((label, index) =>
     labels.indexOf(label) === labels.lastIndexOf(label) || label.startsWith("Track ")

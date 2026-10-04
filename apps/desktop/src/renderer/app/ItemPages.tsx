@@ -1,4 +1,4 @@
-import type { IpcItem, IpcItemDetails } from "@lumen/contracts";
+import type { CatalogItem, CatalogItemDetails } from "@lumen/contracts";
 import { Button, PosterFallback, posterHue, StatusState } from "@lumen/ui";
 import { type UseQueryResult, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
@@ -46,7 +46,7 @@ const useChildren = (parentId: string) => {
 };
 
 // Playback and watched controls take catalog items; build one from the details response.
-const catalogItem = ({ item, watchState }: IpcItemDetails): IpcItem => ({
+const catalogItem = ({ item, watchState }: CatalogItemDetails): CatalogItem => ({
   id: item.id,
   libraryId: item.libraryId,
   parentId: item.parentId,
@@ -78,7 +78,7 @@ const episodeCode = (
     .filter(Boolean)
     .join(" ") || null;
 
-const episodeSubtitle = (episode: IpcItem, seasonNumber: number | null | undefined): string =>
+const episodeSubtitle = (episode: CatalogItem, seasonNumber: number | null | undefined): string =>
   [
     episodeCode(seasonNumber, episode.indexNumber),
     (episode.resumePositionSeconds ?? 0) > 0
@@ -88,7 +88,7 @@ const episodeSubtitle = (episode: IpcItem, seasonNumber: number | null | undefin
     .filter(Boolean)
     .join(" · ");
 
-const PlayButton = ({ item }: { readonly item: IpcItem }): React.ReactElement => {
+const PlayButton = ({ item }: { readonly item: CatalogItem }): React.ReactElement => {
   const { playItem } = useWorkspace();
   const resume = item.resumePositionSeconds ?? 0;
   return (
@@ -125,7 +125,7 @@ const DetailsHeader = ({
   actions,
   onBack,
 }: {
-  readonly details: IpcItemDetails;
+  readonly details: CatalogItemDetails;
   readonly meta: ReadonlyArray<string | null>;
   /** Hero artwork when the item has no backdrop of its own, such as its show's. */
   readonly backdropId?: string | null;
@@ -209,7 +209,7 @@ const DetailsHeader = ({
   );
 };
 
-const DetailsInfo = ({ details }: { readonly details: IpcItemDetails }): React.ReactElement => {
+const DetailsInfo = ({ details }: { readonly details: CatalogItemDetails }): React.ReactElement => {
   const { account } = useWorkspace();
   const { item } = details;
   const studios = metadataList(item.studiosJson);
@@ -264,7 +264,7 @@ const DetailsPending = ({
   query,
   landscape = false,
 }: {
-  readonly query: UseQueryResult<IpcItemDetails>;
+  readonly query: UseQueryResult<CatalogItemDetails>;
   readonly landscape?: boolean;
 }): React.ReactElement =>
   query.isError ? (

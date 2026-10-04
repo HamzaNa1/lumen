@@ -17,6 +17,8 @@
         "koffi": "3.3.1",
       },
       "devDependencies": {
+        "@lumen/app": "workspace:*",
+        "@lumen/client": "workspace:*",
         "@lumen/contracts": "workspace:*",
         "@lumen/ui": "workspace:*",
         "@tanstack/history": "1.162.4",
@@ -52,6 +54,37 @@
       },
       "devDependencies": {
         "@types/bun": "1.4.2",
+        "typescript": "7.0.2",
+      },
+    },
+    "packages/app": {
+      "name": "@lumen/app",
+      "version": "0.0.8",
+      "dependencies": {
+        "@lumen/client": "workspace:*",
+        "@lumen/contracts": "workspace:*",
+        "@lumen/ui": "workspace:*",
+        "@tanstack/history": "1.162.4",
+        "@tanstack/react-query": "5.103.2",
+        "@tanstack/react-router": "1.170.39",
+        "lucide-react": "1.48.0",
+        "react": "19.3.0",
+        "react-dom": "19.3.0",
+      },
+      "devDependencies": {
+        "@types/react": "19.3.0",
+        "@types/react-dom": "19.3.0",
+        "typescript": "7.0.2",
+      },
+    },
+    "packages/client": {
+      "name": "@lumen/client",
+      "version": "0.0.8",
+      "dependencies": {
+        "@lumen/contracts": "workspace:*",
+        "effect": "4.0.0-beta.83",
+      },
+      "devDependencies": {
         "typescript": "7.0.2",
       },
     },
@@ -316,6 +349,10 @@
     "@koromix/koffi-win32-ia32": ["@koromix/koffi-win32-ia32@3.3.1", "", { "os": "win32", "cpu": "ia32" }, "sha512-pARisOvxCPkk6Wg1HkwRCnrkJIVS31kDweWLo+bQay/Dr1915s7skVydWpTKS30EcfOh4Jay7B4c0dgamTLBHg=="],
 
     "@koromix/koffi-win32-x64": ["@koromix/koffi-win32-x64@3.3.1", "", { "os": "win32", "cpu": "x64" }, "sha512-LYoO19cTIA7xjl+3s4VeGagCAO38VNXZ969DNszb1wTwJUjrHLrAbHFkk8fYkXineM3HJkFwElW0VLmZqXcfRg=="],
+
+    "@lumen/app": ["@lumen/app@workspace:packages/app"],
+
+    "@lumen/client": ["@lumen/client@workspace:packages/client"],
 
     "@lumen/config": ["@lumen/config@workspace:packages/config"],
 

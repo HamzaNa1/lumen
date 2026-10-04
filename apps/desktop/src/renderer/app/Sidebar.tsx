@@ -1,5 +1,5 @@
 import { WatchGroups } from "./WatchGroups";
-import type { IpcAccount, IpcLibrary } from "@lumen/contracts";
+import type { AccountSummary, LibrarySummary } from "@lumen/contracts";
 import { AccountMenu } from "@lumen/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
@@ -17,7 +17,7 @@ import type { ReactNode } from "react";
 import { LumenMark } from "./LumenMark";
 import { useLibraries } from "./Workspace";
 
-export const libraryIcon = (kind: IpcLibrary["kind"]): LucideIcon =>
+export const libraryIcon = (kind: LibrarySummary["kind"]): LucideIcon =>
   kind === "shows" ? Tv : kind === "music" ? Music : Film;
 
 const NavLabel = ({
@@ -44,8 +44,8 @@ export const Sidebar = ({
   onRemove,
   onAddServer,
 }: {
-  readonly account: IpcAccount;
-  readonly accounts: ReadonlyArray<IpcAccount>;
+  readonly account: AccountSummary;
+  readonly accounts: ReadonlyArray<AccountSummary>;
   readonly scope: readonly unknown[];
   readonly onActivate: (id: string) => void;
   readonly onRemove: (id: string) => void;

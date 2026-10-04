@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import type { WatchStatus } from "@lumen/contracts";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
-import { WatchGroupClient } from "../../apps/desktop/src/main/watch-groups/WatchGroupClient";
+import { WatchGroupClient } from "../../packages/client/src/index.ts";
 import { forbidden } from "../../apps/server/src/core/Errors";
 import { WatchGroups, type WatchSocketData } from "../../apps/server/src/watch-groups/WatchGroups";
 import { eventually, watchFixture } from "../helpers/watch-groups";

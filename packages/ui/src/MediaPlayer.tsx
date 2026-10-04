@@ -1,5 +1,5 @@
 import { Slider } from "@base-ui/react/slider";
-import type { IpcAudioOutput, IpcBufferedRange, IpcPlayableStream } from "@lumen/contracts";
+import type { AudioOutput, BufferedRange, PlayableStream } from "@lumen/contracts";
 import {
   ArrowLeft,
   LoaderCircle,
@@ -29,14 +29,14 @@ interface MediaPlayerProps {
   readonly error: string | null;
   readonly position: number;
   readonly duration: number | null;
-  readonly bufferedRanges: ReadonlyArray<IpcBufferedRange>;
+  readonly bufferedRanges: ReadonlyArray<BufferedRange>;
   readonly volume: number;
   readonly muted: boolean;
-  readonly streams: ReadonlyArray<IpcPlayableStream>;
+  readonly streams: ReadonlyArray<PlayableStream>;
   readonly selectedAudioStreamId: string | null;
   readonly selectedSubtitleStreamId: string | null;
-  readonly audioOutput: IpcAudioOutput;
-  readonly onAudioOutput: (output: IpcAudioOutput) => Promise<void>;
+  readonly audioOutput: AudioOutput;
+  readonly onAudioOutput: (output: AudioOutput) => Promise<void>;
   readonly onCopyAudioDiagnostics: () => Promise<void>;
   readonly surfaceRef: Ref<HTMLDivElement>;
   readonly controlsVisible: boolean;

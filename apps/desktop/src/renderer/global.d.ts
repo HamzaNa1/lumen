@@ -4,16 +4,16 @@ import type {
   WatchStatus,
   EpisodeOrderSelection,
   HomeContent,
-  IpcAccounts,
-  IpcItemPage,
-  IpcItem,
-  IpcItemDetails,
-  IpcLibrary,
-  IpcPlayerDisplay,
-  IpcPlayerSession,
-  IpcPlayerState,
+  AccountList,
+  CatalogItemPage,
+  CatalogItem,
+  CatalogItemDetails,
+  LibrarySummary,
+  PlayerDisplay,
+  PlayerSession,
+  PlayerState,
   IpcPlayerSurfaceBounds,
-  IpcServerDiscovery,
+  ServerDiscovery,
   JobLogEntry,
   ScanRun,
   User,
@@ -27,8 +27,8 @@ export interface LumenBridge {
     readonly onState: (callback: (status: WatchStatus) => void) => () => void;
   };
   readonly accounts: {
-    readonly list: () => Promise<IpcAccounts>;
-    readonly discoverServer: (origin: string) => Promise<IpcServerDiscovery>;
+    readonly list: () => Promise<AccountList>;
+    readonly discoverServer: (origin: string) => Promise<ServerDiscovery>;
     readonly connect: (input: {
       readonly origin: string;
       readonly username: string;
@@ -36,24 +36,24 @@ export interface LumenBridge {
       readonly password: string;
       readonly serverLabel: string;
       readonly signUp?: boolean;
-    }) => Promise<IpcAccounts>;
+    }) => Promise<AccountList>;
     readonly setup: (origin: string) => Promise<boolean>;
-    readonly activate: (connectionId: string) => Promise<IpcAccounts>;
-    readonly remove: (connectionId: string) => Promise<IpcAccounts>;
+    readonly activate: (connectionId: string) => Promise<AccountList>;
+    readonly remove: (connectionId: string) => Promise<AccountList>;
   };
   readonly library: {
     readonly home: () => Promise<HomeContent>;
-    readonly list: () => Promise<ReadonlyArray<IpcLibrary>>;
-    readonly items: (libraryId: string, cursor?: string | null) => Promise<IpcItemPage>;
-    readonly itemDetails: (itemId: string) => Promise<IpcItemDetails>;
+    readonly list: () => Promise<ReadonlyArray<LibrarySummary>>;
+    readonly items: (libraryId: string, cursor?: string | null) => Promise<CatalogItemPage>;
+    readonly itemDetails: (itemId: string) => Promise<CatalogItemDetails>;
     readonly episodeOrder: (itemId: string) => Promise<EpisodeOrderOptions>;
     readonly setEpisodeOrder: (
       itemId: string,
       selection: EpisodeOrderSelection,
     ) => Promise<{ readonly runId: string }>;
-    readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<IpcItemPage>;
+    readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<CatalogItemPage>;
     readonly setWatched: (itemId: string, completed: boolean) => Promise<void>;
-    readonly nextUp: (itemId: string) => Promise<IpcItem | null>;
+    readonly nextUp: (itemId: string) => Promise<CatalogItem | null>;
     readonly artwork: (artworkId: string) => Promise<string | null>;
     readonly search: (query: string, libraryId?: string | null) => Promise<unknown>;
   };
@@ -72,7 +72,7 @@ export interface LumenBridge {
       readonly role?: "admin" | "user" | "guest";
       readonly isActive?: boolean;
     }) => Promise<User>;
-    readonly listLibraries: () => Promise<ReadonlyArray<IpcLibrary>>;
+    readonly listLibraries: () => Promise<ReadonlyArray<LibrarySummary>>;
     readonly metadataSettings: () => Promise<{ readonly tmdbConfigured: boolean }>;
     readonly updateMetadataSettings: (input: {
       readonly tmdbApiKey: string | null;
@@ -82,14 +82,14 @@ export interface LumenBridge {
       readonly name: string;
       readonly slug: string;
       readonly kind: "movies" | "shows" | "music";
-    }) => Promise<IpcLibrary>;
+    }) => Promise<LibrarySummary>;
     readonly updateLibrary: (input: {
       readonly libraryId: string;
       readonly name?: string;
       readonly slug?: string;
       readonly kind?: "movies" | "shows" | "music";
       readonly isEnabled?: boolean;
-    }) => Promise<IpcLibrary>;
+    }) => Promise<LibrarySummary>;
     readonly deleteLibrary: (libraryId: string) => Promise<unknown>;
     readonly listRoots: (libraryId: string) => Promise<ReadonlyArray<unknown>>;
     readonly addRoot: (input: {
@@ -110,30 +110,30 @@ export interface LumenBridge {
     readonly start: (
       itemId: string,
       startAtSeconds?: number,
-    ) => Promise<Omit<IpcPlayerSession, "grantToken"> | null>;
-    readonly pause: (sessionId: string, paused: boolean) => Promise<IpcPlayerState>;
-    readonly seek: (sessionId: string, positionSeconds: number) => Promise<IpcPlayerState>;
-    readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<IpcPlayerState>;
+    ) => Promise<Omit<PlayerSession, "grantToken"> | null>;
+    readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
+    readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;
+    readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;
     readonly surface: (bounds: IpcPlayerSurfaceBounds | null) => Promise<unknown>;
-    readonly selectAudio: (sessionId: string, streamId: string) => Promise<IpcPlayerState>;
+    readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
     readonly selectSubtitle: (
       sessionId: string,
       streamId: string | null,
-    ) => Promise<IpcPlayerState>;
+    ) => Promise<PlayerState>;
     readonly audioOutput: (
       sessionId: string,
       output: "stereo" | "auto-safe",
-    ) => Promise<IpcPlayerState>;
+    ) => Promise<PlayerState>;
     readonly copyAudioDiagnostics: (sessionId: string) => Promise<void>;
-    readonly state: () => Promise<IpcPlayerState | null>;
-    readonly display: (display: IpcPlayerDisplay) => Promise<void>;
-    readonly displayState: () => Promise<IpcPlayerDisplay | null>;
+    readonly state: () => Promise<PlayerState | null>;
+    readonly display: (display: PlayerDisplay) => Promise<void>;
+    readonly displayState: () => Promise<PlayerDisplay | null>;
     readonly overlayAction: (action: "back" | "retry" | "stop") => Promise<void>;
     readonly fullscreen: (enabled: boolean) => Promise<boolean>;
     readonly fullscreenState: () => Promise<boolean>;
     readonly stop: () => Promise<unknown>;
-    readonly onState: (callback: (state: IpcPlayerState | null) => void) => () => void;
-    readonly onDisplay: (callback: (display: IpcPlayerDisplay) => void) => () => void;
+    readonly onState: (callback: (state: PlayerState | null) => void) => () => void;
+    readonly onDisplay: (callback: (display: PlayerDisplay) => void) => () => void;
     readonly onOverlayAction: (callback: (action: "back" | "retry" | "stop") => void) => () => void;
     readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => () => void;
   };

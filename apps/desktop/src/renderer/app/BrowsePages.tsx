@@ -1,4 +1,4 @@
-import type { IpcItem, IpcItemPage, IpcLibrary } from "@lumen/contracts";
+import type { CatalogItem, CatalogItemPage, LibrarySummary } from "@lumen/contracts";
 import { Button, EmptyState, Form, PosterFallback, StatusState } from "@lumen/ui";
 import {
   type InfiniteData,
@@ -36,7 +36,7 @@ import {
   useWorkspace,
 } from "./Workspace";
 
-const yearOf = (item: IpcItem): string | null => (item.year === null ? null : String(item.year));
+const yearOf = (item: CatalogItem): string | null => (item.year === null ? null : String(item.year));
 
 const NoLibraries = (): React.ReactElement => {
   const { account } = useWorkspace();
@@ -132,7 +132,7 @@ const Shelf = ({
   );
 };
 
-const homeSubtitle = (item: IpcItem, resume = false): string | null => {
+const homeSubtitle = (item: CatalogItem, resume = false): string | null => {
   const context =
     item.seriesTitle == null
       ? null
@@ -153,7 +153,7 @@ const LibraryTile = ({
   library,
   artworkId,
 }: {
-  readonly library: IpcLibrary;
+  readonly library: LibrarySummary;
   readonly artworkId?: string | null;
 }): React.ReactElement => {
   const { scope } = useWorkspace();
@@ -209,7 +209,7 @@ export const HomePage = (): React.ReactElement => {
     refetchInterval: 30_000,
   });
   const data = home.data;
-  const contentRows = (items: ReadonlyArray<IpcItem>, title: string, resume = false) =>
+  const contentRows = (items: ReadonlyArray<CatalogItem>, title: string, resume = false) =>
     items.length === 0 ? null : (
       <Shelf key={title} title={title}>
         {items.map((item) => (
@@ -299,7 +299,7 @@ export const LibraryIndexPage = (): React.ReactElement => {
 export const LoadMore = ({
   query,
 }: {
-  readonly query: UseInfiniteQueryResult<InfiniteData<IpcItemPage>>;
+  readonly query: UseInfiniteQueryResult<InfiniteData<CatalogItemPage>>;
 }): React.ReactElement | null => {
   const ref = useRef<HTMLDivElement>(null);
   const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
@@ -329,7 +329,7 @@ export const LoadMore = ({
   );
 };
 
-const LibraryGrid = ({ library }: { readonly library: IpcLibrary }): React.ReactElement => {
+const LibraryGrid = ({ library }: { readonly library: LibrarySummary }): React.ReactElement => {
   const { account, scope } = useWorkspace();
   const navigate = useNavigate();
   const items = useInfiniteQuery({
@@ -402,7 +402,7 @@ export const LibraryPage = (): React.ReactElement => {
   return <Navigate to="/library" replace />;
 };
 
-const extractItems = (value: unknown): ReadonlyArray<IpcItem> => {
+const extractItems = (value: unknown): ReadonlyArray<CatalogItem> => {
   if (
     typeof value !== "object" ||
     value === null ||
@@ -411,7 +411,7 @@ const extractItems = (value: unknown): ReadonlyArray<IpcItem> => {
   )
     return [];
   return value.items.filter(
-    (item): item is IpcItem =>
+    (item): item is CatalogItem =>
       typeof item === "object" &&
       item !== null &&
       typeof item.id === "string" &&

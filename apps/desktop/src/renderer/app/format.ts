@@ -1,4 +1,4 @@
-import type { IpcLibrary, JobLogEntry } from "@lumen/contracts";
+import type { LibrarySummary, JobLogEntry } from "@lumen/contracts";
 
 export const titleCase = (value: string): string =>
   value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -44,13 +44,13 @@ const itemKindLabels: Record<string, string> = {
 };
 export const kindLabel = (kind: string): string => itemKindLabels[kind] ?? titleCase(kind);
 
-export const libraryKindLabels: Record<IpcLibrary["kind"], string> = {
+export const libraryKindLabels: Record<LibrarySummary["kind"], string> = {
   movies: "Movies",
   shows: "TV shows",
   music: "Music",
 };
 
-export const libraryCount = (kind: IpcLibrary["kind"], count: number, more = false): string => {
+export const libraryCount = (kind: LibrarySummary["kind"], count: number, more = false): string => {
   const noun =
     kind === "movies"
       ? ["movie", "movies"]

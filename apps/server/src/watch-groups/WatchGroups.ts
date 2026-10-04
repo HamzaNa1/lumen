@@ -1,4 +1,4 @@
-import { IpcItemDetails, WatchRequest, type WatchGroup, type WatchMessage } from "@lumen/contracts";
+import { CatalogItemDetails, WatchRequest, type WatchGroup, type WatchMessage } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { HttpServices } from "../http/HttpApp";
@@ -400,7 +400,7 @@ export class WatchGroups {
         const group = this.groups.get(socket.data.groupId ?? "");
         if (group === undefined) throw new Error("Join a watch group first");
         const previous = group.state;
-        const details = Schema.decodeUnknownSync(IpcItemDetails)(
+        const details = Schema.decodeUnknownSync(CatalogItemDetails)(
           await Effect.runPromise(
             this.services.catalog.itemDetails(principal, action.itemId, false, Date.now()),
           ),

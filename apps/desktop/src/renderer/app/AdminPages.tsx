@@ -1,4 +1,4 @@
-import type { IpcLibrary, User } from "@lumen/contracts";
+import type { LibrarySummary, User } from "@lumen/contracts";
 import {
   Avatar,
   Button,
@@ -165,7 +165,7 @@ const LibraryDialog = ({
   onOpenChange,
   scope,
 }: {
-  readonly library: IpcLibrary | null;
+  readonly library: LibrarySummary | null;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly scope: readonly unknown[];
@@ -173,7 +173,7 @@ const LibraryDialog = ({
   const queryClient = useQueryClient();
   const [name, setName] = useState(library?.name ?? "");
   const [slug, setSlug] = useState(library?.slug ?? "");
-  const [kind, setKind] = useState<IpcLibrary["kind"]>(library?.kind ?? "movies");
+  const [kind, setKind] = useState<LibrarySummary["kind"]>(library?.kind ?? "movies");
   const [isEnabled, setIsEnabled] = useState(library?.isEnabled ?? true);
   const save = useMutation({
     mutationFn: async () => {
@@ -267,7 +267,7 @@ const LibraryCard = ({
   library,
   scope,
 }: {
-  readonly library: IpcLibrary;
+  readonly library: LibrarySummary;
   readonly scope: readonly unknown[];
 }): React.ReactElement => {
   const queryClient = useQueryClient();

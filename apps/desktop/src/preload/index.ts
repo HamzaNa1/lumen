@@ -2,7 +2,7 @@ import type {
   EpisodeOrderSelection,
   WatchAction,
   WatchStatus,
-  IpcPlayerDisplay,
+  PlayerDisplay,
   IpcPlayerSurfaceBounds,
 } from "@lumen/contracts";
 import { contextBridge, ipcRenderer } from "electron";
@@ -82,15 +82,15 @@ const api = {
       invoke<unknown>("player:audio-output", { sessionId, output }),
     copyAudioDiagnostics: (sessionId: string) => invoke<void>("player:copy-audio-diagnostics", sessionId),
     state: () => invoke<unknown>("player:state"),
-    display: (display: IpcPlayerDisplay) => invoke<unknown>("player:display", display),
+    display: (display: PlayerDisplay) => invoke<unknown>("player:display", display),
     displayState: () => invoke<unknown>("player:display-state"),
     overlayAction: (action: "back" | "retry" | "stop") =>
       invoke<unknown>("player:overlay-action", action),
     fullscreen: (enabled: boolean) => invoke<unknown>("player:fullscreen", enabled),
     fullscreenState: () => invoke<unknown>("player:fullscreen-state"),
     stop: () => invoke<unknown>("player:stop"),
-    onDisplay: (callback: (display: IpcPlayerDisplay) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, display: IpcPlayerDisplay): void =>
+    onDisplay: (callback: (display: PlayerDisplay) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, display: PlayerDisplay): void =>
         callback(display);
       ipcRenderer.on("player:display", listener);
       return () => ipcRenderer.removeListener("player:display", listener);

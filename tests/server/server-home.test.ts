@@ -9,9 +9,9 @@ import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
 import type {
   HomeContent,
-  IpcItem,
-  IpcItemDetails,
-  IpcItemPage,
+  CatalogItem,
+  CatalogItemDetails,
+  CatalogItemPage,
 } from "../../packages/contracts/src/index.ts";
 
 const paths: string[] = [];
@@ -550,14 +550,14 @@ test("watch-state requests update whole seasons, clear resume, and preserve libr
     });
 
   expect((await setWatched(season, true)).status).toBe(200);
-  expect((await home.json<IpcItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(true);
-  const firstPage = await home.json<IpcItemPage>(`/api/v1/items/${season}/children?limit=100`);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(true);
+  const firstPage = await home.json<CatalogItemPage>(`/api/v1/items/${season}/children?limit=100`);
   expect(firstPage.items).toHaveLength(100);
   expect(
     firstPage.items.every((item) => item.completed && item.resumePositionSeconds === null),
   ).toBe(true);
   const cursor = encodeURIComponent(firstPage.nextCursor ?? "");
-  const lastPage = await home.json<IpcItemPage>(
+  const lastPage = await home.json<CatalogItemPage>(
     `/api/v1/items/${season}/children?limit=100&cursor=${cursor}`,
   );
   expect(lastPage.items).toHaveLength(5);
@@ -565,7 +565,7 @@ test("watch-state requests update whole seasons, clear resume, and preserve libr
     lastPage.items.every((item) => item.completed && item.resumePositionSeconds === null),
   ).toBe(true);
   expect(
-    (await home.json<{ item: IpcItem | null }>(`/api/v1/items/${show}/next-up`)).item?.id,
+    (await home.json<{ item: CatalogItem | null }>(`/api/v1/items/${show}/next-up`)).item?.id,
   ).toBe(nextEpisode);
   expect(
     (await home.json<HomeContent>("/api/v1/home")).continueWatching.map((item) => item.id),
@@ -573,40 +573,40 @@ test("watch-state requests update whole seasons, clear resume, and preserve libr
 
   const episodeId = episodes[0]?.id ?? "";
   expect((await setWatched(episodeId, false)).status).toBe(200);
-  expect((await home.json<IpcItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(false);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(false);
   expect(
-    (await home.json<IpcItemPage>(`/api/v1/items/${show}/children`)).items.find(
+    (await home.json<CatalogItemPage>(`/api/v1/items/${show}/children`)).items.find(
       (item) => item.id === season,
     )?.completed,
   ).toBe(false);
   expect((await setWatched(episodeId, true)).status).toBe(200);
-  expect((await home.json<IpcItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(true);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(true);
   expect((await setWatched(season, false)).status).toBe(200);
   expect(
-    (await home.json<IpcItemPage>(`/api/v1/items/${season}/children`)).items.every(
+    (await home.json<CatalogItemPage>(`/api/v1/items/${season}/children`)).items.every(
       (item) => item.completed === false,
     ),
   ).toBe(true);
   expect(
-    (await home.json<{ item: IpcItem | null }>(`/api/v1/items/${show}/next-up`)).item?.id,
+    (await home.json<{ item: CatalogItem | null }>(`/api/v1/items/${show}/next-up`)).item?.id,
   ).toBe(episodeId);
 
   expect((await setWatched(movie, true)).status).toBe(200);
   expect(
-    (await home.json<IpcItemPage>(`/api/v1/items?libraryId=${libraryId}`)).items.find(
+    (await home.json<CatalogItemPage>(`/api/v1/items?libraryId=${libraryId}`)).items.find(
       (item) => item.id === movie,
     ),
   ).toMatchObject({
     completed: true,
     resumePositionSeconds: null,
   });
-  expect((await home.json<IpcItemDetails>(`/api/v1/items/${movie}`)).watchState).toEqual({
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${movie}`)).watchState).toEqual({
     completed: true,
     positionSeconds: 0,
   });
   expect((await home.json<HomeContent>("/api/v1/home")).continueWatching).toEqual([]);
   expect((await setWatched(movie, false)).status).toBe(200);
-  expect((await home.json<IpcItemDetails>(`/api/v1/items/${movie}`)).item.completed).toBe(false);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${movie}`)).item.completed).toBe(false);
   expect((await setWatched(privateMovie, true)).status).toBe(403);
   expect((await setWatched(newUuid(), true)).status).toBe(404);
 });

@@ -5,7 +5,21 @@ import {
   type WatchStatus,
 } from "@lumen/contracts";
 import { Schema } from "effect";
-import type { ServerClient } from "../api/ServerClient";
+
+/** How the socket's first message proves who is connecting. */
+export type WatchAuthentication =
+  | { readonly token: string }
+  // The browser sent its session cookie with the upgrade request.
+  | { readonly session: "cookie" };
+
+export interface WatchConnection {
+  /** The server's HTTP origin; the socket opens beside it. */
+  readonly serverOrigin: string;
+  readonly watchAuthentication: () => WatchAuthentication;
+}
+
+// A connection that has been silent this long is treated as lost.
+const HEARTBEAT_TIMEOUT_MS = 15_000;
 
 class WatchRequestRejected extends Error {
   constructor(
@@ -34,7 +48,7 @@ export class WatchGroupClient {
   status: WatchStatus = initialWatchStatus();
 
   constructor(
-    private readonly client: ServerClient,
+    private readonly connection: WatchConnection,
     private readonly onStatus: (status: WatchStatus) => void,
   ) {}
 
@@ -45,13 +59,12 @@ export class WatchGroupClient {
   connect(): void {
     if (this.stopped || this.socket !== null) return;
     this.update({ connection: "connecting", error: null });
-    const url = new URL("/api/v1/watch-groups", this.client.serverOrigin);
+    const url = new URL("/api/v1/watch-groups", this.connection.serverOrigin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
     const socket = new WebSocket(url);
     this.socket = socket;
     const timeout = setTimeout(() => socket.close(), 7000);
-    socket.onopen = () =>
-      socket.send(JSON.stringify({ token: this.client.currentSession?.accessToken ?? "" }));
+    socket.onopen = () => socket.send(JSON.stringify(this.connection.watchAuthentication()));
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
       try {
@@ -69,7 +82,7 @@ export class WatchGroupClient {
           });
           void this.request({ type: "ping", sentAtMs: Date.now() }).catch(() => socket.close());
           this.heartbeat = setInterval(() => {
-            if (Date.now() - this.lastPong > 15_000) {
+            if (Date.now() - this.lastPong > HEARTBEAT_TIMEOUT_MS) {
               socket.close();
               return;
             }
@@ -101,22 +114,50 @@ export class WatchGroupClient {
     socket.onerror = () => socket.close();
     socket.onclose = () => {
       clearTimeout(timeout);
-      clearInterval(this.heartbeat);
-      clearTimeout(this.rejoinTimer);
-      if (this.socket !== socket) return;
-      this.socket = null;
-      this.rejectPending("Watch group disconnected. Try again after reconnecting.");
-      this.update({
-        connection: "offline",
-        groups: [],
-        error: this.stopped ? null : "Connection lost. Reconnecting…",
-      });
-      if (!this.stopped)
-        this.reconnectTimer = setTimeout(
-          () => this.connect(),
-          Math.min(10_000, 500 * 2 ** this.attempts++),
-        );
+      this.disconnected(socket);
     };
+  }
+
+  private disconnected(socket: WebSocket): void {
+    if (this.socket !== socket) return;
+    clearInterval(this.heartbeat);
+    clearTimeout(this.rejoinTimer);
+    this.socket = null;
+    this.rejectPending("Watch group disconnected. Try again after reconnecting.");
+    this.update({
+      connection: "offline",
+      groups: [],
+      error: this.stopped ? null : "Connection lost. Reconnecting…",
+    });
+    if (!this.stopped)
+      this.reconnectTimer = setTimeout(
+        () => this.connect(),
+        Math.min(10_000, 500 * 2 ** this.attempts++),
+      );
+  }
+
+  /**
+   * Call after the device slept or lost its network. A socket that went quiet meanwhile is
+   * replaced right away rather than after its heartbeat times out, and the clock offset is
+   * measured again because timers do not run while a page is suspended.
+   */
+  resume(): void {
+    if (this.stopped) return;
+    this.bestRtt = Infinity;
+    const socket = this.socket;
+    if (socket === null) {
+      clearTimeout(this.reconnectTimer);
+      this.attempts = 0;
+      this.connect();
+    } else if (
+      this.status.connection === "connected" &&
+      Date.now() - this.lastPong > HEARTBEAT_TIMEOUT_MS / 2
+    ) {
+      this.attempts = 0;
+      socket.close();
+      // A dead connection may take a long time to report that it closed.
+      this.disconnected(socket);
+    }
   }
 
   get rejoining(): boolean {

@@ -1,5 +1,6 @@
 export * from "./api.ts";
 export * from "./ipc.ts";
+export * from "./models.ts";
 export * from "./home.ts";
 export * from "./episode-order.ts";
 export * from "./server.ts";

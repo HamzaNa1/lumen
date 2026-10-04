@@ -1,5 +1,5 @@
 import { Menu } from "@base-ui/react/menu";
-import type { IpcAccount } from "@lumen/contracts";
+import type { AccountSummary } from "@lumen/contracts";
 import { Check, ChevronsUpDown, LogOut, Plus, Server, Settings } from "lucide-react";
 import { useState } from "react";
 import { Button } from "./Button";
@@ -33,8 +33,8 @@ export const AccountMenu = ({
   onAddServer,
   onOpenSettings,
 }: {
-  readonly accounts: ReadonlyArray<IpcAccount>;
-  readonly active: IpcAccount;
+  readonly accounts: ReadonlyArray<AccountSummary>;
+  readonly active: AccountSummary;
   readonly onActivate: (id: string) => void;
   readonly onRemove: (id: string) => void;
   readonly onAddServer: () => void;
