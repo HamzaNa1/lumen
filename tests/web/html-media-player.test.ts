@@ -1,0 +1,265 @@
+import { describe, expect, test } from "bun:test";
+import { HtmlMediaPlayer, type MediaElementLike } from "../../apps/web/src/HtmlMediaPlayer";
+import { PlaybackUnsupportedError, ServerHttpError } from "../../packages/client/src/index.ts";
+import type { PlayerSession, PlayerState } from "../../packages/contracts/src/index.ts";
+
+type Listener = () => void;
+
+/** A media element whose loading and autoplay outcomes the test decides. */
+class FakeMedia implements MediaElementLike {
+  src = "";
+  currentTime = 0;
+  volume = 1;
+  muted = false;
+  playbackRate = 1;
+  duration = Number.NaN;
+  paused = true;
+  ended = false;
+  error: { code: number } | null = null;
+  buffered = { length: 0, start: () => 0, end: () => 0 };
+  sources: string[] = [];
+  /** What happens when a source is loaded: metadata arrives, an error, or nothing yet. */
+  loadOutcome: "loaded" | "unsupported" | "hang" = "loaded";
+  playOutcome: "plays" | "blocked" = "plays";
+  private readonly listeners = new Map<string, Set<Listener>>();
+
+  play(): Promise<void> {
+    if (this.playOutcome === "blocked")
+      return Promise.reject(Object.assign(new Error("blocked"), { name: "NotAllowedError" }));
+    this.paused = false;
+    this.emit("play");
+    return Promise.resolve();
+  }
+  pause(): void {
+    this.paused = true;
+    this.emit("pause");
+  }
+  load(): void {
+    if (this.src === "") return;
+    this.sources.push(this.src);
+    queueMicrotask(() => {
+      if (this.loadOutcome === "loaded") {
+        this.duration = 100;
+        this.emit("loadedmetadata");
+      } else if (this.loadOutcome === "unsupported") {
+        this.error = { code: 4 };
+        this.emit("error");
+      }
+    });
+  }
+  removeAttribute(name: string): void {
+    if (name === "src") this.src = "";
+  }
+  canPlayType(type: string): string {
+    return type.includes("ac-3") ? "" : "probably";
+  }
+  addEventListener(type: string, listener: Listener): void {
+    const listeners = this.listeners.get(type) ?? new Set();
+    listeners.add(listener);
+    this.listeners.set(type, listeners);
+  }
+  removeEventListener(type: string, listener: Listener): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+  emit(type: string): void {
+    for (const listener of [...(this.listeners.get(type) ?? [])]) listener();
+  }
+  fail(code: number): void {
+    this.error = { code };
+    this.emit("error");
+  }
+  listenerCount(): number {
+    return [...this.listeners.values()].reduce((total, listeners) => total + listeners.size, 0);
+  }
+}
+
+const setup = (streams: PlayerSession["streams"] = []) => {
+  const element = new FakeMedia();
+  const calls: string[] = [];
+  const states: (PlayerState | null)[] = [];
+  const failures: string[] = [];
+  let sessions = 0;
+  const api = {
+    serverOrigin: "http://lumen.test",
+    heartbeatFailure: null as Error | null,
+    startGate: Promise.resolve(),
+    startPlayback: async (itemId: string): Promise<PlayerSession> => {
+      await api.startGate;
+      sessions += 1;
+      calls.push(`start session-${sessions}`);
+      return {
+        sessionId: `session-${sessions}`,
+        itemId,
+        sourceId: "source",
+        title: "Film",
+        streamUrl: `/api/v1/media/${itemId}`,
+        durationSeconds: 100,
+        streams,
+        grantExpiresInSeconds: 3600,
+        grantToken: `grant-${sessions}`,
+      };
+    },
+    heartbeat: async (sessionId: string) => {
+      calls.push(`heartbeat ${sessionId}`);
+      if (api.heartbeatFailure !== null) throw api.heartbeatFailure;
+    },
+    progress: async (
+      sessionId: string,
+      state: PlayerState,
+      sequence: number,
+      init?: { keepalive?: boolean },
+    ) => {
+      calls.push(
+        `progress ${sessionId} @${state.positionSeconds} #${sequence}${init?.keepalive === true ? " keepalive" : ""}`,
+      );
+    },
+    stopPlayback: async (sessionId: string, init?: { keepalive?: boolean }) => {
+      calls.push(`stop ${sessionId}${init?.keepalive === true ? " keepalive" : ""}`);
+    },
+  };
+  const player = new HtmlMediaPlayer({
+    element,
+    api,
+    onState: (state) => states.push(state),
+    onFailure: (message) => failures.push(message),
+    loadTimeoutMs: 80,
+  });
+  return { element, api, player, calls, states, failures };
+};
+
+describe("browser playback lifecycle", () => {
+  test("plays with a grant in the element's source only, and reports the session's end", async () => {
+    const { element, player, calls, states } = setup();
+    await player.start({ itemId: "item-1", startAtSeconds: 30 });
+    expect(element.src).toBe("http://lumen.test/api/v1/media/item-1?grant=grant-1");
+    expect(element.currentTime).toBe(30);
+    const state = player.getState();
+    expect(state).toMatchObject({ sessionId: "session-1", paused: false, positionSeconds: 30 });
+    expect(JSON.stringify(states)).not.toContain("grant-1");
+
+    element.currentTime = 42;
+    await player.pause("session-1", true);
+    expect(calls).toContain("progress session-1 @42 #1");
+    await player.stop();
+    expect(calls.slice(-2)).toEqual(["progress session-1 @42 #2", "stop session-1"]);
+    expect(states.at(-1)).toBeNull();
+    expect(element.src).toBe("");
+    expect(element.listenerCount()).toBe(0);
+  });
+
+  test("a file the browser cannot decode fails with a clear, non-retryable error", async () => {
+    const { element, player, calls } = setup();
+    element.loadOutcome = "unsupported";
+    const failure = await player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(PlaybackUnsupportedError);
+    expect((failure as Error).message).toContain("can’t play this file’s format");
+    expect(player.getState()).toBeNull();
+    // The session opened for it is closed rather than left to expire.
+    expect(calls).toEqual(["start session-1", "stop session-1"]);
+  });
+
+  test("a file that never loads times out instead of loading forever", async () => {
+    const { element, player, calls } = setup();
+    element.loadOutcome = "hang";
+    await expect(player.start({ itemId: "item-1" })).rejects.toThrow("Timed out");
+    expect(calls).toEqual(["start session-1", "stop session-1"]);
+  });
+
+  test("audio the browser cannot decode is refused before anything plays silently", async () => {
+    const { element, player } = setup([
+      { id: "a", kind: "audio", ordinal: 1, codec: "ac3", language: "eng", title: null, isDefault: true },
+    ]);
+    const failure = await player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(PlaybackUnsupportedError);
+    expect((failure as Error).message).toContain("AC3 audio");
+    expect(element.sources).toEqual([]);
+  });
+
+  test("blocked autoplay waits for a click instead of failing or pretending to play", async () => {
+    const { element, player } = setup();
+    element.playOutcome = "blocked";
+    await player.start({ itemId: "item-1" });
+    expect(player.getState()).toMatchObject({ paused: true, awaitingInteraction: true });
+    element.playOutcome = "plays";
+    await player.allowPlayback();
+    expect(player.getState()).toMatchObject({ paused: false, awaitingInteraction: false });
+  });
+
+  test("rapid navigation leaves only the last session, and closes the ones it replaced", async () => {
+    const { element, player, calls, states } = setup();
+    const first = player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
+    const second = player.start({ itemId: "item-2" }).catch((cause: unknown) => cause);
+    const third = player.start({ itemId: "item-3" });
+    expect(((await first) as Error).message).toBe("Playback was cancelled");
+    expect(((await second) as Error).message).toBe("Playback was cancelled");
+    await third;
+    expect(player.getState()?.itemId).toBe("item-3");
+    expect(element.src).toContain("/api/v1/media/item-3");
+    const started = calls.filter((call) => call.startsWith("start")).map((call) => call.split(" ")[1]);
+    const live = player.getState()?.sessionId;
+    for (const session of started.filter((id) => id !== live))
+      expect(calls).toContain(`stop ${session}`);
+    // No state from a replaced session is ever published.
+    expect(states.every((state) => state === null || state.itemId === "item-3")).toBe(true);
+  });
+
+  test("events from a stopped session cannot update the next one", async () => {
+    const { element, player, states } = setup();
+    await player.start({ itemId: "item-1" });
+    await player.stop();
+    states.length = 0;
+    element.emit("timeupdate");
+    element.emit("error");
+    expect(states).toEqual([]);
+    await expect(player.pause("session-1", true)).rejects.toThrow("not active");
+  });
+
+  test("a session the server expired while the tab slept is reopened at the same position", async () => {
+    const { element, api, player, calls } = setup();
+    await player.start({ itemId: "item-1" });
+    element.currentTime = 64;
+    api.heartbeatFailure = new ServerHttpError("Playback session has ended", 404);
+    await player.reconcile();
+    api.heartbeatFailure = null;
+    expect(player.getState()).toMatchObject({ sessionId: "session-2", positionSeconds: 64 });
+    expect(element.src).toContain("grant=grant-2");
+    expect(calls).toContain("start session-2");
+    // A server that cannot be reached is not treated as an expired session.
+    api.heartbeatFailure = new Error("offline");
+    await player.reconcile();
+    expect(player.getState()?.sessionId).toBe("session-2");
+  });
+
+  test("leaving the page saves progress with requests that can outlive it", async () => {
+    const { element, player, calls } = setup();
+    await player.start({ itemId: "item-1" });
+    element.currentTime = 12;
+    player.checkpoint();
+    await Bun.sleep(1);
+    expect(calls.at(-1)).toBe("progress session-1 @12 #1 keepalive");
+    element.currentTime = 15;
+    player.leave();
+    await Bun.sleep(1);
+    expect(calls.slice(-2)).toEqual(["progress session-1 @15 #2 keepalive", "stop session-1 keepalive"]);
+    // Restored from the back/forward cache: the ended session is replaced before resuming.
+    await player.reconcile();
+    expect(player.getState()).toMatchObject({ sessionId: "session-2", positionSeconds: 15, paused: false });
+  });
+
+  test("a lost connection is retried a bounded number of times, then reported", async () => {
+    const { element, player, failures, states } = setup();
+    await player.start({ itemId: "item-1" });
+    element.fail(2);
+    await Bun.sleep(5);
+    expect(player.getState()?.sessionId).toBe("session-2");
+    element.fail(2);
+    await Bun.sleep(5);
+    expect(player.getState()?.sessionId).toBe("session-3");
+    expect(failures).toEqual([]);
+    element.fail(2);
+    await Bun.sleep(5);
+    expect(failures).toEqual(["The connection was lost while loading this file."]);
+    expect(player.getState()).toBeNull();
+    expect(states.at(-1)).toBeNull();
+  });
+});

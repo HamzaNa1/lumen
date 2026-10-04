@@ -394,7 +394,7 @@ export const App = (): React.ReactElement => {
                 void runtime.accounts
                   .remove(id)
                   .then(() => queryClient.invalidateQueries())
-                  .catch(() => undefined);
+                  .catch((cause) => setPlaybackError(errorMessage(cause, "Could not sign out")));
               }}
               onAddServer={() => {
                 setSignInAccount(null);

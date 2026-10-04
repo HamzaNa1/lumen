@@ -64,6 +64,12 @@ describe("independent release policy", () => {
     expect(releasePaths("server")).toContain("packages/contracts");
     expect(releasePaths("server")).toContain("packages/database");
     expect(releasePaths("server")).not.toContain("apps/desktop");
+    // The server release ships the web app, so its frontend is the server's to announce.
+    for (const path of ["apps/web", "packages/client", "packages/app", "packages/ui"])
+      expect(releasePaths("server")).toContain(path);
+    for (const path of ["packages/client", "packages/app"])
+      expect(releasePaths("desktop")).toContain(path);
+    expect(releasePaths("desktop")).not.toContain("apps/web");
     expect(releasePaths("desktop")).toContain("packages/contracts");
     expect(releasePaths("desktop")).toContain("packages/ui");
     expect(releasePaths("desktop")).not.toContain("packages/database");

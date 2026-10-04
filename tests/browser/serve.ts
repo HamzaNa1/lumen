@@ -1,0 +1,69 @@
+// Starts a server with deterministic data for the browser tests: an admin account, one movie the
+// browser can play, and one whose file is not media at all.
+import { Database } from "bun:sqlite";
+import { copyFile, mkdtemp, rm, stat } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { newUuid } from "../../apps/server/src/core/Security";
+import { startServer } from "../../apps/server/src/Runtime";
+import { seedPlaybackFixture } from "../helpers/playback";
+
+const repository = fileURLToPath(new URL("../../", import.meta.url));
+const root = await mkdtemp(join(tmpdir(), "lumen-browser-test-"));
+const databasePath = join(root, "server.sqlite");
+const seeded = await seedPlaybackFixture(root, databasePath);
+
+// "Clip" keeps the fixture's placeholder bytes, which no browser can play. Add a real film.
+const moviePath = join(root, "film.mp4");
+await copyFile(join(repository, "tests/fixtures/playback.mp4"), moviePath);
+const database = new Database(databasePath);
+const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid(), item: newUuid() };
+const now = Date.now();
+database.run(
+  `INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, inode, scanned_at_ms)
+   SELECT ?, library_id, root_id, 'film.mp4', ?, 'local', ?, ?, '2', ? FROM media_sources LIMIT 1`,
+  [ids.source, moviePath, (await stat(moviePath)).size, now, now],
+);
+database.run(
+  "INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (?, ?, 'video', 'mp4', 'h264', 0, 1)",
+  [ids.video, ids.source],
+);
+database.run(
+  "INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (?, ?, 'audio', 'mp4', 'aac', 'eng', 'English', 1, 1)",
+  [ids.audio, ids.source],
+);
+database.run(
+  `INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
+   VALUES (?, ?, ?, ?, 'Film', 'film', 5000, 0, ?, ?)`,
+  [ids.track, seeded.libraryId, ids.source, ids.video, now, now],
+);
+database.run(
+  `INSERT INTO catalog_items(id, library_id, kind, title, sort_title, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
+   VALUES (?, ?, 'movie', 'Film', 'film', 5, 'local', ?, ?)`,
+  [ids.item, seeded.libraryId, now, now],
+);
+database.run(
+  "INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (?, ?, 1, 1)",
+  [ids.item, ids.source],
+);
+database.close();
+
+const server = await startServer({
+  databasePath,
+  dataDir: root,
+  host: "127.0.0.1",
+  port: Number(process.env.LUMEN_BROWSER_TEST_PORT ?? 3277),
+  logLevel: "warn",
+  loginAttemptsPerMinute: 1_000,
+  maxRequestsPerMinute: 100_000,
+  // The tests exercise the build that would ship.
+  webApp: "required",
+});
+const stop = async (): Promise<void> => {
+  await server.stop();
+  await rm(root, { recursive: true, force: true });
+  process.exit(0);
+};
+process.once("SIGINT", () => void stop());
+process.once("SIGTERM", () => void stop());

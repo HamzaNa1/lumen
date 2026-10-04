@@ -1,0 +1,27 @@
+{
+  "name": "lumen-web",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite build --watch --mode development",
+    "build": "vite build",
+    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "test": "bun test ../../tests/web ../../tests/shared"
+  },
+  "devDependencies": {
+    "@lumen/app": "workspace:*",
+    "@lumen/client": "workspace:*",
+    "@lumen/contracts": "workspace:*",
+    "@lumen/ui": "workspace:*",
+    "@tanstack/history": "1.162.4",
+    "@types/node": "26.6.2",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "@vitejs/plugin-react": "5.1.1",
+    "lucide-react": "1.48.0",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "typescript": "7.0.2",
+    "vite": "7.3.6"
+  }
+}

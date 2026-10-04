@@ -1,6 +1,6 @@
 # Lumen
 
-Lumen is a Bun-based direct-play media server with an Electron desktop client. It stores original media on the server filesystem, scans multiple library roots, authorizes accounts independently per server, and streams original bytes to an in-app MPV player over a session-scoped loopback bridge.
+Lumen is a Bun-based direct-play media server with an Electron desktop client and a web app the server hosts at `/web`. It stores original media on the server filesystem, scans multiple library roots, authorizes accounts independently per server, and streams original bytes to an in-app MPV player over a session-scoped loopback bridge.
 
 ## Development
 
@@ -11,7 +11,24 @@ bun run lint
 bun test
 bun run dev:server
 bun run dev:desktop
+bun run dev:web
 ```
+
+## Web app
+
+The desktop app and the web app are one React application (`packages/app`) with two adapters. `apps/desktop` supplies Electron IPC, saved credentials and MPV; `apps/web` supplies the browser session, an HTML media player and the Vite build. Shared API, playback-session and watch-group logic lives in `packages/client`.
+
+The web app is a build, not a service: `bun run build:web` writes `apps/web/dist`, and the server serves it under `/web`. `bun run dev:web` rebuilds on every change while `bun run dev:server` serves the result, so development uses the same routing, cookies and content security policy as production. A production server (`NODE_ENV=production`, as in the Docker image) refuses to start if the build is missing; set `LUMEN_WEB_ROOT` to serve a build from elsewhere.
+
+The browser plays files directly, so it can only play what the browser itself decodes. Files it cannot play say so; the desktop app plays everything MPV does.
+
+A browser signs in with a session cookie rather than a token it could read:
+
+- The cookie is host-only, `HttpOnly`, `SameSite=Strict`, limited to `/api`, and lasts as long as the server-side session, which is extended while it is in use.
+- `LUMEN_COOKIE_SECURE` is `auto` by default: the cookie is `Secure` when the app is reached over HTTPS (directly, or as reported by a proxy's `X-Forwarded-Proto`) and not over the plain HTTP of local development or a home network, where a `Secure` cookie would never be sent back. Set `always` to refuse plain HTTP sign-ins, or `never` to override a proxy that misreports the scheme.
+- Every cookie-authenticated change, including sign-in and sign-out, must carry an `Origin` matching the address the app was loaded from and the app's CSRF header. If a reverse proxy rewrites `Host` without setting `X-Forwarded-Host`, list the public address in `LUMEN_ALLOWED_ORIGINS` (comma-separated origins).
+
+`bun run test:browser` builds the web app and runs the browser tests in Chromium, Firefox and WebKit against a real server (install the browsers once with `bunx playwright install`). `bun scripts/smoke-server-image.ts <image>` checks that a server image serves its web app.
 
 On first launch, open the desktop app, enter the server address, and create the first account. That account becomes the server administrator; subsequent users are managed from Administration.
 
@@ -19,7 +36,7 @@ The server requires no transcoder. Configure a read-only media root and a local 
 
 ## Releases
 
-Server and desktop releases are independent within the monorepo. Each app's `package.json` owns its release version; private shared packages are built from the release commit and do not share either app's release numbering. GitHub tags start with the version and identify the product using build metadata (`v0.0.10+server` or `v0.0.10+desktop`), so GitHub can recognize the version for sorting without treating the product name as a prerelease identifier. Existing combined `v0.0.x` tags and earlier `server-v...` / `desktop-v...` tags remain valid release history and compatibility baselines. Product versions can diverge, so the repository-wide release list is not a chronological feed for either product.
+Server and desktop releases are independent within the monorepo. The web app has no version or release of its own: it is built into the server image and reports the server's version. Each app's `package.json` owns its release version; private shared packages are built from the release commit and do not share either app's release numbering. GitHub tags start with the version and identify the product using build metadata (`v0.0.10+server` or `v0.0.10+desktop`), so GitHub can recognize the version for sorting without treating the product name as a prerelease identifier. Existing combined `v0.0.x` tags and earlier `server-v...` / `desktop-v...` tags remain valid release history and compatibility baselines. Product versions can diverge, so the repository-wide release list is not a chronological feed for either product.
 
 Prepare only the app being released, then push its version commit to the default branch:
 

@@ -83,6 +83,7 @@ export const PlayerView = ({
         volume={player?.volume ?? 100}
         muted={player?.muted ?? false}
         streams={capabilities.trackSelection ? (player?.streams ?? []) : []}
+        trackSelection={capabilities.trackSelection}
         selectedAudioStreamId={player?.selectedAudioStreamId ?? null}
         selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
         audioOutput={player?.audioOutput ?? "stereo"}

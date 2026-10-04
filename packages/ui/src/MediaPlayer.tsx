@@ -40,6 +40,8 @@ interface MediaPlayerProps {
   readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
   /** Omitted where the player cannot describe its audio pipeline. */
   readonly onCopyAudioDiagnostics?: () => Promise<void>;
+  /** False where the player cannot switch tracks at all, whatever the file contains. */
+  readonly trackSelection?: boolean;
   /** Playback stalled waiting for data. */
   readonly buffering?: boolean;
   /** Playback is held until the viewer asks for it; `onStartPlayback` is that request. */
@@ -77,6 +79,7 @@ export const MediaPlayer = ({
   audioOutput,
   onAudioOutput,
   onCopyAudioDiagnostics,
+  trackSelection = true,
   buffering = false,
   awaitingInteraction = false,
   onStartPlayback,
@@ -355,7 +358,11 @@ export const MediaPlayer = ({
                       />
                     ) : null}
                     {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
-                      <p>This file has no alternate audio or subtitle tracks.</p>
+                      <p>
+                        {trackSelection
+                          ? "This file has no alternate audio or subtitle tracks."
+                          : "This player can’t switch audio or subtitle tracks."}
+                      </p>
                     ) : null}
                     {onCopyAudioDiagnostics === undefined ? null : (
                       <Button

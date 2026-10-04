@@ -1,0 +1,7 @@
+/* The reload prompt sits above everything, including the player. */
+.update-prompt {
+  z-index: 200;
+}
+.update-prompt > svg {
+  color: var(--accent);
+}

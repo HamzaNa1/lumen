@@ -12,3 +12,5 @@ data/
 apps/desktop/resources/native/*
 !apps/desktop/resources/native/.gitkeep
 /media/
+test-results/
+playwright-report/
