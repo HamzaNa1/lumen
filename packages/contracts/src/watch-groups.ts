@@ -65,12 +65,20 @@ export const WatchMessage = Schema.Union([
 ]);
 export type WatchMessage = typeof WatchMessage.Type;
 export interface WatchStatus {
-  readonly connection: "offline" | "connecting" | "connected";
+  readonly connection: "offline" | "connecting" | "connected" | "unavailable";
   readonly memberId: string | null;
   readonly groups: ReadonlyArray<WatchGroup>;
   readonly group: WatchGroup | null;
   readonly error: string | null;
 }
+
+export const initialWatchStatus = (): WatchStatus => ({
+  connection: "offline",
+  memberId: null,
+  groups: [],
+  group: null,
+  error: null,
+});
 
 export const watchPosition = (playback: WatchPlayback, nowMs: number): number =>
   Math.min(

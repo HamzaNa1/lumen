@@ -1,4 +1,9 @@
-import { WatchMessage, type WatchAction, type WatchStatus } from "@lumen/contracts";
+import {
+  initialWatchStatus,
+  WatchMessage,
+  type WatchAction,
+  type WatchStatus,
+} from "@lumen/contracts";
 import { Schema } from "effect";
 import type { ServerClient } from "../api/ServerClient";
 
@@ -26,13 +31,7 @@ export class WatchGroupClient {
   private offsetMs = 0;
   private bestRtt = Infinity;
   private lastPong = 0;
-  status: WatchStatus = {
-    connection: "offline",
-    memberId: null,
-    groups: [],
-    group: null,
-    error: null,
-  };
+  status: WatchStatus = initialWatchStatus();
 
   constructor(
     private readonly client: ServerClient,

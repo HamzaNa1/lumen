@@ -28,6 +28,7 @@ export const watchFixture = async () => {
   const clients: WatchGroupClient[] = [];
   const login = async (username = "admin") => {
     const server = new ServerClient({ origin: running.server.url.toString() });
+    await server.identity();
     await server.login(
       {
         origin: running.server.url.toString(),
@@ -65,6 +66,8 @@ export const watchProxy = (origin: URL) => {
   let dropJoin = false;
   let busyJoin = false;
   let retryAfterMs = 20;
+  let stopStalled = false;
+  const pendingStops: { socket: import("bun").ServerWebSocket<Connection>; raw: string }[] = [];
   const server = Bun.serve<Connection>({
     hostname: "127.0.0.1",
     port: 0,
@@ -92,6 +95,10 @@ export const watchProxy = (origin: URL) => {
       async message(socket, message) {
         const raw = String(message);
         const request = JSON.parse(raw) as { requestId?: string; action?: { type?: string } };
+        if (stopStalled && request.action?.type === "stop") {
+          pendingStops.push({ socket, raw });
+          return;
+        }
         if (busyJoin && request.action?.type === "join") {
           busyJoin = false;
           socket.send(
@@ -120,6 +127,15 @@ export const watchProxy = (origin: URL) => {
   });
   return {
     origin: server.url.toString(),
+    stallStop() {
+      stopStalled = true;
+    },
+    releaseStops() {
+      stopStalled = false;
+      for (const { socket, raw } of pendingStops.splice(0)) {
+        if (socket.data.upstream.readyState === WebSocket.OPEN) socket.data.upstream.send(raw);
+      }
+    },
     overloadRejoin(delayMs = 20) {
       retryAfterMs = delayMs;
       busyJoin = true;

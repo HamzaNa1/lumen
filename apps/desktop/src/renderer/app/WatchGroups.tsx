@@ -1,4 +1,4 @@
-import type { WatchAction, WatchGroup, WatchStatus } from "@lumen/contracts";
+import { initialWatchStatus, type WatchAction, type WatchGroup } from "@lumen/contracts";
 import { Button, Modal, TextField } from "@lumen/ui";
 import {
   Check,
@@ -15,20 +15,12 @@ import { useEffect, useState } from "react";
 import { errorMessage } from "./format";
 import "./watch-groups.css";
 
-const initial: WatchStatus = {
-  connection: "offline",
-  memberId: null,
-  groups: [],
-  group: null,
-  error: null,
-};
-
 export const WatchGroups = ({
   compact = false,
 }: {
   readonly compact?: boolean;
-}): React.ReactElement => {
-  const [status, setStatus] = useState(initial);
+}): React.ReactElement | null => {
+  const [status, setStatus] = useState(initialWatchStatus);
   const [open, setOpen] = useState(false);
   const [view, setView] = useState<"groups" | "create" | "password">("groups");
   const [selected, setSelected] = useState<WatchGroup | null>(null);
@@ -70,6 +62,7 @@ export const WatchGroups = ({
         .then(setStatus)
         .catch((cause: unknown) => setError(errorMessage(cause, "Could not connect")));
   };
+  if (status.connection === "unavailable") return null;
   return (
     <>
       <Button

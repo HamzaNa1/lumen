@@ -23,6 +23,16 @@ interface Group {
   readonly passwordHash: string | null;
   emptySince: number | null;
 }
+interface StateDelivery {
+  group: Group;
+  sentState: WatchGroup | null;
+  promise: Promise<void>;
+}
+type WatchServices = {
+  readonly auth: Pick<HttpServices["auth"], "authenticate">;
+  readonly catalog: Pick<HttpServices["catalog"], "itemDetails">;
+  readonly access: Pick<HttpServices["access"], "requireLibrary">;
+};
 const Authentication = Schema.Struct({
   token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
 });
@@ -39,6 +49,7 @@ class WatchGroupsBusy extends Error {
 export class WatchGroups {
   private readonly sockets = new Set<ServerWebSocket<WatchSocketData>>();
   private readonly groups = new Map<string, Group>();
+  private readonly deliveries = new Map<ServerWebSocket<WatchSocketData>, StateDelivery>();
   private passwordOperations = 0;
   private readonly attempts = new RequestLimiter({
     maxRequests: 10,
@@ -47,7 +58,7 @@ export class WatchGroups {
   });
   private readonly timer: ReturnType<typeof setInterval>;
 
-  constructor(private readonly services: Pick<HttpServices, "auth" | "catalog" | "access">) {
+  constructor(private readonly services: WatchServices) {
     this.timer = setInterval(() => {
       this.attempts.sweep(Date.now());
       for (const [id, group] of this.groups) {
@@ -138,10 +149,71 @@ export class WatchGroups {
     });
   }
 
-  private publish(group: Group): void {
+  private async publish(group: Group): Promise<void> {
+    const deliveries: Promise<void>[] = [];
     for (const socket of this.sockets) {
-      if (socket.data.groupId === group.state.id)
-        this.send(socket, { type: "state", group: group.state });
+      if (socket.data.groupId === group.state.id) deliveries.push(this.deliverState(socket, group));
+    }
+    await Promise.all(deliveries);
+  }
+
+  private deliverState(socket: ServerWebSocket<WatchSocketData>, group: Group): Promise<void> {
+    const running = this.deliveries.get(socket);
+    if (running !== undefined) {
+      running.group = group;
+      return running.promise;
+    }
+    const delivery: StateDelivery = { group, sentState: null, promise: Promise.resolve() };
+    delivery.promise = this.visibleState(socket, delivery)
+      .then(async () => {
+        this.deliveries.delete(socket);
+        if (
+          !socket.data.closed &&
+          socket.data.groupId === delivery.group.state.id &&
+          delivery.group.state !== delivery.sentState
+        )
+          await this.deliverState(socket, delivery.group);
+      })
+      .catch(() => {
+        this.deliveries.delete(socket);
+        socket.close(1011, "Could not check media access");
+      });
+    this.deliveries.set(socket, delivery);
+    return delivery.promise;
+  }
+
+  private async visibleState(
+    socket: ServerWebSocket<WatchSocketData>,
+    delivery: StateDelivery,
+  ): Promise<void> {
+    while (!socket.data.closed && socket.data.groupId === delivery.group.state.id) {
+      const group = delivery.group;
+      const state = group.state;
+      const token = socket.data.token;
+      if (token === null) return;
+      let principal: AuthPrincipal;
+      try {
+        principal = await Effect.runPromise(this.services.auth.authenticate(token, Date.now()));
+      } catch {
+        this.leave(socket);
+        socket.data.principal = null;
+        socket.close(1008, "Sign-in required");
+        return;
+      }
+      let visible = true;
+      if (state.playback !== null) {
+        visible = await Effect.runPromise(
+          this.services.catalog
+            .itemDetails(principal, state.playback.itemId, false, Date.now())
+            .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })),
+        );
+      }
+      if (socket.data.closed || socket.data.groupId !== delivery.group.state.id) return;
+      // Coalesce publications while access checks run; never send a superseded snapshot.
+      if (delivery.group !== group || group.state !== state) continue;
+      this.send(socket, { type: "state", group: visible ? state : { ...state, playback: null } });
+      delivery.sentState = state;
+      return;
     }
   }
 
@@ -158,7 +230,7 @@ export class WatchGroups {
         members: group.state.members.filter((member) => member.id !== socket.data.id),
       };
       if (group.state.members.length === 0) group.emptySince = Date.now();
-      this.publish(group);
+      void this.publish(group);
       this.directory();
     }
     this.send(socket, { type: "state", group: null });
@@ -205,19 +277,19 @@ export class WatchGroups {
       if (socket.data.closed) return;
       socket.data.principal = principal;
       if (action.type === "ping") {
+        const group = this.groups.get(socket.data.groupId ?? "");
+        if (group !== undefined) await this.deliverState(socket, group);
         this.send(socket, { type: "pong", sentAtMs: action.sentAtMs, serverTimeMs: Date.now() });
       } else if (action.type === "list") this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
         const retrySeconds = await Effect.runPromise(
-          this.attempts
-            .check(principal.user.id, Date.now())
-            .pipe(
-              Effect.match({
-                onFailure: (failure) => failure.retryAfterSeconds,
-                onSuccess: () => 0,
-              }),
-            ),
+          this.attempts.check(principal.user.id, Date.now()).pipe(
+            Effect.match({
+              onFailure: (failure) => failure.retryAfterSeconds,
+              onSuccess: () => 0,
+            }),
+          ),
         );
         if (retrySeconds > 0)
           throw new WatchGroupsBusy(
@@ -274,7 +346,7 @@ export class WatchGroups {
             { id: socket.data.id, displayName: principal.user.displayName },
           ],
         };
-        this.publish(group);
+        await this.publish(group);
         this.directory();
       } else {
         const group = this.groups.get(socket.data.groupId ?? "");
@@ -328,7 +400,7 @@ export class WatchGroups {
                   },
           };
         }
-        this.publish(group);
+        await this.publish(group);
       }
       this.send(socket, { type: "reply", requestId, error: null });
     } catch (cause) {

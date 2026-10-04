@@ -120,6 +120,7 @@ export class ServerClient {
   private readonly origin: string;
   private readonly fetchImpl: typeof fetch;
   private session: AccountSession | null = null;
+  private serverIdentity: ServerIdentity | null = null;
 
   constructor(options: ServerClientOptions) {
     this.origin = normalizeOrigin(options.origin);
@@ -144,7 +145,12 @@ export class ServerClient {
 
   async identity(): Promise<ServerIdentity> {
     const response = await this.fetchImpl(new URL("/api/v1/server", this.origin), { redirect: "manual", cache: "no-store" });
-    return parseIdentity(await readJson(response));
+    this.serverIdentity = parseIdentity(await readJson(response));
+    return this.serverIdentity;
+  }
+
+  get supportsWatchGroups(): boolean {
+    return this.serverIdentity?.capabilities?.watchGroups === true;
   }
 
   async setupRequired(fallback = false): Promise<boolean> {

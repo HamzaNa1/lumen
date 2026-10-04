@@ -165,6 +165,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       throw new Error(`${setupRequired || input.signUp === true ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
     }
     dependencies.clients.set(connectionId, client);
+    watch.connect(client, connectionId);
     discoveredServers.delete(client.serverOrigin);
     return dependencies.registry.list();
   });
@@ -172,12 +173,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const connectionId = decode(Schema.String, raw);
     const account = dependencies.registry.find(connectionId);
     if (account === null) throw new Error("Connection not found");
-    await restoreClient(account);
+    const client = await restoreClient(account);
     if (dependencies.registry.active()?.connectionId !== connectionId) {
       watch.disconnect();
       await dependencies.player.stop();
     }
     await dependencies.registry.activate(connectionId);
+    watch.connect(client, connectionId);
     return dependencies.registry.list();
   });
   handle("accounts:remove", async (_event, raw) => {
