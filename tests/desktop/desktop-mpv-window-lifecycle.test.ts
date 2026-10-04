@@ -2,6 +2,8 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import type { IpcPlayerState } from "@lumen/contracts";
 import type { BrowserWindow } from "electron";
+import { WatchPlaybackController } from "../../apps/desktop/src/main/watch-groups/WatchPlaybackController";
+import { eventually, watchFixture } from "../helpers/watch-groups";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 
 const events: string[] = [];
@@ -44,7 +46,7 @@ class FakeBaseWindow {
 mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {}, screen: {} }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
 const { PlayerController, startNativePlayer } = await import("../../apps/desktop/src/main/player/PlayerController");
-const { MpvIpc } = await import("../../apps/desktop/src/main/player/MpvIpc");
+const { MpvIpc, MpvIpcFailure } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
 
 const withPlayback = async (
@@ -56,13 +58,23 @@ const withPlayback = async (
     progress: ReturnType<typeof mock>;
     request: ReturnType<typeof mock>;
     stopProcess: ReturnType<typeof mock>;
+    connections: InstanceType<typeof MpvIpc>[];
+    exits: (() => void)[];
+    restart: () => Promise<unknown>;
+    failNextLoad: () => void;
+    disconnectNextStart: () => void;
   }) => Promise<void>,
 ): Promise<void> => {
   const stopProcess = mock(async () => undefined);
-  const startProcess = spyOn(MpvProcess, "start").mockReturnValue({
-    stop: stopProcess,
-  } as unknown as MpvProcess);
-  const connect = spyOn(MpvIpc.prototype, "connect").mockResolvedValue(undefined);
+  const exits: (() => void)[] = [];
+  const connections: InstanceType<typeof MpvIpc>[] = [];
+  const startProcess = spyOn(MpvProcess, "start").mockImplementation((options) => {
+    exits.push(() => options.onExit?.(1));
+    return { stop: stopProcess } as unknown as MpvProcess;
+  });
+  const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async function (this: InstanceType<typeof MpvIpc>) {
+    connections.push(this);
+  });
   const properties = new Map<string, unknown>([
     ["window-id", 1],
     ["time-pos", 12.25],
@@ -70,12 +82,20 @@ const withPlayback = async (
     ["pause", false],
     ["eof-reached", false],
   ]);
+  let failLoad = false;
+  let disconnectStart = false;
   const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
     this: InstanceType<typeof MpvIpc>,
     args: ReadonlyArray<string | number>,
     timeoutMs = 5_000,
   ): Promise<unknown> {
-    if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
+    if (disconnectStart && args[0] === "set_property" && args[1] === "audio-channels") {
+      queueMicrotask(() => this.emit("disconnected", new MpvIpcFailure("MPV IPC closed")));
+      return Promise.reject(new MpvIpcFailure("MPV IPC closed"));
+    }
+    if (args[0] === "loadfile") {
+      queueMicrotask(() => this.emit(failLoad ? "end-file" : "file-loaded", { reason: "error", file_error: "network failure" }));
+    }
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
       return Promise.race([
@@ -119,7 +139,11 @@ const withPlayback = async (
   try {
     await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
     states.length = 0;
-    await run({ controller, states, properties, heartbeat, progress, request, stopProcess });
+    await run({ controller, states, properties, heartbeat, progress, request, stopProcess, connections, exits,
+      restart: () => controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]),
+      failNextLoad: () => { failLoad = true; },
+      disconnectNextStart: () => { disconnectStart = true; },
+    });
   } finally {
     await controller.stop();
     startProcess.mockRestore();
@@ -623,6 +647,7 @@ describe("macOS MPV window lifecycle", () => {
       },
       ipc: { close: () => calls.push("close IPC") },
       capability: "capability-1",
+      cancellation: new AbortController(),
     });
 
     let firstFinished = false;
@@ -738,4 +763,102 @@ describe("macOS MPV window lifecycle", () => {
       close.mockRestore();
     }
   });
+});
+
+
+describe("native playback failure recovery", () => {
+  test("a failure during media loading tears down that startup exactly once", async () => {
+    await withPlayback(async ({ controller, failNextLoad, restart, stopProcess, request }) => {
+      await controller.stop();
+      stopProcess.mockClear();
+      request.mockClear();
+      failNextLoad();
+      await expect(restart()).rejects.toThrow("network failure");
+      expect(controller.getState()).toBeNull();
+      expect(stopProcess).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("a disconnect during initialization consumes the load failure and tears down once", async () => {
+    await withPlayback(async ({ controller, disconnectNextStart, restart, stopProcess, request }) => {
+      await controller.stop();
+      stopProcess.mockClear();
+      request.mockClear();
+      disconnectNextStart();
+      await expect(restart()).rejects.toThrow("MPV IPC closed");
+      expect(controller.getState()).toBeNull();
+      expect(stopProcess).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("a stalled IPC query invalidates playback while transient unavailable properties retain it", async () => {
+    await withPlayback(async ({ controller, properties }) => {
+      properties.set("time-pos", Promise.reject(new Error("property unavailable")));
+      await controller.refreshState();
+      expect(controller.getState()?.sessionId).toBe("session-1");
+      properties.set("time-pos", Promise.reject(new MpvIpcFailure("MPV command timed out")));
+      await controller.refreshState();
+      expect(controller.getState()).toBeNull();
+    });
+  });
+
+  test("an exited process invalidates its session and late failure callbacks cannot clear its replacement", async () => {
+    await withPlayback(async ({ controller, exits, connections, restart, stopProcess, request }) => {
+      exits[0]?.();
+      expect(controller.getState()).toBeNull();
+      await restart();
+      expect(controller.getState()?.sessionId).toBe("session-2");
+      expect(stopProcess).toHaveBeenCalledTimes(1);
+      expect(request).toHaveBeenCalledTimes(1);
+      exits[0]?.();
+      connections[0]?.emit("disconnected", new Error("old IPC closed"));
+      expect(controller.getState()?.sessionId).toBe("session-2");
+      expect(stopProcess).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  test("an established IPC failure restarts shared playback at the group position after its surface is ready", async () => {
+    const fixture = await watchFixture();
+    try {
+      await withPlayback(async ({ controller, connections }) => {
+        const watch = new WatchPlaybackController(controller, () => undefined);
+        try {
+          const owner = await fixture.connect(await fixture.login());
+          await owner.action({ type: "create", name: "Movie night", password: "" });
+          await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 7 });
+          await owner.action({ type: "pause", itemId: fixture.itemId, positionSeconds: 7, paused: true });
+          watch.connect(await fixture.login(), "viewer");
+          watch.setSurfaceReady(true);
+          await eventually(() => watch.status.connection === "connected");
+          await watch.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+          await eventually(() => controller.getState()?.itemId === fixture.itemId && controller.getState()?.paused === true);
+          const failedSession = controller.getState()?.sessionId;
+          const started = connections.length;
+          watch.setSurfaceReady(false);
+          connections.at(-1)?.emit("disconnected", new Error("MPV IPC closed"));
+          expect(controller.getState()).toBeNull();
+          await Bun.sleep(600);
+          expect(connections).toHaveLength(started);
+          watch.setSurfaceReady(true);
+          await eventually(() => controller.getState() !== null);
+          expect(controller.getState()).toMatchObject({ itemId: fixture.itemId, paused: true, positionSeconds: 7 });
+          expect(controller.getState()?.sessionId).not.toBe(failedSession);
+          connections.at(-1)?.emit("disconnected", new Error("MPV IPC closed"));
+          const beforeStop = connections.length;
+          await watch.stop();
+          watch.retry();
+          await Bun.sleep(1100);
+          expect(controller.getState()).toBeNull();
+          expect(connections).toHaveLength(beforeStop);
+          expect(watch.status.group?.playback).toBeNull();
+        } finally {
+          watch.close();
+        }
+      });
+    } finally {
+      await fixture.close();
+    }
+  }, 15_000);
 });

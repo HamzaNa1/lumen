@@ -230,7 +230,7 @@ export const makeHttpHandler = (
           apiVersion: API_VERSION,
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
-          capabilities: { directPlayOnly: true },
+          capabilities: { directPlayOnly: true, watchGroups: true },
         },
         200,
         { "cache-control": "no-store" },

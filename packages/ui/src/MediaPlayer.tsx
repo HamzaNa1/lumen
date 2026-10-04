@@ -14,13 +14,14 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { type Ref, useState } from "react";
+import { type ReactNode, type Ref, useState } from "react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
 import { formatPlayerTime, streamLabels } from "./PlayerFormatting";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
 
 interface MediaPlayerProps {
+  readonly headerActions?: ReactNode;
   readonly title: string;
   readonly subtitle?: string;
   readonly paused: boolean;
@@ -51,6 +52,7 @@ interface MediaPlayerProps {
 }
 
 export const MediaPlayer = ({
+  headerActions,
   title,
   subtitle,
   paused,
@@ -109,6 +111,7 @@ export const MediaPlayer = ({
           <h1>{title}</h1>
           {subtitle === undefined || subtitle === "" ? null : <p>{subtitle}</p>}
         </div>
+        {headerActions}
       </header>
 
       <div className="media-player-frame">

@@ -306,7 +306,8 @@ body:has(.app-shell) {
   z-index: 100;
   outline: 0;
 }
-.menu-popup {
+.menu-popup,
+.popover-popup {
   min-width: 200px;
   padding: 5px;
   border: 1px solid var(--border-strong);
@@ -320,9 +321,24 @@ body:has(.app-shell) {
     scale 120ms ease;
 }
 .menu-popup[data-starting-style],
-.menu-popup[data-ending-style] {
+.menu-popup[data-ending-style],
+.popover-popup[data-starting-style],
+.popover-popup[data-ending-style] {
   opacity: 0;
   scale: 0.97;
+}
+.popover-popup {
+  padding: 0;
+  border-radius: var(--radius-lg);
+}
+.popover-title {
+  margin: 0;
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .account-menu {
   width: max(var(--anchor-width), 232px);
