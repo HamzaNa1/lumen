@@ -80,8 +80,9 @@ const LOAD_TIMEOUT_MS = 20_000;
 const MAX_RECOVERIES = 2;
 const RECOVERY_WINDOW_MS = 60_000;
 
-// HTMLMediaElement.readyState: the frame at the current position is available.
-const HAVE_CURRENT_DATA = 2;
+// HTMLMediaElement.readyState: there is enough data past the current position for playback to
+// advance. One state lower, only the current frame is there and playing would stall at once.
+const HAVE_FUTURE_DATA = 3;
 
 // MediaError.code
 const MEDIA_ERR_NETWORK = 2;
@@ -170,10 +171,10 @@ export class HtmlMediaPlayer {
     return this.publish(active);
   }
 
-  /** Whether the element has fetched the media at its current position, as after a seek. */
+  /** Whether the element can play on from its current position, as after a seek. */
   loaded(sessionId: string): boolean {
     this.requireActive(sessionId);
-    return !this.element.seeking && this.element.readyState >= HAVE_CURRENT_DATA;
+    return !this.element.seeking && this.element.readyState >= HAVE_FUTURE_DATA;
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {

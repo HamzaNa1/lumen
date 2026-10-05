@@ -56,8 +56,12 @@ class NativePlayback implements WatchPlayer<ServerClient> {
   }
   /** Set to false to model a player that is still fetching its position. */
   ready = true;
+  /** Holds back the answer to the next `loaded()` until the test settles it. */
+  loadedGate: Promise<boolean> | null = null;
   loaded() {
-    return this.ready;
+    const gate = this.loadedGate;
+    this.loadedGate = null;
+    return gate ?? this.ready;
   }
 }
 
@@ -520,6 +524,52 @@ test("a held group can be paused, and stops waiting for a viewer who leaves", as
     await slow.playback.action({ type: "leave" });
     await eventually(() => fast.native.state?.paused === false);
     expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 40, paused: false });
+  } finally {
+    for (const viewer of viewers) viewer.close();
+    await fixture.close();
+  }
+});
+
+test("readiness answered after the viewer changed groups does not release the new group", async () => {
+  const fixture = await watchFixture();
+  const viewers: WatchPlaybackController[] = [];
+  try {
+    const first = await fixture.connect(await fixture.login());
+    await first.action({ type: "create", name: "First", password: "" });
+    const second = await fixture.connect(await fixture.login());
+    await second.action({ type: "create", name: "Second", password: "" });
+    const viewer = await groupViewer(fixture, first.status.group?.id ?? "", "viewer");
+    viewers.push(viewer.playback);
+
+    // The player is still being asked whether it has loaded the first group's position.
+    const answer = Promise.withResolvers<boolean>();
+    viewer.native.loadedGate = answer.promise;
+    await first.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => viewer.native.loadedGate === null);
+    const held = first.status.group?.revision;
+
+    // Meanwhile the viewer moves to a group that holds for them at the very same revision.
+    await viewer.playback.action({
+      type: "join",
+      groupId: second.status.group?.id ?? "",
+      password: "",
+    });
+    await second.action({ type: "play", itemId: fixture.itemId, positionSeconds: 50 });
+    expect(second.status.group?.revision).toBe(held);
+    expect(second.status.group?.playback?.waitingFor).toEqual([viewer.playback.status.memberId]);
+
+    viewer.native.ready = false;
+    answer.resolve(true);
+    await eventually(() => viewer.native.state?.positionSeconds === 50);
+    await Bun.sleep(300);
+    expect(second.status.group?.playback).toMatchObject({
+      positionSeconds: 50,
+      paused: true,
+      waitingFor: [viewer.playback.status.memberId],
+    });
+
+    viewer.native.ready = true;
+    await eventually(() => second.status.group?.playback?.paused === false);
   } finally {
     for (const viewer of viewers) viewer.close();
     await fixture.close();

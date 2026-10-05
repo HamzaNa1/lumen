@@ -475,21 +475,17 @@ test.each([true, false])("slow discovery progresses under sustained updates with
   }
 });
 
-test("a member that never reports ready delays the group only until the wait runs out", async () => {
+test("a group waits for a member for as long as it takes to report ready", async () => {
   const fixture = await watchFixture();
   const admin = await fixture.login();
   const user = await admin.me();
   const details = await admin.itemDetails(fixture.itemId);
   const principal = { user, sessionId: crypto.randomUUID(), deviceId: crypto.randomUUID() };
-  const groups = new WatchGroups(
-    {
-      auth: { authenticate: () => Effect.succeed(principal) },
-      catalog: { itemDetails: () => Effect.succeed(details) },
-      access: { requireLibrary: () => Effect.void },
-    },
-    undefined,
-    200,
-  );
+  const groups = new WatchGroups({
+    auth: { authenticate: () => Effect.succeed(principal) },
+    catalog: { itemDetails: () => Effect.succeed(details) },
+    access: { requireLibrary: () => Effect.void },
+  });
   const server = Bun.serve<WatchSocketData>({
     hostname: "127.0.0.1",
     port: 0,
@@ -514,7 +510,6 @@ test("a member that never reports ready delays the group only until the wait run
     await owner.action({ type: "create", name: "Movie night", password: "" });
     await stuck.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
 
-    const asked = Date.now();
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
     // Only the member that said it would report readiness is waited for.
     expect(owner.status.group?.playback).toMatchObject({
@@ -526,8 +521,15 @@ test("a member that never reports ready delays the group only until the wait run
     await stuck.action({ type: "ready", revision: (owner.status.group?.revision ?? 0) - 1 });
     expect(owner.status.group?.playback?.paused).toBe(true);
 
+    // No amount of waiting starts the group without that member.
+    await Bun.sleep(500);
+    expect(owner.status.group?.playback).toMatchObject({
+      paused: true,
+      waitingFor: [stuck.status.memberId],
+    });
+
+    await stuck.action({ type: "ready", revision: owner.status.group?.revision ?? 0 });
     await eventually(() => owner.status.group?.playback?.paused === false);
-    expect(Date.now() - asked).toBeGreaterThanOrEqual(190);
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
     expect(owner.status.group?.playback?.positionSeconds).toBe(2);
 

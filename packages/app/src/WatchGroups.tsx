@@ -15,7 +15,7 @@ import "./watch-groups.css";
 const visibleMemberNames = 3;
 
 /** The group is paused only until its members have loaded what it is about to play. */
-export const holdingForMembers = (playback: WatchPlayback | null | undefined): boolean =>
+const holdingForMembers = (playback: WatchPlayback | null | undefined): boolean =>
   playback?.waitingFor !== undefined;
 
 const playbackSummary = (playback: WatchPlayback | null): string =>
@@ -27,9 +27,15 @@ const playbackSummary = (playback: WatchPlayback | null): string =>
         ? `Paused on ${playback.title}`
         : `Watching ${playback.title}`;
 
-const waitingSummary = (group: WatchGroup): string => {
+/** The group is holding its playback for this member, who has yet to load it. */
+const stillLoading = (group: WatchGroup, memberId: string): boolean =>
+  group.playback?.waitingFor?.includes(memberId) === true;
+
+/** Who a held group is waiting for; undefined when the group is not holding. */
+export const waitingSummary = (group: WatchGroup | null | undefined): string | undefined => {
+  if (group == null || !holdingForMembers(group.playback)) return undefined;
   const names = group.members
-    .filter((member) => group.playback?.waitingFor?.includes(member.id) === true)
+    .filter((member) => stillLoading(group, member.id))
     .map((member) => member.displayName);
   return names.length === 0 ? "Starting for everyone…" : `Waiting for ${names.join(", ")}…`;
 };
@@ -258,11 +264,10 @@ const ActiveGroup = ({
           <span>
             {playback === null
               ? "Play a movie or episode and it starts for everyone."
-              : holding
-                ? waitingSummary(group)
-                : playback.paused
+              : (waitingSummary(group) ??
+                (playback.paused
                   ? `Paused at ${formatPlayerTime(playback.positionSeconds)}`
-                : "Playing for everyone"}
+                  : "Playing for everyone"))}
           </span>
         </span>
       </div>
@@ -273,6 +278,7 @@ const ActiveGroup = ({
             <Avatar name={member.displayName} size="sm" />
             <span>{member.displayName}</span>
             {member.id === memberId ? <small>You</small> : null}
+            {stillLoading(group, member.id) ? <small>Loading…</small> : null}
           </li>
         ))}
       </ul>

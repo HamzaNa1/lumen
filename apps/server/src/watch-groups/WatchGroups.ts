@@ -33,8 +33,6 @@ interface Group {
   state: WatchGroup;
   readonly passwordHash: string | null;
   emptySince: number | null;
-  /** Ends a wait for members to load that has gone on too long. */
-  holdTimer?: ReturnType<typeof setTimeout>;
 }
 interface StateDelivery {
   group: Group;
@@ -61,9 +59,6 @@ const Authentication = Schema.Union([
   }),
   Schema.Struct({ session: Schema.Literal("cookie"), ...Readiness }),
 ]);
-
-// One member that never finishes loading must not keep everyone else from watching.
-const READY_TIMEOUT_MS = 10_000;
 
 type TrustedOrigin = (request: Request, origin: string) => boolean;
 
@@ -93,15 +88,12 @@ export class WatchGroups {
     private readonly services: WatchServices,
     private readonly trustedOrigin: TrustedOrigin = (request, origin) =>
       origin === requestOrigin(request),
-    private readonly readyTimeoutMs = READY_TIMEOUT_MS,
   ) {
     this.timer = setInterval(() => {
       this.attempts.sweep(Date.now());
       for (const [id, group] of this.groups) {
-        if (group.emptySince !== null && Date.now() - group.emptySince > 30_000) {
-          clearTimeout(group.holdTimer);
+        if (group.emptySince !== null && Date.now() - group.emptySince > 30_000)
           this.groups.delete(id);
-        }
       }
     }, 5000);
     this.timer.unref();
@@ -174,7 +166,6 @@ export class WatchGroups {
   close(): void {
     clearInterval(this.timer);
     for (const socket of this.sockets) socket.close(1001, "Server stopping");
-    for (const group of this.groups.values()) clearTimeout(group.holdTimer);
     this.groups.clear();
   }
 
@@ -336,14 +327,14 @@ export class WatchGroups {
 
   /**
    * Moves the group to a position it is to play from. Members that report readiness get to
-   * load it first: the group holds there, paused, until each has or the wait runs out, so
-   * nobody starts out behind a clock that is already running.
+   * load it first: the group holds there, paused, for as long as any of them takes, so nobody
+   * starts out behind a clock that is already running. A member that leaves, disconnects, or
+   * says its device will not play is no longer waited for.
    */
   private playFrom(
     group: Group,
     position: Pick<WatchPlayback, "itemId" | "title" | "positionSeconds">,
   ): void {
-    clearTimeout(group.holdTimer);
     const waitingFor = [...this.sockets]
       .filter(({ data }) => data.groupId === group.state.id && data.readiness)
       .map(({ data }) => data.id);
@@ -359,8 +350,6 @@ export class WatchGroups {
         ...(held ? { waitingFor } : {}),
       },
     };
-    if (held)
-      group.holdTimer = setTimeout(() => this.release(group, revision), this.readyTimeoutMs);
   }
 
   /** Leaves the group at rest, no longer about to play: paused at a position, or with nothing on. */
@@ -368,7 +357,6 @@ export class WatchGroups {
     group: Group,
     position: Pick<WatchPlayback, "itemId" | "title" | "positionSeconds"> | null,
   ): void {
-    clearTimeout(group.holdTimer);
     group.state = {
       ...group.state,
       revision: group.state.revision + 1,
@@ -380,7 +368,6 @@ export class WatchGroups {
   private release(group: Group, revision: number): void {
     const playback = group.state.playback;
     if (group.state.revision !== revision || playback?.waitingFor === undefined) return;
-    clearTimeout(group.holdTimer);
     const { waitingFor: _waitingFor, ...position } = playback;
     group.state = {
       ...group.state,

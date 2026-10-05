@@ -321,7 +321,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (this.appliedGroup !== group.id) {
       this.appliedGroup = group.id;
       this.appliedRevision = -1;
-    this.heldPosition = null;
+      this.heldPosition = null;
       this.retryAt = 0;
       this.failures = 0;
     }
@@ -401,7 +401,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         this.onStatus(this.status);
       }
       if (!awaited) return;
-      if (await this.player.loaded(state.sessionId)) this.reportReady(client, group);
+      const loaded = await this.player.loaded(state.sessionId);
+      // The answer is about this group as it stood; it must not release whatever replaced it.
+      if (!current()) return;
+      if (loaded) this.reportReady(client, group);
       else this.checkReadinessSoon();
     } catch (cause) {
       if (current()) this.recordFailure(cause);
