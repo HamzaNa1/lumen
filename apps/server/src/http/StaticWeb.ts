@@ -6,7 +6,7 @@ import { LimitExceeded, RequestLimiter } from "../core/Limits";
 import type { Logger } from "../core/Logger";
 import { isPathWithin } from "../core/Paths";
 import { requestOrigin } from "./BrowserSession";
-import { clientKey } from "./RequestLogging";
+import { clientKey, type RequestContext } from "./ClientIdentity";
 import { serveFile } from "./ServeFile";
 
 /** The browser app lives under this path; everything else belongs to the API. */
@@ -90,8 +90,7 @@ const relativePath = (pathname: string): string | null => {
 };
 
 // Client-side routes have no file extension; anything that names a file must exist as one.
-const namesFile = (path: string): boolean =>
-  path.startsWith(HASHED_ASSETS) || extname(path) !== "";
+const namesFile = (path: string): boolean => path.startsWith(HASHED_ASSETS) || extname(path) !== "";
 
 /** Fails when the browser app has not been built where the server expects it. */
 export const assertWebBuild = async (root: string): Promise<void> => {
@@ -113,9 +112,10 @@ export const assertWebBuild = async (root: string): Promise<void> => {
  * for a file that is not there is answered 404, never with the page.
  */
 export const makeStaticWebHandler = (
-  config: Pick<ServerConfig, "webRoot" | "maxRequestsPerMinute" | "maxConcurrentRequests">,
+  config: Pick<ServerConfig, "webRoot" | "maxRequestsPerMinute" | "maxConcurrentRequests"> &
+    Partial<Pick<ServerConfig, "trustedProxies">>,
   logger: Logger,
-): ((request: Request) => Promise<Response>) => {
+): ((request: Request, context?: RequestContext) => Promise<Response>) => {
   // A page load fetches a handful of files at once. Counting those here, apart from the API's
   // limiter, keeps them from spending the allowance that sign-in and API requests rely on.
   const limiter = new RequestLimiter({
@@ -182,8 +182,8 @@ export const makeStaticWebHandler = (
     });
   };
 
-  return async (request) => {
-    const key = clientKey(request);
+  return async (request, context) => {
+    const key = clientKey(request, context, config.trustedProxies);
     const nowMs = Date.now();
     if (nowMs - sweptAtMs >= 60_000) {
       sweptAtMs = nowMs;
@@ -191,14 +191,16 @@ export const makeStaticWebHandler = (
     }
     try {
       return await Effect.runPromise(
-        limiter.check(key, nowMs).pipe(
-          Effect.flatMap(() =>
-            limiter.run(
-              key,
-              Effect.tryPromise({ try: () => respond(request), catch: (cause) => cause }),
+        limiter
+          .check(key, nowMs)
+          .pipe(
+            Effect.flatMap(() =>
+              limiter.run(
+                key,
+                Effect.tryPromise({ try: () => respond(request), catch: (cause) => cause }),
+              ),
             ),
           ),
-        ),
       );
     } catch (cause) {
       if (cause instanceof LimitExceeded)

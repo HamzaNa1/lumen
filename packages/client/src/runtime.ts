@@ -153,16 +153,14 @@ export interface PlaybackRuntime {
   readonly onState: (callback: (state: PlayerState | null) => void) => Unsubscribe;
   /** Playback failed after it had started. */
   readonly onFailure: (callback: (message: string) => void) => Unsubscribe;
-  readonly mountSurface: (
-    element: HTMLElement,
-    onError: (cause: unknown) => void,
-  ) => PlayerSurface;
+  readonly mountSurface: (element: HTMLElement, onError: (cause: unknown) => void) => PlayerSurface;
   readonly fullscreen: (enabled: boolean) => Promise<boolean>;
   readonly fullscreenState: () => Promise<boolean>;
   readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => Unsubscribe;
   readonly presentation: PlayerPresentation;
   /** Present only where the player controls the audio device itself. */
   readonly nativeAudio: NativeAudioRuntime | null;
+  readonly copyDiagnostics?: () => Promise<void>;
 }
 
 export interface WatchRuntime {

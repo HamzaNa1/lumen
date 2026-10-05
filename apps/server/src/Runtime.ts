@@ -256,7 +256,11 @@ const startConfiguredServer = async (
         if (pathname === "/api/v1/watch-groups") return watchGroups.upgrade(request, server);
         // The app's files are matched by prefix before the API sees the request, and the API
         // owns every other path, so neither can answer for the other.
-        return isWebPath(pathname) ? web(request) : handler(request);
+        const context = {
+          peerAddress: server.requestIP(request)?.address ?? null,
+          disableIdleTimeout: () => server.timeout(request, 0),
+        };
+        return isWebPath(pathname) ? web(request, context) : handler(request, context);
       },
       websocket: watchGroups.websocket,
     });

@@ -87,6 +87,9 @@ describe("HTTP and lifecycle logging", () => {
     );
     expect(denied.status).toBe(401);
     expect((await denied.json()).requestId).toBe(denied.headers.get("x-request-id"));
+    expect((await fetch(new Request("http://localhost/api/v1/items/private-title"))).status).toBe(
+      401,
+    );
     const limited = await fetch(new Request("http://localhost/api/v1/items/private-title"));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).not.toBeNull();
@@ -100,6 +103,7 @@ describe("HTTP and lifecycle logging", () => {
     );
     expect(invalid.status).toBe(400);
     expect(logging.records.map(({ level, status }) => [level, status])).toEqual([
+      ["warn", 401],
       ["warn", 401],
       ["warn", 429],
       ["warn", 400],
