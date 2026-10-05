@@ -11,8 +11,9 @@ import {
   type LibraryAccess,
   type LibrarySummary,
   ManagedUser,
-  PlayableStream,
-  type PlayerSession,
+  ManagedDelivery,
+  PlayerSession,
+  type BrowserDelivery,
   type PlayerState,
   type ScanRun,
   type ServerDiscovery,
@@ -195,18 +196,6 @@ const itemPageSchema = Schema.Struct({
   nextCursor: Schema.NullOr(Schema.String),
 });
 
-const playerSessionSchema = Schema.Struct({
-  sessionId: Schema.String,
-  itemId: Schema.String,
-  sourceId: Schema.String,
-  title: Schema.String,
-  streamUrl: Schema.String,
-  durationSeconds: Schema.NullOr(Schema.Number),
-  streams: Schema.Array(PlayableStream),
-  grantExpiresInSeconds: Schema.Number,
-  grantToken: Schema.String,
-});
-
 const metadataSettingsSchema = Schema.Struct({ tmdbConfigured: Schema.Boolean });
 const runSchema = Schema.Struct({ runId: Schema.String });
 
@@ -236,7 +225,10 @@ const decodeSession = (value: unknown): AccountSession => {
 
 const readJson = async (response: Response): Promise<unknown> => {
   if (!response.ok) {
-    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get("retry-after"), Date.now());
+    const retryAfterSeconds = parseRetryAfterSeconds(
+      response.headers.get("retry-after"),
+      Date.now(),
+    );
     let message = `Server request failed (${response.status})`;
     try {
       const body = (await response.json()) as { message?: unknown };
@@ -309,7 +301,9 @@ export class ServerApi {
         headers,
         redirect: "manual",
         signal,
-        ...(this.credentials.cookies === undefined ? {} : { credentials: this.credentials.cookies }),
+        ...(this.credentials.cookies === undefined
+          ? {}
+          : { credentials: this.credentials.cookies }),
       });
     } catch (cause) {
       if (scope.signal.aborted) throw new RequestCancelledError();
@@ -412,7 +406,10 @@ export class ServerApi {
 
   // Browser sessions: the server keeps the token in an HttpOnly cookie and answers with the account.
 
-  async browserRegister(input: CredentialsInput, device: DeviceDescription): Promise<BrowserSession> {
+  async browserRegister(
+    input: CredentialsInput,
+    device: DeviceDescription,
+  ): Promise<BrowserSession> {
     return this.signIn(
       "/api/v1/auth/browser/register",
       jsonBody("POST", {
@@ -634,12 +631,48 @@ export class ServerApi {
 
   // Playback sessions
 
-  async startPlayback(itemId: string): Promise<PlayerSession> {
+  get supportsManagedStreaming(): boolean {
+    return this.serverIdentity?.capabilities?.managedStreaming === true;
+  }
+
+  async startPlayback(itemId: string, browserDelivery?: BrowserDelivery): Promise<PlayerSession> {
+    // Older renderers passed a device ID here; device identity comes from credentials.
+    const delivery =
+      browserDelivery === "auto" || browserDelivery === "direct" || browserDelivery === "managed"
+        ? browserDelivery
+        : undefined;
     return this.request(
       "/api/v1/playback/sessions",
-      jsonBody("POST", { trackId: itemId }),
-      playerSessionSchema,
+      jsonBody("POST", { trackId: itemId, browserDelivery: delivery }),
+      PlayerSession,
     );
+  }
+
+  async preparePlayback(sessionId: string, signal?: AbortSignal): Promise<ManagedDelivery> {
+    return this.request(
+      `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/managed`,
+      {
+        ...jsonBody("POST", {}),
+        signal,
+      },
+      ManagedDelivery,
+    );
+  }
+
+  async managedPlaybackStatus(sessionId: string, signal?: AbortSignal): Promise<ManagedDelivery> {
+    return this.request(
+      `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/managed`,
+      {
+        signal,
+      },
+      ManagedDelivery,
+    );
+  }
+
+  async cancelPreparation(sessionId: string): Promise<void> {
+    await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/managed`, {
+      method: "DELETE",
+    });
   }
 
   async heartbeat(sessionId: string, state: PlayerState): Promise<void> {

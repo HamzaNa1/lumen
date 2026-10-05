@@ -7,7 +7,17 @@ import {
   PlaybackUnsupportedError,
   ServerHttpError,
 } from "@lumen/client";
-import type { PlayableStream, PlayerSession, PlayerState } from "@lumen/contracts";
+import type { BrowserDeliveryStatus } from "@lumen/client/runtime";
+import { DeliveryRecovery, abortableDelay } from "./playback/DeliveryRecovery";
+import { DeliveryFailure, DirectSource, type MediaSourceAdapter } from "./playback/MediaSource";
+import { HlsSource, supportsManagedType } from "./playback/HlsSource";
+import type {
+  BrowserDelivery,
+  ManagedDelivery,
+  PlayableStream,
+  PlayerSession,
+  PlayerState,
+} from "@lumen/contracts";
 
 /** The parts of an HTML media element the player drives. */
 export interface MediaElementLike {
@@ -41,7 +51,13 @@ export interface MediaElementLike {
 
 export interface BrowserPlaybackApi {
   readonly serverOrigin: string;
-  readonly startPlayback: (itemId: string) => Promise<PlayerSession>;
+  readonly startPlayback: (itemId: string, delivery?: BrowserDelivery) => Promise<PlayerSession>;
+  readonly cancelPreparation?: (sessionId: string) => Promise<void>;
+  readonly preparePlayback?: (sessionId: string, signal?: AbortSignal) => Promise<ManagedDelivery>;
+  readonly managedPlaybackStatus?: (
+    sessionId: string,
+    signal?: AbortSignal,
+  ) => Promise<ManagedDelivery>;
   readonly heartbeat: (sessionId: string, state: PlayerState) => Promise<void>;
   readonly progress: (
     sessionId: string,
@@ -62,6 +78,16 @@ export interface HtmlMediaPlayerOptions {
   /** Playback that had started can no longer continue. */
   readonly onFailure: (cause: Error) => void;
   readonly loadTimeoutMs?: number;
+  readonly preparationTimeoutMs?: number;
+  readonly deliveryPreference?: () => BrowserDelivery;
+  readonly managedSupported?: () => boolean;
+  readonly workerPath?: string;
+  readonly onDeliveryStatus?: (status: BrowserDeliveryStatus | null) => void;
+  readonly sourceFactory?: (
+    delivery: ManagedDelivery,
+    recovery: DeliveryRecovery,
+    onFailure: (failure: DeliveryFailure) => void,
+  ) => MediaSourceAdapter;
   /** How long a command waits for the browser to answer a request to play. */
   readonly playAnswerTimeoutMs?: number;
 }
@@ -81,6 +107,7 @@ interface ActiveSession {
   suspended: boolean;
   /** Whether playback was running when the page was hidden. */
   playingBeforeSuspend: boolean;
+  suspendedSnapshot: PlayerState | null;
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
@@ -147,6 +174,13 @@ export class HtmlMediaPlayer {
   private stopping: Promise<void> | null = null;
   private recoveries: number[] = [];
   private leaving = false;
+  private opening: {
+    readonly abort: AbortController;
+    readonly reporter: PlaybackSessionReporter;
+  } | null = null;
+  private source: MediaSourceAdapter | null = null;
+  private deliveryRecovery = new DeliveryRecovery();
+  private grantReconciled = false;
   private diagnostics = new PlaybackDiagnostics();
 
   playbackDiagnostics(): string {
@@ -157,7 +191,7 @@ export class HtmlMediaPlayer {
     );
   }
 
-  constructor(options: HtmlMediaPlayerOptions) {
+  constructor(private readonly options: HtmlMediaPlayerOptions) {
     this.element = options.element;
     this.api = options.api;
     this.onState = options.onState;
@@ -176,6 +210,8 @@ export class HtmlMediaPlayer {
     await this.stopActive();
     if (generation !== this.generation) throw cancelled();
     this.recoveries = [];
+    this.deliveryRecovery = new DeliveryRecovery();
+    this.grantReconciled = false;
     const diagnostics = new PlaybackDiagnostics();
     this.diagnostics = diagnostics;
     try {
@@ -202,7 +238,7 @@ export class HtmlMediaPlayer {
     const active = this.requireActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
-    this.element.currentTime = positionSeconds;
+    this.source?.seek(positionSeconds);
     return this.publish(active);
   }
 
@@ -216,6 +252,7 @@ export class HtmlMediaPlayer {
       // A paused browser fetches only as much as it sees fit, and reports what it holds by its
       // own estimate, so it may come to rest short of any amount that is waited for.
       settled:
+        this.source?.kind === "direct" &&
         !element.seeking &&
         element.readyState >= HAVE_FUTURE_DATA &&
         element.networkState === NETWORK_IDLE,
@@ -302,11 +339,18 @@ export class HtmlMediaPlayer {
    * relied on to arrive: a session that is never closed expires on the server.
    */
   leave(): void {
+    if (this.opening !== null) {
+      void this.stop();
+      return;
+    }
     const active = this.active;
     if (active === null || active.suspended) return;
     active.suspended = true;
     active.playingBeforeSuspend = !this.element.paused;
     this.element.pause();
+    active.suspendedSnapshot = this.snapshot(active);
+    this.source?.dispose();
+    this.source = null;
     this.leaving = true;
     void active.reporter
       .saveProgress(this.snapshot(active))
@@ -356,30 +400,124 @@ export class HtmlMediaPlayer {
     startAtSeconds: number,
     paused: boolean,
   ): Promise<void> {
-    const session = await this.api.startPlayback(itemId);
-    const reporter = new PlaybackSessionReporter(this.sessionApi(), session.sessionId, () => {
-      // A failed report is retried by the next one; it must not interrupt playback.
-    });
+    const requested = this.options.deliveryPreference?.() ?? "direct";
+    const managed = requested === "managed" && this.options.managedSupported?.() === true;
+    const session = await this.api.startPlayback(itemId, managed ? "managed" : undefined);
+    const reporter = new PlaybackSessionReporter(
+      this.sessionApi(),
+      session.sessionId,
+      () => undefined,
+    );
     if (generation !== this.generation) {
       await reporter.end();
       throw cancelled();
     }
+    const opening = { abort: new AbortController(), reporter };
+    this.opening = opening;
+    let preparationHeartbeat: ReturnType<typeof setInterval> | undefined;
+    let heartbeatPending = false;
     try {
-      this.assertAudioSupported(session.streams);
-      await this.load(generation, session);
-      // The element is shared: metadata may have arrived for a newer start's source.
+      if (
+        managed &&
+        this.api.preparePlayback !== undefined &&
+        this.api.managedPlaybackStatus !== undefined
+      ) {
+        const preparationState: PlayerState = {
+          sessionId: session.sessionId,
+          itemId,
+          paused: true,
+          positionSeconds: Math.round(startAtSeconds),
+          durationSeconds: session.durationSeconds,
+          bufferedRanges: [],
+          volume: Math.round(this.element.volume * 100),
+          muted: this.element.muted,
+          ended: false,
+          streams: [],
+          selectedAudioStreamId: null,
+          selectedSubtitleStreamId: null,
+          audioOutput: "stereo",
+          buffering: true,
+        };
+        preparationHeartbeat = setInterval(() => {
+          if (heartbeatPending || opening.abort.signal.aborted) return;
+          heartbeatPending = true;
+          void this.api
+            .heartbeat(session.sessionId, preparationState)
+            .catch(() => undefined)
+            .finally(() => {
+              heartbeatPending = false;
+            });
+        }, 9_000);
+        const delivery = await this.prepare(session, opening.abort.signal);
+        clearInterval(preparationHeartbeat);
+        if (generation !== this.generation) throw cancelled();
+        if (
+          delivery.state === "ready" &&
+          delivery.mimeType !== null &&
+          (this.options.sourceFactory !== undefined || supportsManagedType(delivery.mimeType))
+        ) {
+          this.options.onDeliveryStatus?.({
+            phase: "managed",
+            progress: 1,
+            message: "Managed playback · Original quality",
+          });
+          const onFailure = (failure: DeliveryFailure): void => {
+            if (generation === this.generation) void this.managedFailure(failure);
+          };
+          this.source =
+            this.options.sourceFactory?.(delivery, this.deliveryRecovery, onFailure) ??
+            new HlsSource(
+              this.element,
+              this.api.serverOrigin,
+              delivery,
+              this.deliveryRecovery,
+              this.options.workerPath ?? "",
+              this.loadTimeoutMs,
+              onFailure,
+            );
+        } else {
+          void this.api.cancelPreparation?.(session.sessionId).catch(() => undefined);
+          if (!this.directViable(session)) throw new PlaybackUnsupportedError(UNSUPPORTED_FORMAT);
+          this.options.onDeliveryStatus?.({
+            phase: "direct",
+            progress: 1,
+            message: `${delivery.unavailableReason ?? "This browser cannot use managed playback"}. Using direct playback.`,
+          });
+        }
+      } else {
+        this.options.onDeliveryStatus?.({
+          phase: "direct",
+          progress: 1,
+          message:
+            requested === "managed"
+              ? "Managed playback is unavailable. Using direct playback."
+              : "Direct playback · Original quality",
+        });
+      }
+      if (this.source === null) {
+        this.assertAudioSupported(session.streams);
+        this.source = new DirectSource(
+          this.element,
+          this.api.serverOrigin,
+          this.loadTimeoutMs,
+          () => describeMediaError(this.element.error?.code),
+        );
+      }
+      await this.source.load(session, startAtSeconds, opening.abort.signal);
       if (generation !== this.generation) throw cancelled();
     } catch (cause) {
-      // Only the latest start owns the element. A replaced one must leave its successor's
-      // source alone and just close the session it opened.
       if (generation === this.generation) this.unload();
       await reporter.end();
-      throw cause;
+      throw generation !== this.generation ? cancelled() : cause;
+    } finally {
+      clearInterval(preparationHeartbeat);
+      if (this.opening === opening) this.opening = null;
     }
     const audioStreams = session.streams.filter((stream) => stream.kind === "audio");
-    // Offer audio tracks only when the browser exposes exactly the tracks the server lists.
     const switchable =
-      audioStreams.length > 1 && this.element.audioTracks?.length === audioStreams.length;
+      this.source?.kind === "direct" &&
+      audioStreams.length > 1 &&
+      this.element.audioTracks?.length === audioStreams.length;
     const active: ActiveSession = {
       session,
       reporter,
@@ -393,11 +531,11 @@ export class HtmlMediaPlayer {
       heldPlay: null,
       suspended: false,
       playingBeforeSuspend: false,
+      suspendedSnapshot: null,
     };
     this.active = active;
     active.detach = this.attach(active);
-    if (Number.isFinite(startAtSeconds) && startAtSeconds > 0)
-      this.element.currentTime = startAtSeconds;
+    if (Number.isFinite(startAtSeconds) && startAtSeconds > 0) this.source?.seek(startAtSeconds);
     try {
       if (!paused) await this.play(active);
     } catch (cause) {
@@ -407,36 +545,74 @@ export class HtmlMediaPlayer {
     if (this.active === active) this.publish(active);
   }
 
-  /** Points the element at the media and waits until the browser can tell whether it will play. */
-  private load(generation: number, session: PlayerSession): Promise<void> {
-    // The grant authorises this one file for this one session. It appears only in the element's
-    // source: never in state handed to the application, and never in anything that is stored.
-    const url = new URL(session.streamUrl, this.api.serverOrigin);
-    url.searchParams.set("grant", session.grantToken);
-    return new Promise<void>((resolve, reject) => {
-      const settle = (outcome: () => void): void => {
-        clearTimeout(timer);
-        clearInterval(watchdog);
-        this.element.removeEventListener("loadedmetadata", onLoaded);
-        this.element.removeEventListener("error", onError);
-        outcome();
-      };
-      const onLoaded = (): void => settle(resolve);
-      const onError = (): void =>
-        settle(() => reject(describeMediaError(this.element.error?.code)));
-      const timer = setTimeout(
-        () => settle(() => reject(new Error("Timed out waiting for media to load"))),
-        this.loadTimeoutMs,
+  private async prepare(session: PlayerSession, signal: AbortSignal): Promise<ManagedDelivery> {
+    const deadline = Date.now() + (this.options.preparationTimeoutMs ?? 15 * 60_000);
+    // Each authenticated request also has a deadline; a hung poll cannot extend preparation.
+    const timeout = new AbortController();
+    const timer = setTimeout(
+      () => timeout.abort(new Error("Managed preparation timed out")),
+      deadline - Date.now(),
+    );
+    const preparationSignal = AbortSignal.any([signal, timeout.signal]);
+    try {
+      this.options.onDeliveryStatus?.({
+        phase: "preparing",
+        progress: 0,
+        message: "Preparing managed playback…",
+      });
+      let delivery = await this.api.preparePlayback?.(session.sessionId, preparationSignal);
+      if (delivery === undefined) throw new Error("Managed preparation is unavailable");
+      for (;;) {
+        preparationSignal.throwIfAborted();
+        this.options.onDeliveryStatus?.({
+          phase: "preparing",
+          progress: delivery.progress,
+          message:
+            delivery.state === "queued"
+              ? "Waiting to prepare managed playback…"
+              : `Preparing managed playback… ${Math.floor(delivery.progress * 100)}%`,
+        });
+        if (delivery.state !== "queued" && delivery.state !== "preparing") return delivery;
+        await abortableDelay(500, preparationSignal);
+        const status = await this.api.managedPlaybackStatus?.(session.sessionId, preparationSignal);
+        if (status === undefined) throw new Error("Managed preparation is unavailable");
+        delivery = status;
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private directViable(session: PlayerSession): boolean {
+    try {
+      this.assertAudioSupported(session.streams);
+    } catch {
+      return false;
+    }
+    return (
+      session.directMimeType !== undefined &&
+      this.element.canPlayType(session.directMimeType) !== ""
+    );
+  }
+
+  private async managedFailure(failure: DeliveryFailure): Promise<void> {
+    const active = this.active;
+    if (active === null) return;
+    if (failure.kind === "authorization" && !this.grantReconciled) {
+      this.grantReconciled = true;
+      try {
+        await this.api.heartbeat(active.session.sessionId, this.snapshot(active));
+      } catch (cause) {
+        if (cause instanceof ServerHttpError && (cause.status === 404 || cause.status === 409)) {
+          if (this.active === active) await this.reopen(active);
+          return;
+        }
+      }
+    }
+    if (this.active === active)
+      await this.fail(
+        failure.kind === "decode" ? new PlaybackUnsupportedError(failure.message) : failure,
       );
-      // A newer start or stop abandons this load without waiting for the browser to give up.
-      const watchdog = setInterval(() => {
-        if (generation !== this.generation) settle(() => reject(cancelled()));
-      }, 50);
-      this.element.addEventListener("loadedmetadata", onLoaded);
-      this.element.addEventListener("error", onError);
-      this.element.src = url.toString();
-      this.element.load();
-    });
   }
 
   /** A file whose default audio the browser cannot decode would play silently; say so instead. */
@@ -503,6 +679,10 @@ export class HtmlMediaPlayer {
 
   private attach(active: ActiveSession): () => void {
     const update = (): void => {
+      this.deliveryRecovery.observe(
+        this.element.currentTime,
+        !this.element.paused && !active.buffering && !this.element.seeking,
+      );
       if (this.active === active) this.publish(active);
     };
     const buffering = (waiting: boolean) => (): void => {
@@ -537,7 +717,13 @@ export class HtmlMediaPlayer {
     };
     const onError = (): void => {
       record("browser_error");
-      if (this.active === active) void this.recover(active, this.element.error?.code);
+      if (this.active === active) {
+        if (this.source?.kind === "managed")
+          void this.managedFailure(
+            new DeliveryFailure("decode", "This browser cannot decode this managed file."),
+          );
+        else void this.recover(active, this.element.error?.code);
+      }
     };
     const onEnded = (): void => {
       update();
@@ -583,7 +769,8 @@ export class HtmlMediaPlayer {
 
   /** Replaces a session the server no longer honours with a new one at the same position. */
   private async reopen(active: ActiveSession): Promise<void> {
-    const { positionSeconds, paused } = this.snapshot(active);
+    const { positionSeconds, paused, volume, muted } = this.snapshot(active);
+    const speed = this.element.playbackRate;
     const wasPaused = active.suspended
       ? !active.playingBeforeSuspend
       : paused && !active.awaitingInteraction;
@@ -593,6 +780,11 @@ export class HtmlMediaPlayer {
     if (generation !== this.generation) return;
     try {
       await this.open(generation, active.session.itemId, positionSeconds, wasPaused);
+      if (generation === this.generation) {
+        this.element.volume = volume / 100;
+        this.element.muted = muted;
+        this.element.playbackRate = speed;
+      }
     } catch (cause) {
       if (generation !== this.generation) return;
       // The old session was retired quietly; now that nothing replaces it, say that it is gone.
@@ -615,6 +807,14 @@ export class HtmlMediaPlayer {
     readonly announce?: boolean;
   } = {}): Promise<void> {
     if (this.stopping !== null) return this.stopping;
+    const opening = this.opening;
+    if (opening !== null) {
+      this.opening = null;
+      opening.abort.abort();
+      this.unload();
+      this.options.onDeliveryStatus?.(null);
+      return opening.reporter.end();
+    }
     const active = this.active;
     if (active === null) return Promise.resolve();
     const state = this.snapshot(active);
@@ -622,7 +822,10 @@ export class HtmlMediaPlayer {
     active.detach();
     active.reporter.retire();
     this.unload();
-    if (announce) this.onState(null);
+    if (announce) {
+      this.onState(null);
+      this.options.onDeliveryStatus?.(null);
+    }
     const stopping = (async () => {
       // A suspended session has already saved its position and ended.
       if (saveProgress && !active.suspended) await active.reporter.saveProgress(state);
@@ -635,6 +838,8 @@ export class HtmlMediaPlayer {
   }
 
   private unload(): void {
+    this.source?.dispose();
+    this.source = null;
     this.element.pause();
     this.element.removeAttribute("src");
     this.element.load();
@@ -651,6 +856,7 @@ export class HtmlMediaPlayer {
   }
 
   private snapshot(active: ActiveSession): PlayerState {
+    if (active.suspendedSnapshot !== null) return active.suspendedSnapshot;
     const { element } = this;
     const bufferedRanges = [];
     for (let index = 0; index < element.buffered.length; index += 1) {
@@ -668,6 +874,9 @@ export class HtmlMediaPlayer {
           ? element.duration
           : active.session.durationSeconds,
       bufferedRanges,
+      ...(this.source?.estimatedEncodedBytes === undefined
+        ? {}
+        : { estimatedEncodedBytes: this.source.estimatedEncodedBytes() }),
       volume: Math.round(element.volume * 100),
       muted: element.muted,
       ended: element.ended,

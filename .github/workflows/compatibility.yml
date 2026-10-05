@@ -11,5 +11,7 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
+      - run: sudo apt-get update && sudo apt-get install --yes ffmpeg
+      - run: ffmpeg -version && ffprobe -version
       - run: bun install --frozen-lockfile
       - run: bun test tests/compatibility tests/server tests/web tests/desktop tests/shared

@@ -24,6 +24,7 @@ export class PlaybackSessionReporter {
   private sequence = 0;
   private reporting = false;
   private retired = false;
+  private ending: Promise<void> | null = null;
 
   constructor(
     private readonly api: PlaybackSessionApi,
@@ -66,10 +67,9 @@ export class PlaybackSessionReporter {
   }
 
   /** Ends the session on the server. A session that cannot be reached expires there on its own. */
-  async end(): Promise<void> {
+  end(): Promise<void> {
     this.retired = true;
-    try {
-      await this.api.stopPlayback(this.sessionId);
-    } catch {}
+    this.ending ??= this.api.stopPlayback(this.sessionId).catch(() => undefined);
+    return this.ending;
   }
 }

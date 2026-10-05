@@ -1,14 +1,6 @@
-import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { type BrowserContext, expect, test } from "@playwright/test";
 
-const PASSWORD = "correct horse battery staple";
-
-const signIn = async (page: Page): Promise<void> => {
-  await page.goto("/web/");
-  await page.getByLabel("Username").fill("admin");
-  await page.getByLabel("Password").fill(PASSWORD);
-  await page.getByRole("button", { name: "Sign in" }).click();
-  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
-};
+import { PASSWORD, signIn } from "./session";
 
 const sessionCookie = async (context: BrowserContext) =>
   (await context.cookies()).find((cookie) => cookie.name === "lumen_session");
@@ -65,7 +57,9 @@ test("every route survives direct navigation and refresh", async ({ page }) => {
     "/web/library",
   ]) {
     await page.goto(path);
-    await expect(page).toHaveURL(new RegExp(`${path}$`, "u"));
+    const route =
+      path === "/web/library" ? /\/web\/library(?:\/[^/]+)?$/u : new RegExp(`${path}$`, "u");
+    await expect(page).toHaveURL(route);
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     await page.reload();
     await expect(page.locator(".page").first()).toBeVisible();

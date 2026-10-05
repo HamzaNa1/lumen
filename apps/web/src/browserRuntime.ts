@@ -7,8 +7,10 @@ import {
   type WatchPlayer,
   type WatchServer,
 } from "@lumen/client";
-import type { LumenRuntime, PlayerSurface } from "@lumen/client/runtime";
-import type { PlayerState, WatchStatus } from "@lumen/contracts";
+import type { BrowserDeliveryStatus, LumenRuntime, PlayerSurface } from "@lumen/client/runtime";
+import type { BrowserDelivery, PlayerState, WatchStatus } from "@lumen/contracts";
+import Hls from "hls.js";
+import workerPath from "hls.js/dist/hls.worker.js?url";
 import { BrowserAccounts } from "./BrowserAccounts";
 import { HtmlMediaPlayer } from "./HtmlMediaPlayer";
 
@@ -37,6 +39,14 @@ const subscribers = <T>() => {
  */
 export const createBrowserRuntime = (origin: string = window.location.origin): BrowserRuntime => {
   const playerStates = subscribers<PlayerState | null>();
+  const deliveryStates = subscribers<BrowserDeliveryStatus | null>();
+  let deliveryStatus: BrowserDeliveryStatus | null = null;
+  const preferenceKey = "lumen.browser-delivery";
+  let deliveryPreference: BrowserDelivery = "auto";
+  try {
+    const saved = localStorage.getItem(preferenceKey);
+    if (saved === "auto" || saved === "direct" || saved === "managed") deliveryPreference = saved;
+  } catch {}
   const playerFailures = subscribers<string>();
   const watchStates = subscribers<WatchStatus>();
   const fullscreenChanges = subscribers<boolean>();
@@ -63,6 +73,13 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
   const player = new HtmlMediaPlayer({
     element: video,
     api,
+    workerPath,
+    deliveryPreference: () => deliveryPreference,
+    managedSupported: () => api.supportsManagedStreaming && Hls.isSupported(),
+    onDeliveryStatus: (status) => {
+      deliveryStatus = status;
+      deliveryStates.emit(status);
+    },
     onState: playerStates.emit,
     onFailure: (cause) => {
       // The group must learn that this viewer's player failed, or leaving the player afterwards
@@ -201,6 +218,20 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     // The image element sends the session cookie itself, so artwork loads straight from the server.
     artwork: { url: async (artworkId) => api.artworkPath(artworkId) },
     playback: {
+      browserDelivery: {
+        get supported() {
+          return api.supportsManagedStreaming;
+        },
+        preference: () => deliveryPreference,
+        setPreference: (preference) => {
+          deliveryPreference = preference;
+          try {
+            localStorage.setItem(preferenceKey, preference);
+          } catch {}
+        },
+        status: () => deliveryStatus,
+        onStatus: deliveryStates.subscribe,
+      },
       start: async (itemId, startAtSeconds, title) => {
         await commands.start(itemId, startAtSeconds, title);
       },

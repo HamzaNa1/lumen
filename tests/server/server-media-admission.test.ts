@@ -61,6 +61,83 @@ describe("media response setup admission", () => {
       false,
     );
   });
+  test("managed artifacts use media admission only for exact GET/HEAD routes", () => {
+    const root = `http://x/api/v1/managed-media/track/${"a".repeat(64)}`;
+    for (const name of ["index.m3u8", "init.mp4", "segment-0.m4s"])
+      for (const method of ["GET", "HEAD"])
+        expect(isMediaRequest(new Request(`${root}/${name}`, { method }))).toBe(true);
+    for (const suffix of ["init.mp4/extra", "../private", "unknown.m4s"])
+      expect(isMediaRequest(new Request(`${root}/${suffix}`))).toBe(false);
+    expect(isMediaRequest(new Request(`${root}/index.m3u8`, { method: "POST" }))).toBe(false);
+  });
+
+  test("managed media bypasses exhausted control allowance and holds body permits by trusted peer", async () => {
+    const workspace = await mkdtemp(join(tmpdir(), "managed-admission-"));
+    const path = join(workspace, "init.mp4");
+    await writeFile(path, "abcdefghij");
+    let releases = 0;
+    const handler = makeHttpHandler(
+      {
+        playback: {
+          managedGrant: () => Effect.succeed({ sessionId: "session", userId: "user" }),
+        },
+        managedStreaming: {
+          available: true,
+          artifact: async () => ({
+            path,
+            size: 10,
+            modifiedAtMs: 0,
+            mimeType: "video/mp4",
+            release: () => {
+              releases += 1;
+            },
+          }),
+        },
+      } as unknown as HttpServices,
+      {
+        ...decodeConfig({}),
+        maxRequestsPerMinute: 1,
+        streamMaxOpenBodies: 2,
+        streamMaxOpenBodiesPerIp: 1,
+      },
+      createLogger({ level: "error", destination: { write() {} } }),
+    );
+    const url = `http://x/api/v1/managed-media/track/${"a".repeat(64)}/init.mp4`;
+    const media = () =>
+      new Request(url, {
+        headers: { authorization: "Bearer private-grant", "x-forwarded-for": "192.0.2.99" },
+      });
+    let first: Response | undefined;
+    let other: Response | undefined;
+    try {
+      expect(
+        (await handler(new Request("http://x/health/live"), context("192.0.2.1"))).status,
+      ).toBe(200);
+      expect(
+        (await handler(new Request("http://x/health/live"), context("192.0.2.1"))).status,
+      ).toBe(429);
+      first = await handler(media(), context("192.0.2.1"));
+      expect(first.status).toBe(200);
+      expect((await handler(media(), context("192.0.2.1"))).status).toBe(429);
+      other = await handler(media(), context("192.0.2.2"));
+      expect(other.status).toBe(200);
+      await first.body?.cancel();
+      first = undefined;
+      expect(releases).toBe(1);
+      expect(await other.text()).toBe("abcdefghij");
+      other = undefined;
+      expect(releases).toBe(2);
+      const next = await handler(media(), context("192.0.2.1"));
+      expect(next.status).toBe(200);
+      await next.body?.cancel();
+      expect(releases).toBe(3);
+    } finally {
+      await first?.body?.cancel();
+      await other?.body?.cancel();
+      await rm(workspace, { recursive: true, force: true });
+    }
+  });
+
   test("permits startup/seek bursts across concurrent viewers, refills rates and bounds authenticated identities", () => {
     const admission = new MediaAdmission({
       ...decodeConfig({}),
@@ -304,7 +381,7 @@ test("authenticated setup slots span asynchronous file validation and release af
     ).toHaveLength(3);
     expect((await handler(request(), context("192.0.2.5"))).status).toBe(200);
     await rm(path);
-    expect((await handler(request(), context("192.0.2.6"))).status).toBe(500);
+    expect((await handler(request(), context("192.0.2.6"))).status).toBe(404);
     await writeFile(path, "abcdefghij");
     expect((await handler(request(), context("192.0.2.7"))).status).toBe(200);
   } finally {

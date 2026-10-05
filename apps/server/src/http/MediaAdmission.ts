@@ -14,7 +14,24 @@ export const mediaTrackIdFor = (request: Request): string | null => {
   return /^\/api\/v1\/media\/([^/]+)$/u.exec(new URL(request.url).pathname)?.[1] ?? null;
 };
 
-export const isMediaRequest = (request: Request): boolean => mediaTrackIdFor(request) !== null;
+export const managedMediaArtifactFor = (
+  request: Request,
+): {
+  readonly trackId: string;
+  readonly packageId: string;
+  readonly artifact: string;
+} | null => {
+  if (request.method !== "GET" && request.method !== "HEAD") return null;
+  const match =
+    /^\/api\/v1\/managed-media\/([^/]+)\/([a-f0-9]{64})\/(index\.m3u8|init\.mp4|segment-\d+\.m4s)$/u.exec(
+      new URL(request.url).pathname,
+    );
+  if (match?.[1] === undefined || match[2] === undefined || match[3] === undefined) return null;
+  return { trackId: match[1], packageId: match[2], artifact: match[3] };
+};
+
+export const isMediaRequest = (request: Request): boolean =>
+  mediaTrackIdFor(request) !== null || managedMediaArtifactFor(request) !== null;
 
 /** Covers grant authorization and response creation. Live Bun.file transfers are not counted. */
 export class MediaAdmission {

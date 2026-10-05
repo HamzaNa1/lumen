@@ -42,6 +42,8 @@ const literalSegments = new Set([
   "sidecars",
   "library-roots",
   "media",
+  "managed",
+  "managed-media",
   "cancel",
   "retry",
 ]);

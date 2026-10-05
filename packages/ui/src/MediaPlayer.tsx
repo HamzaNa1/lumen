@@ -26,6 +26,7 @@ interface MediaPlayerProps {
   readonly subtitle?: string;
   readonly paused: boolean;
   readonly loading: boolean;
+  readonly loadingMessage?: string;
   readonly error: string | null;
   readonly position: number;
   readonly duration: number | null;
@@ -69,6 +70,7 @@ export const MediaPlayer = ({
   subtitle,
   paused,
   loading,
+  loadingMessage,
   error,
   position,
   duration,
@@ -146,7 +148,13 @@ export const MediaPlayer = ({
           <button
             className="media-player-video-hit-target"
             type="button"
-            aria-label={settingsOpen ? "Close playback settings" : paused ? "Resume playback" : "Pause playback"}
+            aria-label={
+              settingsOpen
+                ? "Close playback settings"
+                : paused
+                  ? "Resume playback"
+                  : "Pause playback"
+            }
             disabled={!settingsOpen && inactive}
             onClick={() => {
               if (settingsOpen) setSettingsOpen(false);
@@ -166,7 +174,7 @@ export const MediaPlayer = ({
             ) : loading ? (
               <>
                 <LoaderCircle className="spinner" aria-hidden="true" size={26} />
-                <span>Starting playback…</span>
+                <span role="status">{loadingMessage ?? "Starting playback…"}</span>
               </>
             ) : awaitingInteraction ? (
               <>
@@ -217,7 +225,10 @@ export const MediaPlayer = ({
                           <span
                             key={`${startSeconds}-${endSeconds}`}
                             className="media-slider-buffered"
-                            style={{ left: `${(start / duration) * 100}%`, width: `${((end - start) / duration) * 100}%` }}
+                            style={{
+                              left: `${(start / duration) * 100}%`,
+                              width: `${((end - start) / duration) * 100}%`,
+                            }}
                             aria-hidden="true"
                           />
                         ) : null;

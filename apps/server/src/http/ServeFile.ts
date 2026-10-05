@@ -19,7 +19,9 @@ export interface ServeFileOptions {
 
 /** Answers GET and HEAD for one file, honouring conditional and range requests. */
 export const serveFile = async (options: ServeFileOptions): Promise<Response> => {
-  const details = await lstat(options.path);
+  const details = await lstat(options.path).catch(() => {
+    throw notFound("File is unavailable");
+  });
   if (!details.isFile() || details.isSymbolicLink()) throw notFound("File is unavailable");
   const etag = `W/"${options.size.toString(16)}-${Math.trunc(options.modifiedAtMs).toString(16)}"`;
   const lastModified = date(options.modifiedAtMs);

@@ -1,4 +1,4 @@
-import type { PlayerAction } from "@lumen/client/runtime";
+import type { BrowserDeliveryStatus, PlayerAction } from "@lumen/client/runtime";
 import type { PlayerDisplay, PlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,6 +20,11 @@ export const PlayerView = ({
   const runtime = useRuntime();
   const { capabilities } = runtime;
   const nativeAudio = runtime.playback.nativeAudio;
+  const delivery = runtime.playback.browserDelivery;
+  const [deliveryStatus, setDeliveryStatus] = useState<BrowserDeliveryStatus | null>(
+    delivery?.status() ?? null,
+  );
+  useEffect(() => delivery?.onStatus(setDeliveryStatus), [delivery]);
   const [watchStatus] = useWatchStatus();
   const waiting = waitingSummary(watchStatus.group);
   const [player, setPlayer] = useState<PlayerState | null>(null);
@@ -75,9 +80,14 @@ export const PlayerView = ({
       <MediaPlayer
         headerActions={<WatchGroups placement="player" />}
         title={display.title}
-        subtitle={display.context}
+        subtitle={
+          deliveryStatus?.phase === "direct" && deliveryStatus.message.includes("Using direct")
+            ? deliveryStatus.message
+            : display.context
+        }
         paused={player?.paused ?? true}
         loading={display.loading}
+        loadingMessage={deliveryStatus?.phase === "preparing" ? deliveryStatus.message : undefined}
         error={display.error}
         position={player?.positionSeconds ?? 0}
         duration={player?.durationSeconds ?? display.duration}

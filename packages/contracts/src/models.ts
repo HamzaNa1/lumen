@@ -119,6 +119,24 @@ export const PlayableStream = Schema.Struct({
 });
 export type PlayableStream = Schema.Schema.Type<typeof PlayableStream>;
 
+export const BrowserDelivery = Schema.Literals(["auto", "direct", "managed"]);
+export type BrowserDelivery = Schema.Schema.Type<typeof BrowserDelivery>;
+
+export const ManagedDelivery = Schema.Struct({
+  packageId: Schema.NullOr(Schema.String.check(Schema.isPattern(/^[a-f0-9]{64}$/u))),
+  state: Schema.Literals(["queued", "preparing", "ready", "failed", "cancelled"]),
+  progress: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 1 })),
+  manifestUrl: Schema.NullOr(Schema.String),
+  mimeType: Schema.NullOr(Schema.String),
+  videoStreamId: Schema.NullOr(Uuid),
+  audioStreamId: Schema.NullOr(Uuid),
+  unavailableReason: Schema.NullOr(Schema.String),
+  forwardBufferSeconds: Schema.Number.check(Schema.isBetween({ minimum: 5, maximum: 30 })),
+  backBufferSeconds: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 15 })),
+  encodedWindowBytes: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
+});
+export type ManagedDelivery = Schema.Schema.Type<typeof ManagedDelivery>;
+
 export const PlayerSession = Schema.Struct({
   sessionId: Uuid,
   itemId: Uuid,
@@ -129,6 +147,8 @@ export const PlayerSession = Schema.Struct({
   streams: Schema.Array(PlayableStream),
   grantExpiresInSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   grantToken: Schema.String.check(Schema.isMinLength(1)),
+  managedDelivery: Schema.optional(ManagedDelivery),
+  directMimeType: Schema.optional(Schema.String),
 });
 export type PlayerSession = Schema.Schema.Type<typeof PlayerSession>;
 
@@ -155,6 +175,8 @@ export const PlayerState = Schema.Struct({
   selectedAudioStreamId: Schema.NullOr(Uuid),
   selectedSubtitleStreamId: Schema.NullOr(Uuid),
   audioOutput: AudioOutput,
+  /** Estimate of retained encoded segments; excludes decoder and MSE allocation overhead. */
+  estimatedEncodedBytes: Schema.optional(Schema.Number.check(Schema.isGreaterThanOrEqualTo(0))),
   /** Playback stalled waiting for data. */
   buffering: Schema.optional(Schema.Boolean),
   /** The platform refuses to start playback until the viewer interacts with the player. */
