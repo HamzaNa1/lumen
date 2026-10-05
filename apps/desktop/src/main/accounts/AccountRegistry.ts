@@ -1,7 +1,7 @@
 import { app } from "electron";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AccountSummary, AccountList } from "@lumen/contracts";
+import type { AccountSummary, AccountList, UserRole } from "@lumen/contracts";
 import { createTokenVault, writePrivateJson, type VaultValue } from "./TokenVault";
 import type { AccountSession } from "../api/ServerClient";
 
@@ -12,7 +12,7 @@ interface StoredAccount {
   readonly origin: string;
   readonly username: string;
   readonly userId: string;
-  readonly role: "admin" | "user" | "guest";
+  readonly role: UserRole;
   readonly lastConnectedAtMs: number | null;
 }
 
@@ -39,7 +39,7 @@ export class AccountRegistry {
       const data = JSON.parse(await readFile(path, "utf8")) as RegistryData;
       return new AccountRegistry(path, {
         activeConnectionId: data.activeConnectionId ?? null,
-        accounts: Array.isArray(data.accounts) ? data.accounts.map((account) => ({ ...account, role: account.role ?? "user" })) : [],
+        accounts: Array.isArray(data.accounts) ? data.accounts.map((account) => ({ ...account, role: account.role === "admin" ? "admin" : "user" })) : [],
       });
     } catch {
       return new AccountRegistry(path, emptyRegistry);
@@ -77,7 +77,7 @@ export class AccountRegistry {
     readonly origin: string;
     readonly username: string;
     readonly userId: string;
-    readonly role: "admin" | "user" | "guest";
+    readonly role: UserRole;
     readonly sessionId: string;
     readonly accessToken: string;
     readonly accessExpiresAtMs: number;
@@ -114,7 +114,7 @@ export class AccountRegistry {
     await writePrivateJson(this.path, this.data);
   }
 
-  async updateRole(connectionId: string, role: "admin" | "user" | "guest"): Promise<void> {
+  async updateRole(connectionId: string, role: UserRole): Promise<void> {
     if (this.find(connectionId) === null) throw new Error("Connection not found");
     this.data = {
       ...this.data,

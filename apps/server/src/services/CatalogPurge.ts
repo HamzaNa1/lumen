@@ -9,7 +9,7 @@ import {
   catalogItemParents,
   catalogItems,
   catalogItemSources,
-  type DatabaseClient,
+  type DatabaseTransaction,
   libraries,
   mediaSources,
   outboxEvents,
@@ -21,7 +21,7 @@ import { and, asc, eq, inArray, isNotNull, notExists, notInArray, or } from "dri
 import { Effect } from "effect";
 import { queueArtworkSweep } from "../media/GeneratedArtwork";
 
-type Transaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
+type Transaction = DatabaseTransaction;
 
 export interface SourcePurgeCounts {
   readonly sourcesDeleted: number;

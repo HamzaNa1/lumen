@@ -60,7 +60,7 @@ export const libraryCount = (kind: LibrarySummary["kind"], count: number, more =
   return `${count}${more ? "+" : ""} ${count === 1 && !more ? noun[0] : noun[1]}`;
 };
 
-export const roleLabels = { admin: "Administrator", user: "User", guest: "Guest" } as const;
+export const roleLabels = { admin: "Administrator", user: "User" } as const;
 
 export const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>
   `${count} ${count === 1 ? singular : pluralForm}`;

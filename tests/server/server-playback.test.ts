@@ -45,8 +45,8 @@ const withPlaybackSession = async (
       try {
         sqlite.run("UPDATE users SET role = 'user' WHERE id = ?", [seeded.userId]);
         sqlite.run(
-          `INSERT INTO library_grants(id, library_id, user_id, role, capabilities_json, expires_at_ms, created_at_ms, updated_at_ms)
-           VALUES (?, ?, ?, 'user', '["library:read","playback:control"]', ?, ?, ?)`,
+          `INSERT INTO library_grants(id, library_id, user_id, capabilities_json, expires_at_ms, created_at_ms, updated_at_ms)
+           VALUES (?, ?, ?, '["library:read","playback:control"]', ?, ?, ?)`,
           [
             newUuid(),
             seeded.libraryId,
@@ -238,12 +238,22 @@ describe("direct-play HTTP delivery", () => {
     await withPlaybackSession(
       async ({ base, seeded, headers, sessionUrl, streamUrl, grantHeaders, advanceTo }) => {
         const deviceId = newUuid();
-        const registration = await fetch(new URL("/api/v1/auth/register", base), {
+        const created = await fetch(new URL("/api/v1/users", base), {
+          method: "POST",
+          headers,
+          body: JSON.stringify({
+            username: "other",
+            displayName: "Other",
+            password: "correct horse battery staple",
+          }),
+        });
+        expect(created.status).toBe(201);
+        await created.arrayBuffer();
+        const login = await fetch(new URL("/api/v1/auth/login", base), {
           method: "POST",
           headers: { "content-type": "application/json" },
           body: JSON.stringify({
             username: "other",
-            displayName: "Other",
             password: "correct horse battery staple",
             deviceId,
             deviceName: "Other device",
@@ -251,8 +261,8 @@ describe("direct-play HTTP delivery", () => {
             platformDeviceId: deviceId,
           }),
         });
-        expect(registration.status).toBe(201);
-        const other = (await registration.json()) as { accessToken: string };
+        expect(login.status).toBe(200);
+        const other = (await login.json()) as { accessToken: string };
         advanceTo(3_580_000);
         const denied = await fetch(`${sessionUrl}/heartbeat`, {
           method: "POST",

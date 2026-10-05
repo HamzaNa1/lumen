@@ -6,7 +6,6 @@ import {
   LibraryGrant,
   LibraryRoot,
   UpsertLibraryGrant,
-  UserRole,
   UtcMillis,
   Uuid,
 } from "@lumen/contracts";
@@ -39,7 +38,6 @@ const grantSelection = {
   id: libraryGrants.id,
   libraryId: libraryGrants.libraryId,
   userId: libraryGrants.userId,
-  role: libraryGrants.role,
   capabilitiesJson: libraryGrants.capabilitiesJson,
   canDownload: libraryGrants.canDownload,
   expiresAtMs: libraryGrants.expiresAtMs,
@@ -56,7 +54,6 @@ const mapGrant = Effect.fn("LibraryRepository.mapGrant")(function* (row: unknown
       id: Uuid,
       libraryId: Uuid,
       userId: Uuid,
-      role: UserRole,
       capabilitiesJson: Schema.String,
       canDownload: Schema.Boolean,
       expiresAtMs: Schema.NullOr(UtcMillis),
@@ -154,7 +151,6 @@ export const makeLibraryRepository = (database: DatabaseClient) => {
           id: value.id,
           libraryId: value.libraryId,
           userId: value.userId,
-          role: value.role,
           capabilitiesJson,
           canDownload: value.canDownload,
           expiresAtMs: value.expiresAtMs,
@@ -164,7 +160,6 @@ export const makeLibraryRepository = (database: DatabaseClient) => {
         .onConflictDoUpdate({
           target: [libraryGrants.libraryId, libraryGrants.userId],
           set: {
-            role: value.role,
             capabilitiesJson,
             canDownload: value.canDownload,
             expiresAtMs: value.expiresAtMs,

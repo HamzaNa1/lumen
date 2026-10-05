@@ -1,10 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
-import { readFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
 import {
   Database,
   DatabaseWithMigrationsLive,
+  defaultMigrationsFolder,
   makeDatabaseRepositories,
   sql,
 } from "../../packages/database/src/index.ts";
@@ -38,7 +41,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.foreignKeys?.foreign_keys).toBe(1);
-    expect(result.migrations?.count).toBe(6);
+    expect(result.migrations?.count).toBe(7);
     expect(result.fts?.value).toBe(1);
     expect(result.tables.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -125,6 +128,63 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
       expect(database.query("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       database.close();
+    }
+  });
+
+  test("drops the guest role without losing anything that references a user", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lumen-migration-test-"));
+    const filename = join(root, "server.sqlite");
+    const earlier = join(root, "earlier");
+    const latest = "20261005091934_restrict_roles_and_library_access";
+    const migrateTo = (folder?: string) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
+        ),
+      );
+    try {
+      cpSync(defaultMigrationsFolder, earlier, {
+        recursive: true,
+        filter: (source) => !source.includes(latest),
+      });
+      await migrateTo(earlier);
+      const before = new SqliteDatabase(filename);
+      before.exec(`
+        INSERT INTO users(id, username, username_normalized, display_name, password_hash, role, created_at_ms, updated_at_ms)
+        VALUES ('owner', 'Owner', 'owner', 'Owner', 'hash', 'admin', 1, 1),
+               ('visitor', 'Visitor', 'visitor', 'Visitor', 'hash', 'guest', 1, 1);
+        INSERT INTO devices(id, user_id, name, platform, last_seen_at_ms, created_at_ms)
+        VALUES ('device', 'visitor', 'Laptop', 'web', 1, 1);
+        INSERT INTO libraries(id, name, slug, created_at_ms, updated_at_ms)
+        VALUES ('library', 'Movies', 'movies', 1, 1);
+        INSERT INTO library_grants(id, library_id, user_id, role, capabilities_json, created_at_ms, updated_at_ms)
+        VALUES ('grant', 'library', 'visitor', 'guest', '["library:read"]', 1, 1);
+      `);
+      before.close();
+      await migrateTo();
+      const after = new SqliteDatabase(filename);
+      try {
+        expect(
+          after.query("SELECT id, role, all_libraries FROM users ORDER BY id").all(),
+        ).toEqual([
+          { id: "owner", role: "admin", all_libraries: 0 },
+          { id: "visitor", role: "user", all_libraries: 0 },
+        ]);
+        expect(after.query("SELECT id, user_id FROM devices").all()).toEqual([
+          { id: "device", user_id: "visitor" },
+        ]);
+        expect(
+          after.query("SELECT id, user_id, capabilities_json FROM library_grants").all(),
+        ).toEqual([{ id: "grant", user_id: "visitor", capabilities_json: '["library:read"]' }]);
+        expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
+        expect(() =>
+          after.exec("UPDATE users SET role = 'guest' WHERE id = 'visitor'"),
+        ).toThrow();
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 

@@ -37,7 +37,6 @@ export const ConnectionInput = Schema.Struct({
   displayName: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
   serverLabel: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  signUp: Schema.optional(Schema.Boolean),
 });
 export type ConnectionInput = Schema.Schema.Type<typeof ConnectionInput>;
 

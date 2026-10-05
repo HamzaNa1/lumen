@@ -9,6 +9,8 @@ export type DatabaseClient = EffectSQLiteBunDatabase & {
   readonly $client: Sqlite.SqliteClient;
 };
 
+export type DatabaseTransaction = Parameters<Parameters<DatabaseClient["transaction"]>[0]>[0];
+
 export class Database extends Context.Service<Database, DatabaseClient>()(
   "@lumen/database/Database",
 ) {}

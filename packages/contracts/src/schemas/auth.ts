@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { NonEmptyText, Sha256Digest, UserRole, UtcMillis, Uuid } from "./common.ts";
+import { LibraryAccess, NonEmptyText, Sha256Digest, UserRole, UtcMillis, Uuid } from "./common.ts";
 
 export const DevicePlatform = Schema.Literals(["web", "desktop", "ios", "android", "other"]);
 
@@ -13,6 +13,10 @@ export const User = Schema.Struct({
   updatedAtMs: UtcMillis,
 });
 export type User = Schema.Schema.Type<typeof User>;
+
+/** A user as administrators manage it, including the libraries it may use. */
+export const ManagedUser = Schema.Struct({ ...User.fields, libraryAccess: LibraryAccess });
+export type ManagedUser = Schema.Schema.Type<typeof ManagedUser>;
 
 export const Device = Schema.Struct({
   id: Uuid,

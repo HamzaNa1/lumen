@@ -1,13 +1,32 @@
+import { GrantCapability, type LibraryAccess } from "@lumen/contracts";
 import {
   authSessions,
   Database,
+  type DatabaseClient,
+  type DatabaseTransaction,
   devices,
   libraries,
+  libraryGrants,
   libraryProfiles,
   Repositories,
   users,
 } from "@lumen/database";
-import { and, asc, count, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  ne,
+  notInArray,
+  or,
+  sql,
+} from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { badRequest, conflict, notFound } from "../core/Errors";
 import { hashPassword, newUuid } from "../core/Security";
@@ -19,9 +38,114 @@ import type { Schema } from "effect";
 
 type CreateUserInput = Schema.Schema.Type<typeof CreateUserBody>;
 type UpdateUserInput = Schema.Schema.Type<typeof UpdateUserBody>;
+type UserRow = {
+  readonly id: string;
+  readonly allLibraries: boolean;
+};
+
+const selectedLibraryIds = (
+  database: DatabaseClient | DatabaseTransaction,
+  userIds: ReadonlyArray<string>,
+  nowMs: number,
+) =>
+  userIds.length === 0
+    ? Effect.succeed([])
+    : database
+        .select({ userId: libraryGrants.userId, libraryId: libraryGrants.libraryId })
+        .from(libraryGrants)
+        .innerJoin(libraries, eq(libraries.id, libraryGrants.libraryId))
+        .where(
+          and(
+            inArray(libraryGrants.userId, [...userIds]),
+            or(isNull(libraryGrants.expiresAtMs), gt(libraryGrants.expiresAtMs, nowMs)),
+          ),
+        )
+        .orderBy(asc(libraries.name));
+
+const withLibraryAccess = <Row extends UserRow>(
+  database: DatabaseClient | DatabaseTransaction,
+  rows: ReadonlyArray<Row>,
+  nowMs: number,
+) =>
+  Effect.map(
+    selectedLibraryIds(
+      database,
+      rows.filter((row) => !row.allLibraries).map((row) => row.id),
+      nowMs,
+    ),
+    (grants) =>
+      rows.map(({ allLibraries, ...user }) => {
+        const libraryAccess: LibraryAccess = allLibraries
+          ? { scope: "all" }
+          : {
+              scope: "selected",
+              libraryIds: grants
+                .filter((grant) => grant.userId === user.id)
+                .map((grant) => grant.libraryId),
+            };
+        return { ...user, libraryAccess };
+      }),
+  );
+
+/**
+ * Makes the user's libraries match the requested access. Grants the user already holds for a
+ * selected library are kept as they are, so narrower capabilities set through the grants API
+ * survive an unrelated edit.
+ */
+const applyLibraryAccess = (
+  transaction: DatabaseTransaction,
+  userId: string,
+  access: LibraryAccess,
+  nowMs: number,
+) =>
+  Effect.gen(function* () {
+    yield* transaction
+      .update(users)
+      .set({ allLibraries: access.scope === "all" })
+      .where(eq(users.id, userId));
+    const libraryIds = access.scope === "all" ? [] : [...new Set(access.libraryIds)];
+    if (libraryIds.length === 0) {
+      yield* transaction.delete(libraryGrants).where(eq(libraryGrants.userId, userId));
+      return;
+    }
+    yield* transaction
+      .delete(libraryGrants)
+      .where(
+        and(
+          eq(libraryGrants.userId, userId),
+          or(
+            notInArray(libraryGrants.libraryId, libraryIds),
+            and(isNotNull(libraryGrants.expiresAtMs), lte(libraryGrants.expiresAtMs, nowMs)),
+          ),
+        ),
+      );
+    const known = yield* transaction
+      .select({ id: libraries.id })
+      .from(libraries)
+      .where(inArray(libraries.id, libraryIds));
+    if (known.length !== libraryIds.length) return yield* badRequest("Library not found");
+    yield* transaction
+      .insert(libraryGrants)
+      .values(
+        libraryIds.map((libraryId) => ({
+          id: newUuid(),
+          libraryId,
+          userId,
+          capabilitiesJson: JSON.stringify(GrantCapability.literals),
+          canDownload: false,
+          expiresAtMs: null,
+          createdAtMs: nowMs,
+          updatedAtMs: nowMs,
+        })),
+      )
+      .onConflictDoNothing();
+  });
 
 export interface AdminServiceShape {
-  readonly listUsers: (principal: AuthPrincipal) => Effect.Effect<ReadonlyArray<unknown>, unknown>;
+  readonly listUsers: (
+    principal: AuthPrincipal,
+    nowMs: number,
+  ) => Effect.Effect<ReadonlyArray<unknown>, unknown>;
   readonly createUser: (
     principal: AuthPrincipal,
     input: CreateUserInput,
@@ -70,6 +194,7 @@ export const makeAdminService = Effect.gen(function* () {
     username: users.username,
     displayName: users.displayName,
     role: users.role,
+    allLibraries: users.allLibraries,
     isActive: users.isActive,
     createdAtMs: users.createdAtMs,
     updatedAtMs: users.updatedAtMs,
@@ -83,10 +208,17 @@ export const makeAdminService = Effect.gen(function* () {
     createdAtMs: libraries.createdAtMs,
     updatedAtMs: libraries.updatedAtMs,
   };
+  const managedUser = (transaction: DatabaseTransaction, userId: string, nowMs: number) =>
+    Effect.gen(function* () {
+      const rows = yield* transaction.select(userSelection).from(users).where(eq(users.id, userId));
+      const [user] = yield* withLibraryAccess(transaction, rows, nowMs);
+      return user ?? (yield* notFound("User not found"));
+    });
   const listUsers: AdminServiceShape["listUsers"] = Effect.fn("Admin.listUsers")(
-    function* (principal) {
+    function* (principal, nowMs) {
       yield* access.requireAdmin(principal);
-      return yield* database.select(userSelection).from(users).orderBy(asc(users.username));
+      const rows = yield* database.select(userSelection).from(users).orderBy(asc(users.username));
+      return yield* withLibraryAccess(database, rows, nowMs);
     },
   );
   const createUser: AdminServiceShape["createUser"] = Effect.fn("Admin.createUser")(
@@ -96,21 +228,28 @@ export const makeAdminService = Effect.gen(function* () {
       if (!/^[a-z0-9._-]+$/u.test(normalized))
         return yield* badRequest("Username contains unsupported characters");
       const passwordHash = yield* Effect.promise(() => hashPassword(input.password));
-      const [row] = yield* database
-        .insert(users)
-        .values({
-          id: newUuid(),
-          username: input.username.trim(),
-          usernameNormalized: normalized,
-          displayName: input.displayName.trim(),
-          passwordHash,
-          role: input.role ?? "user",
-          isActive: true,
-          createdAtMs: nowMs,
-          updatedAtMs: nowMs,
-        })
-        .returning(userSelection);
-      return row;
+      const libraryAccess = input.libraryAccess ?? { scope: "selected", libraryIds: [] };
+      return yield* database.transaction((transaction) =>
+        Effect.gen(function* () {
+          const [created] = yield* transaction
+            .insert(users)
+            .values({
+              id: newUuid(),
+              username: input.username.trim(),
+              usernameNormalized: normalized,
+              displayName: input.displayName.trim(),
+              passwordHash,
+              role: input.role ?? "user",
+              isActive: true,
+              createdAtMs: nowMs,
+              updatedAtMs: nowMs,
+            })
+            .returning({ id: users.id });
+          if (created == null) return yield* conflict("Could not create user");
+          yield* applyLibraryAccess(transaction, created.id, libraryAccess, nowMs);
+          return yield* managedUser(transaction, created.id, nowMs);
+        }),
+      );
     },
   );
   const updateUser: AdminServiceShape["updateUser"] = Effect.fn("Admin.updateUser")(
@@ -152,8 +291,10 @@ export const makeAdminService = Effect.gen(function* () {
               updatedAtMs: nowMs,
             })
             .where(eq(users.id, userId))
-            .returning(userSelection);
+            .returning({ id: users.id });
           if (updated == null) return yield* notFound("User not found");
+          if (input.libraryAccess !== undefined)
+            yield* applyLibraryAccess(transaction, userId, input.libraryAccess, nowMs);
           if (input.password !== undefined) {
             yield* transaction
               .update(authSessions)
@@ -164,7 +305,7 @@ export const makeAdminService = Effect.gen(function* () {
                 and(eq(authSessions.userId, userId), ne(authSessions.id, principal.sessionId)),
               );
           }
-          return updated;
+          return yield* managedUser(transaction, userId, nowMs);
         }),
       );
       return row;

@@ -260,8 +260,9 @@ const expectDesktopUnchanged = async (
   testInfo: TestInfo,
   name: string,
   { desktop, baseline }: Builds,
+  options?: Parameters<typeof expectAlike>[4],
 ): Promise<void> => {
-  if (baseline !== null) await expectAlike(testInfo, name, "body", [desktop, baseline]);
+  if (baseline !== null) await expectAlike(testInfo, name, "body", [desktop, baseline], options);
 };
 
 const signedInBuilds = async (context: BrowserContext, baseURL: string): Promise<Builds> => {
@@ -311,7 +312,8 @@ test("the desktop and web builds draw the shared pages identically", async ({
 
     // Navigation is shared; the account menu beneath it differs by design and is left out.
     await expectAlike(testInfo, name, ".nav", [web, desktop]);
-    await expectDesktopUnchanged(testInfo, name, builds);
+    // The users page has listed each account's libraries only since the baseline was taken.
+    if (name !== "users") await expectDesktopUnchanged(testInfo, name, builds);
     if (name !== "settings") {
       await expectAlike(testInfo, name, ".main-content", [web, desktop]);
       continue;
@@ -366,7 +368,10 @@ test("the connection forms are drawn identically", async ({
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByLabel("Username").focus();
   }
-  await expectDesktopUnchanged(testInfo, "sign-in form", builds);
+  // The baseline still offers to create an account on a server that is already set up.
+  await expectDesktopUnchanged(testInfo, "sign-in form", builds, {
+    style: ".connect-switch { display: none !important; }",
+  });
 
   const signedOut = await newSignedOutPage(browser, baseURL ?? "");
   try {
@@ -377,13 +382,7 @@ test("the connection forms are drawn identically", async ({
     // Only the desktop lets the viewer name the server and offers to change it.
     const style = ".server-chip { visibility: hidden !important; }";
     await expectAlike(testInfo, "sign-in form", ".connect-form", [web, desktop], { style });
-
-    for (const page of [signedOut, ...builds.desktops.map((side) => side.page)]) {
-      await page.getByRole("button", { name: "Create an account" }).click();
-      await page.getByLabel("Display name").focus();
-    }
-    await expectAlike(testInfo, "create-account form", ".connect-form", [web, desktop], { style });
-    await expectDesktopUnchanged(testInfo, "create-account form", builds);
+    await expect(signedOut.getByRole("button", { name: "Create an account" })).toHaveCount(0);
   } finally {
     await signedOut.context().close();
   }

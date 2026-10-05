@@ -118,7 +118,7 @@ describe("server authentication and ACL", () => {
     ).toBe(401);
   });
 
-  test("lets the first account register as the administrator", async () => {
+  test("lets only the first account register, as the administrator", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-server-setup-test-"));
     const databasePath = join(root, "server.sqlite");
     paths.push(root);
@@ -144,7 +144,8 @@ describe("server authentication and ACL", () => {
       }),
     });
     expect(registration.status).toBe(201);
-    expect(((await registration.json()) as { role: string }).role).toBe("admin");
+    const owner = (await registration.json()) as { role: string; accessToken: string };
+    expect(owner.role).toBe("admin");
     expect(
       ((await (await request(base, "/api/v1/auth/setup")).json()) as { setupRequired: boolean })
         .setupRequired,
@@ -162,22 +163,13 @@ describe("server authentication and ACL", () => {
         platformDeviceId: null,
       }),
     });
-    expect(second.status).toBe(201);
-    expect(((await second.json()) as { role: string }).role).toBe("user");
-    const duplicate = await request(base, "/api/v1/auth/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "second",
-        displayName: "Another",
-        password: "correct horse battery staple",
-        deviceId: newUuid(),
-        deviceName: "Setup",
-        platform: "web",
-        platformDeviceId: null,
-      }),
+    expect(second.status).toBe(403);
+    const users = await request(base, "/api/v1/users", {
+      headers: { authorization: `Bearer ${owner.accessToken}` },
     });
-    expect(duplicate.status).toBe(409);
+    expect(
+      ((await users.json()) as ReadonlyArray<{ username: string }>).map((user) => user.username),
+    ).toEqual(["owner"]);
   });
 
   test("exchanges a saved legacy refresh token once", async () => {
@@ -363,7 +355,6 @@ describe("server authentication and ACL", () => {
         id: newUuid(),
         libraryId: library.id,
         userId: user.id,
-        role: "user",
         capabilities: ["library:read"],
         canDownload: false,
         expiresAtMs: null,
@@ -375,5 +366,141 @@ describe("server authentication and ACL", () => {
     });
     expect(empty.status).toBe(200);
     expect(((await empty.json()) as { items: unknown[] }).items).toEqual([]);
+  });
+
+  test("gives users every library or only the selected ones, and lets that be changed", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-server-access-test-"));
+    const databasePath = join(root, "server.sqlite");
+    paths.push(root);
+    await seedAdmin(databasePath);
+    const base = await start(databasePath);
+    const signIn = async (username: string): Promise<Record<string, string>> => {
+      const login = await request(base, "/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password: "correct horse battery staple",
+          deviceId: newUuid(),
+          deviceName: "Test",
+          platform: "web",
+          platformDeviceId: null,
+        }),
+      });
+      expect(login.status).toBe(200);
+      const { accessToken } = (await login.json()) as { accessToken: string };
+      return { "content-type": "application/json", authorization: `Bearer ${accessToken}` };
+    };
+    const admin = await signIn("admin");
+    const createLibrary = async (slug: string): Promise<string> => {
+      const id = newUuid();
+      const created = await request(base, "/api/v1/libraries", {
+        method: "POST",
+        headers: admin,
+        body: JSON.stringify({ id, name: slug, slug, kind: "movies" }),
+      });
+      expect(created.status).toBe(201);
+      return id;
+    };
+    const createUser = async (username: string, libraryAccess?: unknown) => {
+      const created = await request(base, "/api/v1/users", {
+        method: "POST",
+        headers: admin,
+        body: JSON.stringify({
+          username,
+          displayName: username,
+          password: "correct horse battery staple",
+          libraryAccess,
+        }),
+      });
+      expect(created.status).toBe(201);
+      return (await created.json()) as { id: string; libraryAccess: unknown };
+    };
+    const updateAccess = (userId: string, libraryAccess: unknown) =>
+      request(base, `/api/v1/users/${userId}`, {
+        method: "PATCH",
+        headers: admin,
+        body: JSON.stringify({ libraryAccess }),
+      });
+    const visibleTo = async (headers: Record<string, string>): Promise<string[]> => {
+      const libraries = await request(base, "/api/v1/libraries", { headers });
+      expect(libraries.status).toBe(200);
+      return ((await libraries.json()) as ReadonlyArray<{ slug: string }>).map(
+        (library) => library.slug,
+      );
+    };
+    const browse = async (headers: Record<string, string>, libraryId: string): Promise<number> =>
+      (await request(base, `/api/v1/items?libraryId=${libraryId}`, { headers })).status;
+    const alpha = await createLibrary("alpha");
+    const beta = await createLibrary("beta");
+
+    const everything = await createUser("everything", { scope: "all" });
+    expect(everything.libraryAccess).toEqual({ scope: "all" });
+    const selective = await createUser("selective", { scope: "selected", libraryIds: [beta] });
+    expect(selective.libraryAccess).toEqual({ scope: "selected", libraryIds: [beta] });
+    expect((await createUser("nothing")).libraryAccess).toEqual({
+      scope: "selected",
+      libraryIds: [],
+    });
+
+    const everythingHeaders = await signIn("everything");
+    const selectiveHeaders = await signIn("selective");
+    expect(await visibleTo(everythingHeaders)).toEqual(["alpha", "beta"]);
+    expect(await visibleTo(selectiveHeaders)).toEqual(["beta"]);
+    expect(await browse(selectiveHeaders, beta)).toBe(200);
+    expect(await browse(selectiveHeaders, alpha)).toBe(403);
+
+    const gamma = await createLibrary("gamma");
+    expect(await visibleTo(everythingHeaders)).toEqual(["alpha", "beta", "gamma"]);
+    expect(await browse(everythingHeaders, gamma)).toBe(200);
+    expect(await visibleTo(selectiveHeaders)).toEqual(["beta"]);
+
+    const narrowed = await updateAccess(everything.id, { scope: "selected", libraryIds: [alpha] });
+    expect(narrowed.status).toBe(200);
+    expect(((await narrowed.json()) as { libraryAccess: unknown }).libraryAccess).toEqual({
+      scope: "selected",
+      libraryIds: [alpha],
+    });
+    expect(await visibleTo(everythingHeaders)).toEqual(["alpha"]);
+    expect(await browse(everythingHeaders, gamma)).toBe(403);
+
+    expect((await updateAccess(selective.id, { scope: "all" })).status).toBe(200);
+    expect(await visibleTo(selectiveHeaders)).toEqual(["alpha", "beta", "gamma"]);
+    expect(
+      (await updateAccess(selective.id, { scope: "selected", libraryIds: [alpha, gamma] })).status,
+    ).toBe(200);
+    expect(await visibleTo(selectiveHeaders)).toEqual(["alpha", "gamma"]);
+
+    expect(
+      (await updateAccess(selective.id, { scope: "selected", libraryIds: [newUuid()] })).status,
+    ).toBe(400);
+    expect(await visibleTo(selectiveHeaders)).toEqual(["alpha", "gamma"]);
+
+    const listed = await request(base, "/api/v1/users", { headers: admin });
+    expect(
+      Object.fromEntries(
+        ((await listed.json()) as ReadonlyArray<{ username: string; libraryAccess: unknown }>).map(
+          (user) => [user.username, user.libraryAccess],
+        ),
+      ),
+    ).toMatchObject({
+      everything: { scope: "selected", libraryIds: [alpha] },
+      selective: { scope: "selected", libraryIds: [alpha, gamma] },
+      nothing: { scope: "selected", libraryIds: [] },
+    });
+    expect(
+      (
+        await request(base, "/api/v1/users", {
+          method: "POST",
+          headers: admin,
+          body: JSON.stringify({
+            username: "visitor",
+            displayName: "Visitor",
+            password: "correct horse battery staple",
+            role: "guest",
+          }),
+        })
+      ).status,
+    ).toBe(400);
   });
 });

@@ -1,6 +1,7 @@
 import {
   DevicePlatform,
   GrantCapability,
+  LibraryAccess,
   LibraryScanMode,
   NonEmptyText,
   UserRole,
@@ -85,12 +86,14 @@ export const CreateUserBody = Schema.Struct({
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
   role: Schema.optional(UserRole),
+  libraryAccess: Schema.optional(LibraryAccess),
 });
 
 export const UpdateUserBody = Schema.Struct({
   displayName: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   password: Schema.optional(Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024))),
   role: Schema.optional(UserRole),
+  libraryAccess: Schema.optional(LibraryAccess),
   isActive: Schema.optional(Schema.Boolean),
 });
 
@@ -124,7 +127,6 @@ export const CreateGrantBody = Schema.Struct({
   id: Identifier,
   libraryId: Identifier,
   userId: Identifier,
-  role: UserRole,
   capabilities: Schema.Array(GrantCapability),
   canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),
@@ -189,8 +191,3 @@ export const EmptyBody = Schema.Struct({});
 export const IdBody = Schema.Struct({ id: Identifier });
 export const Message = Schema.Struct({ message: Schema.String, requestId: Schema.String });
 export const Ack = Schema.Struct({ ok: Schema.Boolean, nowMs: UtcMillis });
-export const CapabilitiesBody = Schema.Struct({
-  capabilities: Schema.Array(GrantCapability),
-  role: UserRole,
-  canDownload: Schema.Boolean,
-});

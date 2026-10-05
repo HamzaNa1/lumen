@@ -40,7 +40,6 @@ export const ConnectPage = ({
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
-  const [signUp, setSignUp] = useState(false);
   const [server, setServer] = useState<ServerDiscovery | null>(null);
   const [showAddServer, setShowAddServer] = useState(
     accounts.length === 0 || initialShowAddServer || initialSignInAccount != null,
@@ -48,7 +47,7 @@ export const ConnectPage = ({
   const [removing, setRemoving] = useState<AccountSummary | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(initialError ?? null);
-  const creatingAccount = server?.setupRequired === true || signUp;
+  const creatingAccount = server?.setupRequired === true;
   const showingSaved = accounts.length > 0 && !showAddServer;
   const discoverServer = useMutation({
     mutationFn: () => runtime.accounts.discoverServer(origin),
@@ -68,7 +67,6 @@ export const ConnectPage = ({
         username,
         displayName: creatingAccount ? displayName || username : undefined,
         password,
-        signUp,
       });
     },
     onSuccess: () => {
@@ -85,7 +83,6 @@ export const ConnectPage = ({
     setUsername("");
     setDisplayName("");
     setPassword("");
-    setSignUp(false);
     setError(null);
   };
   const activateAccount = (account: AccountSummary): void => {
@@ -113,7 +110,6 @@ export const ConnectPage = ({
     setOrigin(account.origin);
     setServerLabel(account.serverLabel);
     setUsername(account.username);
-    setSignUp(false);
     setError(null);
     try {
       setServer(await runtime.accounts.discoverServer(account.origin));
@@ -146,9 +142,7 @@ export const ConnectPage = ({
             title: "Create the admin account",
             body: "This server is new. The first account manages its users and libraries.",
           }
-        : signUp
-          ? { title: "Create an account", body: `Join ${serverLabel}.` }
-          : { title: "Sign in", body: `Sign in to ${serverLabel}.` };
+        : { title: "Sign in", body: `Sign in to ${serverLabel}.` };
 
   const errorBanner =
     error === null ? null : (
@@ -361,22 +355,6 @@ export const ConnectPage = ({
                     ? "Create account"
                     : "Sign in"}
               </Button>
-              {server.setupRequired ? null : (
-                <p className="connect-switch">
-                  {signUp ? "Already have an account?" : "New to this server?"}{" "}
-                  <button
-                    type="button"
-                    className="text-button"
-                    onClick={() => {
-                      setSignUp((value) => !value);
-                      setError(null);
-                      setPassword("");
-                    }}
-                  >
-                    {signUp ? "Sign in" : "Create an account"}
-                  </button>
-                </p>
-              )}
             </Form>
           )}
         </section>
