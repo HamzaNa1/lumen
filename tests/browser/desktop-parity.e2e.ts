@@ -390,6 +390,9 @@ test("the connection forms are drawn identically", async ({
   for (const { page } of builds.desktops) {
     await page.getByLabel("Server address").fill(baseURL ?? "");
     await page.getByRole("button", { name: "Continue" }).click();
+    // The button sits higher without the baseline's name field, so the pointer it leaves
+    // behind would rest on a different part of the next form in each build.
+    await page.mouse.move(0, 0);
     await page.getByLabel("Username").focus();
   }
   // The baseline still offers to create an account on a server that is already set up, and
