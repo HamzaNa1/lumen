@@ -1,12 +1,10 @@
-import { API_VERSION, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
+import { API_VERSION, BrowserSession, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
 import { version as serverVersion } from "../../package.json";
 import { Effect, Schema } from "effect";
-import { decideConditional, decideRange } from "../core/RangePolicy";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
 import { createLogger, type Logger } from "../core/Logger";
-import { isRoutineProbe, requestIdFor, requestMethod, requestRoute } from "./RequestLogging";
+import { clientKey, isRoutineProbe, requestIdFor, requestMethod, requestRoute } from "./RequestLogging";
 import { RequestLimiter, LimitExceeded } from "../core/Limits";
-import { lstat } from "node:fs/promises";
 import type { ServerConfig } from "../config/Config";
 import type { ServerIdentity } from "../database/Identity";
 import type { AssetServiceShape } from "../services/AssetService";
@@ -22,6 +20,13 @@ import type { PlaybackServiceShape } from "../services/PlaybackService";
 import type { JobServiceShape } from "../jobs/JobService";
 import type { MetadataSettingsShape } from "../services/MetadataSettings";
 import type { MetadataProvider } from "../media/Tmdb";
+import {
+  assertBrowserMutation,
+  clearedSessionCookie,
+  sessionCookie,
+  sessionCookieToken,
+} from "./BrowserSession";
+import { serveFile } from "./ServeFile";
 import * as S from "../http/Schemas";
 
 export interface HttpServices {
@@ -101,11 +106,6 @@ const bearer = (request: Request): string | null => {
   return value?.startsWith("Bearer ") === true ? value.slice(7) : null;
 };
 
-const clientKey = (request: Request): string =>
-  request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-  request.headers.get("x-real-ip") ??
-  "local";
-
 const errorResponse = (cause: unknown, requestId: string): Response => {
   if (cause instanceof LimitExceeded)
     return json(S.Message, { message: "Rate limit exceeded", requestId }, 429, {
@@ -128,68 +128,6 @@ const page = (url: URL, withQuery = false) => {
   return decode(S.PaginationQuery, withQuery ? result : result);
 };
 
-const date = (value: number): string => new Date(value).toUTCString();
-
-const serveFile = async (options: {
-  readonly request: Request;
-  readonly path: string;
-  readonly size: number;
-  readonly modifiedAtMs: number;
-  readonly mimeType: string;
-}): Promise<Response> => {
-  const details = await lstat(options.path);
-  if (!details.isFile() || details.isSymbolicLink()) throw notFound("Media file is unavailable");
-  const etag = `W/"${options.size.toString(16)}-${Math.trunc(options.modifiedAtMs).toString(16)}"`;
-  const lastModified = date(options.modifiedAtMs);
-  const condition = decideConditional({
-    method: options.request.method,
-    ifMatch: options.request.headers.get("if-match"),
-    ifNoneMatch: options.request.headers.get("if-none-match"),
-    ifModifiedSince: options.request.headers.get("if-modified-since"),
-    ifUnmodifiedSince: options.request.headers.get("if-unmodified-since"),
-    lastModified,
-    etag,
-    nowMs: Date.now(),
-  });
-  const common = {
-    "accept-ranges": "bytes",
-    "cache-control": "private, max-age=0, must-revalidate",
-    etag,
-    "last-modified": lastModified,
-    "content-type": options.mimeType,
-    "x-content-type-options": "nosniff",
-  };
-  if (condition === "precondition_failed")
-    return new Response(null, { status: 412, headers: common });
-  if (condition === "not_modified") return new Response(null, { status: 304, headers: common });
-  const ifRange = options.request.headers.get("if-range");
-  const rangeHeader =
-    options.request.method === "HEAD" || (ifRange !== null && ifRange !== etag)
-      ? null
-      : options.request.headers.get("range");
-  const range = decideRange(rangeHeader, options.size);
-  if (range.kind === "unsatisfiable")
-    return new Response(null, {
-      status: 416,
-      headers: { ...common, "content-range": `bytes */${options.size}` },
-    });
-  if (options.size === 0) {
-    return new Response(null, { status: 200, headers: { ...common, "content-length": "0" } });
-  }
-  const start = range.kind === "ignored" || range.kind === "full" ? 0 : range.start;
-  const end =
-    range.kind === "ignored" || range.kind === "full" ? Math.max(0, options.size - 1) : range.end;
-  const bodyFile = Bun.file(options.path).slice(start, options.size === 0 ? 0 : end + 1);
-  const headers: Record<string, string> = {
-    ...common,
-    "content-length": String(Math.max(0, end - start + 1)),
-  };
-  if (range.kind === "partial") headers["content-range"] = `bytes ${start}-${end}/${options.size}`;
-  if (options.request.method === "HEAD" || options.size === 0)
-    return new Response(null, { status: range.kind === "partial" ? 206 : 200, headers });
-  return new Response(bodyFile, { status: range.kind === "partial" ? 206 : 200, headers });
-};
-
 const queryNumber = (url: URL, name: string, fallback: number): number => {
   const value = url.searchParams.get(name);
   if (value === null) return fallback;
@@ -210,10 +148,41 @@ export const makeHttpHandler = (
     loginRequests: config.loginAttemptsPerMinute,
     maxActive: config.maxConcurrentRequests,
   });
+  // Session cookies to set once the response exists, keyed by the request that earned them.
+  const cookies = new WeakMap<Request, string>();
+  /** Renews valid cookie sessions; rejected requests may belong to an older sign-in. */
+  const authenticateCookie = async (request: Request, token: string) => {
+    const nowMs = Date.now();
+    const session = await call(services.auth.authenticateSession(token, nowMs));
+    if (session.renewed)
+      cookies.set(request, sessionCookie(request, config, token, session.expiresAtMs, nowMs));
+    return session;
+  };
+  /** Desktop clients present a bearer token; the browser app presents its session cookie. */
   const authenticate = async (request: Request): Promise<AuthPrincipal> => {
     const token = bearer(request);
-    if (token === null) throw unauthorized();
-    return call(services.auth.authenticate(token, Date.now()));
+    if (token !== null) return call(services.auth.authenticate(token, Date.now()));
+    const cookieToken = sessionCookieToken(request);
+    if (cookieToken === null) throw unauthorized();
+    if (request.method !== "GET" && request.method !== "HEAD")
+      assertBrowserMutation(request, config);
+    return (await authenticateCookie(request, cookieToken)).principal;
+  };
+  /** Starts a browser session: the token goes into the cookie, the account into the body. */
+  const browserSession = async (
+    request: Request,
+    token: string,
+    status: number,
+  ): Promise<Response> => {
+    const nowMs = Date.now();
+    const session = await authenticateCookie(request, token);
+    cookies.set(request, sessionCookie(request, config, token, session.expiresAtMs, nowMs));
+    return json(
+      BrowserSession,
+      { user: session.principal.user, expiresAtMs: session.expiresAtMs },
+      status,
+      { "cache-control": "no-store" },
+    );
   };
   const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
@@ -230,7 +199,7 @@ export const makeHttpHandler = (
           apiVersion: API_VERSION,
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
-          capabilities: { directPlayOnly: true, watchGroups: true },
+          capabilities: { directPlayOnly: true, watchGroups: true, browserSessions: true },
         },
         200,
         { "cache-control": "no-store" },
@@ -269,6 +238,47 @@ export const makeHttpHandler = (
     if (method === "POST" && url.pathname === "/api/v1/auth/login") {
       const input = decode(S.LoginBody, await body(request, config.maxRequestBodyBytes));
       return json(Schema.Unknown, await call(services.auth.login(input, Date.now())));
+    }
+    if (method === "POST" && url.pathname === "/api/v1/auth/browser/register") {
+      assertBrowserMutation(request, config);
+      const input = decode(S.BrowserRegisterBody, await body(request, config.maxRequestBodyBytes));
+      const created = await call(
+        services.auth.register({ ...input, platform: "web", platformDeviceId: null }, Date.now()),
+      );
+      return browserSession(request, created.accessToken, 201);
+    }
+    if (method === "POST" && url.pathname === "/api/v1/auth/browser/login") {
+      assertBrowserMutation(request, config);
+      const input = decode(S.BrowserLoginBody, await body(request, config.maxRequestBodyBytes));
+      const started = await call(
+        services.auth.login({ ...input, platform: "web", platformDeviceId: null }, Date.now()),
+      );
+      return browserSession(request, started.accessToken, 200);
+    }
+    if (method === "GET" && url.pathname === "/api/v1/auth/browser/session") {
+      const token = sessionCookieToken(request);
+      if (token === null) throw unauthorized();
+      return browserSession(request, token, 200);
+    }
+    if (method === "POST" && url.pathname === "/api/v1/auth/browser/logout") {
+      assertBrowserMutation(request, config);
+      const token = sessionCookieToken(request);
+      if (token !== null) {
+        // A session that already ended has nothing left to revoke. Any other failure leaves the
+        // session alive, so it is reported and the cookie is kept rather than cleared.
+        const session = await call(services.auth.authenticateSession(token, Date.now())).catch(
+          (cause: unknown) => {
+            if (cause instanceof ServerError && cause.code === "unauthorized") return null;
+            throw cause;
+          },
+        );
+        if (session !== null)
+          await call(
+            services.auth.logout(session.principal, session.principal.sessionId, Date.now()),
+          );
+      }
+      cookies.set(request, clearedSessionCookie(request, config));
+      return ack();
     }
     if (method === "POST" && url.pathname === "/api/v1/auth/migrate-session") {
       const input = decode(S.LegacySessionBody, await body(request, config.maxRequestBodyBytes));
@@ -965,9 +975,13 @@ export const makeHttpHandler = (
     let response: Response;
     let failure: unknown;
     const key = clientKey(request);
-    const login = ["/auth/login", "/auth/register", "/auth/migrate-session"].some((path) =>
-      new URL(request.url).pathname.endsWith(path),
-    );
+    const login = [
+      "/auth/login",
+      "/auth/register",
+      "/auth/migrate-session",
+      "/auth/browser/login",
+      "/auth/browser/register",
+    ].some((path) => pathname.endsWith(path));
     try {
       const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
       const checked = limiter.check(key, Date.now(), login ? "login" : "request");
@@ -979,6 +993,11 @@ export const makeHttpHandler = (
       response = errorResponse(cause, requestId);
     }
     response.headers.set("x-request-id", requestId);
+    const cookie = cookies.get(request);
+    if (cookie !== undefined) response.headers.append("set-cookie", cookie);
+    // What the API returns belongs to one signed-in person; shared caches must not keep it.
+    if (pathname.startsWith("/api/") && !response.headers.has("cache-control"))
+      response.headers.set("cache-control", "private, no-store");
     const level =
       response.status >= 500
         ? "error"

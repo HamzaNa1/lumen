@@ -1,9 +1,9 @@
-import { checkWorkspaces, parseProduct, workspaceFilters } from "./lib/products";
+import { checkWorkspaces, parseProduct, productTests, workspaceFilters } from "./lib/products";
 import { run } from "./lib/releases";
 
 const product = parseProduct(process.argv[2]);
 const workspaces = checkWorkspaces(product);
-const tests = [`tests/${product}`, "tests/shared", "tests/tooling"];
+const tests = productTests(product);
 const steps = {
   lint: () =>
     run(process.execPath, [
@@ -25,7 +25,12 @@ const steps = {
     run(process.execPath, ["run", "tsc", "-p", "tsconfig.scripts.json"]);
   },
   test: () => run(process.execPath, ["test", ...tests]),
-  build: () => run(process.execPath, ["run", ...workspaceFilters(workspaces), "build"]),
+  // One workspace at a time, in the product's declared order: packages before the apps that
+  // bundle them, and the web app before the server that ships it.
+  build: () => {
+    for (const workspace of workspaces)
+      run(process.execPath, ["run", ...workspaceFilters([workspace]), "build"]);
+  },
 };
 
 const step = process.argv[3];

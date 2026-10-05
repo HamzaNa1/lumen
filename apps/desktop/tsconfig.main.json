@@ -1,15 +1,36 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023"],
+    "lib": [
+      "ES2023"
+    ],
     "jsx": "react-jsx",
-    "types": ["bun", "node"],
+    "types": [
+      "bun",
+      "node"
+    ],
     "paths": {
-      "electron": ["./node_modules/electron"],
-      "koffi": ["./node_modules/koffi"],
-      "@lumen/contracts": ["../../packages/contracts/src/index.ts"],
-      "@lumen/contracts/*": ["../../packages/contracts/src/*"]
+      "electron": [
+        "./node_modules/electron"
+      ],
+      "koffi": [
+        "./node_modules/koffi"
+      ],
+      "@lumen/contracts": [
+        "../../packages/contracts/src/index.ts"
+      ],
+      "@lumen/contracts/*": [
+        "../../packages/contracts/src/*"
+      ],
+      "@lumen/client": [
+        "../../packages/client/src/index.ts"
+      ]
     }
   },
-  "include": ["src/main/**/*.ts", "src/preload/**/*.ts", "scripts/**/*.ts", "electron.vite.config.ts", "../../tests/native/**/*.ts", "../../packages/contracts/src/**/*.ts"]
+  "include": [
+    "src/main/**/*.ts",
+    "scripts/**/*.ts",
+    "electron.vite.config.ts",
+    "../../tests/native/**/*.ts"
+  ]
 }

@@ -1,13 +1,16 @@
-import { IpcItemDetails, WatchRequest, type WatchGroup, type WatchMessage } from "@lumen/contracts";
+import { CatalogItemDetails, WatchRequest, type WatchGroup, type WatchMessage } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { HttpServices } from "../http/HttpApp";
 import type { AuthPrincipal } from "../services/AuthService";
 import { RequestLimiter } from "../core/Limits";
 import { hashPassword, verifyPassword } from "../core/Security";
+import { requestOrigin, sessionCookieToken } from "../http/BrowserSession";
 
 export interface WatchSocketData {
   readonly id: string;
+  /** The session cookie sent with a same-origin browser's upgrade request, if any. */
+  readonly cookieToken: string | null;
   token: string | null;
   principal: AuthPrincipal | null;
   groupId: string | null;
@@ -38,9 +41,14 @@ type WatchServices = {
   readonly catalog: Pick<HttpServices["catalog"], "itemDetails">;
   readonly access: Pick<HttpServices["access"], "requireLibrary">;
 };
-const Authentication = Schema.Struct({
-  token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
-});
+// A desktop client presents its token. A browser cannot read its own token, so it asks the
+// server to use the session cookie that arrived with the upgrade request.
+const Authentication = Schema.Union([
+  Schema.Struct({ token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)) }),
+  Schema.Struct({ session: Schema.Literal("cookie") }),
+]);
+
+type TrustedOrigin = (request: Request, origin: string) => boolean;
 
 class WatchGroupsBusy extends Error {
   constructor(
@@ -64,7 +72,11 @@ export class WatchGroups {
   });
   private readonly timer: ReturnType<typeof setInterval>;
 
-  constructor(private readonly services: WatchServices) {
+  constructor(
+    private readonly services: WatchServices,
+    private readonly trustedOrigin: TrustedOrigin = (request, origin) =>
+      origin === requestOrigin(request),
+  ) {
     this.timer = setInterval(() => {
       this.attempts.sweep(Date.now());
       for (const [id, group] of this.groups) {
@@ -80,11 +92,14 @@ export class WatchGroups {
     if (request.method !== "GET") return new Response(null, { status: 405 });
     // Desktop sockets have no Origin. Browser callers must be same-origin.
     const origin = request.headers.get("origin");
-    if (origin !== null && origin !== new URL(request.url).origin)
+    if (origin !== null && !this.trustedOrigin(request, origin))
       return new Response(null, { status: 403 });
     const upgraded = server.upgrade(request, {
       data: {
         id: crypto.randomUUID(),
+        // Only a browser on this origin may stand on its cookie; a socket without an Origin
+        // header is not a browser page and must present a token.
+        cookieToken: origin === null ? null : sessionCookieToken(request),
         token: null,
         principal: null,
         groupId: null,
@@ -309,7 +324,9 @@ export class WatchGroups {
     if (socket.data.closed) return;
     const value: unknown = JSON.parse(raw);
     if (socket.data.token === null) {
-      const { token } = Schema.decodeUnknownSync(Authentication)(value);
+      const authentication = Schema.decodeUnknownSync(Authentication)(value);
+      const token = "token" in authentication ? authentication.token : socket.data.cookieToken;
+      if (token === null) throw new Error("Sign-in required");
       const principal = await Effect.runPromise(this.services.auth.authenticate(token, Date.now()));
       if (socket.data.closed) return;
       socket.data.token = token;
@@ -400,7 +417,7 @@ export class WatchGroups {
         const group = this.groups.get(socket.data.groupId ?? "");
         if (group === undefined) throw new Error("Join a watch group first");
         const previous = group.state;
-        const details = Schema.decodeUnknownSync(IpcItemDetails)(
+        const details = Schema.decodeUnknownSync(CatalogItemDetails)(
           await Effect.runPromise(
             this.services.catalog.itemDetails(principal, action.itemId, false, Date.now()),
           ),

@@ -1,5 +1,5 @@
 import { Slider } from "@base-ui/react/slider";
-import type { IpcAudioOutput, IpcBufferedRange, IpcPlayableStream } from "@lumen/contracts";
+import type { AudioOutput, BufferedRange, PlayableStream } from "@lumen/contracts";
 import {
   ArrowLeft,
   LoaderCircle,
@@ -29,20 +29,30 @@ interface MediaPlayerProps {
   readonly error: string | null;
   readonly position: number;
   readonly duration: number | null;
-  readonly bufferedRanges: ReadonlyArray<IpcBufferedRange>;
+  readonly bufferedRanges: ReadonlyArray<BufferedRange>;
   readonly volume: number;
   readonly muted: boolean;
-  readonly streams: ReadonlyArray<IpcPlayableStream>;
+  readonly streams: ReadonlyArray<PlayableStream>;
   readonly selectedAudioStreamId: string | null;
   readonly selectedSubtitleStreamId: string | null;
-  readonly audioOutput: IpcAudioOutput;
-  readonly onAudioOutput: (output: IpcAudioOutput) => Promise<void>;
-  readonly onCopyAudioDiagnostics: () => Promise<void>;
+  readonly audioOutput: AudioOutput;
+  /** Omitted where the player does not control the audio device. */
+  readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
+  /** Omitted where the player cannot describe its audio pipeline. */
+  readonly onCopyAudioDiagnostics?: () => Promise<void>;
+  /** False where the player cannot switch tracks at all, whatever the file contains. */
+  readonly trackSelection?: boolean;
+  /** Playback stalled waiting for data. */
+  readonly buffering?: boolean;
+  /** Playback is held until the viewer asks for it; `onStartPlayback` is that request. */
+  readonly awaitingInteraction?: boolean;
+  readonly onStartPlayback?: () => void;
   readonly surfaceRef: Ref<HTMLDivElement>;
   readonly controlsVisible: boolean;
   readonly fullscreen: boolean;
   readonly onBack: () => void;
-  readonly onFullscreen: () => void;
+  /** Omitted where fullscreen is unavailable. */
+  readonly onFullscreen?: () => void;
   readonly onRetry: () => void;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
@@ -69,6 +79,10 @@ export const MediaPlayer = ({
   audioOutput,
   onAudioOutput,
   onCopyAudioDiagnostics,
+  trackSelection = true,
+  buffering = false,
+  awaitingInteraction = false,
+  onStartPlayback,
   surfaceRef,
   controlsVisible,
   fullscreen,
@@ -95,13 +109,23 @@ export const MediaPlayer = ({
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
+  const status =
+    error !== null
+      ? "error"
+      : loading
+        ? "loading"
+        : awaitingInteraction
+          ? "blocked"
+          : buffering
+            ? "buffering"
+            : "ready";
   const seekBy = usePlayerShortcuts({ enabled: !inactive, position, duration, onPause, onSeek });
 
   return (
     <section
       className={`media-player${controlsVisible || settingsOpen ? " controls-visible" : ""}`}
       aria-label="Media player"
-      data-status={error !== null ? "error" : loading ? "loading" : "ready"}
+      data-status={status}
     >
       <header className="media-player-header">
         <Button variant="icon" onClick={onBack} aria-label="Back">
@@ -141,6 +165,17 @@ export const MediaPlayer = ({
                 <LoaderCircle className="spinner" aria-hidden="true" size={26} />
                 <span>Starting playback…</span>
               </>
+            ) : awaitingInteraction ? (
+              <>
+                <strong>Ready to play</strong>
+                <span>Your browser needs a click before it can start playback.</span>
+                <Button variant="primary" onClick={onStartPlayback}>
+                  <Play aria-hidden="true" size={16} fill="currentColor" strokeWidth={0} />
+                  Play
+                </Button>
+              </>
+            ) : buffering ? (
+              <LoaderCircle className="spinner" aria-label="Buffering" size={26} />
             ) : null}
           </div>
         </div>
@@ -275,24 +310,26 @@ export const MediaPlayer = ({
                 {settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
                     <strong>Audio and subtitles</strong>
-                    <SelectField
-                      label="Audio output"
-                      modal={false}
-                      disabled={inactive || changingAudioOutput}
-                      value={audioOutput}
-                      options={[
-                        { value: "stereo", label: "Stereo (speakers / headphones)" },
-                        { value: "auto-safe", label: "Automatic (system layout)" },
-                      ]}
-                      onValueChange={(value) => {
-                        if (value !== "stereo" && value !== "auto-safe") return;
-                        setAudioActionStatus(null);
-                        setChangingAudioOutput(true);
-                        void onAudioOutput(value)
-                          .catch(() => setAudioActionStatus("Could not change audio output."))
-                          .finally(() => setChangingAudioOutput(false));
-                      }}
-                    />
+                    {onAudioOutput === undefined ? null : (
+                      <SelectField
+                        label="Audio output"
+                        modal={false}
+                        disabled={inactive || changingAudioOutput}
+                        value={audioOutput}
+                        options={[
+                          { value: "stereo", label: "Stereo (speakers / headphones)" },
+                          { value: "auto-safe", label: "Automatic (system layout)" },
+                        ]}
+                        onValueChange={(value) => {
+                          if (value !== "stereo" && value !== "auto-safe") return;
+                          setAudioActionStatus(null);
+                          setChangingAudioOutput(true);
+                          void onAudioOutput(value)
+                            .catch(() => setAudioActionStatus("Could not change audio output."))
+                            .finally(() => setChangingAudioOutput(false));
+                        }}
+                      />
+                    )}
                     {audioStreams.length > 0 ? (
                       <SelectField
                         label="Audio track"
@@ -321,35 +358,43 @@ export const MediaPlayer = ({
                       />
                     ) : null}
                     {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
-                      <p>This file has no alternate audio or subtitle tracks.</p>
+                      <p>
+                        {trackSelection
+                          ? "This file has no alternate audio or subtitle tracks."
+                          : "This player can’t switch audio or subtitle tracks."}
+                      </p>
                     ) : null}
-                    <Button
-                      disabled={inactive}
-                      onClick={() => {
-                        setAudioActionStatus(null);
-                        void onCopyAudioDiagnostics().then(
-                          () => setAudioActionStatus("Audio diagnostics copied."),
-                          () => setAudioActionStatus("Could not copy audio diagnostics."),
-                        );
-                      }}
-                    >
-                      Copy audio diagnostics
-                    </Button>
+                    {onCopyAudioDiagnostics === undefined ? null : (
+                      <Button
+                        disabled={inactive}
+                        onClick={() => {
+                          setAudioActionStatus(null);
+                          void onCopyAudioDiagnostics().then(
+                            () => setAudioActionStatus("Audio diagnostics copied."),
+                            () => setAudioActionStatus("Could not copy audio diagnostics."),
+                          );
+                        }}
+                      >
+                        Copy audio diagnostics
+                      </Button>
+                    )}
                     {audioActionStatus === null ? null : <p role="status">{audioActionStatus}</p>}
                   </div>
                 ) : null}
               </div>
-              <Button
-                variant="icon"
-                onClick={onFullscreen}
-                aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
-              >
-                {fullscreen ? (
-                  <Minimize aria-hidden="true" size={18} />
-                ) : (
-                  <Maximize aria-hidden="true" size={18} />
-                )}
-              </Button>
+              {onFullscreen === undefined ? null : (
+                <Button
+                  variant="icon"
+                  onClick={onFullscreen}
+                  aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+                >
+                  {fullscreen ? (
+                    <Minimize aria-hidden="true" size={18} />
+                  ) : (
+                    <Maximize aria-hidden="true" size={18} />
+                  )}
+                </Button>
+              )}
             </div>
           </div>
         </div>

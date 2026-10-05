@@ -45,6 +45,14 @@ const sessionResponse = (
   accessExpiresAtMs: nowMs + sessionExpiresInMs,
 });
 
+export interface AuthenticatedSession {
+  readonly principal: AuthPrincipal;
+  /** When the session lapses unless it is used again. */
+  readonly expiresAtMs: number;
+  /** This check extended the session, so anything mirroring its expiry should follow. */
+  readonly renewed: boolean;
+}
+
 export interface AuthServiceShape {
   readonly setupRequired: () => Effect.Effect<boolean, unknown>;
   readonly register: (input: RegisterInput, nowMs: number) => Effect.Effect<LoginResponse, unknown>;
@@ -54,6 +62,10 @@ export interface AuthServiceShape {
     nowMs: number,
   ) => Effect.Effect<LoginResponse, unknown>;
   readonly authenticate: (token: string, nowMs: number) => Effect.Effect<AuthPrincipal, unknown>;
+  readonly authenticateSession: (
+    token: string,
+    nowMs: number,
+  ) => Effect.Effect<AuthenticatedSession, unknown>;
   readonly logout: (
     principal: AuthPrincipal,
     sessionId: string,
@@ -254,7 +266,9 @@ export const makeAuthService = Effect.gen(function* () {
     return sessionResponse(previous.userId, previous.role, id, token, nowMs);
   });
 
-  const authenticate: AuthServiceShape["authenticate"] = Effect.fn("AuthService.authenticate")(
+  const authenticateSession: AuthServiceShape["authenticateSession"] = Effect.fn(
+    "AuthService.authenticateSession",
+  )(
     function* (token, nowMs) {
       const sessionId = sessionIdFromToken(token);
       if (sessionId === null) return yield* unauthorized();
@@ -298,7 +312,8 @@ export const makeAuthService = Effect.gen(function* () {
         return yield* unauthorized();
       const { deviceRevokedAtMs: _deviceRevokedAtMs, ...userRow } = row;
       const user = { ...userRow, role: userRow.role as User["role"] };
-      if (nowMs - session.lastVerifiedAtMs >= sessionVerificationIntervalMs) {
+      const renewed = nowMs - session.lastVerifiedAtMs >= sessionVerificationIntervalMs;
+      if (renewed) {
         yield* database
           .update(authSessions)
           .set({
@@ -311,9 +326,16 @@ export const makeAuthService = Effect.gen(function* () {
         .update(devices)
         .set({ lastSeenAtMs: nowMs })
         .where(eq(devices.id, session.deviceId));
-      return { user, sessionId: session.id, deviceId: session.deviceId };
+      return {
+        principal: { user, sessionId: session.id, deviceId: session.deviceId },
+        expiresAtMs: renewed ? nowMs + sessionExpiresInMs : session.expiresAtMs,
+        renewed,
+      };
     },
   );
+
+  const authenticate: AuthServiceShape["authenticate"] = (token, nowMs) =>
+    authenticateSession(token, nowMs).pipe(Effect.map((session) => session.principal));
 
   const logout: AuthServiceShape["logout"] = Effect.fn("AuthService.logout")(
     function* (principal, sessionId, nowMs) {
@@ -331,7 +353,15 @@ export const makeAuthService = Effect.gen(function* () {
     },
   );
 
-  return { setupRequired, register, login, migrateLegacySession, authenticate, logout };
+  return {
+    setupRequired,
+    register,
+    login,
+    migrateLegacySession,
+    authenticate,
+    authenticateSession,
+    logout,
+  };
 });
 
 export class AuthService extends Context.Service<AuthService, AuthServiceShape>()(

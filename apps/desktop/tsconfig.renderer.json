@@ -1,15 +1,45 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "lib": [
+      "ES2023",
+      "DOM",
+      "DOM.Iterable"
+    ],
     "jsx": "react-jsx",
-    "types": ["bun"],
+    "types": [
+      "bun"
+    ],
     "paths": {
-      "@lumen/contracts": ["../../packages/contracts/src/index.ts"],
-      "@lumen/contracts/*": ["../../packages/contracts/src/*"],
-      "@lumen/ui": ["../../packages/ui/src/index.ts"],
-      "@lumen/ui/*": ["../../packages/ui/src/*"]
+      "@lumen/contracts": [
+        "../../packages/contracts/src/index.ts"
+      ],
+      "@lumen/contracts/*": [
+        "../../packages/contracts/src/*"
+      ],
+      "@lumen/ui": [
+        "../../packages/ui/src/index.ts"
+      ],
+      "@lumen/ui/*": [
+        "../../packages/ui/src/*"
+      ],
+      "@lumen/client": [
+        "../../packages/client/src/index.ts"
+      ],
+      "@lumen/client/runtime": [
+        "../../packages/client/src/runtime.ts"
+      ],
+      "@lumen/app": [
+        "../../packages/app/src/index.ts"
+      ]
     }
   },
-  "include": ["src/renderer/**/*.ts", "src/renderer/**/*.tsx", "src/preload/**/*.ts", "../../packages/contracts/src/**/*.ts", "../../packages/ui/src/**/*.ts", "../../packages/ui/src/**/*.tsx"]
+  "include": [
+    "src/renderer/**/*.ts",
+    "src/renderer/**/*.tsx",
+    "src/preload/**/*.ts",
+    "src/shared/**/*.ts",
+    "../../packages/app/src/**/*.ts",
+    "../../packages/app/src/**/*.tsx"
+  ]
 }

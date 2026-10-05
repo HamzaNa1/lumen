@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { deviceIdForAccount, getOrCreateInstallationId } from "../../apps/desktop/src/main/accounts/InstallationId";
 import { ids } from "../../packages/testkit/src/ids";
-import { IncompatibleServerError } from "../../apps/desktop/src/main/api/ApiCompatibility";
+import { IncompatibleServerError } from "../../packages/client/src/index.ts";
 
 describe("desktop installation identity", () => {
   test("persists one installation ID across loads", async () => {

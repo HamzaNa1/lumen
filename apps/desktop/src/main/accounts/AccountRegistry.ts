@@ -1,7 +1,7 @@
 import { app } from "electron";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { IpcAccount, IpcAccounts } from "@lumen/contracts";
+import type { AccountSummary, AccountList } from "@lumen/contracts";
 import { createTokenVault, writePrivateJson, type VaultValue } from "./TokenVault";
 import type { AccountSession } from "../api/ServerClient";
 
@@ -54,8 +54,8 @@ export class AccountRegistry {
     return vault;
   }
 
-  async list(): Promise<IpcAccounts> {
-    const accounts = await Promise.all(this.data.accounts.map(async (account): Promise<IpcAccount> => ({
+  async list(): Promise<AccountList> {
+    const accounts = await Promise.all(this.data.accounts.map(async (account): Promise<AccountSummary> => ({
       ...account,
       secureStorageAvailable: (await this.vaultFor(account.connectionId)).available,
     })));

@@ -12,4 +12,4 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
-      - run: bun test tests/compatibility tests/server tests/desktop tests/shared
+      - run: bun test tests/compatibility tests/server tests/web tests/desktop tests/shared

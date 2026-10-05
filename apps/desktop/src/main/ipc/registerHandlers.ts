@@ -1,20 +1,20 @@
-import { WatchPlaybackController } from "../watch-groups/WatchPlaybackController";
+import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
+  AudioOutput,
+  ConnectionInput,
   EpisodeOrderSelection,
-  WatchAction,
-  IpcAudioOutput,
-  IpcPlayerDisplay,
   IpcPlayerSurfaceBounds,
-  type IpcServerDiscovery,
+  PlayerDisplay,
+  type ServerDiscovery,
+  WatchAction,
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import { type BrowserWindow, type IpcMainInvokeEvent, clipboard, ipcMain } from "electron";
-import { IpcConnectionInput } from "../../../../../packages/contracts/src/ipc";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
 import { ServerClient, ServerHttpError, type AccountSession } from "../api/ServerClient";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
-import type { PlayerController } from "../player/PlayerController";
+import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
@@ -41,6 +41,8 @@ const trustedSender = (event: IpcMainInvokeEvent): boolean => {
   );
 };
 
+const registeredHandlers: string[] = [];
+
 export interface IpcDependencies {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
@@ -66,15 +68,34 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 };
 
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
-  const watch = new WatchPlaybackController(dependencies.player, (status) => {
+  const watch = new WatchPlaybackController(watchPlayerFor(dependencies.player), (status) => {
     for (const window of [dependencies.window, dependencies.overlay.window]) {
       if (!window.isDestroyed()) window.webContents.send("watch:state", status);
     }
   });
   dependencies.window.once("closed", () => watch.close());
-  const discoveredServers = new Map<string, IpcServerDiscovery>();
+  const commands = viewerPlayback(watch, {
+    start: (itemId, startAtSeconds) =>
+      dependencies.player.start({
+        client: activeClient(dependencies),
+        connectionId: activeConnectionId(dependencies),
+        itemId,
+        ...(startAtSeconds === undefined ? {} : { startAtSeconds }),
+      }),
+    pause: (sessionId, paused) => dependencies.player.pause(sessionId, paused),
+    seek: (sessionId, positionSeconds) => dependencies.player.seek(sessionId, positionSeconds),
+    getActiveState: (sessionId) => dependencies.player.getActiveState(sessionId),
+  });
+  const discoveredServers = new Map<string, ServerDiscovery>();
   const restoring = new Map<string, Promise<ServerClient>>();
-  let playerDisplay: IpcPlayerDisplay | null = null;
+  let playerDisplay: PlayerDisplay | null = null;
+  const endAccountActivity = async (...connectionIds: ReadonlyArray<string | undefined>): Promise<void> => {
+    watch.disconnect();
+    for (const connectionId of new Set(connectionIds)) {
+      if (connectionId !== undefined) dependencies.clients.get(connectionId)?.cancelPending();
+    }
+    await dependencies.player.stop();
+  };
   const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) return validateClient(cached).then(() => cached);
@@ -109,6 +130,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     name: string,
     action: (event: IpcMainInvokeEvent, ...args: ReadonlyArray<unknown>) => Promise<A>,
   ): void => {
+    registeredHandlers.push(name);
     ipcMain.handle(name, async (event, ...args) => {
       if (!trustedSender(event)) throw new Error("IPC sender is not trusted");
       return action(event, ...args);
@@ -116,15 +138,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   };
 
   handle("accounts:list", async () => dependencies.registry.list());
-  handle("accounts:setup", async (_event, raw) => {
-    const input = decode(
-      Schema.Struct({
-        origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
-      }),
-      raw,
-    );
-    return new ServerClient({ origin: input.origin }).setupRequired();
-  });
   handle("accounts:discover-server", async (_event, raw) => {
     const input = decode(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)), raw);
     const discovery = await new ServerClient({ origin: input }).discover();
@@ -132,7 +145,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return discovery;
   });
   handle("accounts:connect", async (_event, raw) => {
-    const input = decode(IpcConnectionInput, raw);
+    const input = decode(ConnectionInput, raw);
     let connectionId = requestId();
     const client = new ServerClient({ origin: input.origin });
     const discovery = discoveredServers.get(client.serverOrigin);
@@ -148,6 +161,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const user = await client.me();
     const current = client.currentSession ?? session;
     connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
+    await endAccountActivity(dependencies.registry.active()?.connectionId, connectionId);
     try {
       await dependencies.registry.save({
         connectionId,
@@ -175,8 +189,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     if (account === null) throw new Error("Connection not found");
     const client = await restoreClient(account);
     if (dependencies.registry.active()?.connectionId !== connectionId) {
-      watch.disconnect();
-      await dependencies.player.stop();
+      await endAccountActivity(dependencies.registry.active()?.connectionId);
     }
     await dependencies.registry.activate(connectionId);
     watch.connect(client, connectionId);
@@ -184,8 +197,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("accounts:remove", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
-    if (dependencies.registry.active()?.connectionId === connectionId) watch.disconnect();
-    await dependencies.player.stop();
+    if (dependencies.registry.active()?.connectionId === connectionId) await endAccountActivity(connectionId);
+    else dependencies.clients.get(connectionId)?.cancelPending();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
     return dependencies.registry.list();
@@ -337,39 +350,21 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       Schema.Struct({ itemId: Schema.String, startAtSeconds: Schema.optional(Schema.Number) }),
       raw,
     );
-    if (watch.grouped) {
-      await watch.action({ type: "play", itemId: input.itemId, positionSeconds: input.startAtSeconds ?? 0 });
-      return null;
-    }
-    const result = await dependencies.player.start({
-      client: activeClient(dependencies),
-      connectionId: activeConnectionId(dependencies),
-      itemId: input.itemId,
-      ...(input.startAtSeconds === undefined ? {} : { startAtSeconds: input.startAtSeconds }),
-    });
+    const result = await commands.start(input.itemId, input.startAtSeconds);
+    if (result === null) return null;
     const { grantToken: _grantToken, ...safe } = result;
     return safe;
   });
   handle("player:pause", async (_event, raw) => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, paused: Schema.Boolean }), raw);
-    if (watch.grouped) {
-      const state = dependencies.player.getActiveState(input.sessionId);
-      await watch.action({ type: "pause", itemId: state.itemId, paused: input.paused, positionSeconds: state.positionSeconds });
-      return state;
-    }
-    return dependencies.player.pause(input.sessionId, input.paused);
+    return commands.pause(input.sessionId, input.paused);
   });
   handle("player:seek", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ sessionId: Schema.String, positionSeconds: Schema.Number }),
       raw,
     );
-    if (watch.grouped) {
-      const state = dependencies.player.getActiveState(input.sessionId);
-      await watch.action({ type: "seek", itemId: state.itemId, positionSeconds: input.positionSeconds });
-      return state;
-    }
-    return dependencies.player.seek(input.sessionId, input.positionSeconds);
+    return commands.seek(input.sessionId, input.positionSeconds);
   });
   handle("player:volume", async (_event, raw) => {
     const input = decode(
@@ -397,7 +392,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return dependencies.player.selectSubtitleStream(input.sessionId, input.streamId);
   });
   handle("player:audio-output", async (_event, raw) => {
-    const input = decode(Schema.Struct({ sessionId: Schema.String, output: IpcAudioOutput }), raw);
+    const input = decode(Schema.Struct({ sessionId: Schema.String, output: AudioOutput }), raw);
     return dependencies.player.setAudioOutput(input.sessionId, input.output);
   });
   handle("player:copy-audio-diagnostics", async (_event, raw) => {
@@ -406,7 +401,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:state", async () => dependencies.player.getState());
   handle("player:display", async (_event, raw) => {
-    playerDisplay = decode(IpcPlayerDisplay, raw);
+    playerDisplay = decode(PlayerDisplay, raw);
     dependencies.overlay.window.webContents.send("player:display", playerDisplay);
   });
   handle("player:display-state", async () => playerDisplay);
@@ -426,52 +421,5 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
 };
 
 export const unregisterIpcHandlers = (): void => {
-  for (const name of [
-    "watch:retry",
-    "watch:state",
-    "watch:action",
-    "accounts:list",
-    "accounts:setup",
-    "accounts:discover-server",
-    "accounts:connect",
-    "accounts:activate",
-    "accounts:remove",
-    "library:list",
-    "library:home",
-    "library:items",
-    "library:search",
-    "library:set-watched",
-    "admin:listUsers",
-    "admin:createUser",
-    "admin:updateUser",
-    "admin:listLibraries",
-    "admin:metadataSettings",
-    "admin:updateMetadataSettings",
-    "admin:createLibrary",
-    "admin:updateLibrary",
-    "admin:deleteLibrary",
-    "admin:listRoots",
-    "admin:addRoot",
-    "admin:deleteRoot",
-    "admin:startScan",
-    "admin:scanStatus",
-    "admin:jobLog",
-    "player:start",
-    "player:pause",
-    "player:seek",
-    "player:volume",
-    "player:surface",
-    "player:select-audio",
-    "player:select-subtitle",
-    "player:state",
-    "player:audio-output",
-    "player:copy-audio-diagnostics",
-    "player:display",
-    "player:display-state",
-    "player:overlay-action",
-    "player:fullscreen",
-    "player:fullscreen-state",
-    "player:stop",
-  ])
-    ipcMain.removeHandler(name);
+  for (const name of registeredHandlers.splice(0)) ipcMain.removeHandler(name);
 };

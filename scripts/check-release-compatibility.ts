@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git, latestStableTag, repositoryRoot, run } from "./lib/releases";
@@ -19,11 +19,11 @@ let added = false;
 try {
   run("git", ["worktree", "add", "--detach", checkout, tag]);
   added = true;
-  run(
-    process.execPath,
-    ["install", "--frozen-lockfile", ...workspaceFilters(productWorkspaces(counterpart))],
-    checkout,
+  // The released counterpart predates any workspace added since; install the ones it has.
+  const released = productWorkspaces(counterpart).filter((workspace) =>
+    existsSync(join(checkout, workspace, "package.json")),
   );
+  run(process.execPath, ["install", "--frozen-lockfile", ...workspaceFilters(released)], checkout);
   console.log(`Checking candidate ${product} against ${tag}`);
   execFileSync(process.execPath, ["test", "tests/compatibility/releases.test.ts"], {
     cwd: repositoryRoot,

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../apps/server/src/Runtime";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
-import { WatchGroupClient } from "../../apps/desktop/src/main/watch-groups/WatchGroupClient";
+import { WatchGroupClient } from "../../packages/client/src/index.ts";
 import { seedPlaybackFixture } from "./playback";
 
 export const eventually = async (ready: () => boolean, timeout = 5000): Promise<void> => {

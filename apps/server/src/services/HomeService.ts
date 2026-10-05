@@ -1,4 +1,4 @@
-import type { HomeContent, IpcItem, IpcLibrary } from "@lumen/contracts";
+import type { HomeContent, CatalogItem, LibrarySummary } from "@lumen/contracts";
 import { Database, libraries, libraryProfiles } from "@lumen/database";
 import { asc, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -33,7 +33,7 @@ export const makeHomeService = Effect.gen(function* () {
           id: libraries.id,
           name: libraries.name,
           slug: libraries.slug,
-          kind: sql<IpcLibrary["kind"]>`coalesce(${libraryProfiles.kind}, 'movies')`,
+          kind: sql<LibrarySummary["kind"]>`coalesce(${libraryProfiles.kind}, 'movies')`,
           isEnabled: libraries.isEnabled,
           createdAtMs: libraries.createdAtMs,
           updatedAtMs: libraries.updatedAtMs,
@@ -44,7 +44,7 @@ export const makeHomeService = Effect.gen(function* () {
         .orderBy(asc(libraries.name), asc(libraries.id));
       const latest: HomeContent["latest"][number][] = [];
       const resume = (audio: boolean) =>
-        db.all<IpcItem>(sql`
+        db.all<CatalogItem>(sql`
       WITH items AS (${homeItems(principal.user.id, libraryIds)})
       SELECT ${homeCardColumns} FROM items
       WHERE available = 1 AND completed = 0 AND resumePositionSeconds > 0
@@ -53,11 +53,11 @@ export const makeHomeService = Effect.gen(function* () {
     `);
       const continueWatching = yield* resume(false);
       const continueListening = yield* resume(true);
-      const nextUp = yield* db.all<IpcItem>(
+      const nextUp = yield* db.all<CatalogItem>(
         nextUpQuery(principal.user.id, libraryIds, nowMs - 365 * 86400000),
       );
       for (const library of accessibleLibraries) {
-        const items = yield* db.all<IpcItem>(
+        const items = yield* db.all<CatalogItem>(
           library.kind === "shows"
             ? latestEpisodesQuery(principal.user.id, library.id)
             : sql`
