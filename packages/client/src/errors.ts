@@ -31,7 +31,8 @@ export const parseRetryAfterSeconds = (value: string | null, nowMs: number): num
   // HTTP dates include the current format and the two older formats accepted by HTTP.
   if (!/^(?:[A-Z][a-z]{2}, \d{2} [A-Z][a-z]{2} \d{4} \d{2}:\d{2}:\d{2} GMT|[A-Z][a-z]+, \d{2}-[A-Z][a-z]{2}-\d{2} \d{2}:\d{2}:\d{2} GMT|[A-Z][a-z]{2} [A-Z][a-z]{2} [ \d]\d \d{2}:\d{2}:\d{2} \d{4})$/.test(header))
     return null;
-  const retryAtMs = Date.parse(header);
+  const utcHeader = header.endsWith(" GMT") ? header : `${header} GMT`;
+  const retryAtMs = Date.parse(utcHeader);
   return Number.isFinite(retryAtMs) ? Math.max(0, Math.ceil((retryAtMs - nowMs) / 1000)) : null;
 };
 

@@ -60,6 +60,29 @@ describe("HTTP retry feedback", () => {
     expect(new ServerHttpError("Rate limit exceeded", 429, 0).message).toContain("Try again now.");
   });
 
+  test.each([
+    ["Asia/Damascus", -180],
+    ["America/New_York", 240],
+  ] as const)("asctime retry dates use UTC when the client timezone is %s", (timezone, offset) => {
+    const errorsModule = new URL("../../packages/client/src/errors.ts", import.meta.url).href;
+    const result = Bun.spawnSync([process.execPath, "--eval", `
+      import { parseRetryAfterSeconds, ServerHttpError } from ${JSON.stringify(errorsModule)};
+      const nowMs = Date.parse("2026-10-05T12:00:00.100Z");
+      const retryAfterSeconds = parseRetryAfterSeconds("Mon Oct  5 12:00:42 2026", nowMs);
+      console.log(JSON.stringify({
+        offset: new Date(nowMs).getTimezoneOffset(),
+        retryAfterSeconds,
+        message: new ServerHttpError("Rate limit exceeded", 429, retryAfterSeconds).message,
+      }));
+    `], { env: { ...process.env, TZ: timezone } });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout.toString())).toEqual({
+      offset,
+      retryAfterSeconds: 42,
+      message: "Rate limit exceeded Try again in 42 seconds.",
+    });
+  });
+
   test.each([null, "", "invalid", "-1", "1.5", "Infinity", "1e2", "99999999999999999999"])(
     "missing or invalid Retry-After %s keeps the server's error message",
     async (header) => {
