@@ -179,6 +179,23 @@ interface Side {
   readonly page: Page;
 }
 
+/**
+ * Draws a region afresh. A browser that repaints only part of a region can leave the
+ * anti-aliased edges of what it kept a shade off. That is a difference between two paints of
+ * one page, not between two builds, and it stays until the region is next drawn in full.
+ */
+const repaint = (page: Page, selector: string): Promise<void> =>
+  page.evaluate(async (selector) => {
+    const region = document.querySelector<HTMLElement>(selector);
+    if (region === null) throw new Error(`Nothing to repaint at ${selector}`);
+    const painted = (): Promise<void> =>
+      new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    region.style.display = "none";
+    await painted();
+    region.style.display = "";
+    await painted();
+  }, selector);
+
 /** Requires one region to look the same in two builds. */
 const expectAlike = async (
   testInfo: TestInfo,
@@ -506,6 +523,9 @@ test("watch groups are drawn identically", async ({ context, baseURL }, testInfo
     // A control that appears under a pointer left where it last clicked may or may not be
     // drawn as hovered, so the pointer is moved off the panel first.
     for (const page of pages) await page.mouse.move(700, 300);
+    // The sidebar redraws in pieces as a group comes and goes, and not in the same pieces in
+    // every build.
+    for (const page of pages) await repaint(page, ".sidebar");
     await expectAlike(testInfo, name, ".watch-group-panel", [web, desktop]);
     await expectAlike(testInfo, name, ".watch-group-trigger", [web, desktop]);
     await expectDesktopUnchanged(testInfo, name, builds);
