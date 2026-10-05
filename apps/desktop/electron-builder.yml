@@ -19,13 +19,19 @@
   },
   "win": {
     "icon": "resources/icons/icon.ico",
-    "target": ["nsis", "portable"]
+    "target": ["nsis", "portable"],
+    "publish": [{ "provider": "github", "owner": "HamzaNa1", "repo": "lumen", "channel": "latest" }]
+  },
+  "nsis": {
+    "artifactName": "Lumen-Setup-${version}-${arch}.${ext}"
+  },
+  "portable": {
+    "artifactName": "Lumen-Portable-${version}-${arch}.${ext}"
   },
   "linux": {
     "icon": "resources/icons/icon.png",
     "target": ["AppImage", "deb"],
     "category": "AudioVideo",
     "maintainer": "Lumen <HamzaNa1@users.noreply.github.com>"
-  },
-  "publish": [{ "provider": "generic", "url": "https://updates.lumen.invalid" }]
+  }
 }

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import { app, type BrowserWindow, nativeTheme } from "electron";
+import { app, type BrowserWindow, nativeTheme, Notification } from "electron";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import type { ServerClient } from "./api/ServerClient";
@@ -9,6 +9,7 @@ import { PlaybackBridge } from "./player/PlaybackBridge";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
 import { createMainWindow } from "./windows";
+import { startWindowsAutoUpdates } from "./WindowsAutoUpdates";
 
 let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
@@ -43,6 +44,7 @@ if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform",
 
 const bootstrap = async (): Promise<void> => {
   await app.whenReady();
+  if (process.platform === "win32") app.setAppUserModelId("dev.lumen.desktop");
   // The interface is dark-only; keep native chrome (title bar, menus) consistent with it.
   nativeTheme.themeSource = "dark";
   const registry = await AccountRegistry.open();
@@ -96,6 +98,24 @@ const bootstrap = async (): Promise<void> => {
   await overlay.load(rendererUrl, rendererPath);
   const stopUpdates = startNativePlayer(player);
   mainWindow.once("closed", stopUpdates);
+  const stopAutoUpdates = await startWindowsAutoUpdates({
+    platform: process.platform,
+    isPackaged: app.isPackaged,
+    isPortable: process.env.PORTABLE_EXECUTABLE_DIR !== undefined,
+    createUpdater: async () => {
+      const { default: electronUpdater } = await import("electron-updater");
+      return electronUpdater.autoUpdater;
+    },
+    notifyDownloaded: (version) => {
+      if (!Notification.isSupported()) return;
+      new Notification({
+        title: "Lumen update ready",
+        body: `Version ${version} has been downloaded and will be installed when you close Lumen.`,
+      }).show();
+    },
+  });
+  if (mainWindow.isDestroyed()) stopAutoUpdates();
+  else mainWindow.once("closed", stopAutoUpdates);
 };
 
 app.on("before-quit", (event) => {

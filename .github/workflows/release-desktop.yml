@@ -98,6 +98,8 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error
   publish:
     needs: [preflight, package]
@@ -133,6 +135,12 @@ jobs:
             echo "Expected six desktop installers, found ${#assets[@]}." >&2
             exit 1
           fi
+          windows_assets="release-assets/lumen-desktop-$RELEASE_VERSION-windows-latest"
+          if [[ ! -f "$windows_assets/latest.yml" || ! -f "$windows_assets/Lumen-Setup-$RELEASE_VERSION-x64.exe.blockmap" ]]; then
+            echo 'Windows update metadata or installer blockmap is missing.' >&2
+            exit 1
+          fi
+          assets+=("$windows_assets/latest.yml" "$windows_assets/Lumen-Setup-$RELEASE_VERSION-x64.exe.blockmap")
           flags=(--latest)
           if [[ "$RELEASE_VERSION" == *-* ]]; then flags=(--prerelease --latest=false); fi
           gh release create "$RELEASE_TAG" "${assets[@]}" \
