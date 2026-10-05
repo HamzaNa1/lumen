@@ -100,6 +100,9 @@ test("the desktop and web builds draw the shared pages identically", async ({
   for (const [name, route] of routes) {
     await web.goto(`/web${route}`);
     await desktop.goto(`${DESKTOP_BASE}/index.html#${route}`);
+    // Changing only the hash navigates inside the running page. Reload so that both builds
+    // draw the route from a fresh document, as the web build just did.
+    await desktop.reload();
     await settled(web);
     await settled(desktop);
     // Both routers must have ended up in the same place, including after any redirect.
