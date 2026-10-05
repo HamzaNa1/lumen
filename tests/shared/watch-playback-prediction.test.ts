@@ -67,7 +67,7 @@ const fixture = async (group: WatchGroup) => {
       if (state !== null) state = { ...state, paused };
     },
     speed: async () => {},
-    buffer: () => ({ aheadSeconds: Infinity, starved: false }),
+    buffer: () => ({ aheadSeconds: Infinity, starved: false, settled: false }),
   };
   const controller = new WatchPlaybackController(player, () => {});
   controller.setSurfaceReady(true);

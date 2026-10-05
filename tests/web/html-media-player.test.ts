@@ -32,6 +32,8 @@ class FakeMedia implements MediaElementLike {
   ended = false;
   seeking = false;
   readyState = 4;
+  /** Fetching, until the test has the browser come to rest. */
+  networkState = 2;
   error: { code: number } | null = null;
   /** The one stretch of media the element holds, if any. */
   bufferedRange: readonly [number, number] | null = null;
@@ -169,6 +171,7 @@ const setup = (
     onState: (state) => states.push(state),
     onFailure: (cause) => failures.push(cause.message),
     loadTimeoutMs: 80,
+    playAnswerTimeoutMs: 80,
     ...options,
   });
   return { element, api, player, calls, states, failures };
@@ -238,6 +241,42 @@ describe("browser playback lifecycle", () => {
     element.playOutcome = "plays";
     await player.allowPlayback();
     expect(player.getState()).toMatchObject({ paused: false, awaitingInteraction: false });
+  });
+
+  test("a request to play the browser holds keeps nothing waiting, and is recorded once answered", async () => {
+    const { element, player, states } = setup();
+    let begin: () => void = () => undefined;
+    element.playGate = new Promise<void>((resolve) => {
+      begin = resolve;
+    });
+    await player.start({ itemId: "item-1" });
+    expect(player.getState()).toMatchObject({ paused: true, awaitingInteraction: false });
+    // Asking again while the browser holds the first request adds nothing for it to hold.
+    let asked = 0;
+    const play = element.play.bind(element);
+    element.play = () => {
+      asked += 1;
+      return play();
+    };
+    await player.pause("session-1", false);
+    expect(asked).toBe(0);
+
+    states.length = 0;
+    begin();
+    await eventually(() => states.at(-1)?.paused === false);
+  });
+
+  test("a held request to play that the browser then cannot honour ends playback visibly", async () => {
+    const { element, player, failures } = setup();
+    let refuse: (cause: Error) => void = () => undefined;
+    element.playGate = new Promise<void>((_, reject) => {
+      refuse = reject;
+    });
+    await player.start({ itemId: "item-1" });
+    refuse(Object.assign(new Error("no decoder"), { name: "NotSupportedError" }));
+    await eventually(() => failures.length === 1);
+    expect(failures[0]).toContain("can’t play this file’s format");
+    expect(player.getState()).toBeNull();
   });
 
   test("rapid navigation leaves only the last session, and closes the ones it replaced", async () => {
@@ -423,6 +462,21 @@ test("the browser reports how far it can play on, and when it has run out", asyn
   element.currentTime = 100;
   expect(ahead()).toBe(Number.POSITIVE_INFINITY);
 
+  // Fetching, the browser may yet hold more. At rest it will not, unless it cannot play on at all.
+  element.bufferedRange = [8, 12];
+  element.currentTime = 10;
+  const settled = (): boolean => player.buffer(sessionId).settled;
+  expect(settled()).toBe(false);
+  element.networkState = 1;
+  expect(settled()).toBe(true);
+  element.seeking = true;
+  expect(settled()).toBe(false);
+  element.seeking = false;
+  element.readyState = 2;
+  expect(settled()).toBe(false);
+  element.readyState = 4;
+  element.networkState = 2;
+
   expect(player.buffer(sessionId).starved).toBe(false);
   element.emit("waiting");
   expect(player.buffer(sessionId).starved).toBe(true);
@@ -468,6 +522,10 @@ test.each(["direct", "managed"])(
       element.bufferedRange = [0, 7.9];
       await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
       await eventually(() => seeks === 1 && element.currentTime === 3);
+      if (delivery === "managed") {
+        element.networkState = 1;
+        expect(player.buffer("session-1").settled).toBe(false);
+      }
       await Bun.sleep(700);
       expect(owner.status.group?.playback).toMatchObject({
         positionSeconds: 3,
@@ -647,4 +705,117 @@ describe("managed browser session ownership", () => {
     expect(player.getState()).toMatchObject({ itemId: "item-2", paused: true });
     await player.stop();
   });
+});
+
+/** A browser's player joined to a watch group, as the browser runtime wires the two together. */
+const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefined) => {
+  const fixture = await watchFixture();
+  const { element, player } = setup();
+  element.bufferedRange = [0, 100];
+  prepare(element);
+  const viewer = new WatchPlaybackController(
+    {
+      start: ({ itemId, startAtSeconds, paused }) =>
+        player.start({ itemId, startAtSeconds, paused }),
+      stop: () => player.stop(),
+      getState: () => player.getState(),
+      seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
+      pause: (sessionId, paused) => player.pause(sessionId, paused),
+      speed: (sessionId, speed) => player.speed(sessionId, speed),
+      buffer: (sessionId) => player.buffer(sessionId),
+    },
+    () => undefined,
+  );
+  const owner = await fixture.connect(await fixture.login());
+  await owner.action({ type: "create", name: "Movie night", password: "" });
+  viewer.connect(await fixture.login(), "browser");
+  viewer.setSurfaceReady(true);
+  await eventually(() => viewer.status.connection === "connected");
+  await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+  return {
+    fixture,
+    element,
+    player,
+    viewer,
+    owner,
+    async close() {
+      viewer.close();
+      await fixture.close();
+    },
+  };
+};
+
+test("a browser that holds playback back for a click joins the group's playback once clicked", async () => {
+  const group = await groupViewer((element) => {
+    element.playOutcome = "blocked";
+  });
+  const { element, player, viewer, owner, fixture } = group;
+  try {
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    await eventually(() => player.getState()?.awaitingInteraction === true);
+    await Bun.sleep(1200);
+    expect(element.paused).toBe(true);
+
+    element.playOutcome = "plays";
+    await player.allowPlayback();
+    viewer.retry();
+    await eventually(() => !element.paused);
+    await Bun.sleep(700);
+    expect(element.paused).toBe(false);
+    expect(player.getState()).toMatchObject({ paused: false, awaitingInteraction: false });
+    expect(element.currentTime).toBeGreaterThan(4);
+  } finally {
+    await group.close();
+  }
+});
+
+test("a browser that leaves play() unanswered still follows what the group does next", async () => {
+  const group = await groupViewer((element) => {
+    // Some browsers neither start nor refuse playback in a page that is not in the foreground.
+    element.playGate = new Promise(() => undefined);
+  });
+  const { element, owner, fixture } = group;
+  try {
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    await Bun.sleep(300);
+    expect(element.paused).toBe(true);
+
+    await owner.action({
+      type: "pause",
+      itemId: fixture.itemId,
+      paused: true,
+      positionSeconds: 40,
+    });
+    await eventually(() => element.currentTime === 40);
+    await owner.action({ type: "stop", itemId: fixture.itemId });
+    await eventually(() => element.src === "");
+  } finally {
+    await group.close();
+  }
+});
+
+test("a browser that stops fetching short of five seconds no longer keeps its watch group waiting", async () => {
+  const group = await groupViewer((element) => {
+    // Paused, a browser fetches as much as it sees fit, and may report little of it as buffered.
+    element.bufferedRange = [0, 5];
+  });
+  const { element, viewer, owner, fixture } = group;
+  try {
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => element.currentTime === 3);
+    await Bun.sleep(400);
+    expect(owner.status.group?.playback).toMatchObject({
+      paused: true,
+      waitingFor: [viewer.status.memberId],
+    });
+
+    element.networkState = 1;
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    await eventually(() => !element.paused);
+    expect(element.currentTime).toBe(3);
+  } finally {
+    await group.close();
+  }
 });

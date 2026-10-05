@@ -30,6 +30,7 @@ export interface MediaElementLike {
   readonly ended: boolean;
   readonly seeking: boolean;
   readonly readyState: number;
+  readonly networkState: number;
   readonly error: { readonly code: number } | null;
   readonly buffered: {
     readonly length: number;
@@ -86,6 +87,8 @@ export interface HtmlMediaPlayerOptions {
     recovery: DeliveryRecovery,
     onFailure: (failure: DeliveryFailure) => void,
   ) => MediaSourceAdapter;
+  /** How long a command waits for the browser to answer a request to play. */
+  readonly playAnswerTimeoutMs?: number;
 }
 
 interface ActiveSession {
@@ -97,6 +100,8 @@ interface ActiveSession {
   selectedAudioStreamId: string | null;
   buffering: boolean;
   awaitingInteraction: boolean;
+  /** A request to play that the browser is holding, having neither started nor refused it. */
+  heldPlay: Promise<void> | null;
   /** The page was hidden and the server session ended; it must be reopened before resuming. */
   suspended: boolean;
   /** Whether playback was running when the page was hidden. */
@@ -105,12 +110,17 @@ interface ActiveSession {
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
+// A browser that will start or refuse playback says so at once. One that takes longer is holding
+// the request: until it has media to play, or until a page opened in the background is first shown.
+const PLAY_ANSWER_TIMEOUT_MS = 1000;
 const MAX_RECOVERIES = 2;
 const RECOVERY_WINDOW_MS = 60_000;
 
 // HTMLMediaElement.readyState: there is enough data past the current position for playback to
 // advance. One state lower, only the current frame is there and playing would stall at once.
 const HAVE_FUTURE_DATA = 3;
+// HTMLMediaElement.networkState: the browser has a source and is not fetching any of it just now.
+const NETWORK_IDLE = 1;
 // What a browser has buffered can stop a little short of the duration it reports.
 const END_TOLERANCE_SECONDS = 0.5;
 
@@ -157,6 +167,7 @@ export class HtmlMediaPlayer {
   private readonly onState: (state: PlayerState | null) => void;
   private readonly onFailure: (cause: Error) => void;
   private readonly loadTimeoutMs: number;
+  private readonly playAnswerTimeoutMs: number;
   private active: ActiveSession | null = null;
   private generation = 0;
   private stopping: Promise<void> | null = null;
@@ -176,6 +187,7 @@ export class HtmlMediaPlayer {
     this.onState = options.onState;
     this.onFailure = options.onFailure;
     this.loadTimeoutMs = options.loadTimeoutMs ?? LOAD_TIMEOUT_MS;
+    this.playAnswerTimeoutMs = options.playAnswerTimeoutMs ?? PLAY_ANSWER_TIMEOUT_MS;
   }
 
   async start(input: {
@@ -217,6 +229,13 @@ export class HtmlMediaPlayer {
       aheadSeconds: this.bufferedAhead(),
       // A seek also makes the element wait; that is not running out.
       starved: active.buffering && !element.paused && !element.seeking,
+      // A paused browser fetches only as much as it sees fit, and reports what it holds by its
+      // own estimate, so it may come to rest short of any amount that is waited for.
+      settled:
+        this.source?.kind === "direct" &&
+        !element.seeking &&
+        element.readyState >= HAVE_FUTURE_DATA &&
+        element.networkState === NETWORK_IDLE,
     };
   }
 
@@ -273,6 +292,9 @@ export class HtmlMediaPlayer {
     const active = this.active;
     if (active === null) return;
     active.awaitingInteraction = false;
+    // Only a request made during the click is honoured, so one the browser already holds is no
+    // reason not to ask.
+    active.heldPlay = null;
     await this.play(active);
     if (this.active === active) this.publish(active);
   }
@@ -486,6 +508,7 @@ export class HtmlMediaPlayer {
         : null,
       buffering: false,
       awaitingInteraction: false,
+      heldPlay: null,
       suspended: false,
       playingBeforeSuspend: false,
       suspendedSnapshot: null,
@@ -583,7 +606,40 @@ export class HtmlMediaPlayer {
       );
   }
 
+  /**
+   * Asks the browser to play and waits a moment for its answer. A browser may hold the request
+   * instead of answering it, for as long as it likes, so the wait is bounded: commands carry on
+   * with the element as it stands, and whatever the browser decides later is recorded then.
+   */
   private async play(active: ActiveSession): Promise<void> {
+    if (active.heldPlay !== null) return;
+    const answer = this.requestPlay(active);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const held = await Promise.race([
+      answer.then(() => false),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(true), this.playAnswerTimeoutMs);
+      }),
+    ]).finally(() => clearTimeout(timer));
+    if (!held) return;
+    const heldPlay = answer
+      .then(
+        () => {
+          if (this.active === active) this.publish(active);
+        },
+        (cause: unknown) => {
+          if (this.active !== active) return;
+          return this.fail(cause instanceof Error ? cause : new Error("Playback could not start."));
+        },
+      )
+      .finally(() => {
+        if (active.heldPlay === heldPlay) active.heldPlay = null;
+      });
+    active.heldPlay = heldPlay;
+  }
+
+  /** Settles once the browser has started playback or declined to; rejects if it cannot play. */
+  private async requestPlay(active: ActiveSession): Promise<void> {
     try {
       await this.element.play();
       active.awaitingInteraction = false;
