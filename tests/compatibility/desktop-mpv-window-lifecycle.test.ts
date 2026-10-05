@@ -2,6 +2,7 @@ import { describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import type { PlayerState } from "@lumen/contracts";
 import type { BrowserWindow } from "electron";
+import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import {
   PlaybackSessionReporter,
   WatchPlaybackController,
@@ -843,7 +844,10 @@ describe("native playback failure recovery", () => {
           await owner.action({ type: "create", name: "Movie night", password: "" });
           await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 7 });
           await owner.action({ type: "pause", itemId: fixture.itemId, positionSeconds: 7, paused: true });
-          watch.connect(await fixture.login(), "viewer");
+          const viewer = new ServerClient({ origin: fixture.running.server.url.origin });
+          await viewer.identity();
+          viewer.setSession((await fixture.login()).currentSession);
+          watch.connect(viewer, "viewer");
           watch.setSurfaceReady(true);
           await eventually(() => watch.status.connection === "connected");
           await watch.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });

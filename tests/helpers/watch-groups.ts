@@ -2,8 +2,12 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { startServer } from "../../apps/server/src/Runtime";
-import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
-import { WatchGroupClient } from "../../packages/client/src/index.ts";
+import {
+  bearerCredentials,
+  ServerApi,
+  type WatchConnection,
+  WatchGroupClient,
+} from "../../packages/client/src/index.ts";
 import { seedPlaybackFixture } from "./playback";
 
 export const eventually = async (ready: () => boolean, timeout = 5000): Promise<void> => {
@@ -27,20 +31,26 @@ export const watchFixture = async () => {
   });
   const clients: WatchGroupClient[] = [];
   const login = async (username = "admin") => {
-    const server = new ServerClient({ origin: running.server.url.toString() });
+    let accessToken: string | null = null;
+    const server = new ServerApi({
+      origin: running.server.url.toString(),
+      credentials: bearerCredentials(() => accessToken),
+    });
     await server.identity();
-    await server.login(
+    const session = await server.tokenLogin(
       {
-        origin: running.server.url.toString(),
-        serverLabel: "Test",
         username,
         password: "correct horse battery staple",
       },
-      crypto.randomUUID(),
+      { deviceId: crypto.randomUUID(), deviceName: "Test", platform: "desktop" },
     );
-    return server;
+    accessToken = session.accessToken;
+    return Object.assign(server, {
+      currentSession: session,
+      watchAuthentication: () => ({ token: session.accessToken }),
+    });
   };
-  const connect = async (server: ServerClient) => {
+  const connect = async (server: WatchConnection) => {
     const client = new WatchGroupClient(server, () => undefined);
     clients.push(client);
     client.connect();

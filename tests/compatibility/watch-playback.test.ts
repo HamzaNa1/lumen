@@ -2,14 +2,19 @@ import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { expect, test } from "bun:test";
 import type { PlayerState } from "@lumen/contracts";
 import { watchCorrection, watchPosition } from "../../packages/contracts/src/watch-groups";
-import { WatchPlaybackController, type WatchPlayer } from "../../packages/client/src/index.ts";
+import {
+  type ServerApi,
+  WatchPlaybackController,
+  type WatchPlayer,
+  type WatchServer,
+} from "../../packages/client/src/index.ts";
 import { eventually, watchFixture, watchProxy } from "../helpers/watch-groups";
 
-class NativePlayback implements WatchPlayer<ServerClient> {
+class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   state: PlayerState | null = null;
   rate = 1;
   failNextStart = false;
-  async start(input: Parameters<WatchPlayer<ServerClient>["start"]>[0]) {
+  async start(input: Parameters<WatchPlayer<ServerApi & WatchServer>["start"]>[0]) {
     if (this.failNextStart) {
       this.failNextStart = false;
       throw new Error("Temporary media failure");
