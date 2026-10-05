@@ -85,7 +85,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
     pause: (sessionId, paused) => player.pause(sessionId, paused),
     speed: (sessionId, speed) => player.speed(sessionId, speed),
-    loaded: (sessionId) => player.loaded(sessionId),
+    buffer: (sessionId) => player.buffer(sessionId),
   };
   const watch = new WatchPlaybackController(watchPlayer, watchStates.emit);
   watchController = watch;

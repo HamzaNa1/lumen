@@ -533,6 +533,26 @@ test("a group waits for a member for as long as it takes to report ready", async
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
     expect(owner.status.group?.playback?.positionSeconds).toBe(2);
 
+    // A member that runs out of media stops the group where it has got to, and is waited for.
+    const playing = owner.status.group?.revision ?? 0;
+    await stuck.action({ type: "buffering", revision: playing - 1 });
+    await owner.action({ type: "buffering", revision: playing });
+    expect(owner.status.group?.playback?.paused).toBe(false);
+    await stuck.action({ type: "buffering", revision: playing });
+    expect(owner.status.group?.playback).toMatchObject({
+      paused: true,
+      waitingFor: [stuck.status.memberId],
+    });
+    expect(owner.status.group?.playback?.positionSeconds).toBeGreaterThanOrEqual(2);
+    expect(owner.status.group?.playback?.positionSeconds).toBeLessThan(9);
+    // A group that is not playing has nothing to hold.
+    await owner.action({ type: "pause", itemId: fixture.itemId, paused: true, positionSeconds: 4 });
+    const paused = owner.status.group?.revision ?? 0;
+    await stuck.action({ type: "buffering", revision: paused });
+    expect(owner.status.group?.revision).toBe(paused);
+    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+    await owner.action({ type: "pause", itemId: fixture.itemId, paused: false, positionSeconds: 4 });
+
     // Without anyone to wait for, the group plays at once.
     await stuck.action({ type: "leave" });
     await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 9 });

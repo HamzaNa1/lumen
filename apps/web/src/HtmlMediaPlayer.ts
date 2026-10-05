@@ -1,6 +1,7 @@
 import {
   PLAYBACK_REPORT_INTERVAL_MS,
   type PlaybackSessionApi,
+  type PlayerBuffer,
   PlaybackSessionReporter,
   PlaybackUnsupportedError,
   ServerHttpError,
@@ -83,6 +84,8 @@ const RECOVERY_WINDOW_MS = 60_000;
 // HTMLMediaElement.readyState: there is enough data past the current position for playback to
 // advance. One state lower, only the current frame is there and playing would stall at once.
 const HAVE_FUTURE_DATA = 3;
+// What a browser has buffered can stop a little short of the duration it reports.
+const END_TOLERANCE_SECONDS = 0.5;
 
 // MediaError.code
 const MEDIA_ERR_NETWORK = 2;
@@ -171,10 +174,30 @@ export class HtmlMediaPlayer {
     return this.publish(active);
   }
 
-  /** Whether the element can play on from its current position, as after a seek. */
-  loaded(sessionId: string): boolean {
-    this.requireActive(sessionId);
-    return !this.element.seeking && this.element.readyState >= HAVE_FUTURE_DATA;
+  buffer(sessionId: string): PlayerBuffer {
+    const active = this.requireActive(sessionId);
+    const { element } = this;
+    return {
+      aheadSeconds: this.bufferedAhead(),
+      // A seek also makes the element wait; that is not running out.
+      starved: active.buffering && !element.paused && !element.seeking,
+    };
+  }
+
+  private bufferedAhead(): number {
+    const { element } = this;
+    if (element.seeking) return 0;
+    const position = element.currentTime;
+    const end = Number.isFinite(element.duration) ? element.duration : Number.POSITIVE_INFINITY;
+    // Nothing is left to fetch at the end, where the element reports no data to play on with.
+    if (element.ended || position >= end - END_TOLERANCE_SECONDS) return Number.POSITIVE_INFINITY;
+    if (element.readyState < HAVE_FUTURE_DATA) return 0;
+    for (let index = 0; index < element.buffered.length; index += 1) {
+      const rangeEnd = element.buffered.end(index);
+      if (element.buffered.start(index) > position || rangeEnd <= position) continue;
+      return rangeEnd >= end - END_TOLERANCE_SECONDS ? Number.POSITIVE_INFINITY : rangeEnd - position;
+    }
+    return 0;
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {

@@ -65,6 +65,8 @@ export class MpvProcess {
       "--load-scripts=no",
       "--idle=yes",
       "--no-terminal",
+      // Read ahead of playback whatever the source, paused or not: a watch group waits for it.
+      "--cache=yes",
       `--input-ipc-server=${socketPath}`,
       ...(process.platform === "darwin"
         ? [

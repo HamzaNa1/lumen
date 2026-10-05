@@ -46,17 +46,23 @@ export class WatchGroupClient {
   private offsetMs = 0;
   private bestRtt = Infinity;
   private lastPong = 0;
+  private holdsForBuffering = false;
   status: WatchStatus = initialWatchStatus();
 
   constructor(
     private readonly connection: WatchConnection,
     private readonly onStatus: (status: WatchStatus) => void,
     /**
-     * Whether whoever drives this client answers a group that holds for its members to load,
+     * Whether whoever drives this client answers a group that holds for its members to buffer,
      * with a `ready` action. A group does not wait for a client that would never answer.
      */
     private readonly readiness = false,
   ) {}
+
+  /** Whether the server holds a playing group for a member that says it ran out of media. */
+  get waitsForBuffering(): boolean {
+    return this.holdsForBuffering;
+  }
 
   get serverNow(): number {
     return Date.now() + this.offsetMs;
@@ -86,6 +92,7 @@ export class WatchGroupClient {
           this.attempts = 0;
           this.bestRtt = Infinity;
           this.lastPong = Date.now();
+          this.holdsForBuffering = message.holdsForBuffering === true;
           this.update({
             connection: "connected",
             memberId: message.memberId,

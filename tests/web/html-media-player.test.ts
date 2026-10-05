@@ -23,7 +23,20 @@ class FakeMedia implements MediaElementLike {
   seeking = false;
   readyState = 4;
   error: { code: number } | null = null;
-  buffered = { length: 0, start: () => 0, end: () => 0 };
+  /** The one stretch of media the element holds, if any. */
+  bufferedRange: readonly [number, number] | null = null;
+  readonly buffered = {
+    element: this as FakeMedia,
+    get length(): number {
+      return this.element.bufferedRange === null ? 0 : 1;
+    },
+    start(): number {
+      return this.element.bufferedRange?.[0] ?? 0;
+    },
+    end(): number {
+      return this.element.bufferedRange?.[1] ?? 0;
+    },
+  };
   sources: string[] = [];
   /** What happens when a source is loaded: metadata arrives, an error, or nothing yet. */
   loadOutcome: "loaded" | "unsupported" | "hang" = "loaded";
@@ -351,7 +364,45 @@ describe("browser playback lifecycle", () => {
   });
 });
 
-test("a watch group is not told the browser is ready while it only has the current frame", async () => {
+test("the browser reports how far it can play on, and when it has run out", async () => {
+  const { element, player } = setup();
+  await player.start({ itemId: "item-1" });
+  const sessionId = "session-1";
+  element.currentTime = 10;
+  const ahead = (): number => player.buffer(sessionId).aheadSeconds;
+
+  expect(ahead()).toBe(0);
+  element.bufferedRange = [8, 14];
+  expect(ahead()).toBe(4);
+  // Media held elsewhere is no help from here.
+  element.bufferedRange = [11, 30];
+  expect(ahead()).toBe(0);
+  element.bufferedRange = [0, 30];
+  element.seeking = true;
+  expect(ahead()).toBe(0);
+  element.seeking = false;
+  element.readyState = 2;
+  expect(ahead()).toBe(0);
+  element.readyState = 4;
+  // Close to the end there are no five seconds left to wait for.
+  element.bufferedRange = [8, 100];
+  element.currentTime = 97;
+  expect(ahead()).toBe(Number.POSITIVE_INFINITY);
+  element.bufferedRange = null;
+  element.currentTime = 100;
+  expect(ahead()).toBe(Number.POSITIVE_INFINITY);
+
+  expect(player.buffer(sessionId).starved).toBe(false);
+  element.emit("waiting");
+  expect(player.buffer(sessionId).starved).toBe(true);
+  element.seeking = true;
+  expect(player.buffer(sessionId).starved).toBe(false);
+  element.seeking = false;
+  element.emit("playing");
+  expect(player.buffer(sessionId).starved).toBe(false);
+});
+
+test("a watch group is not told the browser is ready until it holds five seconds to play on with", async () => {
   const fixture = await watchFixture();
   const { element, player } = setup();
   let seeks = 0;
@@ -366,7 +417,7 @@ test("a watch group is not told the browser is ready while it only has the curre
       },
       pause: (sessionId, paused) => player.pause(sessionId, paused),
       speed: (sessionId, speed) => player.speed(sessionId, speed),
-      loaded: (sessionId) => player.loaded(sessionId),
+      buffer: (sessionId) => player.buffer(sessionId),
     },
     () => undefined,
   );
@@ -378,9 +429,9 @@ test("a watch group is not told the browser is ready while it only has the curre
     await eventually(() => viewer.status.connection === "connected");
     await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
 
-    // The seek has finished, but the browser holds nothing beyond the frame it landed on.
+    // The seek has finished, but the browser holds too little beyond where it landed.
     element.seeking = false;
-    element.readyState = 2;
+    element.bufferedRange = [0, 7.9];
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
     await eventually(() => seeks === 1 && element.currentTime === 3);
     await Bun.sleep(700);
@@ -393,7 +444,7 @@ test("a watch group is not told the browser is ready while it only has the curre
     expect(seeks).toBe(1);
 
     // Enough has arrived to play on from there.
-    element.readyState = 3;
+    element.bufferedRange = [0, 8];
     await eventually(() => owner.status.group?.playback?.paused === false);
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
     await eventually(() => !element.paused);

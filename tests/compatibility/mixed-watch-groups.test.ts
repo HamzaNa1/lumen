@@ -76,10 +76,8 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
     if (this.state !== null) this.state = { ...this.state, paused };
   }
   async speed() {}
-  /** Set to false to model a player that is still fetching its position. */
-  ready = true;
-  loaded() {
-    return this.ready;
+  buffer() {
+    return { aheadSeconds: Number.POSITIVE_INFINITY, starved: false };
   }
 }
 
