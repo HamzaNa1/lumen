@@ -3,6 +3,7 @@ import { useNavigate } from "@tanstack/react-router";
 import { useEffect, useLayoutEffect, useRef } from "react";
 import { PlayerView } from "./PlayerView";
 import { useRuntime } from "./Runtime";
+import { useFullscreen } from "./useFullscreen";
 import { useWorkspace } from "./Workspace";
 
 export const PlayerPage = (): React.ReactElement => {
@@ -23,11 +24,14 @@ export const PlayerPage = (): React.ReactElement => {
   const hasPlayback = watchPlayback !== null || playingItem !== null || player !== null;
   // Inline controls bind the same shortcuts themselves.
   const inlineControls = runtime.playback.presentation.kind === "inline";
+  const [fullscreen, toggleFullscreen] = useFullscreen();
 
   usePlayerShortcuts({
     enabled: !inlineControls && player !== null && !playbackLoading && playbackError === null,
     position: player?.positionSeconds ?? 0,
     duration: player?.durationSeconds ?? null,
+    fullscreen,
+    onFullscreen: inlineControls ? undefined : toggleFullscreen,
     onPause: () => {
       if (player !== null)
         void runtime.playback.pause(player.sessionId, !player.paused).catch(() => undefined);
