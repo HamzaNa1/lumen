@@ -40,7 +40,14 @@ test("signs in with a cookie scripts cannot read, and a reload restores the sess
 
 test("every route survives direct navigation and refresh", async ({ page }) => {
   await signIn(page);
-  for (const path of ["/web/search", "/web/settings", "/web/admin", "/web/admin/users", "/web/admin/jobs", "/web/library"]) {
+  for (const path of [
+    "/web/search",
+    "/web/settings",
+    "/web/admin",
+    "/web/admin/users",
+    "/web/admin/jobs",
+    "/web/library",
+  ]) {
     await page.goto(path);
     await expect(page).toHaveURL(new RegExp(`${path}$`, "u"));
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
@@ -85,6 +92,78 @@ test("a session revoked on the server returns the app to sign-in", async ({ page
   // sidebar can be gone at any moment; go straight to a page rather than clicking through it.
   await page.goto("/web/admin/users");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+});
+
+test("an old unauthorized request cannot erase a newer sign-in's cookie", async ({
+  page,
+  context,
+}) => {
+  // Keep the actual browser cookie jar, but leave the app runtime out of the race.
+  await page.goto("/health/live");
+  const login = () =>
+    page.evaluate(
+      async (password) =>
+        (
+          await fetch("/api/v1/auth/browser/login", {
+            method: "POST",
+            headers: { "content-type": "application/json", "x-lumen-csrf": "1" },
+            body: JSON.stringify({
+              username: "admin",
+              password,
+              deviceId: crypto.randomUUID(),
+              deviceName: "Cookie race",
+            }),
+          })
+        ).status,
+      PASSWORD,
+    );
+  expect(await login()).toBe(200);
+  const oldCookie = await sessionCookie(context);
+  const oldSessionId = oldCookie?.value.split(".")[0];
+  expect(
+    await page.evaluate(
+      async (sessionId) =>
+        (
+          await fetch(`/api/v1/auth/sessions/${sessionId}`, {
+            method: "DELETE",
+            headers: { "x-lumen-csrf": "1" },
+          })
+        ).status,
+      oldSessionId,
+    ),
+  ).toBe(200);
+  let arrived!: () => void;
+  let release!: () => void;
+  const requested = new Promise<void>((resolve) => {
+    arrived = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/auth/me", async (route) => {
+    const response = await route.fetch();
+    expect(response.status()).toBe(401);
+    arrived();
+    await gate;
+    // Deliver the real server's old response only after the new cookie is installed.
+    await route.fulfill({ response });
+  });
+  const oldRequest = page.evaluate(async () => (await fetch("/api/v1/auth/me")).status);
+  try {
+    await requested;
+    expect(await login()).toBe(200);
+    const newCookie = await sessionCookie(context);
+    expect(newCookie?.value).not.toBe(oldCookie?.value);
+    release();
+    expect(await oldRequest).toBe(401);
+    expect((await sessionCookie(context))?.value).toBe(newCookie?.value);
+    expect(
+      await page.evaluate(async () => (await fetch("/api/v1/auth/browser/session")).status),
+    ).toBe(200);
+  } finally {
+    release();
+    await oldRequest;
+  }
 });
 
 test("a file the browser cannot play says so instead of loading forever", async ({ page }) => {

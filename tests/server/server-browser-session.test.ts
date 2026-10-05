@@ -175,7 +175,7 @@ describe("browser sessions", () => {
     expect((await browser("/api/v1/auth/me", { cookie })).status).toBe(401);
   });
 
-  test("a session revoked elsewhere stops working and its cookie is cleared", async () => {
+  test("a revoked session is refused without overwriting a potentially newer cookie", async () => {
     const { register, browser, account, origin } = await start();
     const cookie = cookiePair(await register());
     const sessionId = cookie.slice("lumen_session=".length).split(".")[0];
@@ -201,8 +201,10 @@ describe("browser sessions", () => {
     expect(revoke.status).toBe(200);
     const rejected = await browser("/api/v1/auth/me", { cookie });
     expect(rejected.status).toBe(401);
-    expect(sessionCookie(rejected)).toContain("Max-Age=0");
-    expect((await browser("/api/v1/auth/browser/session", { cookie })).status).toBe(401);
+    expect(rejected.headers.get("set-cookie")).toBeNull();
+    const rejectedSession = await browser("/api/v1/auth/browser/session", { cookie });
+    expect(rejectedSession.status).toBe(401);
+    expect(rejectedSession.headers.get("set-cookie")).toBeNull();
   });
 
   test("an expired session is refused", async () => {
@@ -211,7 +213,9 @@ describe("browser sessions", () => {
     const realNow = Date.now;
     Date.now = () => realNow() + 11 * 24 * 60 * 60 * 1000;
     try {
-      expect((await browser("/api/v1/auth/browser/session", { cookie })).status).toBe(401);
+      const rejected = await browser("/api/v1/auth/browser/session", { cookie });
+      expect(rejected.status).toBe(401);
+      expect(rejected.headers.get("set-cookie")).toBeNull();
     } finally {
       Date.now = realNow;
     }

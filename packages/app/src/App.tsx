@@ -194,15 +194,18 @@ export const App = (): React.ReactElement => {
   }, [accountsQuery.isSuccess, active, connectionsView, queryClient, runtime]);
   // Everything cached or playing belongs to one account on one server. When that changes, none
   // of it may carry over: stop playback, drop requests still in flight, and forget the data.
-  const scopeKey =
-    active === null ? null : `${active.connectionId}\n${active.serverId}\n${active.userId}`;
-  const previousScopeKey = useRef(scopeKey);
+  const scope = useMemo(
+    () =>
+      active === null ? null : ([active.connectionId, active.serverId, active.userId] as const),
+    [active],
+  );
+  const previousScope = useRef(scope);
   useEffect(() => {
-    const previous = previousScopeKey.current;
-    previousScopeKey.current = scopeKey;
-    if (previous === null || previous === scopeKey) return;
-    void queryClient.cancelQueries({ predicate: (query) => query.queryKey[0] !== "accounts" });
-    queryClient.removeQueries({ predicate: (query) => query.queryKey[0] !== "accounts" });
+    const previous = previousScope.current;
+    previousScope.current = scope;
+    if (previous === null || previous.every((value, index) => value === scope?.[index])) return;
+    void queryClient.cancelQueries({ queryKey: previous });
+    queryClient.removeQueries({ queryKey: previous });
     queryClient.getMutationCache().clear();
     updatePlayer(null);
     setPlayingItem(null);
@@ -210,7 +213,7 @@ export const App = (): React.ReactElement => {
     setPlaybackError(null);
     void runtime.playback.stop().catch(() => undefined);
     if (onPlayerRouteRef.current) void router.navigate({ to: "/", replace: true });
-  }, [queryClient, router, runtime, scopeKey, updatePlayer]);
+  }, [queryClient, router, runtime, scope, updatePlayer]);
   const playerUnavailable = player === null;
   useEffect(() => {
     const leavingPlayer = wasOnPlayerRoute.current && !onPlayerRoute;
@@ -313,7 +316,7 @@ export const App = (): React.ReactElement => {
         </div>
       </main>
     );
-  if (accounts.length === 0 || active === null)
+  if (accounts.length === 0 || active === null || scope === null)
     return (
       <ConnectPage
         accounts={accounts}
@@ -347,7 +350,6 @@ export const App = (): React.ReactElement => {
       />
     );
 
-  const scope = [active.connectionId, active.serverId, active.userId] as const;
   const workspace = {
     account: active,
     scope,

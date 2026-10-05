@@ -389,6 +389,89 @@ test("the connection forms are drawn identically", async ({
   }
 });
 
+test("switching accounts keeps the new account's libraries subscribed", async ({
+  context,
+  baseURL,
+}) => {
+  await signIn(context, baseURL ?? "");
+  const page = await openDesktop(context, desktopBuild);
+  await page.addInitScript(() => {
+    const bridge = window.lumen;
+    const initial = bridge.accounts.list();
+    let activeId: string | null = null;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const state = { requested: false, completed: false, release };
+    Reflect.set(window, "accountSwitchTest", state);
+    const records = initial.then(({ accounts }) => {
+      const first = accounts[0];
+      if (first === undefined) throw new Error("Sign in before switching accounts");
+      activeId = first.connectionId;
+      return [
+        first,
+        {
+          ...first,
+          connectionId: "replacement",
+          userId: "replacement-user",
+          username: "replacement",
+          serverLabel: "Replacement",
+        },
+      ];
+    });
+    Object.assign(bridge.accounts, {
+      list: async () => ({ accounts: await records, activeConnectionId: activeId }),
+      activate: async (id: string) => {
+        await records;
+        activeId = id;
+        return bridge.accounts.list();
+      },
+    });
+    Object.assign(bridge.library, {
+      list: async () => {
+        await records;
+        const replacing = activeId === "replacement";
+        if (replacing) {
+          state.requested = true;
+          await gate;
+          state.completed = true;
+        }
+        return [
+          {
+            id: replacing ? "new-library" : "old-library",
+            name: replacing ? "Replacement library" : "Original library",
+            slug: "movies",
+            kind: "movies",
+            isEnabled: true,
+            createdAtMs: 1,
+            updatedAtMs: 1,
+          },
+        ];
+      },
+    });
+  });
+  await gotoDesktop(page, desktopBuild, "/settings");
+  const nav = page.getByRole("navigation", { name: "Primary" });
+  await expect(nav.getByRole("link", { name: "Original library" })).toBeVisible();
+  await page.locator(".account-trigger").click();
+  await page.getByRole("menuitem", { name: /Replacement/u }).click();
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, "accountSwitchTest").requested))
+    .toBe(true);
+  await page.evaluate(() => Reflect.get(window, "accountSwitchTest").release());
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, "accountSwitchTest").completed))
+    .toBe(true);
+  await expect(nav.getByRole("link", { name: "Replacement library" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Original library" })).toHaveCount(0);
+  // Repeating the transition must retain the new subscription each time.
+  await page.locator(".account-trigger").click();
+  await page.getByRole("menuitem", { name: /admin ·/u }).click();
+  await expect(nav.getByRole("link", { name: "Original library" })).toBeVisible();
+  await expect(nav.getByRole("link", { name: "Replacement library" })).toHaveCount(0);
+});
+
 test("watch groups are drawn identically", async ({ context, baseURL }, testInfo) => {
   const builds = await signedInBuilds(context, baseURL ?? "");
   const { web, desktop } = builds;

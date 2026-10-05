@@ -7,6 +7,7 @@ import {
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
 import { eventually, watchFixture } from "../helpers/watch-groups";
+import { electronTestExports } from "../helpers/electron";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 
 const events: string[] = [];
@@ -46,7 +47,7 @@ class FakeBaseWindow {
   }
 }
 
-mock.module("electron", () => ({ BaseWindow: FakeBaseWindow, app: {}, screen: {} }));
+mock.module("electron", () => ({ ...electronTestExports, BaseWindow: FakeBaseWindow }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
 const { PlayerController, startNativePlayer, watchPlayerFor } = await import("../../apps/desktop/src/main/player/PlayerController");
 const { MpvIpc, MpvIpcFailure } = await import("../../apps/desktop/src/main/player/MpvIpc");

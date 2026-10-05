@@ -89,6 +89,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const discoveredServers = new Map<string, ServerDiscovery>();
   const restoring = new Map<string, Promise<ServerClient>>();
   let playerDisplay: PlayerDisplay | null = null;
+  const endAccountActivity = async (...connectionIds: ReadonlyArray<string | undefined>): Promise<void> => {
+    watch.disconnect();
+    for (const connectionId of new Set(connectionIds)) {
+      if (connectionId !== undefined) dependencies.clients.get(connectionId)?.cancelPending();
+    }
+    await dependencies.player.stop();
+  };
   const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) return validateClient(cached).then(() => cached);
@@ -154,6 +161,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const user = await client.me();
     const current = client.currentSession ?? session;
     connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
+    await endAccountActivity(dependencies.registry.active()?.connectionId, connectionId);
     try {
       await dependencies.registry.save({
         connectionId,
@@ -181,8 +189,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     if (account === null) throw new Error("Connection not found");
     const client = await restoreClient(account);
     if (dependencies.registry.active()?.connectionId !== connectionId) {
-      watch.disconnect();
-      await dependencies.player.stop();
+      await endAccountActivity(dependencies.registry.active()?.connectionId);
     }
     await dependencies.registry.activate(connectionId);
     watch.connect(client, connectionId);
@@ -190,8 +197,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("accounts:remove", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
-    if (dependencies.registry.active()?.connectionId === connectionId) watch.disconnect();
-    await dependencies.player.stop();
+    if (dependencies.registry.active()?.connectionId === connectionId) await endAccountActivity(connectionId);
+    else dependencies.clients.get(connectionId)?.cancelPending();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
     return dependencies.registry.list();

@@ -150,19 +150,13 @@ export const makeHttpHandler = (
   });
   // Session cookies to set once the response exists, keyed by the request that earned them.
   const cookies = new WeakMap<Request, string>();
-  /** Checks the browser's cookie session, keeping the cookie in step with the session. */
+  /** Renews valid cookie sessions; rejected requests may belong to an older sign-in. */
   const authenticateCookie = async (request: Request, token: string) => {
     const nowMs = Date.now();
-    try {
-      const session = await call(services.auth.authenticateSession(token, nowMs));
-      if (session.renewed)
-        cookies.set(request, sessionCookie(request, config, token, session.expiresAtMs, nowMs));
-      return session;
-    } catch (cause) {
-      if (cause instanceof ServerError && cause.code === "unauthorized")
-        cookies.set(request, clearedSessionCookie(request, config));
-      throw cause;
-    }
+    const session = await call(services.auth.authenticateSession(token, nowMs));
+    if (session.renewed)
+      cookies.set(request, sessionCookie(request, config, token, session.expiresAtMs, nowMs));
+    return session;
   };
   /** Desktop clients present a bearer token; the browser app presents its session cookie. */
   const authenticate = async (request: Request): Promise<AuthPrincipal> => {
