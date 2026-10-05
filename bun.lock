@@ -43,7 +43,7 @@
     },
     "apps/server": {
       "name": "lumen-server",
-      "version": "0.0.10",
+      "version": "0.0.11",
       "dependencies": {
         "@effect/platform-bun": "4.0.0-beta.83",
         "@effect/sql-sqlite-bun": "4.0.0-beta.83",
@@ -60,7 +60,6 @@
     },
     "apps/web": {
       "name": "lumen-web",
-      "version": "0.0.10",
       "devDependencies": {
         "@lumen/app": "workspace:*",
         "@lumen/client": "workspace:*",
