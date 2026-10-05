@@ -24,6 +24,7 @@ import { Schema } from "effect";
 import {
   AuthenticationRequiredError,
   assertCompatibleApi,
+  parseRetryAfterSeconds,
   RequestCancelledError,
   ServerHttpError,
   ServerUnreachableError,
@@ -235,12 +236,13 @@ const decodeSession = (value: unknown): AccountSession => {
 
 const readJson = async (response: Response): Promise<unknown> => {
   if (!response.ok) {
+    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get("retry-after"), Date.now());
     let message = `Server request failed (${response.status})`;
     try {
       const body = (await response.json()) as { message?: unknown };
       if (typeof body.message === "string") message = body.message;
     } catch {}
-    throw new ServerHttpError(message, response.status);
+    throw new ServerHttpError(message, response.status, retryAfterSeconds);
   }
   return response.json() as Promise<unknown>;
 };
