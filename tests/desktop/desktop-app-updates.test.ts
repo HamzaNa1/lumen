@@ -5,7 +5,7 @@ import {
   type UpdateSource,
 } from "../../apps/desktop/src/main/updates/AppUpdates";
 
-const fakeSource = (check: () => Promise<unknown> = async () => undefined) => {
+const fakeSource = (check: UpdateSource["checkForUpdates"] = async () => null) => {
   let downloaded: ((info: { readonly version: string }) => void) | undefined;
   const calls = { checks: 0, installs: [] as Array<[boolean, boolean]> };
   const source: UpdateSource = {
@@ -52,6 +52,26 @@ test("a downloaded update is reported and installed on request", () => {
     expect(calls.installs).toEqual([[true, true]]);
   } finally {
     stop();
+  }
+});
+
+test("a failed download is handled like a failed check", async () => {
+  const errors = jest.spyOn(console, "error").mockImplementation(() => undefined);
+  const unhandled: unknown[] = [];
+  const onUnhandled = (cause: unknown): void => {
+    unhandled.push(cause);
+  };
+  process.on("unhandledRejection", onUnhandled);
+  try {
+    const failure = new Error("connection lost");
+    const { source } = fakeSource(async () => ({ downloadPromise: Promise.reject(failure) }));
+    new AppUpdates(() => undefined).start(source)();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(unhandled).toEqual([]);
+    expect(errors).toHaveBeenCalledWith("Failed to update", failure);
+  } finally {
+    process.off("unhandledRejection", onUnhandled);
+    errors.mockRestore();
   }
 });
 

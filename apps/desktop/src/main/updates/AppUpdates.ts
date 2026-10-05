@@ -2,7 +2,8 @@
 export interface UpdateSource {
   allowPrerelease: boolean;
   on(event: "update-downloaded", listener: (info: { readonly version: string }) => void): unknown;
-  checkForUpdates(): Promise<unknown>;
+  /** Resolves once the check is done; a found update goes on downloading in `downloadPromise`. */
+  checkForUpdates(): Promise<{ readonly downloadPromise?: Promise<unknown> | null } | null>;
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
 }
 
@@ -48,10 +49,13 @@ export class AppUpdates {
       this.onReady(version);
     });
     const check = (): void => {
-      // Being offline or between releases is routine; the next check tries again.
-      void source.checkForUpdates().catch((cause: unknown) => {
-        console.error("Failed to check for updates", cause);
-      });
+      // Being offline or losing the connection mid-download is routine; the next check tries again.
+      void source
+        .checkForUpdates()
+        .then((result) => result?.downloadPromise)
+        .catch((cause: unknown) => {
+          console.error("Failed to update", cause);
+        });
     };
     check();
     const timer = setInterval(check, checkIntervalMs);
