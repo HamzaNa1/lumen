@@ -225,3 +225,25 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => document.querySelector("video"))).toBeNull();
 });
+
+test("a watch group's film starts playing in the browser", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.locator(".watch-group-trigger").click();
+  await page.getByRole("button", { name: "New group" }).click();
+  await page.getByLabel("Name").fill("Movie night");
+  await page.getByRole("button", { name: "Create group" }).click();
+  await expect(page.locator(".watch-group-trigger.is-active")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  // Membership lives in this page, so reach the library without loading another.
+  await page.getByRole("link", { name: "Movies", exact: true }).click();
+  await page.getByRole("button", { name: "Play Film" }).first().click({ force: true });
+  await expect(page).toHaveURL(/\/web\/player$/u);
+  const start = page.getByRole("button", { name: "Play", exact: true });
+  if (await start.isVisible().catch(() => false)) await start.click();
+  await expect
+    .poll(() => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0))
+    .toBeGreaterThan(0.2);
+  await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
+});
