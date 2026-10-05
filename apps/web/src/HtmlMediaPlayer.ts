@@ -17,6 +17,8 @@ export interface MediaElementLike {
   readonly duration: number;
   readonly paused: boolean;
   readonly ended: boolean;
+  readonly seeking: boolean;
+  readonly readyState: number;
   readonly error: { readonly code: number } | null;
   readonly buffered: {
     readonly length: number;
@@ -77,6 +79,9 @@ interface ActiveSession {
 const LOAD_TIMEOUT_MS = 20_000;
 const MAX_RECOVERIES = 2;
 const RECOVERY_WINDOW_MS = 60_000;
+
+// HTMLMediaElement.readyState: the frame at the current position is available.
+const HAVE_CURRENT_DATA = 2;
 
 // MediaError.code
 const MEDIA_ERR_NETWORK = 2;
@@ -163,6 +168,12 @@ export class HtmlMediaPlayer {
       throw new Error("Invalid position");
     this.element.currentTime = positionSeconds;
     return this.publish(active);
+  }
+
+  /** Whether the element has fetched the media at its current position, as after a seek. */
+  loaded(sessionId: string): boolean {
+    this.requireActive(sessionId);
+    return !this.element.seeking && this.element.readyState >= HAVE_CURRENT_DATA;
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {

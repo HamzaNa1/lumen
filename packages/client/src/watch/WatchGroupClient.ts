@@ -51,6 +51,11 @@ export class WatchGroupClient {
   constructor(
     private readonly connection: WatchConnection,
     private readonly onStatus: (status: WatchStatus) => void,
+    /**
+     * Whether whoever drives this client answers a group that holds for its members to load,
+     * with a `ready` action. A group does not wait for a client that would never answer.
+     */
+    private readonly readiness = false,
   ) {}
 
   get serverNow(): number {
@@ -65,7 +70,13 @@ export class WatchGroupClient {
     const socket = new WebSocket(url);
     this.socket = socket;
     const timeout = setTimeout(() => socket.close(), 7000);
-    socket.onopen = () => socket.send(JSON.stringify(this.connection.watchAuthentication()));
+    socket.onopen = () =>
+      socket.send(
+        JSON.stringify({
+          ...this.connection.watchAuthentication(),
+          ...(this.readiness ? { readiness: true } : {}),
+        }),
+      );
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
       try {

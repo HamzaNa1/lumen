@@ -474,3 +474,71 @@ test.each([true, false])("slow discovery progresses under sustained updates with
     await fixture.close();
   }
 });
+
+test("a member that never reports ready delays the group only until the wait runs out", async () => {
+  const fixture = await watchFixture();
+  const admin = await fixture.login();
+  const user = await admin.me();
+  const details = await admin.itemDetails(fixture.itemId);
+  const principal = { user, sessionId: crypto.randomUUID(), deviceId: crypto.randomUUID() };
+  const groups = new WatchGroups(
+    {
+      auth: { authenticate: () => Effect.succeed(principal) },
+      catalog: { itemDetails: () => Effect.succeed(details) },
+      access: { requireLibrary: () => Effect.void },
+    },
+    undefined,
+    200,
+  );
+  const server = Bun.serve<WatchSocketData>({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request, server) => groups.upgrade(request, server),
+    websocket: groups.websocket,
+  });
+  const clients: WatchGroupClient[] = [];
+  const connect = async (readiness: boolean) => {
+    const client = new ServerClient({ origin: server.url.toString() });
+    const session = admin.currentSession;
+    if (session === null) throw new Error("No test session");
+    client.setSession(session);
+    const watch = new WatchGroupClient(client, () => undefined, readiness);
+    clients.push(watch);
+    watch.connect();
+    await eventually(() => watch.status.connection === "connected");
+    return watch;
+  };
+  try {
+    const owner = await connect(false);
+    const stuck = await connect(true);
+    await owner.action({ type: "create", name: "Movie night", password: "" });
+    await stuck.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+
+    const asked = Date.now();
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
+    // Only the member that said it would report readiness is waited for.
+    expect(owner.status.group?.playback).toMatchObject({
+      positionSeconds: 2,
+      paused: true,
+      waitingFor: [stuck.status.memberId],
+    });
+    // Readiness for a state the group has left behind changes nothing.
+    await stuck.action({ type: "ready", revision: (owner.status.group?.revision ?? 0) - 1 });
+    expect(owner.status.group?.playback?.paused).toBe(true);
+
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    expect(Date.now() - asked).toBeGreaterThanOrEqual(190);
+    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+    expect(owner.status.group?.playback?.positionSeconds).toBe(2);
+
+    // Without anyone to wait for, the group plays at once.
+    await stuck.action({ type: "leave" });
+    await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 9 });
+    expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 9, paused: false });
+  } finally {
+    for (const client of clients) client.close();
+    groups.close();
+    await server.stop(true);
+    await fixture.close();
+  }
+});

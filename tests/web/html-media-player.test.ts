@@ -15,6 +15,8 @@ class FakeMedia implements MediaElementLike {
   duration = Number.NaN;
   paused = true;
   ended = false;
+  seeking = false;
+  readyState = 4;
   error: { code: number } | null = null;
   buffered = { length: 0, start: () => 0, end: () => 0 };
   sources: string[] = [];
