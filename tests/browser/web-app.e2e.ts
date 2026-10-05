@@ -75,6 +75,25 @@ test("every route survives direct navigation and refresh", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
 });
 
+test("an administrator renames the server from settings", async ({ page }, testInfo) => {
+  await signIn(page);
+  await page.goto("/web/settings");
+  const connectedTo = page.locator(".settings-row").filter({ hasText: "Connected to" });
+  await expect(connectedTo).toContainText("Lumen Server");
+  const rename = async (name: string): Promise<void> => {
+    await connectedTo.getByRole("button", { name: "Rename…" }).click();
+    await page.getByLabel("Server name").fill(name);
+    await testInfo.attach("rename server", { body: await page.screenshot(), contentType: "image/png" });
+    await page.getByRole("button", { name: "Rename", exact: true }).click();
+    await expect(connectedTo).toContainText(name);
+  };
+  await rename("Living room");
+  // The server keeps the name, so a fresh page load reads it back.
+  await page.reload();
+  await expect(connectedTo).toContainText("Living room");
+  await rename("Lumen Server");
+});
+
 test("signing out in one tab signs out the others", async ({ page, context }) => {
   await signIn(page);
   const other = await context.newPage();

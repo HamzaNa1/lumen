@@ -51,7 +51,7 @@ export const AccountMenu = ({
           <Avatar name={active.username} />
           <span className="account-trigger-text">
             <strong>{active.username}</strong>
-            <span>{active.serverLabel}</span>
+            <span>{active.serverName}</span>
           </span>
           <ChevronsUpDown aria-hidden="true" size={15} />
         </Menu.Trigger>
@@ -76,7 +76,7 @@ export const AccountMenu = ({
                             <Server aria-hidden="true" size={15} />
                           </span>
                           <span className="menu-item-label">
-                            {account.serverLabel}
+                            {account.serverName}
                             <small>
                               {account.username} · {hostOf(account.origin)}
                             </small>
@@ -113,7 +113,7 @@ export const AccountMenu = ({
                 <span className="menu-item-icon">
                   <LogOut aria-hidden="true" size={15} />
                 </span>
-                <span className="menu-item-label">Sign out of {active.serverLabel}…</span>
+                <span className="menu-item-label">Sign out of {active.serverName}…</span>
               </Menu.Item>
             </Menu.Popup>
           </Menu.Positioner>
@@ -122,7 +122,7 @@ export const AccountMenu = ({
       <Modal
         open={confirmingRemove}
         onOpenChange={setConfirmingRemove}
-        title={`Sign out of ${active.serverLabel}?`}
+        title={`Sign out of ${active.serverName}?`}
         description={
           canSwitchServers
             ? "This removes the server and its saved sign-in from this device. Nothing on the server is deleted."

@@ -207,6 +207,7 @@ const playerSessionSchema = Schema.Struct({
   grantToken: Schema.String,
 });
 
+const serverNameSchema = Schema.Struct({ displayName: Schema.String.check(Schema.isMinLength(1)) });
 const metadataSettingsSchema = Schema.Struct({ tmdbConfigured: Schema.Boolean });
 const runSchema = Schema.Struct({ runId: Schema.String });
 
@@ -558,6 +559,18 @@ export class ServerApi {
 
   async adminLibraries(): Promise<ReadonlyArray<LibrarySummary>> {
     return this.request("/api/v1/admin/libraries", {}, librarySchema);
+  }
+
+  /** Renames the server for everyone who connects to it. */
+  async renameServer(displayName: string): Promise<string> {
+    const renamed = await this.request<{ readonly displayName: string }>(
+      "/api/v1/admin/server",
+      jsonBody("PUT", { displayName }),
+      serverNameSchema,
+    );
+    if (this.serverIdentity !== null)
+      this.serverIdentity = { ...this.serverIdentity, displayName: renamed.displayName };
+    return renamed.displayName;
   }
 
   async metadataSettings(): Promise<MetadataSettings> {

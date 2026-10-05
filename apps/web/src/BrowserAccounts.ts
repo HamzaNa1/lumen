@@ -126,6 +126,12 @@ export class BrowserAccounts implements AccountsRuntime {
     }
   }
 
+  /** The server was renamed from this page. */
+  serverRenamed(displayName: string): void {
+    if (this.identity !== null) this.identity = { ...this.identity, displayName };
+    if (this.account !== null) this.account = { ...this.account, serverName: displayName };
+  }
+
   dispose(): void {
     this.invalidatePending();
     this.channel.close();
@@ -174,7 +180,7 @@ export class BrowserAccounts implements AccountsRuntime {
     this.account = {
       connectionId: `web:${session.user.id}`,
       serverId: identity.serverId,
-      serverLabel: identity.displayName,
+      serverName: identity.displayName,
       origin: this.api.serverOrigin,
       username: session.user.username,
       userId: session.user.id,

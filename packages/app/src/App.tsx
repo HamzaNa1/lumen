@@ -17,13 +17,13 @@ import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
 import {
+  ACCOUNTS_KEY,
   itemPage,
   refreshWatchProgress,
   WorkspaceContext,
   type WorkspaceValue,
 } from "./Workspace";
 
-const ACCOUNTS_KEY = ["accounts"] as const;
 
 export const App = (): React.ReactElement => {
   const runtime = useRuntime();
@@ -239,16 +239,16 @@ export const App = (): React.ReactElement => {
       });
   }, [active, onPlayerRoute, queryClient, updatePlayer, runtime]);
   const watchTitle = watchStatus?.group?.playback?.title;
-  const serverLabel = active?.serverLabel;
+  const serverName = active?.serverName;
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
       title: playingItem?.title ?? watchTitle ?? "Now playing",
-      context: `${serverLabel ?? "Lumen"} · Original quality`,
+      context: `${serverName ?? "Lumen"} · Original quality`,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
     }),
-    [serverLabel, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
+    [serverName, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
   );
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
@@ -308,7 +308,7 @@ export const App = (): React.ReactElement => {
           </div>
           <section className="connect-card">
             <header className="connect-heading">
-              <h1>Connecting to {active?.serverLabel ?? "server"}…</h1>
+              <h1>Connecting to {active?.serverName ?? "server"}…</h1>
               <p>Opening your last server.</p>
             </header>
             <LoaderCircle className="spinner" aria-hidden="true" size={22} />

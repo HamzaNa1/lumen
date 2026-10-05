@@ -118,6 +118,68 @@ describe("server authentication and ACL", () => {
     ).toBe(401);
   });
 
+  test("has its own name, which only an administrator can change", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lumen-server-name-test-"));
+    const databasePath = join(root, "server.sqlite");
+    paths.push(root);
+    await seedAdmin(databasePath);
+    const base = await start(databasePath);
+    const serverName = async (): Promise<string> =>
+      ((await (await request(base, "/api/v1/server")).json()) as { displayName: string })
+        .displayName;
+    expect(await serverName()).toBe("Lumen Server");
+    const signIn = async (username: string, password: string): Promise<string> => {
+      const login = await request(base, "/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username,
+          password,
+          deviceId: newUuid(),
+          deviceName: "Rename",
+          platform: "desktop",
+          platformDeviceId: null,
+        }),
+      });
+      return ((await login.json()) as { accessToken: string }).accessToken;
+    };
+    const rename = (token: string, displayName: unknown) =>
+      request(base, "/api/v1/admin/server", {
+        method: "PUT",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ displayName }),
+      });
+    const admin = await signIn("admin", "correct horse battery staple");
+    const created = await request(base, "/api/v1/users", {
+      method: "POST",
+      headers: { "content-type": "application/json", authorization: `Bearer ${admin}` },
+      body: JSON.stringify({
+        username: "viewer",
+        displayName: "Viewer",
+        password: "another long password",
+        role: "user",
+      }),
+    });
+    expect(created.status).toBe(201);
+    expect((await rename(await signIn("viewer", "another long password"), "Theirs")).status).toBe(
+      403,
+    );
+    expect((await rename(admin, "   ")).status).toBe(400);
+    expect((await rename(admin, "x".repeat(201))).status).toBe(400);
+    expect(await serverName()).toBe("Lumen Server");
+    const renamed = await rename(admin, "  Living room  ");
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toEqual({ displayName: "Living room" });
+    expect(await serverName()).toBe("Living room");
+    // The name belongs to the server, so it survives a restart.
+    for (const running of runningServers.splice(0)) await running.stop();
+    expect(
+      ((await (await request(await start(databasePath), "/api/v1/server")).json()) as {
+        displayName: string;
+      }).displayName,
+    ).toBe("Living room");
+  });
+
   test("lets only the first account register, as the administrator", async () => {
     const root = await mkdtemp(join(tmpdir(), "lumen-server-setup-test-"));
     const databasePath = join(root, "server.sqlite");

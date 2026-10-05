@@ -109,6 +109,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       const client = new ServerClient({ origin: account.origin });
       const identity = await client.identity();
       if (identity.serverId !== account.serverId) throw new Error("Server identity changed; remove this connection and enroll it again");
+      await dependencies.registry.updateServerName(identity.serverId, identity.displayName);
       const session = await dependencies.registry.session(account.connectionId);
       if (session !== null && hasSessionToken(session)) client.setSession(session);
       else if (session !== null && typeof session.refreshToken === "string") {
@@ -170,7 +171,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       await dependencies.registry.save({
         connectionId,
         serverId: identity.serverId,
-        serverLabel: input.serverLabel,
+        serverName: identity.displayName,
         origin: client.serverOrigin,
         username: input.username,
         userId: session.userId,
@@ -274,6 +275,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return activeClient(dependencies).updateUser(input.userId, input);
   });
   handle("admin:listLibraries", async () => activeClient(dependencies).adminLibraries());
+  handle("admin:renameServer", async (_event, raw) => {
+    const input = decode(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)), raw);
+    const client = activeClient(dependencies);
+    const serverId = dependencies.registry.active()?.serverId;
+    const serverName = await client.renameServer(input);
+    if (serverId !== undefined) await dependencies.registry.updateServerName(serverId, serverName);
+  });
   handle("admin:metadataSettings", async () => activeClient(dependencies).metadataSettings());
   handle("admin:updateMetadataSettings", async (_event, raw) => {
     const input = decode(Schema.Struct({ tmdbApiKey: Schema.NullOr(Schema.String) }), raw);

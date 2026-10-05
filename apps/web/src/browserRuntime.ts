@@ -186,6 +186,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       createUser: (input) => api.createUser(input),
       updateUser: ({ userId, ...input }) => api.updateUser(userId, input),
       listLibraries: () => api.adminLibraries(),
+      renameServer: async (name) => browserAccounts.serverRenamed(await api.renameServer(name)),
       metadataSettings: () => api.metadataSettings(),
       updateMetadataSettings: ({ tmdbApiKey }) => api.updateMetadataSettings(tmdbApiKey),
       createLibrary: (input) => api.createLibrary(input),

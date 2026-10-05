@@ -35,6 +35,7 @@ import type { ScanServiceShape } from "../services/ScanService";
 import type { PlaybackServiceShape } from "../services/PlaybackService";
 import type { JobServiceShape } from "../jobs/JobService";
 import type { MetadataSettingsShape } from "../services/MetadataSettings";
+import type { ServerNameShape } from "../services/ServerName";
 import type { MetadataProvider } from "../media/Tmdb";
 import {
   assertBrowserMutation,
@@ -61,6 +62,7 @@ export interface HttpServices {
   readonly metadataSettings: MetadataSettingsShape;
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
+  readonly serverName: ServerNameShape;
   readonly startedAtMs: number;
 }
 
@@ -214,7 +216,7 @@ export const makeHttpHandler = (
         ServerInfo,
         {
           serverId: services.identity.installationId,
-          displayName: "Lumen",
+          displayName: await call(services.serverName.name()),
           apiVersion: API_VERSION,
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
@@ -329,6 +331,14 @@ export const makeHttpHandler = (
     if (url.pathname.startsWith("/api/v1/media/")) throw notFound("Endpoint not found");
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
+    if (method === "PUT" && url.pathname === "/api/v1/admin/server") {
+      await call(services.access.requireAdmin(principal));
+      const input = decode(S.ServerRenameBody, await body(request, config.maxRequestBodyBytes));
+      const displayName = input.displayName.trim();
+      if (displayName === "") throw badRequest("Server name cannot be empty");
+      await call(services.serverName.rename(displayName, Date.now()));
+      return unknownJson({ displayName });
+    }
     if (
       url.pathname === "/api/v1/admin/metadata-settings" &&
       (method === "GET" || method === "PUT")
