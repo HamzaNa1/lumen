@@ -65,12 +65,13 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   aheadSeconds = Number.POSITIVE_INFINITY;
   /** Models a player that ran out of media while playing. */
   starved = false;
+  settled = false;
   /** Holds back the answer to the next `buffer()` until the test settles it. */
   bufferGate: Promise<PlayerBuffer> | null = null;
   buffer() {
     const gate = this.bufferGate;
     this.bufferGate = null;
-    return gate ?? { aheadSeconds: this.aheadSeconds, starved: this.starved };
+    return gate ?? { aheadSeconds: this.aheadSeconds, starved: this.starved, settled: this.settled };
   }
 }
 
@@ -653,7 +654,7 @@ test("readiness answered after the viewer changed groups does not release the ne
     expect(second.status.group?.playback?.waitingFor).toEqual([viewer.playback.status.memberId]);
 
     viewer.native.aheadSeconds = 0;
-    answer.resolve({ aheadSeconds: 5, starved: false });
+    answer.resolve({ aheadSeconds: 5, starved: false, settled: false });
     await eventually(() => viewer.native.state?.positionSeconds === 50);
     await Bun.sleep(300);
     expect(second.status.group?.playback).toMatchObject({

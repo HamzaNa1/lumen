@@ -20,6 +20,7 @@ export interface MediaElementLike {
   readonly ended: boolean;
   readonly seeking: boolean;
   readonly readyState: number;
+  readonly networkState: number;
   readonly error: { readonly code: number } | null;
   readonly buffered: {
     readonly length: number;
@@ -91,6 +92,8 @@ const RECOVERY_WINDOW_MS = 60_000;
 // HTMLMediaElement.readyState: there is enough data past the current position for playback to
 // advance. One state lower, only the current frame is there and playing would stall at once.
 const HAVE_FUTURE_DATA = 3;
+// HTMLMediaElement.networkState: the browser has a source and is not fetching any of it just now.
+const NETWORK_IDLE = 1;
 // What a browser has buffered can stop a little short of the duration it reports.
 const END_TOLERANCE_SECONDS = 0.5;
 
@@ -190,6 +193,12 @@ export class HtmlMediaPlayer {
       aheadSeconds: this.bufferedAhead(),
       // A seek also makes the element wait; that is not running out.
       starved: active.buffering && !element.paused && !element.seeking,
+      // A paused browser fetches only as much as it sees fit, and reports what it holds by its
+      // own estimate, so it may come to rest short of any amount that is waited for.
+      settled:
+        !element.seeking &&
+        element.readyState >= HAVE_FUTURE_DATA &&
+        element.networkState === NETWORK_IDLE,
     };
   }
 

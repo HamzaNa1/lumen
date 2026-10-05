@@ -78,7 +78,7 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
   }
   async speed() {}
   buffer() {
-    return { aheadSeconds: Number.POSITIVE_INFINITY, starved: false };
+    return { aheadSeconds: Number.POSITIVE_INFINITY, starved: false, settled: false };
   }
 }
 

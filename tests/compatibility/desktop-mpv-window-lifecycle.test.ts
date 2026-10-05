@@ -164,17 +164,18 @@ test("MPV reports how far it has read ahead, and when it has run out", async () 
     properties.set("demuxer-cache-state", { "cache-duration": 12, eof: false });
     properties.set("paused-for-cache", true);
     // What MPV holds describes the position it is leaving until the seek is over.
-    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 0, starved: false });
+    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 0, starved: false, settled: false });
     properties.set("seeking", false);
-    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 12, starved: true });
+    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 12, starved: true, settled: false });
     properties.set("paused-for-cache", false);
     properties.set("demuxer-cache-state", { "cache-duration": 2.5, eof: true });
     expect(await controller.buffer("session-1")).toEqual({
       aheadSeconds: Number.POSITIVE_INFINITY,
       starved: false,
+      settled: false,
     });
     properties.set("demuxer-cache-state", null);
-    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 0, starved: false });
+    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 0, starved: false, settled: false });
   });
 });
 

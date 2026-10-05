@@ -23,6 +23,8 @@ class FakeMedia implements MediaElementLike {
   ended = false;
   seeking = false;
   readyState = 4;
+  /** Fetching, until the test has the browser come to rest. */
+  networkState = 2;
   error: { code: number } | null = null;
   /** The one stretch of media the element holds, if any. */
   bufferedRange: readonly [number, number] | null = null;
@@ -430,6 +432,21 @@ test("the browser reports how far it can play on, and when it has run out", asyn
   element.currentTime = 100;
   expect(ahead()).toBe(Number.POSITIVE_INFINITY);
 
+  // Fetching, the browser may yet hold more. At rest it will not, unless it cannot play on at all.
+  element.bufferedRange = [8, 12];
+  element.currentTime = 10;
+  const settled = (): boolean => player.buffer(sessionId).settled;
+  expect(settled()).toBe(false);
+  element.networkState = 1;
+  expect(settled()).toBe(true);
+  element.seeking = true;
+  expect(settled()).toBe(false);
+  element.seeking = false;
+  element.readyState = 2;
+  expect(settled()).toBe(false);
+  element.readyState = 4;
+  element.networkState = 2;
+
   expect(player.buffer(sessionId).starved).toBe(false);
   element.emit("waiting");
   expect(player.buffer(sessionId).starved).toBe(true);
@@ -578,6 +595,30 @@ test("a browser that leaves play() unanswered still follows what the group does 
     await eventually(() => element.currentTime === 40);
     await owner.action({ type: "stop", itemId: fixture.itemId });
     await eventually(() => element.src === "");
+  } finally {
+    await group.close();
+  }
+});
+
+test("a browser that stops fetching short of five seconds no longer keeps its watch group waiting", async () => {
+  const group = await groupViewer((element) => {
+    // Paused, a browser fetches as much as it sees fit, and may report little of it as buffered.
+    element.bufferedRange = [0, 5];
+  });
+  const { element, viewer, owner, fixture } = group;
+  try {
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => element.currentTime === 3);
+    await Bun.sleep(400);
+    expect(owner.status.group?.playback).toMatchObject({
+      paused: true,
+      waitingFor: [viewer.status.memberId],
+    });
+
+    element.networkState = 1;
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    await eventually(() => !element.paused);
+    expect(element.currentTime).toBe(3);
   } finally {
     await group.close();
   }
