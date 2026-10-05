@@ -76,6 +76,11 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
     if (this.state !== null) this.state = { ...this.state, paused };
   }
   async speed() {}
+  /** Set to false to model a player that is still fetching its position. */
+  ready = true;
+  loaded() {
+    return this.ready;
+  }
 }
 
 test("a desktop viewer and a browser viewer share one group and follow each other's commands", async () => {
@@ -200,9 +205,13 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     // That revision must not turn a later cleanup into a group-wide stop.
     browser.setSurfaceReady(false);
     await desktop.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 30 });
+    // The group holds at the new position for its members to load it.
     await eventually(() => browser.status.group?.revision === (before?.revision ?? 0) + 1);
-    const changed = desktop.status.group;
     await browser.stop();
+    // It does not go on waiting for a viewer who has given up on this device.
+    await eventually(() => desktop.status.group?.playback?.paused === false);
+    const changed = desktop.status.group;
+    expect(changed?.playback).toMatchObject({ positionSeconds: 30, paused: false });
     await Bun.sleep(200);
     expect(desktop.status.group?.revision).toBe(changed?.revision);
     expect(desktop.status.group?.playback).toEqual(changed?.playback ?? null);

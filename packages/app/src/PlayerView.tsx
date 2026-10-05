@@ -3,7 +3,7 @@ import type { PlayerDisplay, PlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
-import { WatchGroups } from "./WatchGroups";
+import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
 import "./player.css";
 
 /**
@@ -20,6 +20,8 @@ export const PlayerView = ({
   const runtime = useRuntime();
   const { capabilities } = runtime;
   const nativeAudio = runtime.playback.nativeAudio;
+  const [watchStatus] = useWatchStatus();
+  const waiting = waitingSummary(watchStatus.group);
   const [player, setPlayer] = useState<PlayerState | null>(null);
   const [fullscreen, setFullscreen] = useState(false);
   const [controlsVisible, setControlsVisible] = useState(true);
@@ -103,7 +105,8 @@ export const PlayerView = ({
                 await nativeAudio.copyDiagnostics(player.sessionId);
               }
         }
-        buffering={player?.buffering === true}
+        buffering={player?.buffering === true || waiting !== undefined}
+        {...(waiting === undefined ? {} : { bufferingMessage: waiting })}
         awaitingInteraction={player?.awaitingInteraction === true}
         onStartPlayback={() => void runtime.playback.allowPlayback().catch(() => undefined)}
         surfaceRef={surfaceRef}

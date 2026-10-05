@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { HtmlMediaPlayer, type MediaElementLike } from "../../apps/web/src/HtmlMediaPlayer";
-import { PlaybackUnsupportedError, ServerHttpError } from "../../packages/client/src/index.ts";
+import {
+  PlaybackUnsupportedError,
+  ServerHttpError,
+  WatchPlaybackController,
+} from "../../packages/client/src/index.ts";
+import { eventually, watchFixture } from "../helpers/watch-groups";
 import type { PlayerSession, PlayerState } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
@@ -15,6 +20,8 @@ class FakeMedia implements MediaElementLike {
   duration = Number.NaN;
   paused = true;
   ended = false;
+  seeking = false;
+  readyState = 4;
   error: { code: number } | null = null;
   buffered = { length: 0, start: () => 0, end: () => 0 };
   sources: string[] = [];
@@ -342,4 +349,59 @@ describe("browser playback lifecycle", () => {
     expect(player.getState()).toBeNull();
     expect(states.at(-1)).toBeNull();
   });
+});
+
+test("a watch group is not told the browser is ready while it only has the current frame", async () => {
+  const fixture = await watchFixture();
+  const { element, player } = setup();
+  let seeks = 0;
+  const viewer = new WatchPlaybackController(
+    {
+      start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
+      stop: () => player.stop(),
+      getState: () => player.getState(),
+      seek: (sessionId, positionSeconds) => {
+        seeks += 1;
+        return player.seek(sessionId, positionSeconds);
+      },
+      pause: (sessionId, paused) => player.pause(sessionId, paused),
+      speed: (sessionId, speed) => player.speed(sessionId, speed),
+      loaded: (sessionId) => player.loaded(sessionId),
+    },
+    () => undefined,
+  );
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Movie night", password: "" });
+    viewer.connect(await fixture.login(), "browser");
+    viewer.setSurfaceReady(true);
+    await eventually(() => viewer.status.connection === "connected");
+    await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+
+    // The seek has finished, but the browser holds nothing beyond the frame it landed on.
+    element.seeking = false;
+    element.readyState = 2;
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => seeks === 1 && element.currentTime === 3);
+    await Bun.sleep(700);
+    expect(owner.status.group?.playback).toMatchObject({
+      positionSeconds: 3,
+      paused: true,
+      waitingFor: [viewer.status.memberId],
+    });
+    expect(element.paused).toBe(true);
+    expect(seeks).toBe(1);
+
+    // Enough has arrived to play on from there.
+    element.readyState = 3;
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+    await eventually(() => !element.paused);
+    // Playback starts from where the element already waits.
+    expect(seeks).toBe(1);
+    expect(element.currentTime).toBe(3);
+  } finally {
+    viewer.close();
+    await fixture.close();
+  }
 });

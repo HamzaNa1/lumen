@@ -12,6 +12,11 @@ export const WatchPlayback = Schema.Struct({
   positionSeconds: Position,
   paused: Schema.Boolean,
   updatedAtMs: Schema.Number,
+  /**
+   * Present while the group holds at this position so its members can load it, naming the
+   * members it is still waiting for. A held group is paused; it plays once the wait is over.
+   */
+  waitingFor: Schema.optional(Schema.Array(Uuid)),
 });
 export type WatchPlayback = typeof WatchPlayback.Type;
 export const WatchGroup = Schema.Struct({
@@ -41,6 +46,8 @@ export const WatchAction = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("seek"), itemId: Uuid, positionSeconds: Position }),
   Schema.Struct({ type: Schema.Literal("stop"), itemId: Uuid }),
+  /** This member no longer needs the group, as it stood at that revision, to wait for it. */
+  Schema.Struct({ type: Schema.Literal("ready"), revision: Schema.Int }),
   Schema.Struct({ type: Schema.Literal("ping"), sentAtMs: Schema.Number.check(Schema.isFinite()) }),
 ]);
 export type WatchAction = typeof WatchAction.Type;

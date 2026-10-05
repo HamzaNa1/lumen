@@ -1,4 +1,10 @@
-import { CatalogItemDetails, WatchRequest, type WatchGroup, type WatchMessage } from "@lumen/contracts";
+import {
+  CatalogItemDetails,
+  WatchRequest,
+  type WatchGroup,
+  type WatchMessage,
+  type WatchPlayback,
+} from "@lumen/contracts";
 import { Effect, Schema } from "effect";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { HttpServices } from "../http/HttpApp";
@@ -13,6 +19,8 @@ export interface WatchSocketData {
   readonly cookieToken: string | null;
   token: string | null;
   principal: AuthPrincipal | null;
+  /** This client says when it has loaded a position, so its group can wait for it. */
+  readiness: boolean;
   groupId: string | null;
   queue: Promise<void>;
   pending: number;
@@ -43,9 +51,13 @@ type WatchServices = {
 };
 // A desktop client presents its token. A browser cannot read its own token, so it asks the
 // server to use the session cookie that arrived with the upgrade request.
+const Readiness = { readiness: Schema.optional(Schema.Boolean) };
 const Authentication = Schema.Union([
-  Schema.Struct({ token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)) }),
-  Schema.Struct({ session: Schema.Literal("cookie") }),
+  Schema.Struct({
+    token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+    ...Readiness,
+  }),
+  Schema.Struct({ session: Schema.Literal("cookie"), ...Readiness }),
 ]);
 
 type TrustedOrigin = (request: Request, origin: string) => boolean;
@@ -102,6 +114,7 @@ export class WatchGroups {
         cookieToken: origin === null ? null : sessionCookieToken(request),
         token: null,
         principal: null,
+        readiness: false,
         groupId: null,
         queue: Promise.resolve(),
         pending: 0,
@@ -282,6 +295,8 @@ export class WatchGroups {
       if (principal === null) return;
       const visible = await this.visibleGroup(principal, state);
       if (socket.data.closed || socket.data.groupId !== delivery.group.state.id) return;
+      // A member who cannot see the media is not going to load it.
+      if (visible.playback === null) this.ready(group, socket.data.id, state.revision);
       // Coalesce publications while access checks run; never send a superseded snapshot.
       if (delivery.group !== group || group.state !== state) continue;
       this.send(socket, { type: "state", group: visible });
@@ -303,10 +318,79 @@ export class WatchGroups {
         members: group.state.members.filter((member) => member.id !== socket.data.id),
       };
       if (group.state.members.length === 0) group.emptySince = Date.now();
+      this.ready(group, socket.data.id, group.state.revision);
       void this.publish(group);
       this.directory();
     }
     this.send(socket, { type: "state", group: null });
+  }
+
+  /**
+   * Moves the group to a position it is to play from. Members that report readiness get to
+   * load it first: the group holds there, paused, for as long as any of them takes, so nobody
+   * starts out behind a clock that is already running. A member that leaves, disconnects, or
+   * says its device will not play is no longer waited for.
+   */
+  private playFrom(
+    group: Group,
+    position: Pick<WatchPlayback, "itemId" | "title" | "positionSeconds">,
+  ): void {
+    const waitingFor = [...this.sockets]
+      .filter(({ data }) => data.groupId === group.state.id && data.readiness)
+      .map(({ data }) => data.id);
+    const revision = group.state.revision + 1;
+    const held = waitingFor.length > 0;
+    group.state = {
+      ...group.state,
+      revision,
+      playback: {
+        ...position,
+        paused: held,
+        updatedAtMs: Date.now(),
+        ...(held ? { waitingFor } : {}),
+      },
+    };
+  }
+
+  /** Leaves the group at rest, no longer about to play: paused at a position, or with nothing on. */
+  private restAt(
+    group: Group,
+    position: Pick<WatchPlayback, "itemId" | "title" | "positionSeconds"> | null,
+  ): void {
+    group.state = {
+      ...group.state,
+      revision: group.state.revision + 1,
+      playback: position === null ? null : { ...position, paused: true, updatedAtMs: Date.now() },
+    };
+  }
+
+  /** Starts a held group playing, unless it has moved on since that revision. */
+  private release(group: Group, revision: number): void {
+    const playback = group.state.playback;
+    if (group.state.revision !== revision || playback?.waitingFor === undefined) return;
+    const { waitingFor: _waitingFor, ...position } = playback;
+    group.state = {
+      ...group.state,
+      revision: revision + 1,
+      playback: { ...position, paused: false, updatedAtMs: Date.now() },
+    };
+    this.directory();
+    void this.publish(group);
+  }
+
+  /** A held group no longer waits for this member; it plays once it waits for nobody. */
+  private ready(group: Group, memberId: string, revision: number): void {
+    const playback = group.state.playback;
+    if (group.state.revision !== revision || playback?.waitingFor?.includes(memberId) !== true)
+      return;
+    const waitingFor = playback.waitingFor.filter((id) => id !== memberId);
+    if (waitingFor.length === 0) {
+      this.release(group, revision);
+      return;
+    }
+    // The revision stays: members still loading must not be told to start over.
+    group.state = { ...group.state, playback: { ...playback, waitingFor } };
+    void this.publish(group);
   }
 
   private async passwordWork<A>(operation: () => Promise<A>): Promise<A> {
@@ -331,6 +415,7 @@ export class WatchGroups {
       if (socket.data.closed) return;
       socket.data.token = token;
       socket.data.principal = principal;
+      socket.data.readiness = authentication.readiness === true;
       clearTimeout(socket.data.authTimer);
       this.send(socket, { type: "ready", memberId: socket.data.id });
       void this.list(socket);
@@ -345,6 +430,9 @@ export class WatchGroups {
         void this.list(socket);
         if (group !== undefined) void this.deliverState(socket, group);
         this.send(socket, { type: "pong", sentAtMs: action.sentAtMs, serverTimeMs: Date.now() });
+      } else if (action.type === "ready") {
+        const group = this.groups.get(socket.data.groupId ?? "");
+        if (group !== undefined) this.ready(group, socket.data.id, action.revision);
       } else if (action.type === "list") await this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
@@ -436,34 +524,29 @@ export class WatchGroups {
         if (action.type === "play") {
           if (details.item.kind === "show" || details.item.kind === "season")
             throw new Error("Choose a movie or episode");
-          group.state = {
-            ...group.state,
-            revision: previous.revision + 1,
-            playback: {
-              itemId: action.itemId,
-              title: details.item.title,
-              paused: false,
-              positionSeconds: action.positionSeconds,
-              updatedAtMs: Date.now(),
-            },
-          };
+          this.playFrom(group, {
+            itemId: action.itemId,
+            title: details.item.title,
+            positionSeconds: action.positionSeconds,
+          });
         } else {
           const playback = previous.playback;
           if (playback === null || playback.itemId !== action.itemId)
             throw new Error("The group is watching something else");
-          group.state = {
-            ...group.state,
-            revision: previous.revision + 1,
-            playback:
-              action.type === "stop"
-                ? null
-                : {
-                    ...playback,
-                    positionSeconds: action.positionSeconds,
-                    paused: action.type === "pause" ? action.paused : playback.paused,
-                    updatedAtMs: Date.now(),
-                  },
-          };
+          if (action.type === "stop") this.restAt(group, null);
+          else {
+            const position = {
+              itemId: playback.itemId,
+              title: playback.title,
+              positionSeconds: action.positionSeconds,
+            };
+            // A held group is one that is playing; it only looks paused while its members load.
+            const held = playback.waitingFor !== undefined;
+            const plays = action.type === "pause" ? !action.paused : held || !playback.paused;
+            if (!plays) this.restAt(group, position);
+            // Asking a group that is about to play to play changes nothing; it is still loading.
+            else if (action.type === "seek" || !held) this.playFrom(group, position);
+          }
         }
         this.directory();
         await this.publish(group);

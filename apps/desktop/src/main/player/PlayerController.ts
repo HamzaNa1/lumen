@@ -323,6 +323,12 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
+  /** Whether MPV has finished moving to its current position, as after a seek. */
+  async loaded(sessionId: string): Promise<boolean> {
+    const active = this.requireActive(sessionId);
+    return (await this.command(active, ["get_property", "seeking"])) === false;
+  }
+
   async speed(sessionId: string, speed: number): Promise<void> {
     const active = this.requireActive(sessionId);
     if (!Number.isFinite(speed) || speed < 0.9 || speed > 1.1) throw new Error("Invalid playback speed");
@@ -619,6 +625,7 @@ export const watchPlayerFor = (controller: PlayerController): WatchPlayer<Server
   seek: (sessionId, positionSeconds) => controller.seek(sessionId, positionSeconds),
   pause: (sessionId, paused) => controller.pause(sessionId, paused),
   speed: (sessionId, speed) => controller.speed(sessionId, speed),
+  loaded: (sessionId) => controller.loaded(sessionId),
 });
 
 export const startNativePlayer = (controller: PlayerController): (() => void) => {

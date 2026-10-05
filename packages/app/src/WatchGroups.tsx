@@ -14,12 +14,46 @@ import "./watch-groups.css";
 
 const visibleMemberNames = 3;
 
+/** The group is paused only until its members have loaded what it is about to play. */
+const holdingForMembers = (playback: WatchPlayback | null | undefined): boolean =>
+  playback?.waitingFor !== undefined;
+
 const playbackSummary = (playback: WatchPlayback | null): string =>
   playback === null
     ? "Nothing playing"
-    : playback.paused
-      ? `Paused on ${playback.title}`
-      : `Watching ${playback.title}`;
+    : holdingForMembers(playback)
+      ? `Starting ${playback.title}`
+      : playback.paused
+        ? `Paused on ${playback.title}`
+        : `Watching ${playback.title}`;
+
+/** The group is holding its playback for this member, who has yet to load it. */
+const stillLoading = (group: WatchGroup, memberId: string): boolean =>
+  group.playback?.waitingFor?.includes(memberId) === true;
+
+/** Who a held group is waiting for; undefined when the group is not holding. */
+export const waitingSummary = (group: WatchGroup | null | undefined): string | undefined => {
+  if (group == null || !holdingForMembers(group.playback)) return undefined;
+  const names = group.members
+    .filter((member) => stillLoading(group, member.id))
+    .map((member) => member.displayName);
+  return names.length === 0 ? "Starting for everyone…" : `Waiting for ${names.join(", ")}…`;
+};
+
+/** This viewer's watch-group status, kept current while the component is mounted. */
+export const useWatchStatus = (): readonly [WatchStatus, (status: WatchStatus) => void] => {
+  const runtime = useRuntime();
+  const [status, setStatus] = useState(initialWatchStatus);
+  useEffect(() => {
+    const unsubscribe = runtime.watch.onState(setStatus);
+    void runtime.watch
+      .state()
+      .then(setStatus)
+      .catch(() => undefined);
+    return unsubscribe;
+  }, [runtime]);
+  return [status, setStatus];
+};
 
 const memberNames = (members: WatchGroup["members"]): string => {
   if (members.length === 0) return "Empty";
@@ -212,11 +246,14 @@ const ActiveGroup = ({
 }): React.ReactElement => {
   const playback = group.playback;
   const playing = playback !== null && !playback.paused;
+  const holding = holdingForMembers(playback);
   return (
     <>
       <div className={`watch-group-now${playing ? " is-playing" : ""}`}>
         <span className="watch-group-now-icon">
-          {playback?.paused ? (
+          {holding ? (
+            <LoaderCircle className="spinner" aria-hidden="true" size={15} />
+          ) : playback?.paused ? (
             <Pause aria-hidden="true" size={15} fill="currentColor" />
           ) : (
             <Play aria-hidden="true" size={15} fill="currentColor" />
@@ -227,9 +264,10 @@ const ActiveGroup = ({
           <span>
             {playback === null
               ? "Play a movie or episode and it starts for everyone."
-              : playback.paused
-                ? `Paused at ${formatPlayerTime(playback.positionSeconds)}`
-                : "Playing for everyone"}
+              : (waitingSummary(group) ??
+                (playback.paused
+                  ? `Paused at ${formatPlayerTime(playback.positionSeconds)}`
+                  : "Playing for everyone"))}
           </span>
         </span>
       </div>
@@ -240,6 +278,7 @@ const ActiveGroup = ({
             <Avatar name={member.displayName} size="sm" />
             <span>{member.displayName}</span>
             {member.id === memberId ? <small>You</small> : null}
+            {stillLoading(group, member.id) ? <small>Loading…</small> : null}
           </li>
         ))}
       </ul>
@@ -260,19 +299,11 @@ export const WatchGroups = ({
   readonly placement: "sidebar" | "player";
 }): React.ReactElement | null => {
   const runtime = useRuntime();
-  const [status, setStatus] = useState(initialWatchStatus);
+  const [status, setStatus] = useWatchStatus();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    const unsubscribe = runtime.watch.onState(setStatus);
-    void runtime.watch
-      .state()
-      .then(setStatus)
-      .catch(() => undefined);
-    return unsubscribe;
-  }, [runtime]);
   const perform = async (action: WatchAction): Promise<void> => {
     setBusy(true);
     setError(null);

@@ -44,6 +44,8 @@ interface MediaPlayerProps {
   readonly trackSelection?: boolean;
   /** Playback stalled waiting for data. */
   readonly buffering?: boolean;
+  /** Says what playback is waiting on, when that is something other than its own data. */
+  readonly bufferingMessage?: string;
   /** Playback is held until the viewer asks for it; `onStartPlayback` is that request. */
   readonly awaitingInteraction?: boolean;
   readonly onStartPlayback?: () => void;
@@ -81,6 +83,7 @@ export const MediaPlayer = ({
   onCopyAudioDiagnostics,
   trackSelection = true,
   buffering = false,
+  bufferingMessage,
   awaitingInteraction = false,
   onStartPlayback,
   surfaceRef,
@@ -175,7 +178,14 @@ export const MediaPlayer = ({
                 </Button>
               </>
             ) : buffering ? (
-              <LoaderCircle className="spinner" aria-label="Buffering" size={26} />
+              bufferingMessage === undefined ? (
+                <LoaderCircle className="spinner" aria-label="Buffering" size={26} />
+              ) : (
+                <>
+                  <LoaderCircle className="spinner" aria-hidden="true" size={26} />
+                  <span role="status">{bufferingMessage}</span>
+                </>
+              )
             ) : null}
           </div>
         </div>

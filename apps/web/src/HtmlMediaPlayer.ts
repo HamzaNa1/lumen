@@ -17,6 +17,8 @@ export interface MediaElementLike {
   readonly duration: number;
   readonly paused: boolean;
   readonly ended: boolean;
+  readonly seeking: boolean;
+  readonly readyState: number;
   readonly error: { readonly code: number } | null;
   readonly buffered: {
     readonly length: number;
@@ -77,6 +79,10 @@ interface ActiveSession {
 const LOAD_TIMEOUT_MS = 20_000;
 const MAX_RECOVERIES = 2;
 const RECOVERY_WINDOW_MS = 60_000;
+
+// HTMLMediaElement.readyState: there is enough data past the current position for playback to
+// advance. One state lower, only the current frame is there and playing would stall at once.
+const HAVE_FUTURE_DATA = 3;
 
 // MediaError.code
 const MEDIA_ERR_NETWORK = 2;
@@ -163,6 +169,12 @@ export class HtmlMediaPlayer {
       throw new Error("Invalid position");
     this.element.currentTime = positionSeconds;
     return this.publish(active);
+  }
+
+  /** Whether the element can play on from its current position, as after a seek. */
+  loaded(sessionId: string): boolean {
+    this.requireActive(sessionId);
+    return !this.element.seeking && this.element.readyState >= HAVE_FUTURE_DATA;
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {
