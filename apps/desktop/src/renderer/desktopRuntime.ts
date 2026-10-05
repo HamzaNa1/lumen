@@ -90,6 +90,7 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
       display: bridge.player.display,
       onAction: bridge.player.onOverlayAction,
     },
+    copyDiagnostics: () => bridge.player.copyAudioDiagnostics(""),
     nativeAudio: {
       output: bridge.player.audioOutput,
       copyDiagnostics: bridge.player.copyAudioDiagnostics,

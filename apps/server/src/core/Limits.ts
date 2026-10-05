@@ -14,6 +14,7 @@ interface Bucket {
 
 export class LimitExceeded extends Data.TaggedError("LimitExceeded")<{
   readonly retryAfterSeconds: number;
+  readonly reason?: string;
 }> {}
 
 export class RequestLimiter {
@@ -21,6 +22,7 @@ export class RequestLimiter {
   readonly #maxRequests: number;
   readonly #loginRequests: number;
   readonly #maxActive: number;
+  #sweptAt = 0;
 
   constructor(options: {
     readonly maxRequests: number;
@@ -34,14 +36,21 @@ export class RequestLimiter {
 
   readonly check = (key: string, nowMs: number, kind: RequestKind = "request") =>
     Effect.suspend(() => {
+      if (nowMs - this.#sweptAt >= 60_000) {
+        this.sweep(nowMs);
+        this.#sweptAt = nowMs;
+      }
+      if (!this.#buckets.has(key) && this.#buckets.size >= 10_000)
+        return Effect.fail(new LimitExceeded({ retryAfterSeconds: 60, reason: "peer_capacity" }));
       const bucket: Bucket = this.#buckets.get(key) ?? { windows: {}, active: 0 };
       const existing = bucket.windows[kind];
-      const window = existing && existing.resetAt > nowMs
-        ? existing
-        : { count: 0, resetAt: nowMs + 60_000 };
+      const window =
+        existing && existing.resetAt > nowMs ? existing : { count: 0, resetAt: nowMs + 60_000 };
       const limit = kind === "login" ? this.#loginRequests : this.#maxRequests;
       if (window.count >= limit) {
-        return Effect.fail(new LimitExceeded({ retryAfterSeconds: Math.ceil((window.resetAt - nowMs) / 1000) }));
+        return Effect.fail(
+          new LimitExceeded({ retryAfterSeconds: Math.ceil((window.resetAt - nowMs) / 1000) }),
+        );
       }
       window.count += 1;
       bucket.windows[kind] = window;
@@ -69,7 +78,10 @@ export class RequestLimiter {
 
   sweep(nowMs: number): void {
     for (const [key, bucket] of this.#buckets) {
-      if (bucket.active === 0 && Object.values(bucket.windows).every((window) => window.resetAt <= nowMs))
+      if (
+        bucket.active === 0 &&
+        Object.values(bucket.windows).every((window) => window.resetAt <= nowMs)
+      )
         this.#buckets.delete(key);
     }
   }

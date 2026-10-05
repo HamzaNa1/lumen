@@ -1,3 +1,4 @@
+import { normalizeAddress } from "../http/ClientIdentity";
 import { Schema } from "effect";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
@@ -27,6 +28,11 @@ const Environment = Schema.Struct({
   LUMEN_MAX_CONCURRENT_REQUESTS: Schema.optional(Numeric),
   LUMEN_MAX_REQUESTS_PER_MINUTE: Schema.optional(Numeric),
   LUMEN_LOGIN_ATTEMPTS_PER_MINUTE: Schema.optional(Numeric),
+  LUMEN_MEDIA_PEER_REQUESTS_PER_MINUTE: Schema.optional(Numeric),
+  LUMEN_MEDIA_BURST: Schema.optional(Numeric),
+  LUMEN_MEDIA_REQUESTS_PER_MINUTE: Schema.optional(Numeric),
+  LUMEN_MEDIA_MAX_CONCURRENT_SETUPS: Schema.optional(Numeric),
+  LUMEN_MEDIA_MAX_GLOBAL_SETUPS: Schema.optional(Numeric),
   LUMEN_MAX_EVENT_ID: Schema.optional(Numeric),
   LUMEN_SCAN_LEASE_MS: Schema.optional(Numeric),
   LUMEN_LIBRARY_WATCH_INTERVAL_MS: Schema.optional(Numeric),
@@ -39,6 +45,7 @@ const Environment = Schema.Struct({
   LUMEN_WEB_ROOT: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_WEB_APP: Schema.optional(Schema.Literals(["required", "optional"])),
   LUMEN_COOKIE_SECURE: Schema.optional(Schema.Literals(["auto", "always", "never"])),
+  LUMEN_TRUSTED_PROXIES: Schema.optional(Schema.String),
   LUMEN_ALLOWED_ORIGINS: Schema.optional(Schema.String),
   NODE_ENV: Schema.optional(Schema.String),
 });
@@ -60,6 +67,12 @@ export interface ServerConfig {
   readonly maxConcurrentRequests: number;
   readonly maxRequestsPerMinute: number;
   readonly loginAttemptsPerMinute: number;
+  /** Provisional media admission profile; concurrency counts response setup, never live transfers. */
+  readonly mediaPeerRequestsPerMinute: number;
+  readonly mediaBurst: number;
+  readonly mediaRequestsPerMinute: number;
+  readonly mediaMaxConcurrentSetups: number;
+  readonly mediaMaxGlobalSetups: number;
   readonly maxEventId: number;
   readonly scanLeaseMs: number;
   readonly libraryWatchIntervalMs: number;
@@ -80,6 +93,8 @@ export interface ServerConfig {
    */
   readonly cookieSecure: "auto" | "always" | "never";
   /** Origins, besides the one a request arrives on, whose pages may use a browser session. */
+  /** Exact socket proxy IP addresses permitted to supply forwarding chains. */
+  readonly trustedProxies: ReadonlyArray<string>;
   readonly allowedOrigins: ReadonlyArray<string>;
 }
 
@@ -243,10 +258,48 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
       1_000,
       600_000,
     ),
+    mediaPeerRequestsPerMinute: toBoundedInteger(
+      "LUMEN_MEDIA_PEER_REQUESTS_PER_MINUTE",
+      parsed.LUMEN_MEDIA_PEER_REQUESTS_PER_MINUTE,
+      1200,
+      1,
+      100000,
+    ),
+    mediaBurst: toBoundedInteger("LUMEN_MEDIA_BURST", parsed.LUMEN_MEDIA_BURST, 64, 1, 10000),
+    mediaRequestsPerMinute: toBoundedInteger(
+      "LUMEN_MEDIA_REQUESTS_PER_MINUTE",
+      parsed.LUMEN_MEDIA_REQUESTS_PER_MINUTE,
+      600,
+      1,
+      100000,
+    ),
+    mediaMaxConcurrentSetups: toBoundedInteger(
+      "LUMEN_MEDIA_MAX_CONCURRENT_SETUPS",
+      parsed.LUMEN_MEDIA_MAX_CONCURRENT_SETUPS,
+      8,
+      1,
+      1000,
+    ),
+    mediaMaxGlobalSetups: toBoundedInteger(
+      "LUMEN_MEDIA_MAX_GLOBAL_SETUPS",
+      parsed.LUMEN_MEDIA_MAX_GLOBAL_SETUPS,
+      64,
+      1,
+      10000,
+    ),
     webRoot: resolveWorkspacePath(parsed.LUMEN_WEB_ROOT ?? "./apps/web/dist"),
     // A production server ships with the browser app; a checkout may not have built it yet.
     webApp: parsed.LUMEN_WEB_APP ?? (parsed.NODE_ENV === "production" ? "required" : "optional"),
     cookieSecure: parsed.LUMEN_COOKIE_SECURE ?? "auto",
+    trustedProxies: (parsed.LUMEN_TRUSTED_PROXIES ?? "")
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .map((value) => {
+        const address = normalizeAddress(value);
+        if (address === null) throw new Error("LUMEN_TRUSTED_PROXIES must list IP addresses");
+        return address;
+      }),
     allowedOrigins: toOrigins(parsed.LUMEN_ALLOWED_ORIGINS),
   };
 };

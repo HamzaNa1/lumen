@@ -13,6 +13,8 @@ export interface ServeFileOptions {
   /** Defaults to private revalidation, which suits files only their owner may see. */
   readonly cacheControl?: string;
   readonly headers?: Readonly<Record<string, string>>;
+  /** Keep the request's idle-timeout override while streaming a file under backpressure. */
+  readonly preserveIdleTimeout?: boolean;
 }
 
 /** Answers GET and HEAD for one file, honouring conditional and range requests. */
@@ -70,5 +72,11 @@ export const serveFile = async (options: ServeFileOptions): Promise<Response> =>
   if (range.kind === "partial") headers["content-range"] = `bytes ${start}-${end}/${options.size}`;
   if (options.request.method === "HEAD" || options.size === 0)
     return new Response(null, { status: range.kind === "partial" ? 206 : 200, headers });
-  return new Response(bodyFile, { status: range.kind === "partial" ? 206 : 200, headers });
+  // Bun 1.4.2's file-response path resets the timeout to the server default. A bare
+  // file.stream() is optimized back into that path; an identity transform keeps the
+  // response streaming with backpressure and cancellation, without copying its chunks.
+  const body = options.preserveIdleTimeout
+    ? bodyFile.stream().pipeThrough(new TransformStream<Uint8Array, Uint8Array>())
+    : bodyFile;
+  return new Response(body, { status: range.kind === "partial" ? 206 : 200, headers });
 };

@@ -819,3 +819,51 @@ test("a browser that stops fetching short of five seconds no longer keeps its wa
     await group.close();
   }
 });
+
+test("browser diagnostics retain waiting, stalled and recovery metrics without media grants or URLs", async () => {
+  const { player, element } = setup();
+  await player.start({ itemId: "private-media-title" });
+  try {
+    element.currentTime = 10;
+    element.bufferedRange = [0, 10];
+    element.emit("waiting");
+    element.emit("stalled");
+    element.bufferedRange = [0, 20];
+    element.emit("playing");
+    expect(
+      JSON.parse(player.playbackDiagnostics()).playbackTimeline.map(
+        (event: { kind: string }) => event.kind,
+      ),
+    ).toEqual(["browser_waiting", "browser_stalled", "browser_recovery"]);
+    for (let index = 0; index < 300; index += 1) element.emit("stalled");
+    const diagnostics = JSON.parse(player.playbackDiagnostics());
+    expect(diagnostics.httpStatusAvailable).toBe(false);
+    expect(diagnostics.playbackTimeline).toHaveLength(256);
+    expect(JSON.stringify(diagnostics)).not.toContain("grant-");
+    expect(JSON.stringify(diagnostics)).not.toContain("private-media");
+    expect(diagnostics.playbackTimeline.at(-1).fields).toMatchObject({
+      positionSeconds: 10,
+      aheadSeconds: 10,
+      intentionalPause: false,
+      seeking: false,
+      eof: false,
+    });
+  } finally {
+    await player.stop();
+  }
+});
+
+test("browser failure diagnostics export after teardown and isolate the next playback attempt", async () => {
+  const { player, element } = setup();
+  await player.start({ itemId: "private-title" });
+  element.emit("waiting");
+  element.fail(3);
+  await eventually(() => player.getState() === null);
+  const failed = JSON.parse(player.playbackDiagnostics());
+  expect(failed.playbackTimeline.map((event: { kind: string }) => event.kind)).toContain("browser_error");
+  expect(JSON.stringify(failed)).not.toContain("private-title");
+  element.error = null;
+  await player.start({ itemId: "other-title" });
+  expect(JSON.parse(player.playbackDiagnostics()).playbackTimeline).toHaveLength(0);
+  await player.stop();
+});

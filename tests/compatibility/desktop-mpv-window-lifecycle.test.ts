@@ -902,3 +902,58 @@ describe("native playback failure recovery", () => {
     }
   }, 15_000);
 });
+
+test("solo playback records starvation/recovery and suppresses intentional pause, seek and EOF starvation", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    properties.set("demuxer-cache-state", { "cache-duration": 0 });
+    properties.set("seeking", false);
+    properties.set("paused-for-cache", true);
+    await controller.refreshState();
+    properties.set("demuxer-cache-state", { "cache-duration": 8 });
+    properties.set("paused-for-cache", false);
+    await controller.refreshState();
+    await controller.pause("session-1", true);
+    properties.set("pause", true);
+    properties.set("paused-for-cache", true);
+    await controller.refreshState();
+    await controller.pause("session-1", false);
+    properties.set("pause", false);
+    properties.set("seeking", true);
+    await controller.refreshState();
+    properties.set("seeking", false);
+    properties.set("eof-reached", true);
+    await controller.refreshState();
+    const diagnostics = JSON.parse(await controller.audioDiagnostics("session-1"));
+    expect(
+      diagnostics.playbackTimeline.filter(
+        (event: { kind: string }) => event.kind === "buffer_starvation",
+      ),
+    ).toHaveLength(1);
+    expect(
+      diagnostics.playbackTimeline.filter(
+        (event: { kind: string }) => event.kind === "buffer_recovery",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.stringify(diagnostics.playbackTimeline)).not.toContain("http");
+    await controller.stop();
+    expect(
+      JSON.parse(await controller.audioDiagnostics("session-1")).playbackTimeline,
+    ).toHaveLength(diagnostics.playbackTimeline.length);
+  });
+});
+
+test("desktop export retains runtime and startup failure diagnostics without a live player", async () => {
+  await withPlayback(async ({ controller, connections, restart, failNextLoad }) => {
+    connections[0]?.emit("disconnected", new MpvIpcFailure("private-path failure"));
+    await controller.stop();
+    expect(controller.getState()).toBeNull();
+    const failed = await controller.audioDiagnostics("");
+    expect(JSON.parse(failed).playbackTimeline.map((event: { kind: string }) => event.kind)).toContain("playback_failure");
+    expect(failed).not.toContain("private-path");
+    failNextLoad();
+    await expect(restart()).rejects.toBeDefined();
+    const startup = JSON.parse(await controller.audioDiagnostics(""));
+    expect(startup.playbackTimeline.some((event: { fields: { stage?: string } }) => event.fields.stage === "startup")).toBe(true);
+    expect(startup.playbackTimeline.some((event: { fields: { stage?: string } }) => event.fields.stage === "runtime")).toBe(false);
+  });
+});

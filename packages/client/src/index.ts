@@ -6,3 +6,4 @@ export * from "./watch/WatchGroupClient.ts";
 export * from "./watch/WatchPlaybackController.ts";
 export * from "./watch/viewerPlayback.ts";
 export * from "./watch/watchPrediction.ts";
+export * from "./playback/PlaybackDiagnostics.ts";

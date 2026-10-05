@@ -39,7 +39,7 @@ interface MediaPlayerProps {
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
   readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
-  /** Omitted where the player cannot describe its audio pipeline. */
+  /** Exports retained diagnostics even when playback has failed. */
   readonly onCopyAudioDiagnostics?: () => Promise<void>;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
   readonly trackSelection?: boolean;
@@ -387,16 +387,15 @@ export const MediaPlayer = ({
                     ) : null}
                     {onCopyAudioDiagnostics === undefined ? null : (
                       <Button
-                        disabled={inactive}
                         onClick={() => {
                           setAudioActionStatus(null);
                           void onCopyAudioDiagnostics().then(
-                            () => setAudioActionStatus("Audio diagnostics copied."),
-                            () => setAudioActionStatus("Could not copy audio diagnostics."),
+                            () => setAudioActionStatus("Playback diagnostics exported."),
+                            () => setAudioActionStatus("Could not export playback diagnostics."),
                           );
                         }}
                       >
-                        Copy audio diagnostics
+                        Export playback diagnostics
                       </Button>
                     )}
                     {audioActionStatus === null ? null : <p role="status">{audioActionStatus}</p>}

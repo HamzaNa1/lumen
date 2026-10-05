@@ -89,8 +89,21 @@ const httpMethods = new Set([
 export const requestMethod = (method: string): string =>
   httpMethods.has(method) ? method : "OTHER";
 
-/** Whose request this is, for rate limiting. A proxy in front names the client it forwards for. */
-export const clientKey = (request: Request): string =>
-  request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-  request.headers.get("x-real-ip") ??
-  "local";
+/** Bounded, parsed range diagnostics; malformed values never enter logs verbatim. */
+export const requestRange = (
+  request: Request,
+): { readonly [key: string]: string | number | null } => {
+  const range = request.headers.get("range");
+  if (range === null) return { kind: "full" };
+  if (range.length > 128) return { kind: "invalid" };
+  const match = /^bytes=(\d*)-(\d*)$/u.exec(range);
+  if (match === null || (match[1] === "" && match[2] === "")) return { kind: "invalid" };
+  const start = match[1] === "" ? null : Number(match[1]);
+  const end = match[2] === "" ? null : Number(match[2]);
+  if (
+    (start !== null && !Number.isSafeInteger(start)) ||
+    (end !== null && !Number.isSafeInteger(end))
+  )
+    return { kind: "invalid" };
+  return { kind: start === null ? "suffix" : end === null ? "open" : "bounded", start, end };
+};

@@ -1,3 +1,4 @@
+import { exportPlaybackDiagnostics } from "./ExportDiagnostics";
 import {
   cookieCredentials,
   ServerApi,
@@ -172,7 +173,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     capabilities: {
       serverSwitching: false,
       nativeAudioOutput: false,
-      audioDiagnostics: false,
+      audioDiagnostics: true,
       // Only some browsers let a page switch a file's audio tracks, and none expose the subtitles
       // embedded in it. The player lists the tracks that really can be switched.
       trackSelection: "audioTracks" in HTMLMediaElement.prototype,
@@ -261,6 +262,9 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       onFullscreenChange: fullscreenChanges.subscribe,
       presentation: { kind: "inline" },
       nativeAudio: null,
+      copyDiagnostics: async () => {
+        await exportPlaybackDiagnostics(player.playbackDiagnostics());
+      },
     },
     watch: {
       state: async () => {

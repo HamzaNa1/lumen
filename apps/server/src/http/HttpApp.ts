@@ -12,12 +12,19 @@ import { Effect, Schema } from "effect";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
 import { createLogger, type Logger } from "../core/Logger";
 import {
-  clientKey,
   isRoutineProbe,
   requestIdFor,
   requestMethod,
   requestRoute,
+  requestRange,
 } from "./RequestLogging";
+import { clientKey, type RequestContext } from "./ClientIdentity";
+import {
+  isMediaRequest,
+  managedMediaArtifactFor,
+  mediaTrackIdFor,
+  MediaAdmission,
+} from "./MediaAdmission";
 import { RequestLimiter, LimitExceeded } from "../core/Limits";
 import type { ServerConfig } from "../config/Config";
 import type { ServerIdentity } from "../database/Identity";
@@ -130,6 +137,7 @@ const errorResponse = (cause: unknown, requestId: string): Response => {
   if (cause instanceof LimitExceeded)
     return json(S.Message, { message: "Rate limit exceeded", requestId }, 429, {
       "retry-after": String(cause.retryAfterSeconds),
+      "x-admission-reason": cause.reason ?? "api_rate_or_setup_capacity",
     });
   if (cause instanceof ServerError)
     return json(
@@ -173,6 +181,8 @@ export const makeHttpHandler = (
     config.streamMaxOpenBodiesPerIp,
   );
   const managed = services.managedStreaming;
+  const mediaAdmission = new MediaAdmission(config);
+  const mediaSessions = new WeakMap<Request, string>();
   // Session cookies to set once the response exists, keyed by the request that earned them.
   const cookies = new WeakMap<Request, string>();
   /** Renews valid cookie sessions; rejected requests may belong to an older sign-in. */
@@ -209,7 +219,7 @@ export const makeHttpHandler = (
       { "cache-control": "no-store" },
     );
   };
-  const dispatch = async (request: Request): Promise<Response> => {
+  const dispatch = async (request: Request, context?: RequestContext): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
     const method = request.method.toUpperCase();
@@ -320,52 +330,59 @@ export const makeHttpHandler = (
         await call(services.auth.migrateLegacySession(input.refreshToken, Date.now())),
       );
     }
-    if (
-      (method === "GET" || method === "HEAD") &&
-      parts[0] === "api" &&
-      parts[1] === "v1" &&
-      parts[2] === "media" &&
-      parts.length === 4 &&
-      url.pathname === `/${parts.join("/")}` &&
-      parts[3] !== undefined
-    ) {
+    const mediaTrackId = mediaTrackIdFor(request);
+    if (mediaTrackId !== null) {
       const grant = bearer(request) ?? url.searchParams.get("grant");
       if (grant === null) throw unauthorized("Playback grant is required");
-      const media = await call(services.playback.authorizeGrant(grant, parts[3], Date.now()));
-      return serveFile({
-        request,
-        path: media.absolutePath,
-        size: media.size,
-        modifiedAtMs: media.modifiedAtMs ?? Date.now(),
-        mimeType: media.mimeType,
-      });
+      const media = await call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now()));
+      mediaSessions.set(request, media.sessionId);
+      const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
+      try {
+        return await serveFile({
+          request,
+          path: media.absolutePath,
+          size: media.size,
+          modifiedAtMs: media.modifiedAtMs ?? Date.now(),
+          mimeType: media.mimeType,
+          preserveIdleTimeout: true,
+        });
+      } finally {
+        release();
+      }
     }
-    if (
-      (method === "GET" || method === "HEAD") &&
-      parts[0] === "api" &&
-      parts[1] === "v1" &&
-      parts[2] === "managed-media" &&
-      parts.length === 6 &&
-      url.pathname === `/${parts.join("/")}` &&
-      parts[3] !== undefined &&
-      /^[a-f0-9]{64}$/u.test(parts[4] ?? "") &&
-      /^(index\.m3u8|init\.mp4|segment-\d+\.m4s)$/u.test(parts[5] ?? "")
-    ) {
+    const managedArtifact = managedMediaArtifactFor(request);
+    if (managedArtifact !== null) {
       if (managed?.available !== true) throw notFound("Managed streaming is unavailable");
       const grant = bearer(request);
       if (grant === null) throw unauthorized("Playback grant is required");
-      const source = await call(services.playback.managedGrant(grant, parts[3], Date.now()));
-      let release: (() => void) | undefined;
-      return mediaLimiter.run(
-        clientKey(request),
-        request,
-        async () => {
-          const artifact = await managed.artifact(source, parts[4] ?? "", parts[5] ?? "");
-          release = artifact.release;
-          return serveFile({ request, ...artifact });
-        },
-        () => release?.(),
+      const source = await call(
+        services.playback.managedGrant(grant, managedArtifact.trackId, Date.now()),
       );
+      mediaSessions.set(request, source.sessionId);
+      const releaseSetup = mediaAdmission.enterAuthenticated(
+        source.userId,
+        source.sessionId,
+        Date.now(),
+      );
+      let release: (() => void) | undefined;
+      try {
+        return await mediaLimiter.run(
+          clientKey(request, context, config.trustedProxies),
+          request,
+          async () => {
+            const artifact = await managed.artifact(
+              source,
+              managedArtifact.packageId,
+              managedArtifact.artifact,
+            );
+            release = artifact.release;
+            return serveFile({ request, ...artifact, preserveIdleTimeout: true });
+          },
+          () => release?.(),
+        );
+      } finally {
+        releaseSetup();
+      }
     }
     if (
       (method === "GET" || method === "HEAD") &&
@@ -1078,7 +1095,7 @@ export const makeHttpHandler = (
     }
     throw notFound("Endpoint not found");
   };
-  return async (request: Request): Promise<Response> => {
+  return async (request: Request, context?: RequestContext): Promise<Response> => {
     const startedAt = performance.now();
     const requestId = requestIdFor(request);
     const pathname = new URL(request.url).pathname;
@@ -1090,7 +1107,8 @@ export const makeHttpHandler = (
     });
     let response: Response;
     let failure: unknown;
-    const key = clientKey(request);
+    const key = clientKey(request, context, config.trustedProxies);
+    const media = isMediaRequest(request);
     const login = [
       "/auth/login",
       "/auth/register",
@@ -1099,15 +1117,31 @@ export const makeHttpHandler = (
       "/auth/browser/register",
     ].some((path) => pathname.endsWith(path));
     try {
-      const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
-      const checked = limiter.check(key, Date.now(), login ? "login" : "request");
-      response = await Effect.runPromise(
-        checked.pipe(Effect.flatMap(() => limiter.run(key, execute))),
-      );
+      if (media) {
+        const release = mediaAdmission.enterPeer(key, Date.now());
+        try {
+          response = await dispatch(request, context);
+        } finally {
+          release();
+        }
+      } else {
+        const execute = Effect.tryPromise({
+          try: () => dispatch(request, context),
+          catch: (cause) => cause,
+        });
+        const checked = limiter.check(key, Date.now(), login ? "login" : "request");
+        response = await Effect.runPromise(
+          checked.pipe(Effect.flatMap(() => limiter.run(key, execute))),
+        );
+      }
     } catch (cause) {
       failure = cause;
       response = errorResponse(cause, requestId);
     }
+    // A valid file transfer may stop reading indefinitely while the player is paused.
+    // Keep ordinary API/denied requests on the transport's default timeout.
+    if (media && request.method === "GET" && (response.status === 200 || response.status === 206))
+      context?.disableIdleTimeout?.();
     response.headers.set("x-request-id", requestId);
     const cookie = cookies.get(request);
     if (cookie !== undefined) response.headers.append("set-cookie", cookie);
@@ -1126,6 +1160,20 @@ export const makeHttpHandler = (
       "http_request",
       {
         status: response.status,
+        ...(media
+          ? {
+              range: requestRange(request),
+              playbackSessionId: mediaSessions.get(request),
+              admission:
+                failure instanceof LimitExceeded ? (failure.reason ?? "rate_limited") : "accepted",
+              expectedResponseBytes:
+                request.method === "HEAD"
+                  ? 0
+                  : response.headers.has("content-length")
+                    ? Number(response.headers.get("content-length"))
+                    : null,
+            }
+          : {}),
         // Response creation time; media and SSE bodies may continue streaming.
         durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
         errorCode:

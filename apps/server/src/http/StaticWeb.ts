@@ -6,7 +6,7 @@ import { LimitExceeded, RequestLimiter } from "../core/Limits";
 import type { Logger } from "../core/Logger";
 import { isPathWithin } from "../core/Paths";
 import { requestOrigin } from "./BrowserSession";
-import { clientKey } from "./RequestLogging";
+import { clientKey, type RequestContext } from "./ClientIdentity";
 import { serveFile } from "./ServeFile";
 
 /** The browser app lives under this path; everything else belongs to the API. */
@@ -113,9 +113,10 @@ export const assertWebBuild = async (root: string): Promise<void> => {
  * for a file that is not there is answered 404, never with the page.
  */
 export const makeStaticWebHandler = (
-  config: Pick<ServerConfig, "webRoot" | "maxRequestsPerMinute" | "maxConcurrentRequests">,
+  config: Pick<ServerConfig, "webRoot" | "maxRequestsPerMinute" | "maxConcurrentRequests"> &
+    Partial<Pick<ServerConfig, "trustedProxies">>,
   logger: Logger,
-): ((request: Request) => Promise<Response>) => {
+): ((request: Request, context?: RequestContext) => Promise<Response>) => {
   // A page load fetches a handful of files at once. Counting those here, apart from the API's
   // limiter, keeps them from spending the allowance that sign-in and API requests rely on.
   const limiter = new RequestLimiter({
@@ -182,8 +183,8 @@ export const makeStaticWebHandler = (
     });
   };
 
-  return async (request) => {
-    const key = clientKey(request);
+  return async (request, context) => {
+    const key = clientKey(request, context, config.trustedProxies);
     const nowMs = Date.now();
     if (nowMs - sweptAtMs >= 60_000) {
       sweptAtMs = nowMs;

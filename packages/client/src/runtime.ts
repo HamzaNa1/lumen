@@ -176,6 +176,7 @@ export interface PlaybackRuntime {
   readonly presentation: PlayerPresentation;
   /** Present only where the player controls the audio device itself. */
   readonly nativeAudio: NativeAudioRuntime | null;
+  readonly copyDiagnostics?: () => Promise<void>;
 }
 
 export interface WatchRuntime {

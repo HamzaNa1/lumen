@@ -86,13 +86,20 @@ export interface PlaybackServiceShape {
     grantToken: string,
     trackId: string,
     nowMs: number,
-  ) => Effect.Effect<ManagedSource, unknown>;
+  ) => Effect.Effect<ManagedSource & { readonly userId: string }, unknown>;
   readonly authorizeGrant: (
     grantToken: string,
     trackId: string,
     nowMs: number,
   ) => Effect.Effect<
-    { absolutePath: string; size: number; modifiedAtMs: number; mimeType: string },
+    {
+      absolutePath: string;
+      size: number;
+      modifiedAtMs: number;
+      mimeType: string;
+      sessionId: string;
+      userId: string;
+    },
     unknown
   >;
 }
@@ -441,6 +448,8 @@ export const makePlaybackServiceWithConfig = (config: ServerConfig) =>
     )(function* (grantToken, trackId, nowMs) {
       const row = yield* database
         .select({
+          sessionId: playbackSessions.id,
+          userId: playbackSessions.userId,
           absolutePath: mediaSources.absolutePath,
           rootPath: libraryRoots.path,
           size: mediaSources.fileSizeBytes,
@@ -640,7 +649,7 @@ export const makePlaybackServiceWithConfig = (config: ServerConfig) =>
     const managedGrant: PlaybackServiceShape["managedGrant"] = Effect.fn("Playback.managedGrant")(
       function* (grantToken, trackId, nowMs) {
         // Direct and managed media share grant expiry, source availability, and canonical path checks.
-        yield* authorizeGrant(grantToken, trackId, nowMs);
+        const media = yield* authorizeGrant(grantToken, trackId, nowMs);
         const session = yield* database
           .select({ id: playbackSessions.id, user: users, deviceId: playbackSessions.deviceId })
           .from(playbackSessions)
@@ -670,7 +679,7 @@ export const makePlaybackServiceWithConfig = (config: ServerConfig) =>
           "playback:control",
           nowMs,
         );
-        return yield* resolveManagedSource(session.id, trackId);
+        return { ...(yield* resolveManagedSource(session.id, trackId)), userId: media.userId };
       },
     );
 
