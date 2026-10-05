@@ -24,5 +24,13 @@ export default defineConfig({
       { find: "@lumen/app", replacement: resolve(packages, "app/src") },
     ],
   },
-  build: { outDir: "dist", emptyOutDir: true, sourcemap: false },
+  build: {
+    outDir: "dist",
+    emptyOutDir: true,
+    sourcemap: false,
+    // The CSS minifier rewrites translucent colours as 8-bit hex, which shifts their alpha a
+    // little. Desktop ships the stylesheet as written, so the web app does too: the two then
+    // draw exactly the same colours, at the cost of a few kilobytes before compression.
+    cssMinify: false,
+  },
 });
