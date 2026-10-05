@@ -1,13 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { HtmlMediaPlayer, type MediaElementLike } from "../../apps/web/src/HtmlMediaPlayer";
+import {
+  HtmlMediaPlayer,
+  type MediaElementLike,
+  type HtmlMediaPlayerOptions,
+} from "../../apps/web/src/HtmlMediaPlayer";
 import {
   PlaybackUnsupportedError,
   ServerHttpError,
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
+import { DirectSource, DeliveryFailure } from "../../apps/web/src/playback/MediaSource";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
-import type { PlayerSession, PlayerState } from "../../packages/contracts/src/index.ts";
+import type {
+  ManagedDelivery,
+  PlayerSession,
+  PlayerState,
+} from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
 
@@ -102,7 +111,10 @@ class FakeMedia implements MediaElementLike {
   }
 }
 
-const setup = (streams: PlayerSession["streams"] = []) => {
+const setup = (
+  streams: PlayerSession["streams"] = [],
+  options: Partial<HtmlMediaPlayerOptions> = {},
+) => {
   const element = new FakeMedia();
   const calls: string[] = [];
   const states: (PlayerState | null)[] = [];
@@ -157,6 +169,7 @@ const setup = (streams: PlayerSession["streams"] = []) => {
     onState: (state) => states.push(state),
     onFailure: (cause) => failures.push(cause.message),
     loadTimeoutMs: 80,
+    ...options,
   });
   return { element, api, player, calls, states, failures };
 };
@@ -201,7 +214,15 @@ describe("browser playback lifecycle", () => {
 
   test("audio the browser cannot decode is refused before anything plays silently", async () => {
     const { element, player } = setup([
-      { id: "a", kind: "audio", ordinal: 1, codec: "ac3", language: "eng", title: null, isDefault: true },
+      {
+        id: "a",
+        kind: "audio",
+        ordinal: 1,
+        codec: "ac3",
+        language: "eng",
+        title: null,
+        isDefault: true,
+      },
     ]);
     const failure = await player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(PlaybackUnsupportedError);
@@ -229,7 +250,9 @@ describe("browser playback lifecycle", () => {
     await third;
     expect(player.getState()?.itemId).toBe("item-3");
     expect(element.src).toContain("/api/v1/media/item-3");
-    const started = calls.filter((call) => call.startsWith("start")).map((call) => call.split(" ")[1]);
+    const started = calls
+      .filter((call) => call.startsWith("start"))
+      .map((call) => call.split(" ")[1]);
     const live = player.getState()?.sessionId;
     for (const session of started.filter((id) => id !== live))
       expect(calls).toContain(`stop ${session}`);
@@ -341,10 +364,17 @@ describe("browser playback lifecycle", () => {
     element.currentTime = 15;
     player.leave();
     await Bun.sleep(1);
-    expect(calls.slice(-2)).toEqual(["progress session-1 @15 #2 keepalive", "stop session-1 keepalive"]);
+    expect(calls.slice(-2)).toEqual([
+      "progress session-1 @15 #2 keepalive",
+      "stop session-1 keepalive",
+    ]);
     // Restored from the back/forward cache: the ended session is replaced before resuming.
     await player.reconcile();
-    expect(player.getState()).toMatchObject({ sessionId: "session-2", positionSeconds: 15, paused: false });
+    expect(player.getState()).toMatchObject({
+      sessionId: "session-2",
+      positionSeconds: 15,
+      paused: false,
+    });
   });
 
   test("a lost connection is retried a bounded number of times, then reported", async () => {
@@ -403,57 +433,218 @@ test("the browser reports how far it can play on, and when it has run out", asyn
   expect(player.buffer(sessionId).starved).toBe(false);
 });
 
-test("a watch group is not told the browser is ready until it holds five seconds to play on with", async () => {
-  const fixture = await watchFixture();
-  const { element, player } = setup();
-  let seeks = 0;
-  const viewer = new WatchPlaybackController(
-    {
-      start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
-      stop: () => player.stop(),
-      getState: () => player.getState(),
-      seek: (sessionId, positionSeconds) => {
-        seeks += 1;
-        return player.seek(sessionId, positionSeconds);
+test.each(["direct", "managed"])(
+  "a %s watch-group viewer needs five playable seconds before readiness",
+  async (delivery) => {
+    const fixture = await watchFixture();
+    const { element, player } = delivery === "managed" ? managedSetup() : setup();
+    let seeks = 0;
+    const viewer = new WatchPlaybackController(
+      {
+        start: ({ itemId, startAtSeconds, paused }) =>
+          player.start({ itemId, startAtSeconds, paused }),
+        stop: () => player.stop(),
+        getState: () => player.getState(),
+        seek: (sessionId, positionSeconds) => {
+          seeks += 1;
+          return player.seek(sessionId, positionSeconds);
+        },
+        pause: (sessionId, paused) => player.pause(sessionId, paused),
+        speed: (sessionId, speed) => player.speed(sessionId, speed),
+        buffer: (sessionId) => player.buffer(sessionId),
       },
-      pause: (sessionId, paused) => player.pause(sessionId, paused),
-      speed: (sessionId, speed) => player.speed(sessionId, speed),
-      buffer: (sessionId) => player.buffer(sessionId),
+      () => undefined,
+    );
+    try {
+      const owner = await fixture.connect(await fixture.login());
+      await owner.action({ type: "create", name: "Movie night", password: "" });
+      viewer.connect(await fixture.login(), "browser");
+      viewer.setSurfaceReady(true);
+      await eventually(() => viewer.status.connection === "connected");
+      await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+
+      // The seek has finished, but the browser holds too little beyond where it landed.
+      element.seeking = false;
+      element.bufferedRange = [0, 7.9];
+      await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+      await eventually(() => seeks === 1 && element.currentTime === 3);
+      await Bun.sleep(700);
+      expect(owner.status.group?.playback).toMatchObject({
+        positionSeconds: 3,
+        paused: true,
+        waitingFor: [viewer.status.memberId],
+      });
+      expect(element.paused).toBe(true);
+      expect(seeks).toBe(1);
+
+      // Enough has arrived to play on from there.
+      element.bufferedRange = [0, 8];
+      await eventually(() => owner.status.group?.playback?.paused === false);
+      expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+      await eventually(() => !element.paused);
+      // Playback starts from where the element already waits.
+      expect(seeks).toBe(1);
+      expect(element.currentTime).toBe(3);
+    } finally {
+      viewer.close();
+      await fixture.close();
+    }
+  },
+);
+
+const readyManaged: ManagedDelivery = {
+  packageId: "a".repeat(64),
+  state: "ready",
+  progress: 1,
+  manifestUrl: "/api/v1/managed-media/track/package/index.m3u8",
+  mimeType: 'video/mp4; codecs="avc1.64001e,mp4a.40.2"',
+  videoStreamId: null,
+  audioStreamId: null,
+  unavailableReason: null,
+  forwardBufferSeconds: 30,
+  backBufferSeconds: 15,
+  encodedWindowBytes: 1024,
+};
+
+const managedSetup = () => {
+  const deliveryStatuses: unknown[] = [];
+  const adapters: {
+    disposed: boolean;
+    initialPosition: number;
+    failure: (cause: DeliveryFailure) => void;
+  }[] = [];
+  const fixture = setup([], {
+    deliveryPreference: () => "managed",
+    managedSupported: () => true,
+    preparationTimeoutMs: 500,
+    onDeliveryStatus: (status) => deliveryStatuses.push(status),
+    sourceFactory: (_delivery, _recovery, onFailure) => {
+      const state = { disposed: false, initialPosition: -1, failure: onFailure };
+      adapters.push(state);
+      const direct = new DirectSource(
+        fixture.element,
+        fixture.api.serverOrigin,
+        80,
+        () => new Error("failed"),
+      );
+      return {
+        kind: "managed",
+        load: async (session, position, signal) => {
+          state.initialPosition = position;
+          await direct.load(session, position, signal);
+        },
+        seek: (position) => {
+          fixture.element.currentTime = position;
+        },
+        dispose: () => {
+          state.disposed = true;
+        },
+      };
     },
-    () => undefined,
-  );
-  try {
-    const owner = await fixture.connect(await fixture.login());
-    await owner.action({ type: "create", name: "Movie night", password: "" });
-    viewer.connect(await fixture.login(), "browser");
-    viewer.setSurfaceReady(true);
-    await eventually(() => viewer.status.connection === "connected");
-    await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+  });
+  const api = Object.assign(fixture.api, {
+    preparePlayback: async (_session: string, _signal?: AbortSignal): Promise<ManagedDelivery> =>
+      readyManaged,
+    managedPlaybackStatus: async (): Promise<ManagedDelivery> => readyManaged,
+  });
+  return { ...fixture, api, deliveryStatuses, adapters };
+};
 
-    // The seek has finished, but the browser holds too little beyond where it landed.
-    element.seeking = false;
-    element.bufferedRange = [0, 7.9];
-    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
-    await eventually(() => seeks === 1 && element.currentTime === 3);
-    await Bun.sleep(700);
-    expect(owner.status.group?.playback).toMatchObject({
-      positionSeconds: 3,
-      paused: true,
-      waitingFor: [viewer.status.memberId],
+describe("managed browser session ownership", () => {
+  test("preparation has its own deadline and never fabricates media progress", async () => {
+    const { player, api, element, calls, deliveryStatuses } = managedSetup();
+    api.preparePlayback = async () => {
+      await Bun.sleep(150);
+      return readyManaged;
+    };
+    const pending = player.start({ itemId: "item", startAtSeconds: 97, paused: true });
+    await Bun.sleep(100); // Past the direct media-load timeout, still preparing.
+    expect(player.getState()).toBeNull();
+    expect(element.sources).toEqual([]);
+    expect(calls.some((call) => call.startsWith("progress"))).toBe(false);
+    await pending;
+    expect(player.getState()).toMatchObject({ positionSeconds: 97, paused: true });
+    expect(deliveryStatuses).toContainEqual({
+      phase: "managed",
+      progress: 1,
+      message: "Managed playback · Original quality",
     });
-    expect(element.paused).toBe(true);
-    expect(seeks).toBe(1);
+    await player.stop();
+  });
 
-    // Enough has arrived to play on from there.
-    element.bufferedRange = [0, 8];
-    await eventually(() => owner.status.group?.playback?.paused === false);
-    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
-    await eventually(() => !element.paused);
-    // Playback starts from where the element already waits.
-    expect(seeks).toBe(1);
-    expect(element.currentTime).toBe(3);
-  } finally {
-    viewer.close();
-    await fixture.close();
-  }
+  test("initial resume is delivered to the adapter before fragment loading", async () => {
+    const { player, adapters, element } = managedSetup();
+    await player.start({ itemId: "item", startAtSeconds: 97, paused: true });
+    expect(adapters[0]?.initialPosition).toBe(97);
+    expect(element.currentTime).toBe(97);
+    await player.seek("session-1", 30);
+    await player.seek("session-1", 60);
+    expect(element.currentTime).toBe(60);
+    await player.stop();
+    expect(adapters[0]?.disposed).toBe(true);
+    expect(element.listenerCount()).toBe(0);
+  });
+
+  test("stop during preparation closes its session immediately and fences a late package response", async () => {
+    const { player, api, calls, adapters, deliveryStatuses } = managedSetup();
+    let resolve: () => void = () => undefined;
+    const gate = new Promise<void>((answer) => {
+      resolve = answer;
+    });
+    api.preparePlayback = async () => {
+      await gate;
+      return readyManaged;
+    };
+    const pending = player.start({ itemId: "item" }).catch((cause: unknown) => cause);
+    await eventually(() => calls.includes("start session-1"));
+    await player.stop();
+    expect(calls).toEqual(["start session-1", "stop session-1"]);
+    resolve();
+    expect(await pending).toBeInstanceOf(Error);
+    expect(adapters).toHaveLength(0);
+    expect(deliveryStatuses.at(-1)).toBeNull();
+    expect(player.getState()).toBeNull();
+  });
+
+  test("managed transport exhaustion cannot reopen another session and refill its retry budget", async () => {
+    const { player, adapters, calls, failures } = managedSetup();
+    await player.start({ itemId: "item" });
+    adapters[0]?.failure(new DeliveryFailure("transport", "Recovery exhausted"));
+    await eventually(() => failures.length === 1);
+    expect(calls.filter((call) => call.startsWith("start"))).toEqual(["start session-1"]);
+    expect(player.getState()).toBeNull();
+    expect(adapters[0]?.disposed).toBe(true);
+  });
+
+  test("one expired-grant reconciliation preserves position, pause, volume and speed", async () => {
+    const { player, api, adapters, element, failures } = managedSetup();
+    await player.start({ itemId: "item", startAtSeconds: 65, paused: true });
+    await player.volume("session-1", 37, true);
+    await player.speed("session-1", 1.05);
+    api.heartbeatFailure = new ServerHttpError("Expired session", 409);
+    adapters[0]?.failure(new DeliveryFailure("authorization", "Expired"));
+    await eventually(() => player.getState()?.sessionId === "session-2");
+    expect(player.getState()).toMatchObject({
+      positionSeconds: 65,
+      paused: true,
+      volume: 37,
+      muted: true,
+    });
+    expect(element.playbackRate).toBe(1.05);
+    adapters[1]?.failure(new DeliveryFailure("authorization", "Expired again"));
+    await eventually(() => failures.length === 1);
+    expect(player.getState()).toBeNull();
+  });
+
+  test("events from destroyed adapters cannot revive or fail a replacement session", async () => {
+    const { player, adapters, failures } = managedSetup();
+    await player.start({ itemId: "item-1" });
+    await player.start({ itemId: "item-2", paused: true });
+    expect(adapters[0]?.disposed).toBe(true);
+    adapters[0]?.failure(new DeliveryFailure("transport", "Late obsolete failure"));
+    await Bun.sleep(5);
+    expect(failures).toEqual([]);
+    expect(player.getState()).toMatchObject({ itemId: "item-2", paused: true });
+    await player.stop();
+  });
 });

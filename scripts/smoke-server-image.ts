@@ -8,7 +8,15 @@ if (image === undefined) throw new Error("Usage: bun scripts/smoke-server-image.
 const docker = (...args: string[]): string =>
   execFileSync("docker", args, { encoding: "utf8" }).trim();
 
-const container = docker("run", "--detach", "--publish", "127.0.0.1::3210", image);
+const container = docker(
+  "run",
+  "--detach",
+  "--env",
+  "LUMEN_MANAGED_STREAMING=enabled",
+  "--publish",
+  "127.0.0.1::3210",
+  image,
+);
 try {
   const port = docker("port", container, "3210/tcp").split(":").at(-1);
   const origin = `http://127.0.0.1:${port}`;
@@ -39,6 +47,10 @@ try {
   const info = (await (await expectStatus("/api/v1/server", 200)).json()) as {
     capabilities?: Record<string, boolean>;
   };
+  docker("exec", container, "ffmpeg", "-version");
+  docker("exec", container, "ffprobe", "-version");
+  if (info.capabilities?.managedStreaming !== true || info.capabilities?.directPlayOnly !== false)
+    throw new Error("The image cannot prepare managed media");
   if (info.capabilities?.browserSessions !== true)
     throw new Error("The server does not advertise browser sessions");
   await expectStatus("/api/v1/auth/browser/session", 401);

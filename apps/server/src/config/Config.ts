@@ -5,13 +5,18 @@ import { isAbsolute, join, resolve } from "node:path";
 const workspaceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 try {
   process.loadEnvFile(join(workspaceRoot, ".env"));
-} catch {
-}
+} catch {}
 
 const Numeric = Schema.String.check(Schema.isPattern(/^\d+$/u));
 const Port = Numeric;
 const LogLevel = Schema.Literals(["debug", "info", "warn", "error"]);
 const Environment = Schema.Struct({
+  LUMEN_MANAGED_STREAMING: Schema.optional(Schema.Literals(["enabled", "disabled"])),
+  LUMEN_STREAM_CACHE_BYTES: Schema.optional(Numeric),
+  LUMEN_STREAM_PACKAGE_BYTES: Schema.optional(Numeric),
+  LUMEN_STREAM_FREE_RESERVE_BYTES: Schema.optional(Numeric),
+  LUMEN_STREAM_MAX_OPEN_BODIES: Schema.optional(Numeric),
+  LUMEN_STREAM_MAX_OPEN_BODIES_PER_IP: Schema.optional(Numeric),
   LUMEN_HOST: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_PORT: Schema.optional(Port),
   LUMEN_DATABASE_PATH: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
@@ -25,6 +30,8 @@ const Environment = Schema.Struct({
   LUMEN_MAX_EVENT_ID: Schema.optional(Numeric),
   LUMEN_SCAN_LEASE_MS: Schema.optional(Numeric),
   LUMEN_LIBRARY_WATCH_INTERVAL_MS: Schema.optional(Numeric),
+  LUMEN_FFMPEG_PATH: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
+  LUMEN_FFPROBE_PATH: Schema.optional(Schema.String.check(Schema.isMinLength(1))),
   LUMEN_FFPROBE_TIMEOUT_MS: Schema.optional(Numeric),
   LUMEN_FFPROBE_MAX_OUTPUT_BYTES: Schema.optional(Numeric),
   LUMEN_SHUTDOWN_GRACE_MS: Schema.optional(Numeric),
@@ -37,6 +44,12 @@ const Environment = Schema.Struct({
 });
 
 export interface ServerConfig {
+  readonly managedStreaming: boolean;
+  readonly streamCacheBytes: number;
+  readonly streamPackageBytes: number;
+  readonly streamFreeReserveBytes: number;
+  readonly streamMaxOpenBodies: number;
+  readonly streamMaxOpenBodiesPerIp: number;
   readonly host: string;
   readonly port: number;
   readonly databasePath: string;
@@ -50,6 +63,8 @@ export interface ServerConfig {
   readonly maxEventId: number;
   readonly scanLeaseMs: number;
   readonly libraryWatchIntervalMs: number;
+  readonly ffmpegPath: string;
+  readonly ffprobePath: string;
   readonly ffprobeTimeoutMs: number;
   readonly ffprobeMaxOutputBytes: number;
   readonly shutdownGraceMs: number;
@@ -87,36 +102,147 @@ const toInteger = (name: string, raw: string | undefined, fallback: number): num
   return value;
 };
 
-const toBoundedInteger = (name: string, raw: string | undefined, fallback: number, minimum: number, maximum: number): number => {
+const toBoundedInteger = (
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number => {
   const value = toInteger(name, raw, fallback);
   if (value < minimum || value > maximum) throw new Error(`${name} is outside its allowed range`);
   return value;
 };
 
-const resolveWorkspacePath = (value: string): string => isAbsolute(value) ? value : resolve(workspaceRoot, value);
+const resolveWorkspacePath = (value: string): string =>
+  isAbsolute(value) ? value : resolve(workspaceRoot, value);
 
 export const decodeConfig = (environment: Record<string, string | undefined>): ServerConfig => {
   const parsed = Schema.decodeUnknownSync(Environment)(environment);
   const databasePath = resolveWorkspacePath(parsed.LUMEN_DATABASE_PATH ?? "./data/lumen.sqlite");
   const dataDir = resolveWorkspacePath(parsed.LUMEN_DATA_DIR ?? "./data");
   return {
+    managedStreaming: parsed.LUMEN_MANAGED_STREAMING === "enabled",
+    streamCacheBytes: toBoundedInteger(
+      "LUMEN_STREAM_CACHE_BYTES",
+      parsed.LUMEN_STREAM_CACHE_BYTES,
+      20 * 1024 ** 3,
+      1024 ** 2,
+      1024 ** 5,
+    ),
+    streamPackageBytes: toBoundedInteger(
+      "LUMEN_STREAM_PACKAGE_BYTES",
+      parsed.LUMEN_STREAM_PACKAGE_BYTES,
+      8 * 1024 ** 3,
+      1024 ** 2,
+      1024 ** 5,
+    ),
+    streamFreeReserveBytes: toBoundedInteger(
+      "LUMEN_STREAM_FREE_RESERVE_BYTES",
+      parsed.LUMEN_STREAM_FREE_RESERVE_BYTES,
+      2 * 1024 ** 3,
+      0,
+      1024 ** 5,
+    ),
+    streamMaxOpenBodies: toBoundedInteger(
+      "LUMEN_STREAM_MAX_OPEN_BODIES",
+      parsed.LUMEN_STREAM_MAX_OPEN_BODIES,
+      32,
+      1,
+      1024,
+    ),
+    streamMaxOpenBodiesPerIp: toBoundedInteger(
+      "LUMEN_STREAM_MAX_OPEN_BODIES_PER_IP",
+      parsed.LUMEN_STREAM_MAX_OPEN_BODIES_PER_IP,
+      8,
+      1,
+      128,
+    ),
     host: parsed.LUMEN_HOST ?? "127.0.0.1",
     port: toBoundedInteger("LUMEN_PORT", parsed.LUMEN_PORT, 3210, 1, 65_535),
     databasePath,
     dataDir,
     logLevel: parsed.LUMEN_LOG_LEVEL ?? "info",
     logFormat: parsed.LUMEN_LOG_FORMAT ?? "text",
-    maxRequestBodyBytes: toBoundedInteger("LUMEN_MAX_REQUEST_BODY_BYTES", parsed.LUMEN_MAX_REQUEST_BODY_BYTES, 1_048_576, 1_024, 100_000_000),
-    maxConcurrentRequests: toBoundedInteger("LUMEN_MAX_CONCURRENT_REQUESTS", parsed.LUMEN_MAX_CONCURRENT_REQUESTS, 128, 1, 10_000),
-    maxRequestsPerMinute: toBoundedInteger("LUMEN_MAX_REQUESTS_PER_MINUTE", parsed.LUMEN_MAX_REQUESTS_PER_MINUTE, 600, 1, 1_000_000),
-    loginAttemptsPerMinute: toBoundedInteger("LUMEN_LOGIN_ATTEMPTS_PER_MINUTE", parsed.LUMEN_LOGIN_ATTEMPTS_PER_MINUTE, 10, 1, 1_000_000),
-    maxEventId: toBoundedInteger("LUMEN_MAX_EVENT_ID", parsed.LUMEN_MAX_EVENT_ID, 65_536, 1, 100_000_000),
-    scanLeaseMs: toBoundedInteger("LUMEN_SCAN_LEASE_MS", parsed.LUMEN_SCAN_LEASE_MS, 300_000, 1_000, 86_400_000),
-    libraryWatchIntervalMs: toBoundedInteger("LUMEN_LIBRARY_WATCH_INTERVAL_MS", parsed.LUMEN_LIBRARY_WATCH_INTERVAL_MS, 60_000, 1_000, 86_400_000),
-    ffprobeTimeoutMs: toBoundedInteger("LUMEN_FFPROBE_TIMEOUT_MS", parsed.LUMEN_FFPROBE_TIMEOUT_MS, 15_000, 100, 600_000),
-    ffprobeMaxOutputBytes: toBoundedInteger("LUMEN_FFPROBE_MAX_OUTPUT_BYTES", parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES, 1_048_576, 1_024, 100_000_000),
-    shutdownGraceMs: toBoundedInteger("LUMEN_SHUTDOWN_GRACE_MS", parsed.LUMEN_SHUTDOWN_GRACE_MS, 10_000, 100, 600_000),
-    heartbeatIntervalMs: toBoundedInteger("LUMEN_HEARTBEAT_INTERVAL_MS", parsed.LUMEN_HEARTBEAT_INTERVAL_MS, 20_000, 1_000, 600_000),
+    maxRequestBodyBytes: toBoundedInteger(
+      "LUMEN_MAX_REQUEST_BODY_BYTES",
+      parsed.LUMEN_MAX_REQUEST_BODY_BYTES,
+      1_048_576,
+      1_024,
+      100_000_000,
+    ),
+    maxConcurrentRequests: toBoundedInteger(
+      "LUMEN_MAX_CONCURRENT_REQUESTS",
+      parsed.LUMEN_MAX_CONCURRENT_REQUESTS,
+      128,
+      1,
+      10_000,
+    ),
+    maxRequestsPerMinute: toBoundedInteger(
+      "LUMEN_MAX_REQUESTS_PER_MINUTE",
+      parsed.LUMEN_MAX_REQUESTS_PER_MINUTE,
+      600,
+      1,
+      1_000_000,
+    ),
+    loginAttemptsPerMinute: toBoundedInteger(
+      "LUMEN_LOGIN_ATTEMPTS_PER_MINUTE",
+      parsed.LUMEN_LOGIN_ATTEMPTS_PER_MINUTE,
+      10,
+      1,
+      1_000_000,
+    ),
+    maxEventId: toBoundedInteger(
+      "LUMEN_MAX_EVENT_ID",
+      parsed.LUMEN_MAX_EVENT_ID,
+      65_536,
+      1,
+      100_000_000,
+    ),
+    scanLeaseMs: toBoundedInteger(
+      "LUMEN_SCAN_LEASE_MS",
+      parsed.LUMEN_SCAN_LEASE_MS,
+      300_000,
+      1_000,
+      86_400_000,
+    ),
+    libraryWatchIntervalMs: toBoundedInteger(
+      "LUMEN_LIBRARY_WATCH_INTERVAL_MS",
+      parsed.LUMEN_LIBRARY_WATCH_INTERVAL_MS,
+      60_000,
+      1_000,
+      86_400_000,
+    ),
+    ffmpegPath: parsed.LUMEN_FFMPEG_PATH ?? "ffmpeg",
+    ffprobePath: parsed.LUMEN_FFPROBE_PATH ?? "ffprobe",
+    ffprobeTimeoutMs: toBoundedInteger(
+      "LUMEN_FFPROBE_TIMEOUT_MS",
+      parsed.LUMEN_FFPROBE_TIMEOUT_MS,
+      15_000,
+      100,
+      600_000,
+    ),
+    ffprobeMaxOutputBytes: toBoundedInteger(
+      "LUMEN_FFPROBE_MAX_OUTPUT_BYTES",
+      parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES,
+      1_048_576,
+      1_024,
+      100_000_000,
+    ),
+    shutdownGraceMs: toBoundedInteger(
+      "LUMEN_SHUTDOWN_GRACE_MS",
+      parsed.LUMEN_SHUTDOWN_GRACE_MS,
+      10_000,
+      100,
+      600_000,
+    ),
+    heartbeatIntervalMs: toBoundedInteger(
+      "LUMEN_HEARTBEAT_INTERVAL_MS",
+      parsed.LUMEN_HEARTBEAT_INTERVAL_MS,
+      20_000,
+      1_000,
+      600_000,
+    ),
     webRoot: resolveWorkspacePath(parsed.LUMEN_WEB_ROOT ?? "./apps/web/dist"),
     // A production server ships with the browser app; a checkout may not have built it yet.
     webApp: parsed.LUMEN_WEB_APP ?? (parsed.NODE_ENV === "production" ? "required" : "optional"),

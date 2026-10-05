@@ -1,5 +1,5 @@
 import { Button } from "@lumen/ui";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { hostOf, roleLabels } from "./format";
 import { useRuntime } from "./Runtime";
 import { PageHeader, useWorkspace } from "./Workspace";
@@ -24,7 +24,9 @@ const SettingsRow = ({
 
 export const SettingsPage = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
-  const { capabilities } = useRuntime();
+  const { capabilities, playback } = useRuntime();
+  const delivery = playback.browserDelivery;
+  const [preference, setPreference] = useState(delivery?.preference() ?? "auto");
   const signInStorage =
     capabilities.signInStorage === "cookie"
       ? {
@@ -53,7 +55,11 @@ export const SettingsPage = (): React.ReactElement => {
           </SettingsRow>
           <SettingsRow
             label="Quality"
-            description="Files stream exactly as they are stored on the server."
+            description={
+              delivery?.supported === true && preference === "managed"
+                ? "Playback preserves the original video and audio quality."
+                : "Files stream exactly as they are stored on the server."
+            }
           >
             Original
           </SettingsRow>
@@ -83,6 +89,33 @@ export const SettingsPage = (): React.ReactElement => {
           ) : null}
         </div>
       </section>
+      {delivery?.supported === true ? (
+        <section className="settings-group" aria-labelledby="settings-browser">
+          <h2 id="settings-browser">Browser playback</h2>
+          <div className="settings-card">
+            <SettingsRow
+              label="Browser delivery"
+              description="Auto uses direct playback. Managed prepares a cached stream before playback and may take time on first use."
+            >
+              <select
+                aria-label="Browser delivery"
+                value={preference}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  if (value === "auto" || value === "direct" || value === "managed") {
+                    delivery.setPreference(value);
+                    setPreference(value);
+                  }
+                }}
+              >
+                <option value="auto">Auto</option>
+                <option value="direct">Direct</option>
+                <option value="managed">Managed</option>
+              </select>
+            </SettingsRow>
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 };

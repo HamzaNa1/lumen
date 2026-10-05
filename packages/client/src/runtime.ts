@@ -1,5 +1,6 @@
 import type {
   AccountList,
+  BrowserDelivery,
   AudioOutput,
   CatalogItem,
   CatalogItemDetails,
@@ -135,7 +136,22 @@ export interface NativeAudioRuntime {
   readonly copyDiagnostics: (sessionId: string) => Promise<void>;
 }
 
+export interface BrowserDeliveryStatus {
+  readonly phase: "preparing" | "direct" | "managed";
+  readonly message: string;
+  readonly progress: number;
+}
+
+export interface BrowserDeliveryRuntime {
+  readonly supported: boolean;
+  readonly preference: () => BrowserDelivery;
+  readonly setPreference: (preference: BrowserDelivery) => void;
+  readonly status: () => BrowserDeliveryStatus | null;
+  readonly onStatus: (callback: (status: BrowserDeliveryStatus | null) => void) => Unsubscribe;
+}
+
 export interface PlaybackRuntime {
+  readonly browserDelivery?: BrowserDeliveryRuntime;
   /** Starts an item, or asks the watch group to when the viewer is in one. */
   readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<void>;
   readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
@@ -153,10 +169,7 @@ export interface PlaybackRuntime {
   readonly onState: (callback: (state: PlayerState | null) => void) => Unsubscribe;
   /** Playback failed after it had started. */
   readonly onFailure: (callback: (message: string) => void) => Unsubscribe;
-  readonly mountSurface: (
-    element: HTMLElement,
-    onError: (cause: unknown) => void,
-  ) => PlayerSurface;
+  readonly mountSurface: (element: HTMLElement, onError: (cause: unknown) => void) => PlayerSurface;
   readonly fullscreen: (enabled: boolean) => Promise<boolean>;
   readonly fullscreenState: () => Promise<boolean>;
   readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => Unsubscribe;

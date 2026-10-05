@@ -1,3 +1,4 @@
+import { ManagedStreaming } from "./features/playback/ManagedStreaming";
 import { WatchGroups, type WatchSocketData } from "./watch-groups/WatchGroups";
 import { createLogger, ServerLogger, type Logger } from "./core/Logger";
 import { Database, RepositoriesLive, serverIdentity } from "@lumen/database";
@@ -29,7 +30,7 @@ import { HomeService, HomeServiceLive } from "./services/HomeService";
 import { EventService, EventServiceLive } from "./services/EventService";
 import { LibraryService, LibraryServiceLive } from "./services/LibraryService";
 import { ScanService, ScanServiceLive } from "./services/ScanService";
-import { PlaybackService, PlaybackServiceLive } from "./services/PlaybackService";
+import { PlaybackService, PlaybackServiceLiveWithConfig } from "./services/PlaybackService";
 import { ScannerLive } from "./services/Scanner";
 import {
   MetadataSettings,
@@ -79,7 +80,9 @@ export const makeLayers = (
   const admin = AdminServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const catalog = CatalogServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
   const home = HomeServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
-  const playback = PlaybackServiceLive.pipe(Layer.provide(Layer.mergeAll(dependencies, access)));
+  const playback = PlaybackServiceLiveWithConfig(config).pipe(
+    Layer.provide(Layer.mergeAll(dependencies, access)),
+  );
   const scanner = ScannerLive.pipe(Layer.provide(dependencies));
   const metadataSettings = MetadataSettingsLive.pipe(Layer.provide(dependencies));
   const ffprobe = FfprobeLive(config);
@@ -194,6 +197,7 @@ const startConfiguredServer = async (
   });
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
   let server: Bun.Server<WatchSocketData> | undefined;
+  let managedStreaming: ManagedStreaming | undefined;
   try {
     const services = await Promise.race([
       servicesPromise,
@@ -216,7 +220,9 @@ const startConfiguredServer = async (
         if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
       }
     }
+    managedStreaming = await ManagedStreaming.create(config, logger);
     const httpServices: HttpServices = {
+      managedStreaming,
       auth: services.auth,
       access: services.access,
       admin: services.admin,
@@ -282,6 +288,7 @@ const startConfiguredServer = async (
             listeningServer.stop(true),
             worker,
             scheduler,
+            managedStreaming?.close(),
           ]);
           const failure = outcomes.find((outcome) => outcome.status === "rejected");
           if (failure?.status === "rejected") throw failure.reason;
@@ -310,6 +317,7 @@ const startConfiguredServer = async (
     return { server: listeningServer, stop };
   } catch (cause) {
     await server?.stop(true);
+    await managedStreaming?.close();
     await Effect.runPromise(Fiber.interrupt(serviceFiber));
     throw cause;
   } finally {

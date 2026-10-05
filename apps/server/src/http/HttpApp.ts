@@ -1,9 +1,23 @@
-import { API_VERSION, BrowserSession, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
+import {
+  API_VERSION,
+  BrowserSession,
+  EpisodeOrderOptions,
+  EpisodeOrderSelection,
+  HomeContent,
+  ServerInfo,
+  User,
+} from "@lumen/contracts";
 import { version as serverVersion } from "../../package.json";
 import { Effect, Schema } from "effect";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
 import { createLogger, type Logger } from "../core/Logger";
-import { clientKey, isRoutineProbe, requestIdFor, requestMethod, requestRoute } from "./RequestLogging";
+import {
+  clientKey,
+  isRoutineProbe,
+  requestIdFor,
+  requestMethod,
+  requestRoute,
+} from "./RequestLogging";
 import { RequestLimiter, LimitExceeded } from "../core/Limits";
 import type { ServerConfig } from "../config/Config";
 import type { ServerIdentity } from "../database/Identity";
@@ -26,6 +40,11 @@ import {
   sessionCookie,
   sessionCookieToken,
 } from "./BrowserSession";
+import {
+  type ManagedStreaming,
+  pendingManagedDelivery,
+} from "../features/playback/ManagedStreaming";
+import { MediaResponseLimiter } from "./MediaResponseLimiter";
 import { serveFile } from "./ServeFile";
 import * as S from "../http/Schemas";
 
@@ -40,6 +59,7 @@ export interface HttpServices {
   readonly scans: ScanServiceShape;
   readonly assets: AssetServiceShape;
   readonly playback: PlaybackServiceShape;
+  readonly managedStreaming?: ManagedStreaming;
   readonly tmdb?: MetadataProvider;
   readonly jobs?: JobServiceShape;
   readonly metadataSettings: MetadataSettingsShape;
@@ -148,6 +168,11 @@ export const makeHttpHandler = (
     loginRequests: config.loginAttemptsPerMinute,
     maxActive: config.maxConcurrentRequests,
   });
+  const mediaLimiter = new MediaResponseLimiter(
+    config.streamMaxOpenBodies,
+    config.streamMaxOpenBodiesPerIp,
+  );
+  const managed = services.managedStreaming;
   // Session cookies to set once the response exists, keyed by the request that earned them.
   const cookies = new WeakMap<Request, string>();
   /** Renews valid cookie sessions; rejected requests may belong to an older sign-in. */
@@ -199,7 +224,12 @@ export const makeHttpHandler = (
           apiVersion: API_VERSION,
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
-          capabilities: { directPlayOnly: true, watchGroups: true, browserSessions: true },
+          capabilities: {
+            directPlayOnly: managed?.available !== true,
+            managedStreaming: managed?.available === true,
+            watchGroups: true,
+            browserSessions: true,
+          },
         },
         200,
         { "cache-control": "no-store" },
@@ -220,9 +250,12 @@ export const makeHttpHandler = (
       });
     }
     if (method === "GET" && url.pathname === "/metrics")
-      return new Response(`lumen_uptime_ms ${Date.now() - services.startedAtMs}\n`, {
-        headers: { "content-type": "text/plain; version=0.0.4" },
-      });
+      return new Response(
+        `lumen_uptime_ms ${Date.now() - services.startedAtMs}\n${managed?.metrics() ?? ""}`,
+        {
+          headers: { "content-type": "text/plain; version=0.0.4" },
+        },
+      );
     if (method === "GET" && url.pathname === "/api/v1/auth/setup") {
       return json(
         Schema.Unknown,
@@ -292,6 +325,8 @@ export const makeHttpHandler = (
       parts[0] === "api" &&
       parts[1] === "v1" &&
       parts[2] === "media" &&
+      parts.length === 4 &&
+      url.pathname === `/${parts.join("/")}` &&
       parts[3] !== undefined
     ) {
       const grant = bearer(request) ?? url.searchParams.get("grant");
@@ -305,6 +340,39 @@ export const makeHttpHandler = (
         mimeType: media.mimeType,
       });
     }
+    if (
+      (method === "GET" || method === "HEAD") &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "managed-media" &&
+      parts.length === 6 &&
+      url.pathname === `/${parts.join("/")}` &&
+      parts[3] !== undefined &&
+      /^[a-f0-9]{64}$/u.test(parts[4] ?? "") &&
+      /^(index\.m3u8|init\.mp4|segment-\d+\.m4s)$/u.test(parts[5] ?? "")
+    ) {
+      if (managed?.available !== true) throw notFound("Managed streaming is unavailable");
+      const grant = bearer(request);
+      if (grant === null) throw unauthorized("Playback grant is required");
+      const source = await call(services.playback.managedGrant(grant, parts[3], Date.now()));
+      let release: (() => void) | undefined;
+      return mediaLimiter.run(
+        clientKey(request),
+        request,
+        async () => {
+          const artifact = await managed.artifact(source, parts[4] ?? "", parts[5] ?? "");
+          release = artifact.release;
+          return serveFile({ request, ...artifact });
+        },
+        () => release?.(),
+      );
+    }
+    if (
+      (method === "GET" || method === "HEAD") &&
+      (url.pathname.startsWith("/api/v1/managed-media/") ||
+        url.pathname.startsWith("/api/v1/media/"))
+    )
+      throw notFound("Media endpoint not found");
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
     if (
@@ -849,14 +917,57 @@ export const makeHttpHandler = (
           sourceGeneration: result.sourceGeneration,
           title: result.title,
           streamUrl: result.streamPath,
+          directMimeType: result.directMimeType,
           durationSeconds: result.durationSeconds,
           streams: result.streams,
           grantExpiresInSeconds: result.grantExpiresInSeconds,
           grantToken: result.grantToken,
           mode: "DirectPlay",
+          ...(input.browserDelivery === "managed"
+            ? {
+                managedDelivery: pendingManagedDelivery(
+                  managed?.available === true
+                    ? null
+                    : "Managed streaming is unavailable on this server",
+                ),
+              }
+            : {}),
         },
         201,
       );
+    }
+    if (
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "playback" &&
+      parts[3] === "sessions" &&
+      parts[4] !== undefined &&
+      parts[5] === "managed" &&
+      parts.length === 6 &&
+      ["GET", "POST", "DELETE"].includes(method)
+    ) {
+      const source = await call(services.playback.managedSource(principal, parts[4], Date.now()));
+      if (method === "DELETE") {
+        managed?.release(parts[4]);
+        return ack();
+      }
+      if (managed?.available !== true)
+        return unknownJson(
+          pendingManagedDelivery("Managed streaming is unavailable on this server"),
+        );
+      const delivery =
+        method === "POST" ? await managed.prepare(source) : await managed.status(source);
+      try {
+        const current = await call(
+          services.playback.managedSource(principal, parts[4], Date.now()),
+        );
+        if (current.sourceId !== source.sourceId || current.trackId !== source.trackId)
+          throw notFound("Playback source changed during preparation");
+      } catch (cause) {
+        managed.release(parts[4]);
+        throw cause;
+      }
+      return unknownJson(delivery);
     }
     if (
       method === "POST" &&
@@ -865,27 +976,31 @@ export const makeHttpHandler = (
       parts[2] === "playback" &&
       parts[3] === "sessions" &&
       parts[4] !== undefined &&
-      parts[5] === "heartbeat"
-    )
-      return unknownJson(
-        await call(
-          services.playback.heartbeat(
-            principal,
-            parts[4],
-            decode(S.HeartbeatBody, await body(request, config.maxRequestBodyBytes)),
-            Date.now(),
-          ),
+      parts[5] === "heartbeat" &&
+      parts.length === 6
+    ) {
+      const session = await call(
+        services.playback.heartbeat(
+          principal,
+          parts[4],
+          decode(S.HeartbeatBody, await body(request, config.maxRequestBodyBytes)),
+          Date.now(),
         ),
       );
+      managed?.touch(parts[4]);
+      return unknownJson(session);
+    }
     if (
       method === "DELETE" &&
       parts[0] === "api" &&
       parts[1] === "v1" &&
       parts[2] === "playback" &&
       parts[3] === "sessions" &&
-      parts[4] !== undefined
+      parts[4] !== undefined &&
+      parts.length === 5
     ) {
       await call(services.playback.stop(principal, parts[4], Date.now()));
+      managed?.release(parts[4]);
       return ack();
     }
     if (
@@ -895,7 +1010,8 @@ export const makeHttpHandler = (
       parts[2] === "playback" &&
       parts[3] === "sessions" &&
       parts[4] !== undefined &&
-      parts[5] === "progress"
+      parts[5] === "progress" &&
+      parts.length === 6
     )
       return unknownJson(
         await call(

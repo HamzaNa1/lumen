@@ -1,3 +1,4 @@
+import { BrowserDelivery } from "@lumen/contracts";
 import {
   DevicePlatform,
   GrantCapability,
@@ -140,6 +141,7 @@ export const StartScanBody = Schema.Struct({
 
 export const StartPlaybackBody = Schema.Struct({
   trackId: Schema.NullOr(Identifier),
+  browserDelivery: Schema.optional(BrowserDelivery),
 });
 
 export const HeartbeatBody = Schema.Struct({

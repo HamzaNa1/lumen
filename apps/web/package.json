@@ -23,5 +23,8 @@
     "react-dom": "19.3.0",
     "typescript": "7.0.2",
     "vite": "7.3.6"
+  },
+  "dependencies": {
+    "hls.js": "1.7.3"
   }
 }

@@ -63,7 +63,8 @@ const pageHeaders = (request: Request): Record<string, string> => {
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data:",
-      "media-src 'self'",
+      "media-src 'self' blob:",
+      "worker-src 'self'",
       `connect-src 'self' ${socketOrigin}`,
       "object-src 'none'",
       "base-uri 'self'",
@@ -90,8 +91,7 @@ const relativePath = (pathname: string): string | null => {
 };
 
 // Client-side routes have no file extension; anything that names a file must exist as one.
-const namesFile = (path: string): boolean =>
-  path.startsWith(HASHED_ASSETS) || extname(path) !== "";
+const namesFile = (path: string): boolean => path.startsWith(HASHED_ASSETS) || extname(path) !== "";
 
 /** Fails when the browser app has not been built where the server expects it. */
 export const assertWebBuild = async (root: string): Promise<void> => {
@@ -191,14 +191,16 @@ export const makeStaticWebHandler = (
     }
     try {
       return await Effect.runPromise(
-        limiter.check(key, nowMs).pipe(
-          Effect.flatMap(() =>
-            limiter.run(
-              key,
-              Effect.tryPromise({ try: () => respond(request), catch: (cause) => cause }),
+        limiter
+          .check(key, nowMs)
+          .pipe(
+            Effect.flatMap(() =>
+              limiter.run(
+                key,
+                Effect.tryPromise({ try: () => respond(request), catch: (cause) => cause }),
+              ),
             ),
           ),
-        ),
       );
     } catch (cause) {
       if (cause instanceof LimitExceeded)

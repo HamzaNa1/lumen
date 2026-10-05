@@ -37,6 +37,7 @@ RUN groupadd --system --gid 10001 lumen \
     && useradd --system --uid 10001 --gid 10001 --create-home lumen \
     && install -d -o 10001 -g 10001 /app /data /media
 COPY --from=ffprobe /ffprobe /usr/local/bin/ffprobe
+COPY --from=ffprobe /ffmpeg /usr/local/bin/ffmpeg
 COPY --chown=10001:10001 --from=dependencies /app/node_modules ./node_modules
 COPY --chown=10001:10001 --from=dependencies /app/package.json ./package.json
 COPY --chown=10001:10001 --from=dependencies /app/bun.lock ./bun.lock
