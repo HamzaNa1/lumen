@@ -429,6 +429,8 @@ export const makeCatalogService = Effect.gen(function* () {
 
   const itemDetails: CatalogServiceShape["itemDetails"] = Effect.fn("Catalog.itemDetails")(
     function* (principal, itemId, metadataProviderConfigured, nowMs) {
+      const parent = alias(catalogItems, "parent");
+      const show = alias(catalogItems, "show");
       const item = yield* database
         .select({
           id: catalogItems.id,
@@ -438,6 +440,12 @@ export const makeCatalogService = Effect.gen(function* () {
           kind: catalogItems.kind,
           year: catalogItems.year,
           indexNumber: catalogItems.indexNumber,
+          // An episode sits in a season of its show, or directly in the show.
+          seriesTitle: sql<string | null>`case ${parent.kind}
+            when 'show' then ${parent.title} when 'season' then ${show.title} end`,
+          seasonNumber: sql<
+            number | null
+          >`case when ${parent.kind} = 'season' then ${parent.indexNumber} end`,
           overview: catalogItems.overview,
           completed: completedFor(principal.user.id),
           durationSeconds: catalogItems.durationSeconds,
@@ -463,6 +471,18 @@ export const makeCatalogService = Effect.gen(function* () {
         })
         .from(catalogItems)
         .leftJoin(catalogItemMetadata, eq(catalogItemMetadata.itemId, catalogItems.id))
+        .leftJoin(
+          parent,
+          and(eq(parent.id, catalogItems.parentId), eq(parent.libraryId, catalogItems.libraryId)),
+        )
+        .leftJoin(
+          show,
+          and(
+            eq(show.id, parent.parentId),
+            eq(show.libraryId, catalogItems.libraryId),
+            eq(show.kind, "show"),
+          ),
+        )
         .where(eq(catalogItems.id, itemId))
         .get();
       if (item == null) return yield* notFound("Item not found");
