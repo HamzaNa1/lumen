@@ -70,7 +70,10 @@ const settled = async (page: Page): Promise<void> => {
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }" });
 };
 
-test("the desktop and web builds draw the shared pages identically", async ({ context, baseURL }) => {
+test("the desktop and web builds draw the shared pages identically", async ({
+  context,
+  baseURL,
+}, testInfo) => {
   await signIn(context, baseURL ?? "");
   const libraries = (await (await context.request.get("/api/v1/libraries")).json()) as { id: string }[];
   const libraryId = libraries[0]?.id ?? "";
@@ -111,18 +114,27 @@ test("the desktop and web builds draw the shared pages identically", async ({ co
       // Some content arrives without a loading indicator to wait on (a library's folders, for
       // one), so the two pages may briefly be at different stages. A real difference between
       // the builds never goes away, so keep comparing until they agree or time runs out.
-      await expect
-        .poll(
-          async () => {
-            const [webShot, desktopShot] = await Promise.all([
-              web.locator(region).screenshot(),
-              desktop.locator(region).screenshot(),
-            ]);
-            return webShot.equals(desktopShot);
-          },
-          { message: `${name}: ${region} differs between the builds`, timeout: 10_000 },
-        )
-        .toBe(true);
+      let shots: readonly [Buffer, Buffer] = [Buffer.alloc(0), Buffer.alloc(0)];
+      const matches = async (): Promise<boolean> => {
+        shots = await Promise.all([
+          web.locator(region).screenshot(),
+          desktop.locator(region).screenshot(),
+        ]);
+        return shots[0].equals(shots[1]);
+      };
+      try {
+        await expect
+          .poll(matches, {
+            message: `${name}: ${region} differs between the builds`,
+            timeout: 10_000,
+          })
+          .toBe(true);
+      } catch (cause) {
+        // Keep both pictures so a difference can be looked at, not just reported.
+        await testInfo.attach(`${name} ${region} web.png`, { body: shots[0], contentType: "image/png" });
+        await testInfo.attach(`${name} ${region} desktop.png`, { body: shots[1], contentType: "image/png" });
+        throw cause;
+      }
     }
   }
 
