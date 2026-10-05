@@ -4,6 +4,7 @@ import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { once } from "node:events";
+import { analyzeAudioTransition } from "../helpers/audio-transition";
 import { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import type { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
 import {
@@ -69,9 +70,20 @@ const child = spawn(
 const exited = once(child, "exit");
 const ipc = new MpvIpc();
 const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+const waitForPcm = async (minimumBytes: number): Promise<number> => {
+  const deadline = performance.now() + 5000;
+  while (true) {
+    const bytes = statSync(pcm, { throwIfNoEntry: false })?.size ?? 0;
+    if (bytes >= minimumBytes) return bytes;
+    assert(performance.now() < deadline, `Timed out waiting for ${minimumBytes} PCM bytes`);
+    await delay(20);
+  }
+};
 const segments: {
   speed: number;
   start: number;
+  commandBefore: number;
+  commandAfter: number;
   end: number;
   sampleAgeMs: number;
   measuredSpeed: number;
@@ -97,12 +109,17 @@ try {
   assert.equal(params.samplerate, 48000);
   assert.equal(params.format, "float");
   assert.equal(await ipc.command(["get_property", "audio-pitch-correction"]), true);
+  // Prime the output so each capture includes 100 ms of already-written pre-command audio.
+  const preRollBytes = 4800 * 6 * 4;
+  await waitForPcm(preRollBytes * 2);
   for (const speed of [1, 1.01, 1.006, 1, 0.99, 0.994, 1]) {
+    const commandBefore = statSync(pcm).size;
+    assert(commandBefore >= preRollBytes, "Missing pre-command PCM");
+    const start = commandBefore - preRollBytes;
     await ipc.command(["set_property", "speed", speed]);
-    await delay(450);
-    const start = statSync(pcm).size;
-    await delay(1600);
-    const end = statSync(pcm).size;
+    const commandAfter = statSync(pcm).size;
+    // Keep the whole transition: MPV/output buffering can delay when changed audio is written.
+    const end = await waitForPcm(commandAfter + 2 * 48000 * 6 * 4);
     const sample = await sampleMpvPlayback(ipc, {
       sessionId: "test",
       itemId: "fixture",
@@ -121,6 +138,8 @@ try {
     segments.push({
       speed,
       start,
+      commandBefore,
+      commandAfter,
       end,
       measuredSpeed: sample.speed,
       sampleAgeMs: performance.now() - sample.sampledAtMs,
@@ -147,43 +166,16 @@ try {
 
 const audio = readFileSync(pcm);
 const channels = 6;
-const bytesPerFrame = channels * 4;
 const measurements = segments.map((segment) => {
-  const start = Math.ceil(segment.start / bytesPerFrame);
-  const end = Math.floor(segment.end / bytesPerFrame);
-  assert(end - start > 4800, `Speed ${segment.speed}: too little PCM (${start} to ${end})`);
-  const frequencies = [0, 1, 2, 4, 5].map((channel) => {
-    let previousCrossing: number | null = null;
-    let firstCrossing = 0;
-    let crossings = 0;
-    for (let frame = start + 1; frame < end; frame++) {
-      const previous = audio.readFloatLE((frame - 1) * bytesPerFrame + channel * 4);
-      const value = audio.readFloatLE(frame * bytesPerFrame + channel * 4);
-      assert(Number.isFinite(value), "Non-finite PCM sample");
-      if (previous <= 0 && value > 0) {
-        const crossing = frame - 1 - previous / (value - previous);
-        if (previousCrossing === null) firstCrossing = crossing;
-        previousCrossing = crossing;
-        crossings++;
-      }
-    }
-    assert(previousCrossing !== null && crossings > 10, "Missing channel output");
-    return ((crossings - 1) * 48000) / (previousCrossing - firstCrossing);
-  });
-  for (const frequency of frequencies)
-    assert(Math.abs(frequency - 440) < 1.5, `Pitch changed at ${segment.speed}x: ${frequency} Hz`);
-  // A 20 ms window of a continuous test tone must never turn silent, including near transitions.
-  for (let frame = start; frame + 960 < end; frame += 960) {
-    let energy = 0;
-    for (let i = frame; i < frame + 960; i++)
-      energy += audio.readFloatLE(i * bytesPerFrame + 8) ** 2;
-    assert(energy / 960 > 0.001, "Center-channel dropout");
-  }
+  const transition = analyzeAudioTransition(audio, segment.start, segment.end);
   return {
     speed: segment.speed,
     sampleAgeMs: segment.sampleAgeMs,
     measuredSpeed: segment.measuredSpeed,
-    frequenciesHz: frequencies,
+    commandBeforeOffsetMs:
+      ((segment.commandBefore - segment.start) * 1000) / (48000 * channels * 4),
+    commandAfterOffsetMs: ((segment.commandAfter - segment.start) * 1000) / (48000 * channels * 4),
+    transition,
   };
 });
 const filterLog = readFileSync(log, "utf8");
