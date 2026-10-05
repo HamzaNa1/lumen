@@ -432,7 +432,12 @@ export class WatchGroups {
       socket.data.principal = principal;
       socket.data.readiness = authentication.readiness === true;
       clearTimeout(socket.data.authTimer);
-      this.send(socket, { type: "ready", memberId: socket.data.id, holdsForBuffering: true });
+      this.send(socket, {
+        type: "ready",
+        memberId: socket.data.id,
+        holdsForBuffering: true,
+        displayName: principal.user.displayName,
+      });
       void this.list(socket);
       return;
     }

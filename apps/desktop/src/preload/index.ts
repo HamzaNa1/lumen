@@ -60,7 +60,7 @@ const api: DesktopBridge = {
     jobLog: () => invoke("admin:jobLog"),
   },
   player: {
-    start: (itemId, startAtSeconds) => invoke("player:start", { itemId, startAtSeconds }),
+    start: (itemId, startAtSeconds, title) => invoke("player:start", { itemId, startAtSeconds, title }),
     pause: (sessionId, paused) => invoke("player:pause", { sessionId, paused }),
     seek: (sessionId, positionSeconds) => invoke("player:seek", { sessionId, positionSeconds }),
     volume: (sessionId, volume, muted) => invoke("player:volume", { sessionId, volume, muted }),

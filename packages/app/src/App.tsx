@@ -130,7 +130,7 @@ export const App = (): React.ReactElement => {
       setPlaybackError(null);
       updatePlayer(null);
       try {
-        await runtime.playback.start(item.id, item.resumePositionSeconds ?? undefined);
+        await runtime.playback.start(item.id, item.resumePositionSeconds ?? undefined, item.title);
         if (watchRef.current?.group !== null && watchRef.current?.group !== undefined) return;
         if (!onPlayerRouteRef.current) {
           await runtime.playback.stop();

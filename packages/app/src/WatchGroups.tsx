@@ -184,18 +184,26 @@ const GroupList = ({
   );
 };
 
+interface GroupDraft {
+  readonly name: string;
+  readonly password: string;
+}
+
+const emptyDraft: GroupDraft = { name: "", password: "" };
+
 const CreateGroupForm = ({
+  draft: { name, password },
   disabled,
+  onDraft,
   onCreate,
   onCancel,
 }: {
+  readonly draft: GroupDraft;
   readonly disabled: boolean;
+  readonly onDraft: (draft: GroupDraft) => void;
   readonly onCreate: (name: string, password: string) => void;
   readonly onCancel: () => void;
-}): React.ReactElement => {
-  const [name, setName] = useState("");
-  const [password, setPassword] = useState("");
-  return (
+}): React.ReactElement => (
     <form
       className="watch-group-form"
       onSubmit={(event) => {
@@ -210,7 +218,7 @@ const CreateGroupForm = ({
         required
         maxLength={80}
         value={name}
-        onValueChange={setName}
+        onValueChange={(name) => onDraft({ name, password })}
       />
       <TextField
         label="Password"
@@ -219,7 +227,7 @@ const CreateGroupForm = ({
         autoComplete="new-password"
         maxLength={128}
         value={password}
-        onValueChange={setPassword}
+        onValueChange={(password) => onDraft({ name, password })}
       />
       <div className="dialog-actions">
         <Button variant="ghost" onClick={onCancel}>
@@ -230,8 +238,7 @@ const CreateGroupForm = ({
         </Button>
       </div>
     </form>
-  );
-};
+);
 
 const ActiveGroup = ({
   group,
@@ -302,6 +309,9 @@ export const WatchGroups = ({
   const [status, setStatus] = useWatchStatus();
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
+  // Kept here because the form gives way to the new group at once, and has to come back as it
+  // was if the server then refuses to create it.
+  const [draft, setDraft] = useState(emptyDraft);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const perform = async (action: WatchAction): Promise<void> => {
@@ -310,6 +320,7 @@ export const WatchGroups = ({
     try {
       setStatus(await runtime.watch.action(action));
       setCreating(false);
+      setDraft(emptyDraft);
     } catch (cause) {
       setError(errorMessage(cause, "Could not update the group"));
     } finally {
@@ -319,6 +330,7 @@ export const WatchGroups = ({
   const changeOpen = (next: boolean): void => {
     setOpen(next);
     setCreating(false);
+    setDraft(emptyDraft);
     setError(null);
     if (next)
       void runtime.watch
@@ -391,10 +403,13 @@ export const WatchGroups = ({
         />
       ) : creating ? (
         <CreateGroupForm
+          draft={draft}
           disabled={disabled}
+          onDraft={setDraft}
           onCreate={(name, password) => void perform({ type: "create", name, password })}
           onCancel={() => {
             setCreating(false);
+            setDraft(emptyDraft);
             setError(null);
           }}
         />

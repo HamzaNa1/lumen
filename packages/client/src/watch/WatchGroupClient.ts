@@ -2,10 +2,12 @@ import {
   initialWatchStatus,
   WatchMessage,
   type WatchAction,
+  type WatchGroup,
   type WatchStatus,
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import { randomId } from "../ids.ts";
+import { predictWatchAction, type WatchPrediction } from "./watchPrediction.ts";
 
 /** How the socket's first message proves who is connecting. */
 export type WatchAuthentication =
@@ -47,6 +49,12 @@ export class WatchGroupClient {
   private bestRtt = Infinity;
   private lastPong = 0;
   private holdsForBuffering = false;
+  private displayName: string | null = null;
+  /** The viewer's group as the server last described it. */
+  private group: WatchGroup | null = null;
+  /** What actions the server has yet to answer are expected to do, in the order they were sent. */
+  private readonly predictions = new Map<string, WatchPrediction>();
+  /** As the server describes it, except that `group` already shows the viewer's own actions. */
   status: WatchStatus = initialWatchStatus();
 
   constructor(
@@ -93,6 +101,7 @@ export class WatchGroupClient {
           this.bestRtt = Infinity;
           this.lastPong = Date.now();
           this.holdsForBuffering = message.holdsForBuffering === true;
+          this.displayName = message.displayName ?? null;
           this.update({
             connection: "connected",
             memberId: message.memberId,
@@ -113,6 +122,7 @@ export class WatchGroupClient {
           if (pending !== undefined) {
             clearTimeout(pending.timer);
             this.pending.delete(message.requestId);
+            this.settle(message.requestId);
             if (message.error === null) pending.resolve();
             else
               pending.reject(new WatchRequestRejected(message.error, message.retryAfterMs ?? null));
@@ -180,7 +190,7 @@ export class WatchGroupClient {
   }
 
   get rejoining(): boolean {
-    return this.desiredGroup !== null && this.status.group === null;
+    return this.desiredGroup !== null && this.group === null;
   }
 
   private async rejoin(): Promise<void> {
@@ -206,13 +216,19 @@ export class WatchGroupClient {
     }
   }
 
+  /**
+   * Asks the server to carry out an action. Where its outcome can be told in advance, `status`
+   * shows it before this returns to the caller, and goes back to what the server last said if
+   * the server refuses.
+   */
   async action(action: WatchAction): Promise<void> {
+    // A viewer who asked to leave is not brought back by a reconnect that lost the request.
+    if (action.type === "leave") this.desiredGroup = null;
     await this.request(action);
-    if (action.type === "create" && this.status.group !== null)
-      this.desiredGroup = { groupId: this.status.group.id, password: action.password };
+    if (action.type === "create" && this.group !== null)
+      this.desiredGroup = { groupId: this.group.id, password: action.password };
     if (action.type === "join")
       this.desiredGroup = { groupId: action.groupId, password: action.password };
-    if (action.type === "leave") this.desiredGroup = null;
   }
 
   close(): void {
@@ -234,15 +250,35 @@ export class WatchGroupClient {
       return Promise.reject(new Error("Watch groups are not connected"));
     if (this.pending.size >= 16) return Promise.reject(new Error("Watch groups are busy"));
     const requestId = randomId();
+    const memberId = this.status.memberId;
+    const prediction =
+      memberId === null
+        ? null
+        : predictWatchAction(
+            action,
+            this.status,
+            { memberId, displayName: this.displayName, readiness: this.readiness },
+            this.serverNow,
+          );
     return new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
+        this.settle(requestId);
         reject(new Error("Watch group request timed out"));
         socket.close();
       }, 10_000);
       this.pending.set(requestId, { resolve, reject, timer });
       socket.send(JSON.stringify({ requestId, action }));
+      if (prediction !== null) {
+        this.predictions.set(requestId, prediction);
+        this.update();
+      }
     });
+  }
+
+  /** The server answered or gave up on a request: the group is whatever it now says it is. */
+  private settle(requestId: string): void {
+    if (this.predictions.delete(requestId)) this.update();
   }
 
   private rejectPending(message: string): void {
@@ -251,10 +287,15 @@ export class WatchGroupClient {
       pending.reject(new Error(message));
     }
     this.pending.clear();
+    this.predictions.clear();
   }
 
-  private update(patch: Partial<WatchStatus>): void {
-    this.status = { ...this.status, ...patch };
+  private update(patch: Partial<WatchStatus> = {}): void {
+    if (patch.group !== undefined) this.group = patch.group;
+    let group = this.group;
+    for (const prediction of this.predictions.values())
+      if (prediction.awaits(group)) group = prediction.apply(group);
+    this.status = { ...this.status, ...patch, group };
     this.onStatus(this.status);
   }
 }

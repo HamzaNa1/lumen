@@ -31,7 +31,7 @@ export interface DesktopBridge {
   };
   readonly admin: AdminRuntime;
   readonly player: {
-    readonly start: (itemId: string, startAtSeconds?: number) => Promise<unknown>;
+    readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<unknown>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;

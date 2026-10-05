@@ -21,9 +21,14 @@ export interface GroupPlayback {
  */
 export const viewerPlayback = <Started>(watch: GroupPlayback, local: LocalPlayback<Started>) => ({
   /** Resolves to null when the group, rather than this player, was asked to play. */
-  start: async (itemId: string, startAtSeconds?: number): Promise<Started | null> => {
+  start: async (itemId: string, startAtSeconds?: number, title?: string): Promise<Started | null> => {
     if (!watch.grouped) return local.start(itemId, startAtSeconds);
-    await watch.action({ type: "play", itemId, positionSeconds: startAtSeconds ?? 0 });
+    await watch.action({
+      type: "play",
+      itemId,
+      positionSeconds: startAtSeconds ?? 0,
+      ...(title === undefined ? {} : { title }),
+    });
     return null;
   },
   pause: async (sessionId: string, paused: boolean): Promise<PlayerState> => {

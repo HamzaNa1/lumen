@@ -137,7 +137,7 @@ export interface NativeAudioRuntime {
 
 export interface PlaybackRuntime {
   /** Starts an item, or asks the watch group to when the viewer is in one. */
-  readonly start: (itemId: string, startAtSeconds?: number) => Promise<void>;
+  readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<void>;
   readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
   readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;
   readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;

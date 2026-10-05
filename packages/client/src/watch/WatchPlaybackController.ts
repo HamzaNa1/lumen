@@ -61,8 +61,12 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private connectionId: string | null = null;
   private server: Server | null = null;
   private syncing = false;
+  /** The group changed while it was being applied, and has to be applied again. */
+  private resync = false;
   private appliedRevision = -1;
   private appliedGroup: string | null = null;
+  /** Playback started by this group, including a request the server may still reject. */
+  private startedPlayback = false;
   private playbackError: string | null = null;
   private stoppedAfterFailure = false;
   private retryAt = 0;
@@ -142,6 +146,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.playbackError = null;
     this.stoppedAfterFailure = false;
     this.appliedGroup = null;
+    this.startedPlayback = false;
     this.appliedRevision = -1;
     this.heldPosition = null;
     this.retryAt = 0;
@@ -202,8 +207,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (client?.rejoining) {
       this.disconnect();
     } else if (client !== null && playback != null && this.pendingStop === null) {
-      const pending = client
-        .action({ type: "stop", itemId: playback.itemId })
+      // The group shows the stop the moment it is sent, so it is sent only once this stop is
+      // recorded as under way and nothing tries to apply that state to the player meanwhile.
+      const pending = Promise.resolve()
+        .then(() => client.action({ type: "stop", itemId: playback.itemId }))
         .catch(() => {
           if (this.client !== client) return;
           if (client.rejoining || this.status.connection !== "connected") this.disconnect();
@@ -316,7 +323,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   }
 
   private async synchronize(): Promise<void> {
-    if (this.syncing || this.pendingStop !== null) return;
+    if (this.syncing) {
+      this.resync = true;
+      return;
+    }
+    if (this.pendingStop !== null) return;
     const client = this.client;
     const group = this.status.group;
     const generation = this.generation;
@@ -346,6 +357,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (this.stoppedPlayback?.groupId === group.id) this.stoppedPlayback = null;
     if (this.appliedGroup !== group.id) {
       this.appliedGroup = group.id;
+      this.startedPlayback = false;
       this.appliedRevision = -1;
       this.heldPosition = null;
       this.retryAt = 0;
@@ -362,13 +374,15 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       let state = this.player.getState();
       if (playback === null) {
         // A freshly created empty group doesn't interrupt the creator's current video.
-        if (group.revision > 0 && state !== null) await this.player.stop();
+        if ((group.revision > 0 || this.startedPlayback) && state !== null)
+          await this.player.stop();
         if (!current()) return;
         this.appliedRevision = group.revision;
         return;
       }
       if (!this.surfaceReady) return;
       if (state === null || state.itemId !== playback.itemId) {
+        this.startedPlayback = true;
         await this.player.start({
           server: this.server,
           connectionId: this.connectionId,
@@ -447,6 +461,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       if (current()) this.recordFailure(cause);
     } finally {
       this.syncing = false;
+      if (this.resync) {
+        this.resync = false;
+        void this.synchronize();
+      }
     }
   }
 }

@@ -353,10 +353,14 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:start", async (_event, raw) => {
     const input = decode(
-      Schema.Struct({ itemId: Schema.String, startAtSeconds: Schema.optional(Schema.Number) }),
+      Schema.Struct({
+        itemId: Schema.String,
+        startAtSeconds: Schema.optional(Schema.Number),
+        title: Schema.optional(Schema.String),
+      }),
       raw,
     );
-    const result = await commands.start(input.itemId, input.startAtSeconds);
+    const result = await commands.start(input.itemId, input.startAtSeconds, input.title);
     if (result === null) return null;
     const { grantToken: _grantToken, ...safe } = result;
     return safe;
