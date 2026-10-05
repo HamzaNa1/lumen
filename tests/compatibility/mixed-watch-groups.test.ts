@@ -145,7 +145,9 @@ test("a browser that cannot play the file leaves the group's playback untouched"
     expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
     expect(desktop.status.group?.members).toHaveLength(2);
 
-    // Leaving the player after the failure, as Back does, is not a request to stop for everyone.
+    // Leaving the player after the failure is not a request to stop for everyone: neither the
+    // stop Back makes, nor the one that follows when the player's route is torn down.
+    await browser.stop();
     await browser.stop();
     await Bun.sleep(200);
     expect(desktop.status.group?.revision).toBe(before?.revision);
@@ -186,12 +188,33 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     browser.playerFailed(new PlaybackUnsupportedError("This browser can’t play this file’s format."));
     expect(browser.status.error).toContain("can’t play this file’s format");
     const starts = player.starts;
-    // The viewer presses Back.
+    // The viewer presses Back, and leaving the player's route stops once more.
+    await browser.stop();
     await browser.stop();
     await Bun.sleep(700);
     expect(desktop.status.group?.revision).toBe(before?.revision);
     expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
     expect(player.starts).toBe(starts);
+
+    // Another participant changes playback while the failed viewer's route is being removed.
+    // That revision must not turn a later cleanup into a group-wide stop.
+    browser.setSurfaceReady(false);
+    await desktop.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 30 });
+    await eventually(() => browser.status.group?.revision === (before?.revision ?? 0) + 1);
+    const changed = desktop.status.group;
+    await browser.stop();
+    await Bun.sleep(200);
+    expect(desktop.status.group?.revision).toBe(changed?.revision);
+    expect(desktop.status.group?.playback).toEqual(changed?.playback ?? null);
+    expect(player.starts).toBe(starts);
+
+    // Once local playback has recovered, a deliberate stop controls the group again.
+    player.unsupported = false;
+    browser.setSurfaceReady(true);
+    await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 35 });
+    await eventually(() => player.state?.paused === false);
+    await browser.stop();
+    await eventually(() => desktop.status.group?.playback === null);
   } finally {
     browser.close();
     await fixture.close();

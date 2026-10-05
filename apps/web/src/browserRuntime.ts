@@ -1,6 +1,7 @@
 import {
   cookieCredentials,
   ServerApi,
+  viewerPlayback,
   WatchPlaybackController,
   type WatchPlayer,
   type WatchServer,
@@ -140,13 +141,12 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     };
   };
 
-  /** The state after a command the watch group will carry out rather than this player. */
-  const activeState = (sessionId: string): PlayerState => {
-    const state = player.getState();
-    if (state === null || state.sessionId !== sessionId)
-      throw new Error("Playback session is not active");
-    return state;
-  };
+  const commands = viewerPlayback(watch, {
+    start: (itemId, startAtSeconds) => player.start({ itemId, startAtSeconds }),
+    pause: (sessionId, paused) => player.pause(sessionId, paused),
+    seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
+    getActiveState: (sessionId) => player.getActiveState(sessionId),
+  });
 
   return {
     api,
@@ -199,27 +199,10 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     artwork: { url: async (artworkId) => api.artworkPath(artworkId) },
     playback: {
       start: async (itemId, startAtSeconds) => {
-        if (watch.grouped)
-          await watch.action({ type: "play", itemId, positionSeconds: startAtSeconds ?? 0 });
-        else await player.start({ itemId, startAtSeconds });
+        await commands.start(itemId, startAtSeconds);
       },
-      pause: async (sessionId, paused) => {
-        if (!watch.grouped) return player.pause(sessionId, paused);
-        const state = activeState(sessionId);
-        await watch.action({
-          type: "pause",
-          itemId: state.itemId,
-          paused,
-          positionSeconds: state.positionSeconds,
-        });
-        return state;
-      },
-      seek: async (sessionId, positionSeconds) => {
-        if (!watch.grouped) return player.seek(sessionId, positionSeconds);
-        const state = activeState(sessionId);
-        await watch.action({ type: "seek", itemId: state.itemId, positionSeconds });
-        return state;
-      },
+      pause: commands.pause,
+      seek: commands.seek,
       volume: (sessionId, volume, muted) => player.volume(sessionId, volume, muted),
       selectAudio: (sessionId, streamId) => player.selectAudioStream(sessionId, streamId),
       selectSubtitle: async () => {

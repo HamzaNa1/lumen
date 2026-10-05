@@ -96,6 +96,8 @@ const audioCodecProbes: Readonly<Record<string, string>> = {
 
 const cancelled = (): Error => new Error("Playback was cancelled");
 
+const inactive = (): Error => new Error("Playback session is not active");
+
 const isAbort = (cause: unknown): boolean => cause instanceof Error && cause.name === "AbortError";
 
 const describeMediaError = (code: number | undefined): Error =>
@@ -152,7 +154,7 @@ export class HtmlMediaPlayer {
       this.element.pause();
       await active.reporter.saveProgress(this.snapshot(active));
     } else await this.play(active);
-    return this.publish(active);
+    return this.publishIfActive(active);
   }
 
   async seek(sessionId: string, positionSeconds: number): Promise<PlayerState> {
@@ -199,11 +201,16 @@ export class HtmlMediaPlayer {
     if (active === null) return;
     active.awaitingInteraction = false;
     await this.play(active);
-    this.publish(active);
+    if (this.active === active) this.publish(active);
   }
 
   getState(): PlayerState | null {
     return this.active === null ? null : this.snapshot(this.active);
+  }
+
+  /** The state of a session that is still the one playing. */
+  getActiveState(sessionId: string): PlayerState {
+    return this.snapshot(this.requireActive(sessionId));
   }
 
   async stop(): Promise<void> {
@@ -539,9 +546,17 @@ export class HtmlMediaPlayer {
     return state;
   }
 
+  /**
+   * Publishes after a command that had to wait. The element is shared, so if the session was
+   * replaced meanwhile its state would be the replacement's media under the old session's name.
+   */
+  private publishIfActive(active: ActiveSession): PlayerState {
+    if (this.active !== active) throw inactive();
+    return this.publish(active);
+  }
+
   private requireActive(sessionId: string): ActiveSession {
-    if (this.active === null || this.active.session.sessionId !== sessionId)
-      throw new Error("Playback session is not active");
+    if (this.active === null || this.active.session.sessionId !== sessionId) throw inactive();
     return this.active;
   }
 }

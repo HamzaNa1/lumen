@@ -21,13 +21,21 @@ class FakeMedia implements MediaElementLike {
   /** What happens when a source is loaded: metadata arrives, an error, or nothing yet. */
   loadOutcome: "loaded" | "unsupported" | "hang" = "loaded";
   playOutcome: "plays" | "blocked" = "plays";
+  /** Holds back the next successful `play()` until the test lets it through. */
+  playGate: Promise<void> | null = null;
   private readonly listeners = new Map<string, Set<Listener>>();
 
   play(): Promise<void> {
     if (this.playOutcome === "blocked")
       return Promise.reject(Object.assign(new Error("blocked"), { name: "NotAllowedError" }));
-    this.paused = false;
-    this.emit("play");
+    const started = (): void => {
+      this.paused = false;
+      this.emit("play");
+    };
+    const gate = this.playGate;
+    this.playGate = null;
+    if (gate !== null) return gate.then(started);
+    started();
     return Promise.resolve();
   }
   pause(): void {
@@ -83,6 +91,8 @@ const setup = (streams: PlayerSession["streams"] = []) => {
     serverOrigin: "http://lumen.test",
     heartbeatFailure: null as Error | null,
     startGate: Promise.resolve(),
+    /** Holds back the next progress write until the test lets it through. */
+    progressGate: null as Promise<void> | null,
     startPlayback: async (itemId: string): Promise<PlayerSession> => {
       await api.startGate;
       sessions += 1;
@@ -109,6 +119,9 @@ const setup = (streams: PlayerSession["streams"] = []) => {
       sequence: number,
       init?: { keepalive?: boolean },
     ) => {
+      const gate = api.progressGate;
+      api.progressGate = null;
+      if (gate !== null) await gate;
       calls.push(
         `progress ${sessionId} @${state.positionSeconds} #${sequence}${init?.keepalive === true ? " keepalive" : ""}`,
       );
@@ -232,6 +245,42 @@ describe("browser playback lifecycle", () => {
     element.emit("error");
     expect(states).toEqual([]);
     await expect(player.pause("session-1", true)).rejects.toThrow("not active");
+  });
+
+  test("a pause answered after its session was replaced neither publishes nor returns state", async () => {
+    const { api, player, states } = setup();
+    await player.start({ itemId: "item-1" });
+    let answer: () => void = () => undefined;
+    api.progressGate = new Promise<void>((resolve) => {
+      answer = resolve;
+    });
+    const pausing = player.pause("session-1", true).catch((cause: unknown) => cause);
+    await player.start({ itemId: "item-2" });
+    states.length = 0;
+    answer();
+    const outcome = await pausing;
+    expect(outcome).toBeInstanceOf(Error);
+    expect((outcome as Error).message).toContain("not active");
+    expect(states).toEqual([]);
+    expect(player.getState()).toMatchObject({ sessionId: "session-2", itemId: "item-2" });
+  });
+
+  test("playback allowed after its session was replaced publishes nothing for the old session", async () => {
+    const { element, player, states } = setup();
+    element.playOutcome = "blocked";
+    await player.start({ itemId: "item-1" });
+    element.playOutcome = "plays";
+    let begin: () => void = () => undefined;
+    element.playGate = new Promise<void>((resolve) => {
+      begin = resolve;
+    });
+    const allowing = player.allowPlayback();
+    await player.start({ itemId: "item-2", paused: true });
+    states.length = 0;
+    begin();
+    await allowing;
+    expect(states.filter((state) => state?.sessionId !== "session-2")).toEqual([]);
+    expect(player.getState()).toMatchObject({ sessionId: "session-2", itemId: "item-2" });
   });
 
   test("a session the server expired while the tab slept is reopened at the same position", async () => {

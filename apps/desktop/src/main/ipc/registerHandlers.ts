@@ -1,4 +1,4 @@
-import { WatchPlaybackController } from "@lumen/client";
+import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
   AudioOutput,
   ConnectionInput,
@@ -74,6 +74,18 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
   });
   dependencies.window.once("closed", () => watch.close());
+  const commands = viewerPlayback(watch, {
+    start: (itemId, startAtSeconds) =>
+      dependencies.player.start({
+        client: activeClient(dependencies),
+        connectionId: activeConnectionId(dependencies),
+        itemId,
+        ...(startAtSeconds === undefined ? {} : { startAtSeconds }),
+      }),
+    pause: (sessionId, paused) => dependencies.player.pause(sessionId, paused),
+    seek: (sessionId, positionSeconds) => dependencies.player.seek(sessionId, positionSeconds),
+    getActiveState: (sessionId) => dependencies.player.getActiveState(sessionId),
+  });
   const discoveredServers = new Map<string, ServerDiscovery>();
   const restoring = new Map<string, Promise<ServerClient>>();
   let playerDisplay: PlayerDisplay | null = null;
@@ -331,39 +343,21 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       Schema.Struct({ itemId: Schema.String, startAtSeconds: Schema.optional(Schema.Number) }),
       raw,
     );
-    if (watch.grouped) {
-      await watch.action({ type: "play", itemId: input.itemId, positionSeconds: input.startAtSeconds ?? 0 });
-      return null;
-    }
-    const result = await dependencies.player.start({
-      client: activeClient(dependencies),
-      connectionId: activeConnectionId(dependencies),
-      itemId: input.itemId,
-      ...(input.startAtSeconds === undefined ? {} : { startAtSeconds: input.startAtSeconds }),
-    });
+    const result = await commands.start(input.itemId, input.startAtSeconds);
+    if (result === null) return null;
     const { grantToken: _grantToken, ...safe } = result;
     return safe;
   });
   handle("player:pause", async (_event, raw) => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, paused: Schema.Boolean }), raw);
-    if (watch.grouped) {
-      const state = dependencies.player.getActiveState(input.sessionId);
-      await watch.action({ type: "pause", itemId: state.itemId, paused: input.paused, positionSeconds: state.positionSeconds });
-      return state;
-    }
-    return dependencies.player.pause(input.sessionId, input.paused);
+    return commands.pause(input.sessionId, input.paused);
   });
   handle("player:seek", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ sessionId: Schema.String, positionSeconds: Schema.Number }),
       raw,
     );
-    if (watch.grouped) {
-      const state = dependencies.player.getActiveState(input.sessionId);
-      await watch.action({ type: "seek", itemId: state.itemId, positionSeconds: input.positionSeconds });
-      return state;
-    }
-    return dependencies.player.seek(input.sessionId, input.positionSeconds);
+    return commands.seek(input.sessionId, input.positionSeconds);
   });
   handle("player:volume", async (_event, raw) => {
     const input = decode(

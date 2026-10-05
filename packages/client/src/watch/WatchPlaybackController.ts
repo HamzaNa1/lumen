@@ -49,6 +49,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private appliedRevision = -1;
   private appliedGroup: string | null = null;
   private playbackError: string | null = null;
+  private stoppedAfterFailure = false;
   private retryAt = 0;
   private failures = 0;
   private surfaceReady = false;
@@ -109,6 +110,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.connectionId = null;
     client?.close();
     this.playbackError = null;
+    this.stoppedAfterFailure = false;
     this.appliedGroup = null;
     this.appliedRevision = -1;
     this.retryAt = 0;
@@ -128,6 +130,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (this.client !== client) return;
     if (action.type === "join" || action.type === "create") {
       this.stoppedPlayback = null;
+      this.stoppedAfterFailure = false;
       void this.synchronize();
     }
     if (action.type === "leave") await this.setSpeed(1);
@@ -155,8 +158,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     const client = this.client;
     const group = this.status.group;
     // A viewer whose own player failed is only giving up locally. Everyone else is still
-    // watching, so the group is not asked to stop.
-    const playback = this.playbackError === null ? this.status.group?.playback : null;
+    // watching, so the group is not asked to stop. Keep that decision through repeated route
+    // cleanup, even across group revisions, until local playback succeeds or membership changes.
+    this.stoppedAfterFailure ||= this.playbackError !== null;
+    const localOnly = this.stoppedAfterFailure || this.stoppedHere(group);
+    const playback = localOnly ? null : group?.playback;
     if (this.pendingStop === null && group?.playback != null)
       this.stoppedPlayback = { groupId: group.id, revision: group.revision };
     this.playbackError = null;
@@ -228,6 +234,15 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     return this.status.group !== null || this.client?.rejoining === true;
   }
 
+  /** This viewer already stopped the group's playback, as it stands, on this device. */
+  private stoppedHere(group: WatchStatus["group"]): boolean {
+    return (
+      group != null &&
+      this.stoppedPlayback?.groupId === group.id &&
+      group.revision <= this.stoppedPlayback.revision
+    );
+  }
+
   private async setSpeed(speed: number): Promise<void> {
     if (speed === this.speed) return;
     const state = this.player.getState();
@@ -255,10 +270,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       await this.setSpeed(1).catch(() => undefined);
       return;
     }
-    if (this.stoppedPlayback?.groupId === group.id) {
-      if (group.revision <= this.stoppedPlayback.revision) return;
-      this.stoppedPlayback = null;
-    }
+    if (this.stoppedHere(group)) return;
+    if (this.stoppedPlayback?.groupId === group.id) this.stoppedPlayback = null;
     if (this.appliedGroup !== group.id) {
       this.appliedGroup = group.id;
       this.appliedRevision = -1;
@@ -317,6 +330,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       this.appliedRevision = group.revision;
       this.failures = 0;
       this.playbackError = null;
+      this.stoppedAfterFailure = false;
       if (this.status.error !== null) {
         this.status = { ...this.status, error: null };
         this.onStatus(this.status);
