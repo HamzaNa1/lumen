@@ -54,7 +54,7 @@ interface MediaPlayerProps {
   readonly fullscreen: boolean;
   readonly onBack: () => void;
   /** Omitted where fullscreen is unavailable. */
-  readonly onFullscreen?: () => void;
+  readonly onFullscreen?: (() => void) | undefined;
   readonly onRetry: () => void;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
@@ -122,7 +122,15 @@ export const MediaPlayer = ({
           : buffering
             ? "buffering"
             : "ready";
-  const seekBy = usePlayerShortcuts({ enabled: !inactive, position, duration, onPause, onSeek });
+  const seekBy = usePlayerShortcuts({
+    enabled: !inactive,
+    position,
+    duration,
+    fullscreen,
+    onFullscreen,
+    onPause,
+    onSeek,
+  });
 
   return (
     <section
