@@ -108,11 +108,21 @@ test("the desktop and web builds draw the shared pages identically", async ({ co
     for (const region of [".nav", ".main-content"]) {
       // Settings names each platform's player, sign-in storage and server actions.
       if (name === "settings" && region === ".main-content") continue;
-      const [webShot, desktopShot] = await Promise.all([
-        web.locator(region).screenshot(),
-        desktop.locator(region).screenshot(),
-      ]);
-      expect(webShot.equals(desktopShot), `${name}: ${region} differs between the builds`).toBe(true);
+      // Some content arrives without a loading indicator to wait on (a library's folders, for
+      // one), so the two pages may briefly be at different stages. A real difference between
+      // the builds never goes away, so keep comparing until they agree or time runs out.
+      await expect
+        .poll(
+          async () => {
+            const [webShot, desktopShot] = await Promise.all([
+              web.locator(region).screenshot(),
+              desktop.locator(region).screenshot(),
+            ]);
+            return webShot.equals(desktopShot);
+          },
+          { message: `${name}: ${region} differs between the builds`, timeout: 10_000 },
+        )
+        .toBe(true);
     }
   }
 
