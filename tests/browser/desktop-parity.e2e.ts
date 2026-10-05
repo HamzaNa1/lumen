@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,8 +131,11 @@ test("the desktop and web builds draw the shared pages identically", async ({
           .toBe(true);
       } catch (cause) {
         // Keep both pictures so a difference can be looked at, not just reported.
-        await testInfo.attach(`${name} ${region} web.png`, { body: shots[0], contentType: "image/png" });
-        await testInfo.attach(`${name} ${region} desktop.png`, { body: shots[1], contentType: "image/png" });
+        for (const [build, shot] of [["web", shots[0]], ["desktop", shots[1]]] as const) {
+          const path = testInfo.outputPath(`${name}-${region.slice(1)}-${build}.png`);
+          writeFileSync(path, shot);
+          await testInfo.attach(`${name} ${region} ${build}`, { path, contentType: "image/png" });
+        }
         throw cause;
       }
     }
