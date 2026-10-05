@@ -1,0 +1,1491 @@
+{
+  "base": "4d4a5c6d20a89e26232f1406b55504a5a25ade49",
+  "candidate": "84f091a9ba3fa308146b055342752e55a43b3a06",
+  "generatedAt": "2026-10-05T16:09:04.506Z",
+  "mpvVersion": "mpv v0.41.0 Copyright © 2000-2025 mpv/MPlayer/mplayer2 projects",
+  "ffmpegVersion": "ffmpeg version 9.0.2 Copyright (c) 2000-2026 the FFmpeg developers",
+  "fixture": "120s H.264 video,640x360@30fps,24Mbit/s constant-rate filler, no audio",
+  "generatorArguments": [
+    "-hide_banner",
+    "-loglevel",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc2=size=640x360:rate=30",
+    "-t",
+    "120",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-b:v",
+    "24M",
+    "-minrate",
+    "24M",
+    "-maxrate",
+    "24M",
+    "-bufsize",
+    "48M",
+    "-x264-params",
+    "nal-hrd=cbr:force-cfr=1",
+    "-g",
+    "60",
+    "-an",
+    "-y"
+  ],
+  "methodology": "3 alternating paired runs, native mpv paused, null video/audio output, same Bun HTTP file server; cache plateau after5 consecutive250ms samples with equal fw-bytes (15s deadline); process RSS sampled via ps; isolates cache profile, excludes app bridge/UI/diagnostics",
+  "samples": [
+    {
+      "version": "baseline",
+      "round": 0,
+      "args": ["--cache=yes"],
+      "fiveSecondsReadyMs": 392.7760840000001,
+      "peakRssMiB": 301.296875,
+      "aheadSeconds": 52.167,
+      "forwardMiB": 150.08583068847656,
+      "samples": [
+        {
+          "elapsedMs": 392.7760840000001,
+          "rssMiB": 290.15625,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 729306,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 649.2462090000001,
+          "rssMiB": 300.484375,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 729306,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 906.5463750000001,
+          "rssMiB": 301.28125,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 729306,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1167.5095420000002,
+          "rssMiB": 301.28125,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 729306,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1427.6720420000001,
+          "rssMiB": 301.296875,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 73934818,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1689.8260840000003,
+          "rssMiB": 301.296875,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 73934818,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "version": "candidate",
+      "round": 0,
+      "args": [
+        "--cache=yes",
+        "--cache-secs=60",
+        "--demuxer-max-bytes=256MiB",
+        "--demuxer-max-back-bytes=32MiB",
+        "--cache-pause=yes",
+        "--cache-pause-wait=2",
+        "--cache-pause-initial=no"
+      ],
+      "fiveSecondsReadyMs": 156.12075000000004,
+      "peakRssMiB": 327.15625,
+      "aheadSeconds": 60,
+      "forwardMiB": 172.6226806640625,
+      "samples": [
+        {
+          "elapsedMs": 156.12075000000004,
+          "rssMiB": 160.78125,
+          "cache": {
+            "cache-end": 12.167,
+            "reader-pts": 0.3,
+            "cache-duration": 11.867,
+            "eof": false,
+            "underrun": false,
+            "idle": false,
+            "total-bytes": 36207648,
+            "fw-bytes": 35799360,
+            "raw-input-rate": 1175332,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 12.167,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 11.867,
+                "reader-pts": 0.3,
+                "cache-end": 12.167
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 11.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 411.0743339999999,
+          "rssMiB": 315.703125,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1175332,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 672.4601250000001,
+          "rssMiB": 327.03125,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1175332,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 930.166792,
+          "rssMiB": 327.140625,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1175332,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1190.0074999999997,
+          "rssMiB": 327.140625,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1175332,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1450.0945840000004,
+          "rssMiB": 327.15625,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 85680663,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1710.4518749999997,
+          "rssMiB": 327.15625,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 85680663,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "version": "candidate",
+      "round": 1,
+      "args": [
+        "--cache=yes",
+        "--cache-secs=60",
+        "--demuxer-max-bytes=256MiB",
+        "--demuxer-max-back-bytes=32MiB",
+        "--cache-pause=yes",
+        "--cache-pause-wait=2",
+        "--cache-pause-initial=no"
+      ],
+      "fiveSecondsReadyMs": 154.7706250000001,
+      "peakRssMiB": 332.640625,
+      "aheadSeconds": 60,
+      "forwardMiB": 172.6226806640625,
+      "samples": [
+        {
+          "elapsedMs": 154.7706250000001,
+          "rssMiB": 160.890625,
+          "cache": {
+            "cache-end": 11.467,
+            "reader-pts": 0.3,
+            "cache-duration": 11.167,
+            "eof": false,
+            "underrun": false,
+            "idle": false,
+            "total-bytes": 34095888,
+            "fw-bytes": 33687600,
+            "raw-input-rate": 1179981,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 11.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 11.167,
+                "reader-pts": 0.3,
+                "cache-end": 11.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 9.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 409.71229200000016,
+          "rssMiB": 315.90625,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1179981,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 670.4662500000004,
+          "rssMiB": 332.640625,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1179981,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 930.226208,
+          "rssMiB": 327.59375,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1179981,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1189.0958330000003,
+          "rssMiB": 327.59375,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1179981,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1450.1426250000004,
+          "rssMiB": 327.609375,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 85718887,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1707.384,
+          "rssMiB": 327.609375,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 85718887,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "version": "baseline",
+      "round": 1,
+      "args": ["--cache=yes"],
+      "fiveSecondsReadyMs": 133.79558300000008,
+      "peakRssMiB": 298.265625,
+      "aheadSeconds": 52.167,
+      "forwardMiB": 150.08583068847656,
+      "samples": [
+        {
+          "elapsedMs": 133.79558300000008,
+          "rssMiB": 139.6875,
+          "cache": {
+            "cache-end": 5.767,
+            "reader-pts": 0.3,
+            "cache-duration": 5.467,
+            "eof": false,
+            "underrun": false,
+            "idle": false,
+            "total-bytes": 16900128,
+            "fw-bytes": 16491840,
+            "raw-input-rate": 1112153,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 5.767,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 5.467,
+                "reader-pts": 0.3,
+                "cache-end": 5.767
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 3.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 389.1891250000008,
+          "rssMiB": 289.9375,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 1112153,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 646.457625,
+          "rssMiB": 289.953125,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 1112153,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 900.2983750000003,
+          "rssMiB": 298.25,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 1112153,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1155.8044170000003,
+          "rssMiB": 298.25,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 1112153,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1410.4527500000013,
+          "rssMiB": 298.265625,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 75064350,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1665.553417,
+          "rssMiB": 298.265625,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 75064350,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "version": "baseline",
+      "round": 2,
+      "args": ["--cache=yes"],
+      "fiveSecondsReadyMs": 415.712125,
+      "peakRssMiB": 298.375,
+      "aheadSeconds": 52.167,
+      "forwardMiB": 150.08583068847656,
+      "samples": [
+        {
+          "elapsedMs": 159.37216699999954,
+          "rssMiB": 125,
+          "cache": {
+            "cache-end": 2.133,
+            "reader-pts": 0.267,
+            "cache-duration": 1.866,
+            "eof": false,
+            "underrun": false,
+            "idle": false,
+            "total-bytes": 5939088,
+            "fw-bytes": 5631360,
+            "raw-input-rate": 656840,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 2.133,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 1.866,
+                "reader-pts": 0.267,
+                "cache-end": 2.133
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 1.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 415.712125,
+          "rssMiB": 290.203125,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 656840,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 671.7125420000011,
+          "rssMiB": 298.078125,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 656840,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 926.967834000001,
+          "rssMiB": 298.359375,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 656840,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1182.1547499999997,
+          "rssMiB": 298.359375,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 656840,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1436.8030419999996,
+          "rssMiB": 298.375,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 73670380,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1693.8374590000003,
+          "rssMiB": 298.375,
+          "cache": {
+            "cache-end": 52.467,
+            "reader-pts": 0.3,
+            "cache-duration": 52.167,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 157784688,
+            "fw-bytes": 157376400,
+            "raw-input-rate": 73670380,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 52.467,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 52.167,
+                "reader-pts": 0.3,
+                "cache-end": 52.467
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 51.967
+              }
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "version": "candidate",
+      "round": 2,
+      "args": [
+        "--cache=yes",
+        "--cache-secs=60",
+        "--demuxer-max-bytes=256MiB",
+        "--demuxer-max-back-bytes=32MiB",
+        "--cache-pause=yes",
+        "--cache-pause-wait=2",
+        "--cache-pause-initial=no"
+      ],
+      "fiveSecondsReadyMs": 388.59708300000057,
+      "peakRssMiB": 327.046875,
+      "aheadSeconds": 60,
+      "forwardMiB": 172.6226806640625,
+      "samples": [
+        {
+          "elapsedMs": 388.59708300000057,
+          "rssMiB": 315.84375,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1125531,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 649.0137080000004,
+          "rssMiB": 315.859375,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1125531,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 907.9895420000012,
+          "rssMiB": 327.03125,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1125531,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1169.4164170000004,
+          "rssMiB": 327.03125,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 1125531,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1430.5445,
+          "rssMiB": 327.046875,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 85885668,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        },
+        {
+          "elapsedMs": 1691.0087920000005,
+          "rssMiB": 327.046875,
+          "cache": {
+            "cache-end": 60.3,
+            "reader-pts": 0.3,
+            "cache-duration": 60,
+            "eof": false,
+            "underrun": false,
+            "idle": true,
+            "total-bytes": 181416288,
+            "fw-bytes": 181008000,
+            "raw-input-rate": 85885668,
+            "debug-low-level-seeks": 0,
+            "debug-byte-level-seeks": 0,
+            "debug-ts-last": 60.3,
+            "ts-per-stream": [
+              {
+                "type": "video",
+                "cache-duration": 60,
+                "reader-pts": 0.3,
+                "cache-end": 60.3
+              }
+            ],
+            "bof-cached": true,
+            "eof-cached": false,
+            "seekable-ranges": [
+              {
+                "start": 0,
+                "end": 59.967
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "fixtureBytes": 359440720
+}
