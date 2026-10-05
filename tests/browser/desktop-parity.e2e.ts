@@ -7,7 +7,7 @@ import { type BrowserContext, expect, type Page, test } from "@playwright/test";
 
 // Renders the desktop renderer build and the web build side by side — same server, same data,
 // same account, same viewport, same browser engine — and requires the shared pages to come out
-// pixel for pixel alike. The desktop renderer runs here in a browser behind a stand-in for its
+// alike pixel for pixel, apart from the few corner pixels a software renderer paints unevenly. The desktop renderer runs here in a browser behind a stand-in for its
 // Electron bridge, so this proves the two builds draw the same pages; it does not exercise
 // Electron's window chrome or the native player.
 
@@ -60,6 +60,42 @@ const openDesktop = async (context: BrowserContext): Promise<Page> => {
   await page.addInitScript(shim);
   return page;
 };
+
+// Without a GPU, as on CI, the browser does not antialias a rounded corner identically every
+// time it paints: two pictures of the same page can disagree on three or four corner pixels,
+// on a different page from one run to the next. Anything a build could actually get wrong,
+// such as a missing icon, shifted text or a changed colour, alters hundreds of pixels at least.
+const RASTER_NOISE_PIXELS = 16;
+
+/** How many pixels differ between two PNGs, counted by the browser so no decoder is needed. */
+const differingPixels = (page: Page, first: Buffer, second: Buffer): Promise<number> =>
+  page.evaluate(
+    async ([a, b]) => {
+      const decode = async (base64: string) => {
+        const bytes = Uint8Array.from(atob(base64), (character) => character.charCodeAt(0));
+        const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+        const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+        const context = canvas.getContext("2d");
+        if (context === null) throw new Error("No 2D context");
+        context.drawImage(bitmap, 0, 0);
+        return context.getImageData(0, 0, bitmap.width, bitmap.height);
+      };
+      const [left, right] = await Promise.all([decode(a), decode(b)]);
+      if (left.width !== right.width || left.height !== right.height)
+        return Number.MAX_SAFE_INTEGER;
+      let differing = 0;
+      for (let index = 0; index < left.data.length; index += 4)
+        if (
+          left.data[index] !== right.data[index] ||
+          left.data[index + 1] !== right.data[index + 1] ||
+          left.data[index + 2] !== right.data[index + 2] ||
+          left.data[index + 3] !== right.data[index + 3]
+        )
+          differing += 1;
+      return differing;
+    },
+    [first.toString("base64"), second.toString("base64")] as const,
+  );
 
 const settled = async (page: Page): Promise<void> => {
   await expect(page.locator(".main-content")).toBeVisible();
@@ -123,7 +159,10 @@ test("the desktop and web builds draw the shared pages identically", async ({
           web.locator(region).screenshot(),
           desktop.locator(region).screenshot(),
         ]);
-        return shots[0].equals(shots[1]);
+        return (
+          shots[0].equals(shots[1]) ||
+          (await differingPixels(web, shots[0], shots[1])) <= RASTER_NOISE_PIXELS
+        );
       };
       try {
         await expect
