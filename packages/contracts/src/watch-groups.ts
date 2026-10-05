@@ -62,6 +62,8 @@ export const WatchMessage = Schema.Union([
     memberId: Uuid,
     /** Whether this server takes the `buffering` action; one that predates it would hang up. */
     holdsForBuffering: Schema.optional(Schema.Boolean),
+    /** The name this member goes by in a group. Servers before 0.0.14 do not say. */
+    displayName: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("groups"), groups: Schema.Array(WatchGroup) }),
   Schema.Struct({ type: Schema.Literal("state"), group: Schema.NullOr(WatchGroup) }),

@@ -61,6 +61,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private connectionId: string | null = null;
   private server: Server | null = null;
   private syncing = false;
+  /** The group changed while it was being applied, and has to be applied again. */
+  private resync = false;
   private appliedRevision = -1;
   private appliedGroup: string | null = null;
   private playbackError: string | null = null;
@@ -202,8 +204,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (client?.rejoining) {
       this.disconnect();
     } else if (client !== null && playback != null && this.pendingStop === null) {
-      const pending = client
-        .action({ type: "stop", itemId: playback.itemId })
+      // The group shows the stop the moment it is sent, so it is sent only once this stop is
+      // recorded as under way and nothing tries to apply that state to the player meanwhile.
+      const pending = Promise.resolve()
+        .then(() => client.action({ type: "stop", itemId: playback.itemId }))
         .catch(() => {
           if (this.client !== client) return;
           if (client.rejoining || this.status.connection !== "connected") this.disconnect();
@@ -316,7 +320,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   }
 
   private async synchronize(): Promise<void> {
-    if (this.syncing || this.pendingStop !== null) return;
+    if (this.syncing) {
+      this.resync = true;
+      return;
+    }
+    if (this.pendingStop !== null) return;
     const client = this.client;
     const group = this.status.group;
     const generation = this.generation;
@@ -447,6 +455,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       if (current()) this.recordFailure(cause);
     } finally {
       this.syncing = false;
+      if (this.resync) {
+        this.resync = false;
+        void this.synchronize();
+      }
     }
   }
 }
