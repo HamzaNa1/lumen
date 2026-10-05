@@ -1,4 +1,4 @@
-import type { AccountSummary, ServerDiscovery } from "@lumen/contracts";
+import { type AccountSummary, MIN_PASSWORD_LENGTH, type ServerDiscovery } from "@lumen/contracts";
 import { Button, Form, Modal, TextField } from "@lumen/ui";
 import { useMutation } from "@tanstack/react-query";
 import {
@@ -11,7 +11,7 @@ import {
   Trash2,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { errorMessage, hostOf } from "./format";
+import { errorMessage, hostOf, passwordRule } from "./format";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 
@@ -332,7 +332,7 @@ export const ConnectPage = ({
                 autoComplete={creatingAccount ? "new-password" : "current-password"}
                 value={password}
                 onValueChange={setPassword}
-                description={creatingAccount ? "At least 12 characters." : undefined}
+                description={creatingAccount ? passwordRule : undefined}
               />
               {errorBanner}
               <Button
@@ -344,7 +344,7 @@ export const ConnectPage = ({
                   connect.isPending ||
                   username.trim() === "" ||
                   password === "" ||
-                  (creatingAccount && password.length < 12)
+                  (creatingAccount && password.length < MIN_PASSWORD_LENGTH)
                 }
               >
                 {connect.isPending

@@ -1,4 +1,4 @@
-import type { LibrarySummary, JobLogEntry } from "@lumen/contracts";
+import { type JobLogEntry, type LibrarySummary, MIN_PASSWORD_LENGTH } from "@lumen/contracts";
 
 export const titleCase = (value: string): string =>
   value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -60,6 +60,7 @@ export const libraryCount = (kind: LibrarySummary["kind"], count: number, more =
   return `${count}${more ? "+" : ""} ${count === 1 && !more ? noun[0] : noun[1]}`;
 };
 
+export const passwordRule = `At least ${MIN_PASSWORD_LENGTH} characters.`;
 export const roleLabels = { admin: "Administrator", user: "User" } as const;
 
 export const plural = (count: number, singular: string, pluralForm = `${singular}s`): string =>

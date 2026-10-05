@@ -130,19 +130,22 @@ describe("server authentication and ACL", () => {
       ((await (await request(base, "/api/v1/auth/setup")).json()) as { setupRequired: boolean })
         .setupRequired,
     ).toBe(true);
-    const registration = await request(base, "/api/v1/auth/register", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        username: "owner",
-        displayName: "Owner",
-        password: "correct horse battery staple",
-        deviceId: newUuid(),
-        deviceName: "Setup",
-        platform: "web",
-        platformDeviceId: null,
-      }),
-    });
+    const register = (password: string) =>
+      request(base, "/api/v1/auth/register", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: "owner",
+          displayName: "Owner",
+          password,
+          deviceId: newUuid(),
+          deviceName: "Setup",
+          platform: "web",
+          platformDeviceId: null,
+        }),
+      });
+    expect((await register("12345")).status).toBe(400);
+    const registration = await register("123456");
     expect(registration.status).toBe(201);
     const owner = (await registration.json()) as { role: string; accessToken: string };
     expect(owner.role).toBe("admin");

@@ -30,7 +30,14 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { errorMessage, libraryKindLabels, plural, roleLabels, slugify } from "./format";
+import {
+  errorMessage,
+  libraryKindLabels,
+  passwordRule,
+  plural,
+  roleLabels,
+  slugify,
+} from "./format";
 import { libraryIcon } from "./Sidebar";
 import { PageHeader, useWorkspace } from "./Workspace";
 import { useRuntime } from "./Runtime";
@@ -724,7 +731,7 @@ const UserDialog = ({
           onValueChange={setPassword}
           autoComplete="new-password"
           placeholder={user === null ? undefined : "Leave blank to keep the current password"}
-          description={user === null ? "At least 12 characters." : undefined}
+          description={user === null ? passwordRule : undefined}
         />
         <SelectField label="Role" value={role} options={roleOptions} onValueChange={setRole} />
         <LibraryAccessField

@@ -1,6 +1,6 @@
 import { Schema } from "effect";
 import { User } from "./schemas/auth.ts";
-import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
+import { NewPassword, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 
 export const ApiErrorCode = Schema.Literals([
   "bad_request",
@@ -43,7 +43,7 @@ export type LoginResponse = Schema.Schema.Type<typeof LoginResponse>;
 export const RegisterRequest = Schema.Struct({
   username: Schema.String.check(Schema.isMinLength(1)),
   displayName: Schema.String.check(Schema.isMinLength(1)),
-  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  password: NewPassword,
   deviceId: Uuid,
   deviceName: Schema.String.check(Schema.isMinLength(1)),
   platform: Schema.Literals(["web", "desktop", "ios", "android", "other"]),
