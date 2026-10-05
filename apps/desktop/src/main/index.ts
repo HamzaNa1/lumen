@@ -8,6 +8,7 @@ import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
+import { AppUpdates, supportsAutoUpdates } from "./updates/AppUpdates";
 import { createMainWindow } from "./windows";
 
 let mainWindow: BrowserWindow | null = null;
@@ -76,6 +77,9 @@ const bootstrap = async (): Promise<void> => {
     void player?.stop().catch((cause: unknown) => console.error("Failed to stop playback", cause));
   });
   const clients = new Map<string, ServerClient>();
+  const updates = new AppUpdates((version) => {
+    mainWindow?.webContents.send("updates:ready", version);
+  });
   registerIpcHandlers({
     registry,
     clients,
@@ -84,6 +88,7 @@ const bootstrap = async (): Promise<void> => {
     installationId,
     window: mainWindow,
     overlay,
+    updates,
   });
   const sendFullscreenState = (): void => {
     mainWindow?.webContents.send("player:fullscreen-state", mainWindow.isFullScreen());
@@ -96,6 +101,17 @@ const bootstrap = async (): Promise<void> => {
   await overlay.load(rendererUrl, rendererPath);
   const stopUpdates = startNativePlayer(player);
   mainWindow.once("closed", stopUpdates);
+  if (
+    supportsAutoUpdates({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      portableExecutable: process.env.PORTABLE_EXECUTABLE_FILE,
+    })
+  ) {
+    // Loaded only where it runs: reaching for the updater elsewhere sets up one that cannot work.
+    const { autoUpdater } = await import("electron-updater");
+    mainWindow.once("closed", updates.start(autoUpdater));
+  }
 };
 
 app.on("before-quit", (event) => {

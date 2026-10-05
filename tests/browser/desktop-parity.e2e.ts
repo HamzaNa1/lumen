@@ -471,6 +471,29 @@ test("switching accounts keeps the new account's libraries subscribed", async ({
   await expect(nav.getByRole("link", { name: "Replacement library" })).toHaveCount(0);
 });
 
+test("a downloaded update offers a restart that installs it", async ({
+  context,
+  baseURL,
+}) => {
+  await signIn(context, baseURL ?? "");
+  const page = await openDesktop(context, desktopBuild);
+  await page.addInitScript(() => {
+    Object.assign(window.lumen.updates, {
+      ready: async () => "0.0.13",
+      install: async () => {
+        Reflect.set(window, "updateInstallRequested", true);
+      },
+    });
+  });
+  await gotoDesktop(page, desktopBuild, "/");
+  const prompt = page.getByRole("alert").filter({ hasText: "Lumen 0.0.13 is ready" });
+  await expect(prompt).toBeVisible();
+  await prompt.getByRole("button", { name: "Restart" }).click();
+  await expect
+    .poll(() => page.evaluate(() => Reflect.get(window, "updateInstallRequested")))
+    .toBe(true);
+});
+
 test("watch groups are drawn identically", async ({ context, baseURL }, testInfo) => {
   const builds = await signedInBuilds(context, baseURL ?? "");
   const { web, desktop } = builds;

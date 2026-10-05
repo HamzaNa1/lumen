@@ -89,6 +89,9 @@ jobs:
           bun apps/desktop/scripts/verify-native-binaries.ts
       - run: bun run --cwd apps/desktop build
       - run: bun run --cwd apps/desktop package
+      - name: Verify the update feed (Windows)
+        if: runner.os == 'Windows'
+        run: bun apps/desktop/scripts/verify-update-feed.ts
       - uses: actions/upload-artifact@v4
         with:
           name: lumen-desktop-${{ needs.preflight.outputs.version }}-${{ matrix.os }}
@@ -98,6 +101,8 @@ jobs:
             apps/desktop/release/*.dmg
             apps/desktop/release/*.zip
             apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
           if-no-files-found: error
   publish:
     needs: [preflight, package]
@@ -133,6 +138,13 @@ jobs:
             echo "Expected six desktop installers, found ${#assets[@]}." >&2
             exit 1
           fi
+          # Installed Windows apps read these from the Latest release to update themselves.
+          mapfile -d '' update_feed < <(find release-assets -mindepth 2 -maxdepth 2 -type f \( -name 'latest.yml' -o -name '*.exe.blockmap' \) -print0)
+          if [[ "${#update_feed[@]}" -ne 2 ]]; then
+            echo "Expected the Windows update feed and its block map, found ${#update_feed[@]} files." >&2
+            exit 1
+          fi
+          assets+=("${update_feed[@]}")
           flags=(--latest)
           if [[ "$RELEASE_VERSION" == *-* ]]; then flags=(--prerelease --latest=false); fi
           gh release create "$RELEASE_TAG" "${assets[@]}" \

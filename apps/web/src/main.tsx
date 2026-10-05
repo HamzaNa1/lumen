@@ -1,5 +1,4 @@
 import "@lumen/ui/styles/global.css";
-import "./web.css";
 import { LumenApp } from "@lumen/app";
 import { createBrowserHistory } from "@tanstack/history";
 import { StrictMode } from "react";

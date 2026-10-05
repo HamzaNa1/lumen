@@ -133,6 +133,11 @@ const bridge: DesktopBridge = {
     onOverlayAction: silent,
     onFullscreenChange: silent,
   },
+  updates: {
+    ready: async () => null,
+    onReady: silent,
+    install: unavailable,
+  },
 };
 
 Object.defineProperty(window, "lumen", { value: bridge });

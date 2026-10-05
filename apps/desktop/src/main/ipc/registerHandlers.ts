@@ -18,6 +18,7 @@ import { ServerClient, ServerHttpError, type AccountSession } from "../api/Serve
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
+import type { AppUpdates } from "../updates/AppUpdates";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
   Schema.decodeUnknownSync(schema)(value);
@@ -53,6 +54,7 @@ export interface IpcDependencies {
   readonly installationId: string;
   readonly window: BrowserWindow;
   readonly overlay: PlayerOverlayWindow;
+  readonly updates: AppUpdates;
 }
 
 const activeClient = (dependencies: IpcDependencies): ServerClient => {
@@ -422,6 +424,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     await watch.stop();
     return { ok: true };
   });
+  handle("updates:ready", async () => dependencies.updates.ready);
+  handle("updates:install", async () => dependencies.updates.install());
 };
 
 export const unregisterIpcHandlers = (): void => {
