@@ -6,6 +6,8 @@ const Position = Schema.Number.check(
   Schema.isBetween({ minimum: 0, maximum: 604800 }),
 );
 const Password = Schema.String.check(Schema.isMaxLength(128));
+/** How much media a member must hold beyond the group's position before the group plays on. */
+export const WATCH_READY_BUFFER_SECONDS = 5;
 export const WatchPlayback = Schema.Struct({
   itemId: Uuid,
   title: Schema.String,
@@ -13,7 +15,7 @@ export const WatchPlayback = Schema.Struct({
   paused: Schema.Boolean,
   updatedAtMs: Schema.Number,
   /**
-   * Present while the group holds at this position so its members can load it, naming the
+   * Present while the group holds at this position so its members can buffer it, naming the
    * members it is still waiting for. A held group is paused; it plays once the wait is over.
    */
   waitingFor: Schema.optional(Schema.Array(Uuid)),
@@ -48,12 +50,19 @@ export const WatchAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("stop"), itemId: Uuid }),
   /** This member no longer needs the group, as it stood at that revision, to wait for it. */
   Schema.Struct({ type: Schema.Literal("ready"), revision: Schema.Int }),
+  /** This member ran out of media to play; the group, as it stood at that revision, holds for it. */
+  Schema.Struct({ type: Schema.Literal("buffering"), revision: Schema.Int }),
   Schema.Struct({ type: Schema.Literal("ping"), sentAtMs: Schema.Number.check(Schema.isFinite()) }),
 ]);
 export type WatchAction = typeof WatchAction.Type;
 export const WatchRequest = Schema.Struct({ requestId: Uuid, action: WatchAction });
 export const WatchMessage = Schema.Union([
-  Schema.Struct({ type: Schema.Literal("ready"), memberId: Uuid }),
+  Schema.Struct({
+    type: Schema.Literal("ready"),
+    memberId: Uuid,
+    /** Whether this server takes the `buffering` action; one that predates it would hang up. */
+    holdsForBuffering: Schema.optional(Schema.Boolean),
+  }),
   Schema.Struct({ type: Schema.Literal("groups"), groups: Schema.Array(WatchGroup) }),
   Schema.Struct({ type: Schema.Literal("state"), group: Schema.NullOr(WatchGroup) }),
   Schema.Struct({

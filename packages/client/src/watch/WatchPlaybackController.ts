@@ -1,5 +1,6 @@
 import {
   initialWatchStatus,
+  WATCH_READY_BUFFER_SECONDS,
   watchCorrection,
   watchPosition,
   type PlayerState,
@@ -12,6 +13,14 @@ import { type WatchConnection, WatchGroupClient } from "./WatchGroupClient.ts";
 
 export interface WatchServer extends WatchConnection {
   readonly supportsWatchGroups: boolean;
+}
+
+/** What a player holds of its media beyond where it now is. */
+export interface PlayerBuffer {
+  /** How far it can play on without fetching more; infinite once it holds the rest of the media. */
+  readonly aheadSeconds: number;
+  /** It is meant to be playing but has stopped, having run out of media. */
+  readonly starved: boolean;
 }
 
 /** The part of a player that watch groups drive. Any platform's player can stand behind it. */
@@ -31,12 +40,11 @@ export interface WatchPlayer<Server extends WatchServer> {
   readonly seek: (sessionId: string, positionSeconds: number) => Promise<unknown>;
   readonly pause: (sessionId: string, paused: boolean) => Promise<unknown>;
   readonly speed: (sessionId: string, speed: number) => Promise<void>;
-  /** Whether the player has fetched what it needs to play from where it now is. */
-  readonly loaded: (sessionId: string) => boolean | Promise<boolean>;
+  readonly buffer: (sessionId: string) => PlayerBuffer | Promise<PlayerBuffer>;
 }
 
 const SYNCHRONIZE_INTERVAL_MS = 500;
-// A group holding for this viewer should hear that its position has loaded without delay.
+// A group holding for this viewer should hear that its position has buffered without delay.
 const READINESS_INTERVAL_MS = 100;
 
 /**
@@ -45,7 +53,8 @@ const READINESS_INTERVAL_MS = 100;
  * Commands flow one way: the group's shared state is applied to the local player. A local player
  * that fails or cannot play the file only reports the problem to its own viewer; nothing here
  * sends the group a pause, seek or stop on the player's behalf. The one thing a player does tell
- * the group is that it has loaded a position the group is holding at, so playback can begin.
+ * the group is how its buffer stands: that it has run out of media while playing, so the group
+ * holds for it, and that it has buffered the position the group holds at, so playback can begin.
  */
 export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private client: WatchGroupClient | null = null;
@@ -63,8 +72,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private generation = 0;
   private pendingStop: Promise<void> | null = null;
   private stoppedPlayback: { groupId: string; revision: number } | null = null;
-  /** The group revision, as `groupId:revision`, already told not to wait for this viewer. */
-  private reportedReady: string | null = null;
+  /** What the group was last told of this viewer's buffer, as `action:groupId:revision`. */
+  private reported: string | null = null;
   /** Where the group was holding when its playback was last applied, if it was holding. */
   private heldPosition: number | null = null;
   private readinessTimer: ReturnType<typeof setTimeout> | undefined;
@@ -90,17 +99,24 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.server = server;
     this.connectionId = connectionId;
     const onStatus = (status: WatchStatus): void => {
+      if (status.group?.id !== this.status.group?.id) this.reported = null;
+      const released =
+        status.group?.id === this.status.group?.id &&
+        this.status.group?.playback?.waitingFor !== undefined &&
+        status.group?.playback?.paused === false &&
+        status.group.playback.itemId === this.status.group.playback.itemId &&
+        status.group.playback.positionSeconds === this.status.group.playback.positionSeconds;
       if (
         status.connection === "connected" &&
         (this.status.connection !== "connected" ||
-          status.group?.revision !== this.status.group?.revision)
+          (status.group?.revision !== this.status.group?.revision && !released))
       ) {
         this.retryAt = 0;
         this.failures = 0;
       }
       if (
         status.group?.id !== this.status.group?.id ||
-        status.group?.revision !== this.status.group?.revision ||
+        (status.group?.revision !== this.status.group?.revision && !released) ||
         status.group?.playback?.itemId !== this.status.group?.playback?.itemId
       )
         this.playbackError = null;
@@ -116,7 +132,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.generation += 1;
     this.pendingStop = null;
     this.stoppedPlayback = null;
-    this.reportedReady = null;
+    this.reported = null;
     clearTimeout(this.readinessTimer);
     const client = this.client;
     this.client = null;
@@ -258,23 +274,33 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     );
   }
 
-  /** The group is holding its playback until this viewer, among others, has loaded it. */
+  /** The group is holding its playback until this viewer, among others, has buffered it. */
   private awaited(group: WatchGroup): boolean {
     const memberId = this.status.memberId;
     return memberId !== null && group.playback?.waitingFor?.includes(memberId) === true;
   }
 
+  /** Tells the group, once for each of its revisions, how this viewer's buffer stands. */
+  private report(client: WatchGroupClient, group: WatchGroup, type: "ready" | "buffering"): void {
+    const reported = `${type}:${group.id}:${group.revision}`;
+    if (this.reported === reported) return;
+    this.reported = reported;
+    void client.action({ type, revision: group.revision }).catch(() => {
+      if (this.reported === reported) this.reported = null;
+    });
+  }
+
   /**
    * Tells a group that is holding for this viewer to stop waiting: either its position has
-   * loaded here, or this device is not going to play it.
+   * buffered here, or this device is not going to play it.
    */
   private reportReady(client: WatchGroupClient, group: WatchGroup): void {
-    const reported = `${group.id}:${group.revision}`;
-    if (this.reportedReady === reported || !this.awaited(group)) return;
-    this.reportedReady = reported;
-    void client.action({ type: "ready", revision: group.revision }).catch(() => {
-      if (this.reportedReady === reported) this.reportedReady = null;
-    });
+    if (this.awaited(group)) this.report(client, group, "ready");
+  }
+
+  /** Whether the player holds enough beyond where it is for the group to play on from there. */
+  private async buffered(sessionId: string): Promise<boolean> {
+    return (await this.player.buffer(sessionId)).aheadSeconds >= WATCH_READY_BUFFER_SECONDS;
   }
 
   private checkReadinessSoon(): void {
@@ -367,10 +393,21 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       if (
         awaited &&
         this.appliedRevision === group.revision &&
-        !(await this.player.loaded(state.sessionId))
+        !(await this.buffered(state.sessionId))
       ) {
-        // Still loading the position the group holds at; another seek would start that over.
+        // Still buffering the position the group holds at; another seek would start that over.
         this.checkReadinessSoon();
+        return;
+      }
+      if (
+        !playback.paused &&
+        this.appliedRevision === group.revision &&
+        client.waitsForBuffering &&
+        (await this.player.buffer(state.sessionId)).starved
+      ) {
+        // Chasing the group's clock would only move this player further from what it holds.
+        // The group stops for it instead, and plays on once it has buffered enough.
+        if (current()) this.report(client, group, "buffering");
         return;
       }
       if (!current()) return;
@@ -401,10 +438,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         this.onStatus(this.status);
       }
       if (!awaited) return;
-      const loaded = await this.player.loaded(state.sessionId);
+      const buffered = await this.buffered(state.sessionId);
       // The answer is about this group as it stood; it must not release whatever replaced it.
       if (!current()) return;
-      if (loaded) this.reportReady(client, group);
+      if (buffered) this.reportReady(client, group);
       else this.checkReadinessSoon();
     } catch (cause) {
       if (current()) this.recordFailure(cause);

@@ -76,10 +76,8 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
     if (this.state !== null) this.state = { ...this.state, paused };
   }
   async speed() {}
-  /** Set to false to model a player that is still fetching its position. */
-  ready = true;
-  loaded() {
-    return this.ready;
+  buffer() {
+    return { aheadSeconds: Number.POSITIVE_INFINITY, starved: false };
   }
 }
 
@@ -122,7 +120,7 @@ test("a desktop viewer and a browser viewer share one group and follow each othe
   }
 });
 
-test("a browser that cannot play the file leaves the group's playback untouched", async () => {
+test("a browser that cannot play the file releases its join hold without stopping the group", async () => {
   const fixture = await watchFixture();
   const origin = fixture.running.server.url.origin;
   const player = new BrowserPlayer();
@@ -145,9 +143,12 @@ test("a browser that cannot play the file leaves the group's playback untouched"
     // Trying again cannot help, so the player is not started over and over.
     await Bun.sleep(1_300);
     expect(player.starts).toBe(1);
-    // Nothing was paused, sought or stopped on the group's behalf.
-    expect(desktop.status.group?.revision).toBe(before?.revision);
-    expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
+    // Joining holds the group, then the failed viewer releases it without retrying the file.
+    expect(desktop.status.group?.revision).toBe((before?.revision ?? 0) + 2);
+    expect(desktop.status.group?.playback).toMatchObject({ itemId: fixture.itemId, paused: false });
+    expect(desktop.status.group?.playback?.waitingFor).toBeUndefined();
+    expect(desktop.status.group?.playback?.positionSeconds).toBeGreaterThanOrEqual(5);
+    const released = desktop.status.group;
     expect(desktop.status.group?.members).toHaveLength(2);
 
     // Leaving the player after the failure is not a request to stop for everyone: neither the
@@ -155,8 +156,8 @@ test("a browser that cannot play the file leaves the group's playback untouched"
     await browser.stop();
     await browser.stop();
     await Bun.sleep(200);
-    expect(desktop.status.group?.revision).toBe(before?.revision);
-    expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
+    expect(desktop.status.group?.revision).toBe(released?.revision);
+    expect(desktop.status.group?.playback).toEqual(released?.playback ?? null);
 
     // The viewer stays in the group, and plays along once the group moves to something else.
     player.unsupported = false;
@@ -183,7 +184,7 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     browser.setSurfaceReady(true);
     await eventually(() => browser.status.connection === "connected");
     await browser.action({ type: "join", groupId: desktop.status.group?.id ?? "", password: "" });
-    await eventually(() => player.state !== null);
+    await eventually(() => player.state?.paused === false);
     await eventually(() => desktop.status.group?.members.length === 2);
     const before = desktop.status.group;
 

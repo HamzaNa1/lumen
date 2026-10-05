@@ -14,7 +14,7 @@ import "./watch-groups.css";
 
 const visibleMemberNames = 3;
 
-/** The group is paused only until its members have loaded what it is about to play. */
+/** The group is paused only until its members have buffered what it is about to play. */
 const holdingForMembers = (playback: WatchPlayback | null | undefined): boolean =>
   playback?.waitingFor !== undefined;
 
@@ -22,12 +22,12 @@ const playbackSummary = (playback: WatchPlayback | null): string =>
   playback === null
     ? "Nothing playing"
     : holdingForMembers(playback)
-      ? `Starting ${playback.title}`
+      ? `Buffering ${playback.title}`
       : playback.paused
         ? `Paused on ${playback.title}`
         : `Watching ${playback.title}`;
 
-/** The group is holding its playback for this member, who has yet to load it. */
+/** The group is holding its playback for this member, who has yet to buffer it. */
 const stillLoading = (group: WatchGroup, memberId: string): boolean =>
   group.playback?.waitingFor?.includes(memberId) === true;
 

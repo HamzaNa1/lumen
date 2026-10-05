@@ -1,6 +1,7 @@
 import {
   CatalogItemDetails,
   WatchRequest,
+  watchPosition,
   type WatchGroup,
   type WatchMessage,
   type WatchPlayback,
@@ -19,7 +20,7 @@ export interface WatchSocketData {
   readonly cookieToken: string | null;
   token: string | null;
   principal: AuthPrincipal | null;
-  /** This client says when it has loaded a position, so its group can wait for it. */
+  /** This client says when it has buffered a position, so its group can wait for it. */
   readiness: boolean;
   groupId: string | null;
   queue: Promise<void>;
@@ -327,7 +328,7 @@ export class WatchGroups {
 
   /**
    * Moves the group to a position it is to play from. Members that report readiness get to
-   * load it first: the group holds there, paused, for as long as any of them takes, so nobody
+   * buffer it first: the group holds there, paused, for as long as any of them takes, so nobody
    * starts out behind a clock that is already running. A member that leaves, disconnects, or
    * says its device will not play is no longer waited for.
    */
@@ -362,6 +363,20 @@ export class WatchGroups {
       revision: group.state.revision + 1,
       playback: position === null ? null : { ...position, paused: true, updatedAtMs: Date.now() },
     };
+  }
+
+  /**
+   * Holds a playing group where its clock has reached, so its members can buffer there.
+   */
+  private hold(group: Group, revision: number): boolean {
+    const playback = group.state.playback;
+    if (group.state.revision !== revision || playback === null || playback.paused) return false;
+    this.playFrom(group, {
+      itemId: playback.itemId,
+      title: playback.title,
+      positionSeconds: watchPosition(playback, Date.now()),
+    });
+    return true;
   }
 
   /** Starts a held group playing, unless it has moved on since that revision. */
@@ -417,7 +432,7 @@ export class WatchGroups {
       socket.data.principal = principal;
       socket.data.readiness = authentication.readiness === true;
       clearTimeout(socket.data.authTimer);
-      this.send(socket, { type: "ready", memberId: socket.data.id });
+      this.send(socket, { type: "ready", memberId: socket.data.id, holdsForBuffering: true });
       void this.list(socket);
       return;
     }
@@ -433,6 +448,13 @@ export class WatchGroups {
       } else if (action.type === "ready") {
         const group = this.groups.get(socket.data.groupId ?? "");
         if (group !== undefined) this.ready(group, socket.data.id, action.revision);
+      } else if (action.type === "buffering") {
+        const group = this.groups.get(socket.data.groupId ?? "");
+        // Only a member that reports readiness can end the wait it is asking for.
+        if (group !== undefined && socket.data.readiness && this.hold(group, action.revision)) {
+          this.directory();
+          void this.publish(group);
+        }
       } else if (action.type === "list") await this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
@@ -499,6 +521,16 @@ export class WatchGroups {
             { id: socket.data.id, displayName: principal.user.displayName },
           ],
         };
+        const playback = group.state.playback;
+        if (socket.data.readiness && playback !== null) {
+          if (playback.waitingFor !== undefined) {
+            // Keep the position and revision: existing members are already buffering there.
+            group.state = {
+              ...group.state,
+              playback: { ...playback, waitingFor: [...playback.waitingFor, socket.data.id] },
+            };
+          } else this.hold(group, group.state.revision);
+        }
         this.directory();
         await this.publish(group);
       } else {

@@ -7,7 +7,7 @@ import type {
   PlayerState,
   IpcPlayerSurfaceBounds,
 } from "@lumen/contracts";
-import { PlaybackSessionReporter, type WatchPlayer } from "@lumen/client";
+import { PlaybackSessionReporter, type PlayerBuffer, type WatchPlayer } from "@lumen/client";
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
@@ -41,6 +41,14 @@ const bufferedRangesFrom = (value: unknown): ReadonlyArray<BufferedRange> => {
       ? [{ startSeconds: start, endSeconds: end }]
       : [];
   });
+};
+
+/** How far MPV's demuxer has read beyond what is playing; infinite once it has read to the end. */
+const bufferedAheadFrom = (value: unknown): number => {
+  if (value === null || typeof value !== "object") return 0;
+  if ("eof" in value && value.eof === true) return Number.POSITIVE_INFINITY;
+  const duration = "cache-duration" in value ? value["cache-duration"] : null;
+  return typeof duration === "number" && Number.isFinite(duration) && duration > 0 ? duration : 0;
 };
 
 interface ActiveSession {
@@ -323,10 +331,14 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
-  /** Whether MPV has finished moving to its current position, as after a seek. */
-  async loaded(sessionId: string): Promise<boolean> {
+  async buffer(sessionId: string): Promise<PlayerBuffer> {
     const active = this.requireActive(sessionId);
-    return (await this.command(active, ["get_property", "seeking"])) === false;
+    // Until a seek has finished, the cache still describes the position MPV is leaving.
+    if ((await this.command(active, ["get_property", "seeking"])) !== false)
+      return { aheadSeconds: 0, starved: false };
+    const cache = await this.command(active, ["get_property", "demuxer-cache-state"]);
+    const starved = (await this.command(active, ["get_property", "paused-for-cache"])) === true;
+    return { aheadSeconds: bufferedAheadFrom(cache), starved };
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {
@@ -625,7 +637,7 @@ export const watchPlayerFor = (controller: PlayerController): WatchPlayer<Server
   seek: (sessionId, positionSeconds) => controller.seek(sessionId, positionSeconds),
   pause: (sessionId, paused) => controller.pause(sessionId, paused),
   speed: (sessionId, speed) => controller.speed(sessionId, speed),
-  loaded: (sessionId) => controller.loaded(sessionId),
+  buffer: (sessionId) => controller.buffer(sessionId),
 });
 
 export const startNativePlayer = (controller: PlayerController): (() => void) => {
