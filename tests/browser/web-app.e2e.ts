@@ -38,6 +38,22 @@ test("signs in with a cookie scripts cannot read, and a reload restores the sess
   await expect(page.getByText("Movies").first()).toBeVisible();
 });
 
+test("the page names its own icon, so the browser never asks the API for one", async ({ page }) => {
+  const refused: string[] = [];
+  page.on("response", (response) => {
+    if (response.status() === 401 && !new URL(response.url()).pathname.startsWith("/api/"))
+      refused.push(response.url());
+  });
+  await page.goto("/web/");
+  await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
+  const href = await page.locator('link[rel="icon"]').getAttribute("href");
+  expect(href).toMatch(/^\/web\/assets\/.+\.svg$/u);
+  const icon = await page.request.get(href ?? "");
+  expect(icon.status()).toBe(200);
+  expect(icon.headers()["content-type"]).toBe("image/svg+xml");
+  expect(refused).toEqual([]);
+});
+
 test("every route survives direct navigation and refresh", async ({ page }) => {
   await signIn(page);
   for (const path of [
