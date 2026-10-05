@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { mpvCacheArguments } from "./MpvCache";
 import { LibMpv } from "./LibMpv";
 
 export interface MpvProcessOptions {
@@ -66,7 +67,7 @@ export class MpvProcess {
       "--idle=yes",
       "--no-terminal",
       // Read ahead of playback whatever the source, paused or not: a watch group waits for it.
-      "--cache=yes",
+      ...mpvCacheArguments,
       `--input-ipc-server=${socketPath}`,
       ...(process.platform === "darwin"
         ? [

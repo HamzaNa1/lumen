@@ -7,7 +7,12 @@ import type {
   PlayerState,
   IpcPlayerSurfaceBounds,
 } from "@lumen/contracts";
-import { PlaybackSessionReporter, type PlayerBuffer, type WatchPlayer } from "@lumen/client";
+import {
+  PlaybackDiagnostics,
+  PlaybackSessionReporter,
+  type PlayerBuffer,
+  type WatchPlayer,
+} from "@lumen/client";
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
@@ -36,8 +41,12 @@ const bufferedRangesFrom = (value: unknown): ReadonlyArray<BufferedRange> => {
     if (range === null || typeof range !== "object" || !("start" in range) || !("end" in range))
       return [];
     const { start, end } = range;
-    return typeof start === "number" && Number.isFinite(start) && start >= 0 &&
-        typeof end === "number" && Number.isFinite(end) && end > start
+    return typeof start === "number" &&
+      Number.isFinite(start) &&
+      start >= 0 &&
+      typeof end === "number" &&
+      Number.isFinite(end) &&
+      end > start
       ? [{ startSeconds: start, endSeconds: end }]
       : [];
   });
@@ -122,6 +131,10 @@ export class PlayerController extends EventEmitter {
   private stopping: Promise<void> | null = null;
   // Avoid relying on a Windows driver to downmix center/surround channels.
   // Automatic output remains available for a correctly configured surround system.
+  private diagnostics = new PlaybackDiagnostics();
+  private starved = false;
+  private intentionalPause = false;
+  private lastBufferSampleMs = 0;
   private audioOutput: AudioOutput = process.platform === "win32" ? "stereo" : "auto-safe";
 
   constructor(options: PlayerControllerOptions) {
@@ -142,7 +155,13 @@ export class PlayerController extends EventEmitter {
     const generation = ++this.startGeneration;
     await this.stopActive();
     if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-    const session = await input.client.startPlayback(input.itemId);
+    const diagnostics = new PlaybackDiagnostics();
+    this.diagnostics = diagnostics;
+    diagnostics.record("playback_start", {});
+    const session = await input.client.startPlayback(input.itemId).catch((cause: unknown) => {
+      diagnostics.record("playback_failure", { stage: "startup" });
+      throw cause;
+    });
     const reporter = new PlaybackSessionReporter(input.client, session.sessionId, (cause) =>
       this.emitError(cause),
     );
@@ -166,6 +185,8 @@ export class PlayerController extends EventEmitter {
       await ipc.connect(playerProcess);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       const registered = this.bridge.register({
+        diagnostics: this.diagnostics,
+        sessionId: session.sessionId,
         connectionId: input.connectionId,
         serverClient: input.client,
         streamPath: new URL(session.streamUrl, input.client.serverOrigin).pathname,
@@ -191,7 +212,10 @@ export class PlayerController extends EventEmitter {
       ipc.on("disconnected", (cause: Error) => this.failActive(active, cause));
       ipc.on("end-file", (event: { readonly reason?: string; readonly file_error?: string }) => {
         if (event.reason === "error")
-          this.failActive(active, new Error(`Playback failed: ${event.file_error ?? "media error"}`));
+          this.failActive(
+            active,
+            new Error(`Playback failed: ${event.file_error ?? "media error"}`),
+          );
       });
       // The loadfile ack only means mpv accepted the command, not that the
       // file demuxed. Wait for file-loaded and fail fast on end-file/error
@@ -281,9 +305,14 @@ export class PlayerController extends EventEmitter {
         selectedSubtitleStreamId: selectedSubtitleStream?.id ?? null,
         audioOutput: this.audioOutput,
       };
+      this.intentionalPause = input.paused ?? false;
       this.publish();
       return this.sanitized(session);
     } catch (cause) {
+      diagnostics.record(
+        generation === this.startGeneration ? "playback_failure" : "playback_cancelled",
+        { stage: "startup" },
+      );
       if (startedActive !== null) {
         if (this.active === startedActive) await this.stopActive();
         else await startedActive.stopping;
@@ -311,10 +340,13 @@ export class PlayerController extends EventEmitter {
     }
     this.assertActive(sessionId);
     const sample = this.state === previous;
+    this.intentionalPause = paused;
     this.state = { ...this.requireState(), paused };
     this.publish();
     if (paused) {
-      const state = sample ? await this.samplePosition(active, this.requireState()) : this.requireState();
+      const state = sample
+        ? await this.samplePosition(active, this.requireState())
+        : this.requireState();
       await active.reporter.saveProgress(state);
     }
     return this.requireState();
@@ -344,17 +376,20 @@ export class PlayerController extends EventEmitter {
 
   async speed(sessionId: string, speed: number): Promise<void> {
     const active = this.requireActive(sessionId);
-    if (!Number.isFinite(speed) || speed < 0.9 || speed > 1.1) throw new Error("Invalid playback speed");
+    if (!Number.isFinite(speed) || speed < 0.9 || speed > 1.1)
+      throw new Error("Invalid playback speed");
     await this.command(active, ["set_property", "speed", speed]);
   }
 
   volume(sessionId: string, volume: number, muted = false): PlayerState {
     const active = this.requireActive(sessionId);
     const bounded = Math.max(0, Math.min(100, Math.round(volume)));
-    this.command(active, ["set_property", "volume", bounded])
-      .catch((cause: unknown) => this.emitError(cause));
-    this.command(active, ["set_property", "mute", muted ? "yes" : "no"])
-      .catch((cause: unknown) => this.emitError(cause));
+    this.command(active, ["set_property", "volume", bounded]).catch((cause: unknown) =>
+      this.emitError(cause),
+    );
+    this.command(active, ["set_property", "mute", muted ? "yes" : "no"]).catch((cause: unknown) =>
+      this.emitError(cause),
+    );
     this.state = { ...this.requireState(), volume: bounded, muted };
     this.publish();
     return this.requireState();
@@ -428,14 +463,13 @@ export class PlayerController extends EventEmitter {
       }, FILE_LOADED_TIMEOUT_MS);
       active.ipc.on("playback-restart", onRestart);
       void this.command(active, [
-          "seek",
-          typeof position === "number" ? position : this.requireState().positionSeconds,
-          "absolute+exact",
-        ])
-        .catch((cause: unknown) => {
-          cleanup();
-          reject(cause);
-        });
+        "seek",
+        typeof position === "number" ? position : this.requireState().positionSeconds,
+        "absolute+exact",
+      ]).catch((cause: unknown) => {
+        cleanup();
+        reject(cause);
+      });
     });
     this.assertActive(sessionId);
     this.audioOutput = output;
@@ -445,22 +479,30 @@ export class PlayerController extends EventEmitter {
   }
 
   async audioDiagnostics(sessionId: string): Promise<string> {
-    const active = this.requireActive(sessionId);
+    if (this.active === null || this.state === null)
+      return JSON.stringify(
+        { lumenVersion: app.getVersion(), playbackTimeline: this.diagnostics.snapshot() },
+        null,
+        2,
+      );
+    const active = sessionId === "" ? this.active : this.requireActive(sessionId);
     const state = this.requireState();
     const trackId =
       state.selectedAudioStreamId === null
         ? null
         : active.trackIds.get(state.selectedAudioStreamId);
+    const diagnostics = this.diagnostics;
     const properties = await collectAudioDiagnostics(active.ipc);
-    this.assertActive(sessionId);
     return JSON.stringify(
       {
+        playbackSessionId: active.session.sessionId,
         lumenVersion: app.getVersion(),
         platform: process.platform,
         osRelease: release(),
         audioOutput: state.audioOutput,
         expectedAudioTrack: trackId,
         properties,
+        playbackTimeline: diagnostics.snapshot(),
       },
       null,
       2,
@@ -478,13 +520,20 @@ export class PlayerController extends EventEmitter {
 
   private failActive(active: ActiveSession, cause: unknown): void {
     if (this.active !== active) return;
+    this.diagnostics.record("playback_failure", {
+      stage: this.state === null ? "startup" : "runtime",
+      sessionId: active.session.sessionId,
+    });
     this.startGeneration += 1;
     void this.stopActive(cause);
     this.emitError(cause);
     this.emit("ended", cause);
   }
 
-  private async command(active: ActiveSession, args: ReadonlyArray<string | number>): Promise<unknown> {
+  private async command(
+    active: ActiveSession,
+    args: ReadonlyArray<string | number>,
+  ): Promise<unknown> {
     try {
       return await active.ipc.command(args);
     } catch (cause) {
@@ -504,6 +553,8 @@ export class PlayerController extends EventEmitter {
     const state = this.state;
     this.active = null;
     this.state = null;
+    this.starved = false;
+    this.intentionalPause = false;
     active?.reporter.retire();
     active?.cancellation.abort(cause);
     this.surface.hide();
@@ -532,18 +583,50 @@ export class PlayerController extends EventEmitter {
       const paused = await this.command(active, ["get_property", "pause"]);
       const ended = await this.command(active, ["get_property", "eof-reached"]);
       const cache = await cacheState;
+      const [seeking, pausedForCache] = await Promise.all([
+        active.ipc.command(["get_property", "seeking"], CACHE_STATE_TIMEOUT_MS).catch(() => null),
+        active.ipc
+          .command(["get_property", "paused-for-cache"], CACHE_STATE_TIMEOUT_MS)
+          .catch(() => null),
+      ]);
       // A stop, replacement session, or user action makes this sample stale.
       if (this.active !== active || this.state !== state) return;
       const next: PlayerState = {
         ...state,
-        positionSeconds:
-          typeof value === "number" && value >= 0 ? value : state.positionSeconds,
+        positionSeconds: typeof value === "number" && value >= 0 ? value : state.positionSeconds,
         durationSeconds:
           typeof duration === "number" && duration >= 0 ? duration : state.durationSeconds,
         bufferedRanges: bufferedRangesFrom(cache),
         paused: paused === true,
         ended: ended === true,
       };
+      if (seeking !== null && pausedForCache !== null) {
+        const starved =
+          pausedForCache === true && seeking !== true && ended !== true && !this.intentionalPause;
+        const now = Date.now();
+        if (starved !== this.starved || now - this.lastBufferSampleMs >= 1000) {
+          this.diagnostics.record(
+            starved !== this.starved
+              ? starved
+                ? "buffer_starvation"
+                : "buffer_recovery"
+              : "buffer_sample",
+            {
+              sessionId: active.session.sessionId,
+              aheadSeconds: Number.isFinite(bufferedAheadFrom(cache))
+                ? bufferedAheadFrom(cache)
+                : null,
+              pausedForCache: pausedForCache === true,
+              seeking: seeking === true,
+              intentionalPause: this.intentionalPause,
+              eof: ended === true,
+              positionSeconds: next.positionSeconds,
+            },
+          );
+          this.lastBufferSampleMs = now;
+        }
+        this.starved = starved;
+      }
       this.state = next;
       this.publish();
     } catch (cause) {
@@ -586,10 +669,11 @@ export class PlayerController extends EventEmitter {
   ): Promise<void> {
     const { reporter, process, ipc, capability } = resources;
     reporter.retire();
-    const savedState = finalProgress === null
-      ? null
-      : await this.samplePosition(finalProgress.active, finalProgress.state);
     if (capability !== null) this.bridge.revoke(capability);
+    const savedState =
+      finalProgress === null
+        ? null
+        : await this.samplePosition(finalProgress.active, finalProgress.state);
     ipc?.close();
     const stoppingProcess = process?.stop().catch((cause: unknown) => this.emitError(cause));
     if (savedState !== null) await reporter.saveProgress(savedState);

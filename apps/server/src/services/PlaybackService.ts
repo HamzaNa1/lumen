@@ -76,7 +76,14 @@ export interface PlaybackServiceShape {
     trackId: string,
     nowMs: number,
   ) => Effect.Effect<
-    { absolutePath: string; size: number; modifiedAtMs: number; mimeType: string },
+    {
+      absolutePath: string;
+      size: number;
+      modifiedAtMs: number;
+      mimeType: string;
+      sessionId: string;
+      userId: string;
+    },
     unknown
   >;
 }
@@ -227,9 +234,7 @@ export const makePlaybackService = Effect.gen(function* () {
       const grants = yield* database
         .select({ id: playbackGrants.id, trackId: playbackGrants.trackId })
         .from(playbackGrants)
-        .where(
-          and(eq(playbackGrants.sessionId, sessionId), gt(playbackGrants.expiresAtMs, nowMs)),
-        );
+        .where(and(eq(playbackGrants.sessionId, sessionId), gt(playbackGrants.expiresAtMs, nowMs)));
       const trackIds = new Set(grants.map((grant) => grant.trackId));
       if (activeTrackId !== null) trackIds.add(activeTrackId);
       for (const trackId of trackIds)
@@ -261,7 +266,10 @@ export const makePlaybackService = Effect.gen(function* () {
             .where(
               and(
                 eq(playbackGrants.sessionId, sessionId),
-                inArray(playbackGrants.id, grants.map((grant) => grant.id)),
+                inArray(
+                  playbackGrants.id,
+                  grants.map((grant) => grant.id),
+                ),
                 gt(playbackGrants.expiresAtMs, nowMs),
               ),
             );
@@ -409,6 +417,8 @@ export const makePlaybackService = Effect.gen(function* () {
   )(function* (grantToken, trackId, nowMs) {
     const row = yield* database
       .select({
+        sessionId: playbackSessions.id,
+        userId: playbackSessions.userId,
         absolutePath: mediaSources.absolutePath,
         rootPath: libraryRoots.path,
         size: mediaSources.fileSizeBytes,

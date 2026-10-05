@@ -98,11 +98,13 @@ export const PlayerView = ({
               }
         }
         onCopyAudioDiagnostics={
-          nativeAudio === null || !capabilities.audioDiagnostics
+          (runtime.playback.copyDiagnostics === undefined && nativeAudio === null) ||
+          !capabilities.audioDiagnostics
             ? undefined
             : async () => {
-                if (player === null) throw new Error("Playback is not active");
-                await nativeAudio.copyDiagnostics(player.sessionId);
+                if (runtime.playback.copyDiagnostics !== undefined)
+                  await runtime.playback.copyDiagnostics();
+                else if (player !== null) await nativeAudio?.copyDiagnostics(player.sessionId);
               }
         }
         buffering={player?.buffering === true || waiting !== undefined}
@@ -129,7 +131,10 @@ export const PlayerView = ({
         }
         onPause={() => {
           if (player !== null)
-            void runtime.playback.pause(player.sessionId, !player.paused).then(setPlayer).catch(() => undefined);
+            void runtime.playback
+              .pause(player.sessionId, !player.paused)
+              .then(setPlayer)
+              .catch(() => undefined);
         }}
         onSeek={(positionSeconds) => {
           if (player !== null)

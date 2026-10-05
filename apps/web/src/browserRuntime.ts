@@ -1,3 +1,4 @@
+import { exportPlaybackDiagnostics } from "./ExportDiagnostics";
 import {
   cookieCredentials,
   ServerApi,
@@ -104,7 +105,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
   };
 
   let fullscreenTarget: HTMLElement | null = null;
-  const onFullscreenChange = (): void => fullscreenChanges.emit(document.fullscreenElement !== null);
+  const onFullscreenChange = (): void =>
+    fullscreenChanges.emit(document.fullscreenElement !== null);
   // Timers stop while a page is hidden or the device sleeps, and the network may have gone away.
   // Before carrying on, find out what the server still knows about this session and playback.
   const resume = (): void => {
@@ -154,7 +156,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     capabilities: {
       serverSwitching: false,
       nativeAudioOutput: false,
-      audioDiagnostics: false,
+      audioDiagnostics: true,
       // Only some browsers let a page switch a file's audio tracks, and none expose the subtitles
       // embedded in it. The player lists the tracks that really can be switched.
       trackSelection: "audioTracks" in HTMLMediaElement.prototype,
@@ -229,6 +231,9 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       onFullscreenChange: fullscreenChanges.subscribe,
       presentation: { kind: "inline" },
       nativeAudio: null,
+      copyDiagnostics: async () => {
+        await exportPlaybackDiagnostics(player.playbackDiagnostics());
+      },
     },
     watch: {
       state: async () => {

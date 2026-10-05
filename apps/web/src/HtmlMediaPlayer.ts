@@ -1,4 +1,5 @@
 import {
+  PlaybackDiagnostics,
   PLAYBACK_REPORT_INTERVAL_MS,
   type PlaybackSessionApi,
   type PlayerBuffer,
@@ -146,6 +147,15 @@ export class HtmlMediaPlayer {
   private stopping: Promise<void> | null = null;
   private recoveries: number[] = [];
   private leaving = false;
+  private diagnostics = new PlaybackDiagnostics();
+
+  playbackDiagnostics(): string {
+    return JSON.stringify(
+      { httpStatusAvailable: false, playbackTimeline: this.diagnostics.snapshot() },
+      null,
+      2,
+    );
+  }
 
   constructor(options: HtmlMediaPlayerOptions) {
     this.element = options.element;
@@ -166,7 +176,17 @@ export class HtmlMediaPlayer {
     await this.stopActive();
     if (generation !== this.generation) throw cancelled();
     this.recoveries = [];
-    await this.open(generation, input.itemId, input.startAtSeconds ?? 0, input.paused === true);
+    const diagnostics = new PlaybackDiagnostics();
+    this.diagnostics = diagnostics;
+    try {
+      await this.open(generation, input.itemId, input.startAtSeconds ?? 0, input.paused === true);
+    } catch (cause) {
+      diagnostics.record(generation === this.generation ? "browser_failure" : "browser_cancelled", {
+        stage: "startup",
+        mediaErrorCode: this.element.error?.code ?? null,
+      });
+      throw cause;
+    }
   }
 
   async pause(sessionId: string, paused: boolean): Promise<PlayerState> {
@@ -213,7 +233,9 @@ export class HtmlMediaPlayer {
     for (let index = 0; index < element.buffered.length; index += 1) {
       const rangeEnd = element.buffered.end(index);
       if (element.buffered.start(index) > position || rangeEnd <= position) continue;
-      return rangeEnd >= end - END_TOLERANCE_SECONDS ? Number.POSITIVE_INFINITY : rangeEnd - position;
+      return rangeEnd >= end - END_TOLERANCE_SECONDS
+        ? Number.POSITIVE_INFINITY
+        : rangeEnd - position;
     }
     return 0;
   }
@@ -487,9 +509,34 @@ export class HtmlMediaPlayer {
       active.buffering = waiting;
       update();
     };
-    const onWaiting = buffering(true);
-    const onPlaying = buffering(false);
+    const record = (kind: string): void => {
+      if (this.active !== active) return;
+      const state = this.snapshot(active);
+      const range = state.bufferedRanges.find(
+        (range) =>
+          range.startSeconds <= state.positionSeconds && range.endSeconds >= state.positionSeconds,
+      );
+      this.diagnostics.record(kind, {
+        sessionId: active.session.sessionId,
+        positionSeconds: state.positionSeconds,
+        aheadSeconds: range === undefined ? 0 : range.endSeconds - state.positionSeconds,
+        intentionalPause: this.element.paused,
+        seeking: this.element.seeking,
+        eof: this.element.ended,
+        readyState: this.element.readyState,
+        mediaErrorCode: this.element.error?.code ?? null,
+      });
+    };
+    const onWaiting = (): void => {
+      record("browser_waiting");
+      buffering(true)();
+    };
+    const onPlaying = (): void => {
+      if (active.buffering) record("browser_recovery");
+      buffering(false)();
+    };
     const onError = (): void => {
+      record("browser_error");
       if (this.active === active) void this.recover(active, this.element.error?.code);
     };
     const onEnded = (): void => {
@@ -505,6 +552,7 @@ export class HtmlMediaPlayer {
       ["seeked", update],
       ["volumechange", update],
       ["waiting", onWaiting],
+      ["stalled", () => record("browser_stalled")],
       ["playing", onPlaying],
       ["canplay", onPlaying],
       ["ended", onEnded],
@@ -562,7 +610,10 @@ export class HtmlMediaPlayer {
   private stopActive({
     saveProgress = true,
     announce = true,
-  }: { readonly saveProgress?: boolean; readonly announce?: boolean } = {}): Promise<void> {
+  }: {
+    readonly saveProgress?: boolean;
+    readonly announce?: boolean;
+  } = {}): Promise<void> {
     if (this.stopping !== null) return this.stopping;
     const active = this.active;
     if (active === null) return Promise.resolve();

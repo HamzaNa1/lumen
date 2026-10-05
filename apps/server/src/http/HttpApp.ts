@@ -1,9 +1,25 @@
-import { API_VERSION, BrowserSession, EpisodeOrderOptions, EpisodeOrderSelection, HomeContent, ServerInfo, User } from "@lumen/contracts";
+import {
+  API_VERSION,
+  BrowserSession,
+  EpisodeOrderOptions,
+  EpisodeOrderSelection,
+  HomeContent,
+  ServerInfo,
+  User,
+} from "@lumen/contracts";
 import { version as serverVersion } from "../../package.json";
 import { Effect, Schema } from "effect";
 import { badRequest, notFound, ServerError, unauthorized } from "../core/Errors";
 import { createLogger, type Logger } from "../core/Logger";
-import { clientKey, isRoutineProbe, requestIdFor, requestMethod, requestRoute } from "./RequestLogging";
+import {
+  isRoutineProbe,
+  requestIdFor,
+  requestMethod,
+  requestRoute,
+  requestRange,
+} from "./RequestLogging";
+import { clientKey, type RequestContext } from "./ClientIdentity";
+import { isMediaRequest, mediaTrackIdFor, MediaAdmission } from "./MediaAdmission";
 import { RequestLimiter, LimitExceeded } from "../core/Limits";
 import type { ServerConfig } from "../config/Config";
 import type { ServerIdentity } from "../database/Identity";
@@ -110,6 +126,7 @@ const errorResponse = (cause: unknown, requestId: string): Response => {
   if (cause instanceof LimitExceeded)
     return json(S.Message, { message: "Rate limit exceeded", requestId }, 429, {
       "retry-after": String(cause.retryAfterSeconds),
+      "x-admission-reason": cause.reason ?? "api_rate_or_setup_capacity",
     });
   if (cause instanceof ServerError)
     return json(
@@ -148,6 +165,8 @@ export const makeHttpHandler = (
     loginRequests: config.loginAttemptsPerMinute,
     maxActive: config.maxConcurrentRequests,
   });
+  const mediaAdmission = new MediaAdmission(config);
+  const mediaSessions = new WeakMap<Request, string>();
   // Session cookies to set once the response exists, keyed by the request that earned them.
   const cookies = new WeakMap<Request, string>();
   /** Renews valid cookie sessions; rejected requests may belong to an older sign-in. */
@@ -287,24 +306,27 @@ export const makeHttpHandler = (
         await call(services.auth.migrateLegacySession(input.refreshToken, Date.now())),
       );
     }
-    if (
-      (method === "GET" || method === "HEAD") &&
-      parts[0] === "api" &&
-      parts[1] === "v1" &&
-      parts[2] === "media" &&
-      parts[3] !== undefined
-    ) {
+    const mediaTrackId = mediaTrackIdFor(request);
+    if (mediaTrackId !== null) {
       const grant = bearer(request) ?? url.searchParams.get("grant");
       if (grant === null) throw unauthorized("Playback grant is required");
-      const media = await call(services.playback.authorizeGrant(grant, parts[3], Date.now()));
-      return serveFile({
-        request,
-        path: media.absolutePath,
-        size: media.size,
-        modifiedAtMs: media.modifiedAtMs ?? Date.now(),
-        mimeType: media.mimeType,
-      });
+      const media = await call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now()));
+      mediaSessions.set(request, media.sessionId);
+      const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
+      try {
+        return await serveFile({
+          request,
+          path: media.absolutePath,
+          size: media.size,
+          modifiedAtMs: media.modifiedAtMs ?? Date.now(),
+          mimeType: media.mimeType,
+          preserveIdleTimeout: true,
+        });
+      } finally {
+        release();
+      }
     }
+    if (url.pathname.startsWith("/api/v1/media/")) throw notFound("Endpoint not found");
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
     if (
@@ -962,7 +984,7 @@ export const makeHttpHandler = (
     }
     throw notFound("Endpoint not found");
   };
-  return async (request: Request): Promise<Response> => {
+  return async (request: Request, context?: RequestContext): Promise<Response> => {
     const startedAt = performance.now();
     const requestId = requestIdFor(request);
     const pathname = new URL(request.url).pathname;
@@ -974,7 +996,8 @@ export const makeHttpHandler = (
     });
     let response: Response;
     let failure: unknown;
-    const key = clientKey(request);
+    const key = clientKey(request, context, config.trustedProxies);
+    const media = isMediaRequest(request);
     const login = [
       "/auth/login",
       "/auth/register",
@@ -983,15 +1006,31 @@ export const makeHttpHandler = (
       "/auth/browser/register",
     ].some((path) => pathname.endsWith(path));
     try {
-      const execute = Effect.tryPromise({ try: () => dispatch(request), catch: (cause) => cause });
-      const checked = limiter.check(key, Date.now(), login ? "login" : "request");
-      response = await Effect.runPromise(
-        checked.pipe(Effect.flatMap(() => limiter.run(key, execute))),
-      );
+      if (media) {
+        const release = mediaAdmission.enterPeer(key, Date.now());
+        try {
+          response = await dispatch(request);
+        } finally {
+          release();
+        }
+      } else {
+        const execute = Effect.tryPromise({
+          try: () => dispatch(request),
+          catch: (cause) => cause,
+        });
+        const checked = limiter.check(key, Date.now(), login ? "login" : "request");
+        response = await Effect.runPromise(
+          checked.pipe(Effect.flatMap(() => limiter.run(key, execute))),
+        );
+      }
     } catch (cause) {
       failure = cause;
       response = errorResponse(cause, requestId);
     }
+    // A valid file transfer may stop reading indefinitely while the player is paused.
+    // Keep ordinary API/denied requests on the transport's default timeout.
+    if (media && request.method === "GET" && (response.status === 200 || response.status === 206))
+      context?.disableIdleTimeout?.();
     response.headers.set("x-request-id", requestId);
     const cookie = cookies.get(request);
     if (cookie !== undefined) response.headers.append("set-cookie", cookie);
@@ -1010,6 +1049,20 @@ export const makeHttpHandler = (
       "http_request",
       {
         status: response.status,
+        ...(media
+          ? {
+              range: requestRange(request),
+              playbackSessionId: mediaSessions.get(request),
+              admission:
+                failure instanceof LimitExceeded ? (failure.reason ?? "rate_limited") : "accepted",
+              expectedResponseBytes:
+                request.method === "HEAD"
+                  ? 0
+                  : response.headers.has("content-length")
+                    ? Number(response.headers.get("content-length"))
+                    : null,
+            }
+          : {}),
         // Response creation time; media and SSE bodies may continue streaming.
         durationMs: Math.round((performance.now() - startedAt) * 100) / 100,
         errorCode:
