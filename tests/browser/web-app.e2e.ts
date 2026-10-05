@@ -81,7 +81,8 @@ test("a session revoked on the server returns the app to sign-in", async ({ page
     sessionId,
   );
   expect(revoked).toBe(200);
-  await page.getByRole("link", { name: "Search" }).click();
+  // The next request the app makes is refused. That may be one already under way, so the
+  // sidebar can be gone at any moment; go straight to a page rather than clicking through it.
   await page.goto("/web/admin/users");
   await expect(page.getByRole("heading", { name: "Sign in" })).toBeVisible();
 });
