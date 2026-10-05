@@ -14,7 +14,7 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { type ReactNode, type Ref, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useState } from "react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
 import { formatPlayerTime, streamLabels } from "./PlayerFormatting";
@@ -124,9 +124,14 @@ export const MediaPlayer = ({
             : "ready";
   const seekBy = usePlayerShortcuts({ enabled: !inactive, position, duration, onPause, onSeek });
 
+  useEffect(() => {
+    // The settings panel is part of the controls, so it goes away with them.
+    if (!controlsVisible) setSettingsOpen(false);
+  }, [controlsVisible]);
+
   return (
     <section
-      className={`media-player${controlsVisible || settingsOpen ? " controls-visible" : ""}`}
+      className={`media-player${controlsVisible ? " controls-visible" : ""}`}
       aria-label="Media player"
       data-status={status}
     >
