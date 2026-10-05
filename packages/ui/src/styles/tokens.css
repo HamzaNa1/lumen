@@ -929,6 +929,13 @@ body:has(.app-shell) {
   flex: 1;
   line-height: 1.4;
 }
+/* An update prompt sits above everything, including the player. */
+.update-toast {
+  z-index: 200;
+}
+.update-toast > svg {
+  color: var(--accent);
+}
 .panel-skeleton {
   height: 168px;
   border: 1px solid var(--border);

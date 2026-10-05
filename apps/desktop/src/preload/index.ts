@@ -82,6 +82,11 @@ const api: DesktopBridge = {
     onOverlayAction: subscribe("player:overlay-action"),
     onFullscreenChange: subscribe("player:fullscreen-state"),
   },
+  updates: {
+    ready: () => invoke("updates:ready"),
+    onReady: subscribe("updates:ready"),
+    install: () => invoke("updates:install"),
+  },
 };
 
 contextBridge.exposeInMainWorld("lumen", api);

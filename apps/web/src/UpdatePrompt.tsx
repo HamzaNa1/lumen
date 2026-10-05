@@ -1,6 +1,5 @@
 import type { ServerApi } from "@lumen/client";
-import { Button } from "@lumen/ui";
-import { RefreshCw } from "lucide-react";
+import { UpdateToast } from "@lumen/ui";
 import { useEffect, useState } from "react";
 
 /**
@@ -40,12 +39,10 @@ export const UpdatePrompt = ({ api }: { readonly api: ServerApi }): React.ReactE
 
   if (!stale) return null;
   return (
-    <div className="toast update-prompt" role="alert">
-      <RefreshCw aria-hidden="true" size={17} />
-      <span>Lumen was updated. Reload to keep using it.</span>
-      <Button variant="primary" size="sm" onClick={() => window.location.reload()}>
-        Reload
-      </Button>
-    </div>
+    <UpdateToast
+      message="Lumen was updated. Reload to keep using it."
+      action="Reload"
+      onAction={() => window.location.reload()}
+    />
   );
 };

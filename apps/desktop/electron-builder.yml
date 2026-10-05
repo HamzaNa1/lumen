@@ -21,11 +21,13 @@
     "icon": "resources/icons/icon.ico",
     "target": ["nsis", "portable"]
   },
+  "nsis": { "artifactName": "${productName}-Setup-${version}.${ext}" },
+  "portable": { "artifactName": "${productName}-Portable-${version}.${ext}" },
   "linux": {
     "icon": "resources/icons/icon.png",
     "target": ["AppImage", "deb"],
     "category": "AudioVideo",
     "maintainer": "Lumen <HamzaNa1@users.noreply.github.com>"
   },
-  "publish": [{ "provider": "generic", "url": "https://updates.lumen.invalid" }]
+  "publish": [{ "provider": "github", "owner": "HamzaNa1", "repo": "lumen" }]
 }
