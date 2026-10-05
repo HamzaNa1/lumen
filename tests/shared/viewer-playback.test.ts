@@ -83,3 +83,12 @@ for (const command of ["pause", "seek"] as const) {
     await expect(pending).rejects.toThrow("not active");
   });
 }
+
+test("group playback carries the selected title without waiting for another catalog request", async () => {
+  const { commands, group } = setup(true);
+  const starting = commands.start("next", 20, "Next film");
+  expect(group).toEqual([
+    { type: "play", itemId: "next", positionSeconds: 20, title: "Next film" },
+  ]);
+  await starting;
+});

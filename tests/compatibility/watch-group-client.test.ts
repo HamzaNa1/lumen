@@ -79,10 +79,7 @@ test("a viewer's own actions show at once and settle on what the server says", a
     await eventually(() => viewer.status.groups.some((group) => group.id === groupId));
 
     const joining = viewer.action({ type: "join", groupId, password: "" });
-    expect(viewer.status.group?.members.map((member) => member.id)).toEqual([
-      owner.status.memberId ?? "",
-      viewer.status.memberId ?? "",
-    ]);
+    expect(viewer.status.group).toBeNull();
     await joining;
     expect(viewer.status.group).toEqual(owner.status.group);
 

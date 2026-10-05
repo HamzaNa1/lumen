@@ -22,16 +22,11 @@ export interface WatchPrediction {
 
 type Position = Pick<WatchPlayback, "itemId" | "title" | "positionSeconds">;
 
-const MAX_MEMBERS = 32;
-
 /**
  * The server answers a playback action with the group's next revision, so the prediction holds
  * for exactly as long as the group stays at the revision it was made against.
  */
-const nextRevision = (
-  base: WatchGroup,
-  playback: WatchPlayback | null,
-): WatchPrediction => ({
+const nextRevision = (base: WatchGroup, playback: WatchPlayback | null): WatchPrediction => ({
   awaits: (group) => group?.id === base.id && group.revision === base.revision,
   apply: (group) => (group === null ? null : { ...group, revision: base.revision + 1, playback }),
 });
@@ -42,8 +37,17 @@ const playbackPrediction = (
   viewer: WatchViewer,
   nowMs: number,
 ): WatchPrediction | null => {
-  const playback = base.playback;
-  // Only the server knows the title of something the group is not already watching.
+  const playback =
+    action.type === "play"
+      ? {
+          itemId: action.itemId,
+          title:
+            action.title ??
+            (base.playback?.itemId === action.itemId ? base.playback.title : "Loading…"),
+          paused: false,
+          waitingFor: undefined,
+        }
+      : base.playback;
   if (playback === null || playback.itemId !== action.itemId) return null;
   if (action.type === "stop") return nextRevision(base, null);
   const position: Position = {
@@ -68,48 +72,40 @@ const playbackPrediction = (
 };
 
 /**
- * Predicts what an action will do to the viewer's group, or returns null when only the server
- * can tell: whether a password is right, what an item is called, or what a busy group became.
+ * Predicts local group changes. Joining always waits for the server to confirm membership.
  */
 export const predictWatchAction = (
   action: WatchAction,
-  status: Pick<WatchStatus, "group" | "groups">,
+  status: Pick<WatchStatus, "group">,
   viewer: WatchViewer,
   nowMs: number,
 ): WatchPrediction | null => {
   const current = status.group;
   if (action.type === "leave")
     return current === null ? null : { awaits: (group) => group !== null, apply: () => null };
-  if (action.type === "create" || action.type === "join") {
+  if (action.type === "create") {
     if (viewer.displayName === null) return null;
     const member = { id: viewer.memberId, displayName: viewer.displayName };
-    if (action.type === "create") {
-      const created: WatchGroup = {
-        id: randomId(),
-        name: action.name.trim(),
-        hasPassword: action.password !== "",
-        members: [member],
-        playback: null,
-        revision: 0,
-      };
-      // The server names the new group itself; any other group it reports is that one.
-      return {
-        awaits: (group) => group === null || group.id === current?.id,
-        apply: () => created,
-      };
-    }
-    const listed = status.groups.find((group) => group.id === action.groupId);
-    if (
-      listed === undefined ||
-      listed.hasPassword ||
-      listed.id === current?.id ||
-      listed.members.length >= MAX_MEMBERS
-    )
-      return null;
-    const joined = { ...listed, members: [...listed.members, member] };
-    return { awaits: (group) => group?.id !== listed.id, apply: () => joined };
+    const created: WatchGroup = {
+      id: randomId(),
+      name: action.name.trim(),
+      hasPassword: action.password !== "",
+      members: [member],
+      playback: null,
+      revision: 0,
+    };
+    // The server names the new group itself; any other group it reports is that one.
+    return {
+      awaits: (group) => group === null || group.id === current?.id,
+      apply: () => created,
+    };
   }
-  if (action.type === "play" || action.type === "pause" || action.type === "seek" || action.type === "stop")
+  if (
+    action.type === "play" ||
+    action.type === "pause" ||
+    action.type === "seek" ||
+    action.type === "stop"
+  )
     return current === null ? null : playbackPrediction(action, current, viewer, nowMs);
   return null;
 };

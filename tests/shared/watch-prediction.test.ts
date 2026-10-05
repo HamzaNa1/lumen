@@ -12,12 +12,8 @@ const group = (patch: Partial<WatchGroup> = {}): WatchGroup => ({
   revision: 4,
   ...patch,
 });
-const predict = (
-  action: WatchAction,
-  current: WatchGroup | null,
-  groups: ReadonlyArray<WatchGroup> = [],
-  as: WatchViewer = viewer,
-) => predictWatchAction(action, { group: current, groups }, as, 1000);
+const predict = (action: WatchAction, current: WatchGroup | null, as: WatchViewer = viewer) =>
+  predictWatchAction(action, { group: current }, as, 1000);
 
 test("pausing and stopping show the group's next revision at once", () => {
   const current = group();
@@ -46,7 +42,7 @@ test("a group about to play holds for a viewer whose player reports back, and pl
     updatedAtMs: 1000,
     waitingFor: [],
   });
-  const plain = predict(seek, current, [], { ...viewer, readiness: false });
+  const plain = predict(seek, current, { ...viewer, readiness: false });
   expect(plain?.apply(current)?.playback).toMatchObject({ positionSeconds: 40, paused: false });
 });
 
@@ -83,35 +79,18 @@ test("a playback prediction stands only until the group moves past the revision 
 
 test("what only the server knows is not predicted", () => {
   const current = group();
-  expect(predict({ type: "play", itemId: "other", positionSeconds: 0 }, current)).toBeNull();
   expect(predict({ type: "stop", itemId: "other" }, current)).toBeNull();
   expect(predict({ type: "stop", itemId: "item" }, null)).toBeNull();
-  const locked = group({ hasPassword: true });
-  expect(predict({ type: "join", groupId: "group", password: "guess" }, null, [locked])).toBeNull();
-  expect(predict({ type: "join", groupId: "gone", password: "" }, null, [current])).toBeNull();
+  expect(predict({ type: "join", groupId: "group", password: "guess" }, null)).toBeNull();
+  expect(predict({ type: "join", groupId: "gone", password: "" }, null)).toBeNull();
   const unnamed = { ...viewer, displayName: null };
-  expect(
-    predict({ type: "join", groupId: "group", password: "" }, null, [current], unnamed),
-  ).toBeNull();
-  expect(predict({ type: "create", name: "New", password: "" }, null, [], unnamed)).toBeNull();
+  expect(predict({ type: "join", groupId: "group", password: "" }, null, unnamed)).toBeNull();
+  expect(predict({ type: "create", name: "New", password: "" }, null, unnamed)).toBeNull();
   expect(predict({ type: "leave" }, null)).toBeNull();
 });
 
-test("joining, creating and leaving show the viewer's membership at once", () => {
+test("creating and leaving show the viewer's membership at once", () => {
   const listed = group();
-  const joined = predict({ type: "join", groupId: "group", password: "" }, null, [listed]);
-  expect(joined?.apply(null)).toMatchObject({
-    id: "group",
-    revision: 4,
-    members: [
-      { id: "owner", displayName: "Owner" },
-      { id: "me", displayName: "Me" },
-    ],
-  });
-  // Moving between groups passes through belonging to none.
-  expect(joined?.awaits(null)).toBe(true);
-  expect(joined?.awaits(listed)).toBe(false);
-
   const created = predict({ type: "create", name: " Late show ", password: "secret" }, listed);
   expect(created?.apply(listed)).toMatchObject({
     name: "Late show",
@@ -129,3 +108,50 @@ test("joining, creating and leaving show the viewer's membership at once", () =>
   expect(left?.awaits(listed)).toBe(true);
   expect(left?.awaits(null)).toBe(false);
 });
+
+for (const current of [group({ playback: null, revision: 0 }), group()]) {
+  test(`playing a new item is immediate with ${current.playback === null ? "no" : "existing"} group playback`, () => {
+    const prediction = predict(
+      { type: "play", itemId: "new", title: "Next film", positionSeconds: 25 },
+      current,
+    );
+    expect(prediction?.apply(current)).toMatchObject({
+      revision: current.revision + 1,
+      playback: {
+        itemId: "new",
+        title: "Next film",
+        positionSeconds: 25,
+        paused: true,
+        waitingFor: [],
+        updatedAtMs: 1000,
+      },
+    });
+    expect(prediction?.awaits({ ...current, revision: current.revision + 1 })).toBe(false);
+  });
+}
+
+test("a play without a title still predicts loading, and reuses a known title", () => {
+  expect(
+    predict({ type: "play", itemId: "new", positionSeconds: 0 }, group())?.apply(group())?.playback
+      ?.title,
+  ).toBe("Loading…");
+  expect(
+    predict({ type: "play", itemId: "item", positionSeconds: 0 }, group())?.apply(group())?.playback
+      ?.title,
+  ).toBe("Film");
+});
+
+for (const hasPassword of [false, true]) {
+  test(`joining a ${hasPassword ? "protected" : "passwordless"} group waits for the server`, () => {
+    const listed = group({ hasPassword });
+    const status = { group: null, groups: [listed] };
+    expect(
+      predictWatchAction(
+        { type: "join", groupId: listed.id, password: "secret" },
+        status,
+        viewer,
+        1000,
+      ),
+    ).toBeNull();
+  });
+}

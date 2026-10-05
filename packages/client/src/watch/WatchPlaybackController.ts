@@ -65,6 +65,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private resync = false;
   private appliedRevision = -1;
   private appliedGroup: string | null = null;
+  /** Playback started by this group, including a request the server may still reject. */
+  private startedPlayback = false;
   private playbackError: string | null = null;
   private stoppedAfterFailure = false;
   private retryAt = 0;
@@ -144,6 +146,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.playbackError = null;
     this.stoppedAfterFailure = false;
     this.appliedGroup = null;
+    this.startedPlayback = false;
     this.appliedRevision = -1;
     this.heldPosition = null;
     this.retryAt = 0;
@@ -354,6 +357,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (this.stoppedPlayback?.groupId === group.id) this.stoppedPlayback = null;
     if (this.appliedGroup !== group.id) {
       this.appliedGroup = group.id;
+      this.startedPlayback = false;
       this.appliedRevision = -1;
       this.heldPosition = null;
       this.retryAt = 0;
@@ -370,13 +374,15 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       let state = this.player.getState();
       if (playback === null) {
         // A freshly created empty group doesn't interrupt the creator's current video.
-        if (group.revision > 0 && state !== null) await this.player.stop();
+        if ((group.revision > 0 || this.startedPlayback) && state !== null)
+          await this.player.stop();
         if (!current()) return;
         this.appliedRevision = group.revision;
         return;
       }
       if (!this.surfaceReady) return;
       if (state === null || state.itemId !== playback.itemId) {
+        this.startedPlayback = true;
         await this.player.start({
           server: this.server,
           connectionId: this.connectionId,

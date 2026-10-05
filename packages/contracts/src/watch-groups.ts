@@ -39,7 +39,13 @@ export const WatchAction = Schema.Union([
   }),
   Schema.Struct({ type: Schema.Literal("join"), groupId: Uuid, password: Password }),
   Schema.Struct({ type: Schema.Literal("leave") }),
-  Schema.Struct({ type: Schema.Literal("play"), itemId: Uuid, positionSeconds: Position }),
+  Schema.Struct({
+    type: Schema.Literal("play"),
+    itemId: Uuid,
+    positionSeconds: Position,
+    /** Display hint for local prediction; the server resolves the authoritative catalog title. */
+    title: Schema.optional(Schema.String),
+  }),
   Schema.Struct({
     type: Schema.Literal("pause"),
     itemId: Uuid,
