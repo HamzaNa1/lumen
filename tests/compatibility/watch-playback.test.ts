@@ -364,7 +364,7 @@ test.each([undefined, { watchGroups: false }])(
   },
 );
 
-test("restored media visibility and an explicit new membership resume playback at the unchanged revision", async () => {
+test("restored media visibility resumes the current revision and a new membership buffers again", async () => {
   const fixture = await watchFixture();
   const native = new NativePlayback();
   const playback = new WatchPlaybackController(native, () => undefined);
@@ -430,7 +430,7 @@ test("restored media visibility and an explicit new membership resume playback a
     await playback.action({ type: "leave" });
     await playback.action({ type: "join", groupId, password: "" });
     await eventually(() => native.state?.paused === false);
-    expect(playback.status.group?.revision).toBe(revision);
+    expect(playback.status.group?.revision).toBe((revision ?? 0) + 2);
     expect(playback.status.error).toBeNull();
   } finally {
     playback.close();
@@ -442,8 +442,8 @@ const groupViewer = async (
   fixture: Awaited<ReturnType<typeof watchFixture>>,
   groupId: string,
   connectionId: string,
+  native = new NativePlayback(),
 ) => {
-  const native = new NativePlayback();
   const playback = new WatchPlaybackController(native, () => undefined);
   playback.connect(await fixture.login(), connectionId);
   playback.setSurfaceReady(true);
@@ -451,6 +451,91 @@ const groupViewer = async (
   await playback.action({ type: "join", groupId, password: "" });
   return { native, playback };
 };
+
+test.each([false, true])("a late join buffers before the group plays on (already held: %s)", async (held) => {
+  const fixture = await watchFixture();
+  const viewers: WatchPlaybackController[] = [];
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Movie night", password: "" });
+    const groupId = owner.status.group?.id ?? "";
+    const existing = await groupViewer(fixture, groupId, "existing");
+    viewers.push(existing.playback);
+    existing.native.aheadSeconds = held ? 0 : 5;
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => existing.native.state?.paused === held && existing.native.seeks > 0);
+    const revision = owner.status.group?.revision;
+    const seeks = existing.native.seeks;
+
+    const native = new NativePlayback();
+    native.aheadSeconds = 1;
+    const late = await groupViewer(fixture, groupId, "late", native);
+    viewers.push(late.playback);
+    await eventually(
+      () =>
+        owner.status.group?.playback?.waitingFor?.includes(late.playback.status.memberId ?? "") ===
+        true,
+    );
+    await eventually(() => native.state?.paused === true);
+    if (held) {
+      expect(owner.status.group?.revision).toBe(revision);
+      expect(existing.native.seeks).toBe(seeks);
+    }
+    existing.native.aheadSeconds = 5;
+    await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([late.playback.status.memberId]);
+    const position = owner.status.group?.playback?.positionSeconds;
+    expect(position).toBeGreaterThanOrEqual(3);
+
+    native.aheadSeconds = 4.9;
+    await Bun.sleep(700);
+    expect(owner.status.group?.playback?.paused).toBe(true);
+    expect(existing.native.state?.paused).toBe(true);
+    expect(native.state).toMatchObject({ paused: true, positionSeconds: position });
+
+    native.aheadSeconds = 5;
+    await eventually(
+      () => existing.native.state?.paused === false && native.state?.paused === false,
+    );
+    expect(owner.status.group?.playback).toMatchObject({ paused: false, positionSeconds: position });
+    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+  } finally {
+    for (const viewer of viewers) viewer.close();
+    await fixture.close();
+  }
+});
+
+test("a member that rejoins a held group reports readiness again at the same revision", async () => {
+  const fixture = await watchFixture();
+  const viewers: WatchPlaybackController[] = [];
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Movie night", password: "" });
+    const groupId = owner.status.group?.id ?? "";
+    const fast = await groupViewer(fixture, groupId, "fast");
+    const slow = await groupViewer(fixture, groupId, "slow");
+    viewers.push(fast.playback, slow.playback);
+    slow.native.aheadSeconds = 0;
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId]);
+    const revision = owner.status.group?.revision;
+
+    await fast.playback.action({ type: "leave" });
+    fast.native.aheadSeconds = 1;
+    await fast.playback.action({ type: "join", groupId, password: "" });
+    await eventually(() => owner.status.group?.playback?.waitingFor?.length === 2);
+    expect(owner.status.group?.revision).toBe(revision);
+    fast.native.aheadSeconds = 5;
+    await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId]);
+    slow.native.aheadSeconds = 5;
+    await eventually(() => fast.native.state?.paused === false && slow.native.state?.paused === false);
+  } finally {
+    for (const viewer of viewers) viewer.close();
+    await fixture.close();
+  }
+});
 
 test("a group holds until a slow viewer has loaded, without making that viewer start over", async () => {
   const fixture = await watchFixture();

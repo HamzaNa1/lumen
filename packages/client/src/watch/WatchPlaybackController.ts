@@ -99,17 +99,24 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.server = server;
     this.connectionId = connectionId;
     const onStatus = (status: WatchStatus): void => {
+      if (status.group?.id !== this.status.group?.id) this.reported = null;
+      const released =
+        status.group?.id === this.status.group?.id &&
+        this.status.group?.playback?.waitingFor !== undefined &&
+        status.group?.playback?.paused === false &&
+        status.group.playback.itemId === this.status.group.playback.itemId &&
+        status.group.playback.positionSeconds === this.status.group.playback.positionSeconds;
       if (
         status.connection === "connected" &&
         (this.status.connection !== "connected" ||
-          status.group?.revision !== this.status.group?.revision)
+          (status.group?.revision !== this.status.group?.revision && !released))
       ) {
         this.retryAt = 0;
         this.failures = 0;
       }
       if (
         status.group?.id !== this.status.group?.id ||
-        status.group?.revision !== this.status.group?.revision ||
+        (status.group?.revision !== this.status.group?.revision && !released) ||
         status.group?.playback?.itemId !== this.status.group?.playback?.itemId
       )
         this.playbackError = null;

@@ -366,19 +366,17 @@ export class WatchGroups {
   }
 
   /**
-   * A member ran out of media while the group, as it stood at that revision, was playing. The
-   * group holds where it had got to until its members can play on from there.
+   * Holds a playing group where its clock has reached, so its members can buffer there.
    */
-  private buffering(group: Group, revision: number): void {
+  private hold(group: Group, revision: number): boolean {
     const playback = group.state.playback;
-    if (group.state.revision !== revision || playback === null || playback.paused) return;
+    if (group.state.revision !== revision || playback === null || playback.paused) return false;
     this.playFrom(group, {
       itemId: playback.itemId,
       title: playback.title,
       positionSeconds: watchPosition(playback, Date.now()),
     });
-    this.directory();
-    void this.publish(group);
+    return true;
   }
 
   /** Starts a held group playing, unless it has moved on since that revision. */
@@ -453,7 +451,10 @@ export class WatchGroups {
       } else if (action.type === "buffering") {
         const group = this.groups.get(socket.data.groupId ?? "");
         // Only a member that reports readiness can end the wait it is asking for.
-        if (group !== undefined && socket.data.readiness) this.buffering(group, action.revision);
+        if (group !== undefined && socket.data.readiness && this.hold(group, action.revision)) {
+          this.directory();
+          void this.publish(group);
+        }
       } else if (action.type === "list") await this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
@@ -520,6 +521,16 @@ export class WatchGroups {
             { id: socket.data.id, displayName: principal.user.displayName },
           ],
         };
+        const playback = group.state.playback;
+        if (socket.data.readiness && playback !== null) {
+          if (playback.waitingFor !== undefined) {
+            // Keep the position and revision: existing members are already buffering there.
+            group.state = {
+              ...group.state,
+              playback: { ...playback, waitingFor: [...playback.waitingFor, socket.data.id] },
+            };
+          } else this.hold(group, group.state.revision);
+        }
         this.directory();
         await this.publish(group);
       } else {
