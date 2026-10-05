@@ -4,6 +4,9 @@ interface PlayerShortcutsOptions {
   readonly enabled: boolean;
   readonly position: number;
   readonly duration: number | null;
+  readonly fullscreen: boolean;
+  /** Toggles fullscreen. Undefined where fullscreen is unavailable. */
+  readonly onFullscreen: (() => void) | undefined;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
 }
@@ -12,6 +15,8 @@ export const usePlayerShortcuts = ({
   enabled,
   position,
   duration,
+  fullscreen,
+  onFullscreen,
   onPause,
   onSeek,
 }: PlayerShortcutsOptions): ((seconds: number) => void) => {
@@ -52,11 +57,23 @@ export const usePlayerShortcuts = ({
       } else if (event.key === "ArrowRight" && enabled && duration !== null) {
         event.preventDefault();
         seekBy(10);
+      } else if (event.key.toLowerCase() === "f" && onFullscreen !== undefined) {
+        event.preventDefault();
+        if (!event.repeat) onFullscreen();
+      } else if (
+        event.key === "Escape" &&
+        fullscreen &&
+        onFullscreen !== undefined &&
+        // An open popup takes Escape to close itself.
+        document.querySelector("[data-popup-open]") === null
+      ) {
+        event.preventDefault();
+        onFullscreen();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [duration, enabled, onPause, seekBy]);
+  }, [duration, enabled, fullscreen, onFullscreen, onPause, seekBy]);
 
   return seekBy;
 };

@@ -16,6 +16,7 @@ import {
 import { ShowSettings } from "./ShowSettings";
 import {
   CatalogCard,
+  itemDetailsQuery,
   itemPage,
   PosterGridSkeleton,
   useArtwork,
@@ -29,11 +30,7 @@ const playableKinds = new Set(["movie", "episode", "track"]);
 const useItemDetails = (itemId: string | null | undefined) => {
   const runtime = useRuntime();
   const { scope } = useWorkspace();
-  return useQuery({
-    queryKey: [...scope, "item", itemId],
-    queryFn: () => runtime.catalog.itemDetails(itemId ?? ""),
-    enabled: itemId != null,
-  });
+  return useQuery(itemDetailsQuery(runtime, scope, itemId));
 };
 
 const useChildren = (parentId: string) => {

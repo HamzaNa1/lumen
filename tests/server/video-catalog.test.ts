@@ -222,7 +222,11 @@ test("video folders browse as series, seasons, episodes and movies without requi
   // Episodes have a still instead of a poster.
   const episodeDetails = (await (
     await get(`/api/v1/items/${must(firstSeason.items[0]).id}`, admin)
-  ).json()) as { item: { artworkId: string | null } };
+  ).json()) as {
+    item: { artworkId: string | null; seriesTitle: string | null; seasonNumber: number | null };
+  };
+  expect(episodeDetails.item).toMatchObject({ seriesTitle: "House", seasonNumber: 1 });
+  expect(showDetails.item).toMatchObject({ seriesTitle: null, seasonNumber: null });
   expect(episodeDetails.item.artworkId).toBeString();
   expect((await get(`/api/v1/artwork/${episodeDetails.item.artworkId}`, admin)).status).toBe(200);
   const replacementPoster = Buffer.from(

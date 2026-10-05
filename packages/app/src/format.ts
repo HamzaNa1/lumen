@@ -74,6 +74,19 @@ export const hostOf = (origin: string): string => {
   }
 };
 
+/** Where an episode sits in its show: "House · S01E03", or whichever parts are known. */
+export const episodeContext = (item: {
+  readonly seriesTitle?: string | null | undefined;
+  readonly seasonNumber?: number | null | undefined;
+  readonly indexNumber?: number | null | undefined;
+}): string => {
+  const part = (prefix: string, value: number | null | undefined): string =>
+    value == null ? "" : `${prefix}${String(value).padStart(2, "0")}`;
+  return [item.seriesTitle, part("S", item.seasonNumber) + part("E", item.indexNumber)]
+    .filter(Boolean)
+    .join(" · ");
+};
+
 /** 83 seconds → "1:23", 5000 seconds → "1:23:20". */
 export const formatClock = (seconds: number): string => {
   const total = Math.max(0, Math.floor(seconds));

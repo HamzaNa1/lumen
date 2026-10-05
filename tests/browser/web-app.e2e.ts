@@ -236,6 +236,12 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   expect(exposure.href).not.toContain("grant");
   expect(exposure.storage).not.toContain("grant");
 
+  const isFullscreen = () => page.evaluate(() => document.fullscreenElement !== null);
+  await page.keyboard.press("f");
+  await expect.poll(isFullscreen).toBe(true);
+  await page.keyboard.press("f");
+  await expect.poll(isFullscreen).toBe(false);
+
   await page.mouse.move(300, 300);
   await page.getByRole("button", { name: "Pause playback" }).last().click();
   await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(true);

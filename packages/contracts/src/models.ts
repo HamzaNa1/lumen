@@ -74,6 +74,8 @@ export const CatalogItemDetails = Schema.Struct({
     libraryId: Uuid,
     parentId: Schema.NullOr(Uuid),
     indexNumber: Schema.NullOr(Schema.Number),
+    seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
+    seasonNumber: Schema.optional(Schema.NullOr(Schema.Number)),
     title: Schema.String,
     kind: Schema.String,
     year: Schema.NullOr(Schema.Number),

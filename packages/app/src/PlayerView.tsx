@@ -3,6 +3,7 @@ import type { PlayerDisplay, PlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
+import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
 import "./player.css";
 
@@ -23,7 +24,7 @@ export const PlayerView = ({
   const [watchStatus] = useWatchStatus();
   const waiting = waitingSummary(watchStatus.group);
   const [player, setPlayer] = useState<PlayerState | null>(null);
-  const [fullscreen, setFullscreen] = useState(false);
+  const [fullscreen, toggleFullscreen] = useFullscreen();
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
@@ -45,19 +46,13 @@ export const PlayerView = ({
     const onMove = (): void => revealControls();
     window.addEventListener("mousemove", onMove);
     const unsubscribeState = runtime.playback.onState(setPlayer);
-    const unsubscribeFullscreen = runtime.playback.onFullscreenChange(setFullscreen);
     void runtime.playback
       .state()
       .then(setPlayer)
       .catch(() => undefined);
-    void runtime.playback
-      .fullscreenState()
-      .then(setFullscreen)
-      .catch(() => undefined);
     return () => {
       window.removeEventListener("mousemove", onMove);
       unsubscribeState();
-      unsubscribeFullscreen();
       if (hideTimer.current !== null) clearTimeout(hideTimer.current);
     };
   }, [revealControls, runtime]);
@@ -124,11 +119,7 @@ export const PlayerView = ({
             });
         }}
         onRetry={() => onAction("retry")}
-        onFullscreen={
-          capabilities.fullscreen
-            ? () => void runtime.playback.fullscreen(!fullscreen).then(setFullscreen)
-            : undefined
-        }
+        onFullscreen={toggleFullscreen}
         onPause={() => {
           if (player !== null)
             void runtime.playback
