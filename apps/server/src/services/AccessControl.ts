@@ -43,23 +43,23 @@ export const makeAccessControl = Effect.gen(function* () {
       return Effect.map(
         database
           .select({
+            allLibraries: users.allLibraries,
+            isActive: users.isActive,
             capabilitiesJson: libraryGrants.capabilitiesJson,
             expiresAtMs: libraryGrants.expiresAtMs,
-            isActive: users.isActive,
           })
-          .from(libraryGrants)
-          .innerJoin(users, eq(users.id, libraryGrants.userId))
-          .where(
-            and(
-              eq(libraryGrants.libraryId, libraryId),
-              eq(libraryGrants.userId, principal.user.id),
-            ),
+          .from(users)
+          .leftJoin(
+            libraryGrants,
+            and(eq(libraryGrants.userId, users.id), eq(libraryGrants.libraryId, libraryId)),
           )
+          .where(eq(users.id, principal.user.id))
           .get(),
         (row) => {
+          if (row == null || !row.isActive) return false;
+          if (row.allLibraries) return true;
           if (
-            row == null ||
-            !row.isActive ||
+            row.capabilitiesJson === null ||
             (row.expiresAtMs !== null && row.expiresAtMs <= nowMs)
           )
             return false;
@@ -95,17 +95,23 @@ export const makeAccessControl = Effect.gen(function* () {
       yield* requireLibrary(principal, row.libraryId, capability, nowMs);
       return row.libraryId;
     });
+  const enabledLibraryIds = database
+    .select({ id: libraries.id })
+    .from(libraries)
+    .where(eq(libraries.isEnabled, true))
+    .orderBy(asc(libraries.name))
+    .pipe(Effect.map((rows) => rows.map((row) => row.id)));
   const accessibleLibraryIds: AccessControlShape["accessibleLibraryIds"] = (principal, nowMs) =>
-    Effect.suspend(() => {
-      if (isAdmin(principal.user)) {
-        return database
-          .select({ id: libraries.id })
-          .from(libraries)
-          .where(eq(libraries.isEnabled, true))
-          .orderBy(asc(libraries.name))
-          .pipe(Effect.map((rows) => rows.map((row) => row.id)));
-      }
-      return database
+    Effect.gen(function* () {
+      if (isAdmin(principal.user)) return yield* enabledLibraryIds;
+      const user = yield* database
+        .select({ allLibraries: users.allLibraries, isActive: users.isActive })
+        .from(users)
+        .where(eq(users.id, principal.user.id))
+        .get();
+      if (user == null || !user.isActive) return [];
+      if (user.allLibraries) return yield* enabledLibraryIds;
+      return yield* database
         .select({ id: libraryGrants.libraryId })
         .from(libraryGrants)
         .innerJoin(

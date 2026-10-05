@@ -1,7 +1,8 @@
-import type { LibrarySummary, User } from "@lumen/contracts";
+import type { LibraryAccess, LibrarySummary, ManagedUser, UserRole } from "@lumen/contracts";
 import {
   Avatar,
   Button,
+  CheckboxField,
   DropdownItem,
   DropdownMenu,
   DropdownSeparator,
@@ -29,7 +30,14 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
-import { errorMessage, libraryKindLabels, plural, roleLabels, slugify } from "./format";
+import {
+  errorMessage,
+  libraryKindLabels,
+  passwordRule,
+  plural,
+  roleLabels,
+  slugify,
+} from "./format";
 import { libraryIcon } from "./Sidebar";
 import { PageHeader, useWorkspace } from "./Workspace";
 import { useRuntime } from "./Runtime";
@@ -37,8 +45,11 @@ import { randomId } from "@lumen/client";
 
 const roleOptions = [
   { value: "user", label: roleLabels.user },
-  { value: "guest", label: roleLabels.guest },
   { value: "admin", label: roleLabels.admin },
+] as const;
+const libraryScopeOptions = [
+  { value: "all", label: "All libraries" },
+  { value: "selected", label: "Selected libraries" },
 ] as const;
 const libraryKindOptions = [
   { value: "movies", label: libraryKindLabels.movies },
@@ -552,13 +563,87 @@ const AdminLibraries = (): React.ReactElement => {
   );
 };
 
+const libraryAccessSummary = (user: ManagedUser): string => {
+  if (user.role === "admin" || user.libraryAccess.scope === "all") return "All libraries";
+  const count = user.libraryAccess.libraryIds.length;
+  return count === 0 ? "None" : plural(count, "library", "libraries");
+};
+
+const LibraryAccessField = ({
+  role,
+  access,
+  onAccessChange,
+  scope,
+}: {
+  readonly role: UserRole;
+  readonly access: LibraryAccess;
+  readonly onAccessChange: (access: LibraryAccess) => void;
+  readonly scope: readonly unknown[];
+}): React.ReactElement => {
+  const runtime = useRuntime();
+  const libraries = useQuery({
+    queryKey: [...scope, "admin", "libraries"],
+    queryFn: () => runtime.admin.listLibraries(),
+  });
+  if (role === "admin")
+    return (
+      <div className="field">
+        <span className="field-label">Library access</span>
+        <p className="field-description">Administrators can always use every library.</p>
+      </div>
+    );
+  const selected = access.scope === "selected" ? access.libraryIds : [];
+  return (
+    <>
+      <SelectField
+        label="Library access"
+        value={access.scope}
+        options={libraryScopeOptions}
+        onValueChange={(value) =>
+          onAccessChange(
+            value === "all" ? { scope: "all" } : { scope: "selected", libraryIds: selected },
+          )
+        }
+      />
+      {access.scope === "all" ? (
+        <p className="field-description">Includes libraries added later.</p>
+      ) : libraries.isError ? (
+        <FormError error={libraries.error} fallback="Could not load libraries" />
+      ) : libraries.data === undefined ? null : libraries.data.length === 0 ? (
+        <p className="field-description">This server has no libraries yet.</p>
+      ) : (
+        <fieldset className="checkbox-list">
+          <legend className="sr-only">Libraries this user can use</legend>
+          {libraries.data.map((library) => (
+            <CheckboxField
+              key={library.id}
+              label={library.name}
+              checked={selected.includes(library.id)}
+              onCheckedChange={(checked) =>
+                onAccessChange({
+                  scope: "selected",
+                  libraryIds: checked
+                    ? [...selected, library.id]
+                    : selected.filter((id) => id !== library.id),
+                })
+              }
+            />
+          ))}
+        </fieldset>
+      )}
+    </>
+  );
+};
+
+const defaultLibraryAccess: LibraryAccess = { scope: "all" };
+
 const UserDialog = ({
   user,
   open,
   onOpenChange,
   scope,
 }: {
-  readonly user: User | null;
+  readonly user: ManagedUser | null;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly scope: readonly unknown[];
@@ -568,7 +653,10 @@ const UserDialog = ({
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState(user?.displayName ?? "");
   const [password, setPassword] = useState("");
-  const [role, setRole] = useState<User["role"]>(user?.role ?? "user");
+  const [role, setRole] = useState<UserRole>(user?.role ?? "user");
+  const [libraryAccess, setLibraryAccess] = useState<LibraryAccess>(
+    user?.libraryAccess ?? defaultLibraryAccess,
+  );
   const [isActive, setIsActive] = useState(user?.isActive ?? true);
   const save = useMutation({
     mutationFn: async () => {
@@ -578,6 +666,7 @@ const UserDialog = ({
           displayName: displayName || username,
           password,
           role,
+          libraryAccess,
         });
       } else {
         await runtime.admin.updateUser({
@@ -585,6 +674,7 @@ const UserDialog = ({
           displayName,
           password: password === "" ? undefined : password,
           role,
+          libraryAccess,
           isActive,
         });
       }
@@ -595,6 +685,7 @@ const UserDialog = ({
         setUsername("");
         setDisplayName("");
         setRole("user");
+        setLibraryAccess(defaultLibraryAccess);
       }
       onOpenChange(false);
       await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "users"] });
@@ -640,9 +731,15 @@ const UserDialog = ({
           onValueChange={setPassword}
           autoComplete="new-password"
           placeholder={user === null ? undefined : "Leave blank to keep the current password"}
-          description={user === null ? "At least 12 characters." : undefined}
+          description={user === null ? passwordRule : undefined}
         />
         <SelectField label="Role" value={role} options={roleOptions} onValueChange={setRole} />
+        <LibraryAccessField
+          role={role}
+          access={libraryAccess}
+          onAccessChange={setLibraryAccess}
+          scope={scope}
+        />
         {user === null ? null : (
           <SwitchField
             label="Can sign in"
@@ -688,7 +785,7 @@ const AdminUsers = (): React.ReactElement => {
   const runtime = useRuntime();
   const { account, scope } = useWorkspace();
   const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState<User | null>(null);
+  const [editing, setEditing] = useState<ManagedUser | null>(null);
   const users = useQuery({
     queryKey: [...scope, "admin", "users"],
     queryFn: () => runtime.admin.listUsers(),
@@ -720,6 +817,7 @@ const AdminUsers = (): React.ReactElement => {
               <tr>
                 <th scope="col">Name</th>
                 <th scope="col">Role</th>
+                <th scope="col">Libraries</th>
                 <th scope="col">Status</th>
                 <th scope="col">
                   <span className="sr-only">Actions</span>
@@ -744,6 +842,7 @@ const AdminUsers = (): React.ReactElement => {
                     </div>
                   </td>
                   <td>{roleLabels[user.role]}</td>
+                  <td>{libraryAccessSummary(user)}</td>
                   <td>
                     <span className="status-dot" data-tone={user.isActive ? "positive" : "muted"}>
                       {user.isActive ? "Active" : "Disabled"}

@@ -1,7 +1,9 @@
 import {
   DevicePlatform,
   GrantCapability,
+  LibraryAccess,
   LibraryScanMode,
+  NewPassword,
   NonEmptyText,
   UserRole,
   UtcMillis,
@@ -24,7 +26,7 @@ export const LoginBody = Schema.Struct({
 export const RegisterBody = Schema.Struct({
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  password: NewPassword,
   deviceId: Identifier,
   deviceName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   platform: DevicePlatform,
@@ -42,7 +44,7 @@ export const BrowserLoginBody = Schema.Struct({
 export const BrowserRegisterBody = Schema.Struct({
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  password: NewPassword,
   deviceId: Identifier,
   deviceName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });
@@ -83,14 +85,16 @@ export const SearchQuery = Schema.Struct({
 export const CreateUserBody = Schema.Struct({
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
-  password: Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024)),
+  password: NewPassword,
   role: Schema.optional(UserRole),
+  libraryAccess: Schema.optional(LibraryAccess),
 });
 
 export const UpdateUserBody = Schema.Struct({
   displayName: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
-  password: Schema.optional(Schema.String.check(Schema.isMinLength(12), Schema.isMaxLength(1024))),
+  password: Schema.optional(NewPassword),
   role: Schema.optional(UserRole),
+  libraryAccess: Schema.optional(LibraryAccess),
   isActive: Schema.optional(Schema.Boolean),
 });
 
@@ -124,7 +128,6 @@ export const CreateGrantBody = Schema.Struct({
   id: Identifier,
   libraryId: Identifier,
   userId: Identifier,
-  role: UserRole,
   capabilities: Schema.Array(GrantCapability),
   canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),
@@ -189,8 +192,3 @@ export const EmptyBody = Schema.Struct({});
 export const IdBody = Schema.Struct({ id: Identifier });
 export const Message = Schema.Struct({ message: Schema.String, requestId: Schema.String });
 export const Ack = Schema.Struct({ ok: Schema.Boolean, nowMs: UtcMillis });
-export const CapabilitiesBody = Schema.Struct({
-  capabilities: Schema.Array(GrantCapability),
-  role: UserRole,
-  canDownload: Schema.Boolean,
-});

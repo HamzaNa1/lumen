@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { GrantCapability, NonEmptyText, UserRole, UtcMillis, Uuid } from "./common.ts";
+import { GrantCapability, NonEmptyText, UtcMillis, Uuid } from "./common.ts";
 
 export const LibraryScanMode = Schema.Literals(["full", "incremental", "refresh"]);
 
@@ -28,7 +28,6 @@ export const LibraryGrant = Schema.Struct({
   id: Uuid,
   libraryId: Uuid,
   userId: Uuid,
-  role: UserRole,
   capabilities: Schema.Array(GrantCapability),
   canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),
@@ -58,7 +57,6 @@ export const UpsertLibraryGrant = Schema.Struct({
   id: Uuid,
   libraryId: Uuid,
   userId: Uuid,
-  role: UserRole,
   capabilities: Schema.Array(GrantCapability),
   canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),

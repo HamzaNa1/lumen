@@ -10,11 +10,11 @@ import type {
   HomeContent,
   JobLogEntry,
   LibrarySummary,
+  ManagedUser,
   PlayerDisplay,
   PlayerState,
   ScanRun,
   ServerDiscovery,
-  User,
   WatchAction,
   WatchStatus,
 } from "@lumen/contracts";
@@ -82,9 +82,11 @@ export interface ArtworkRuntime {
 }
 
 export interface AdminRuntime {
-  readonly listUsers: () => Promise<ReadonlyArray<User>>;
-  readonly createUser: (input: CreateUserInput) => Promise<User>;
-  readonly updateUser: (input: UpdateUserInput & { readonly userId: string }) => Promise<User>;
+  readonly listUsers: () => Promise<ReadonlyArray<ManagedUser>>;
+  readonly createUser: (input: CreateUserInput) => Promise<ManagedUser>;
+  readonly updateUser: (
+    input: UpdateUserInput & { readonly userId: string },
+  ) => Promise<ManagedUser>;
   readonly listLibraries: () => Promise<ReadonlyArray<LibrarySummary>>;
   readonly metadataSettings: () => Promise<MetadataSettings>;
   readonly updateMetadataSettings: (input: {

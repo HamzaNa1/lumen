@@ -620,6 +620,14 @@ body:has(.app-shell) {
   align-items: center;
   min-height: 34px;
 }
+.checkbox-list {
+  max-height: 172px;
+  margin: 0;
+  padding: 2px 11px;
+  overflow-y: auto;
+  border: 1px solid var(--border-control);
+  border-radius: var(--radius);
+}
 .checkbox-label {
   display: inline-flex;
   align-items: center;
@@ -1324,11 +1332,6 @@ body:has(.app-shell) {
 .connect-form {
   display: grid;
   gap: 16px;
-}
-.connect-switch {
-  margin: 0;
-  color: var(--text-secondary);
-  text-align: center;
 }
 .server-list {
   display: grid;

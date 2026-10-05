@@ -351,7 +351,7 @@ export const makeHttpHandler = (
       return ack();
     }
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "users")
-      return unknownJson(await call(services.admin.listUsers(principal)));
+      return unknownJson(await call(services.admin.listUsers(principal, Date.now())));
     if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "users")
       return unknownJson(
         await call(

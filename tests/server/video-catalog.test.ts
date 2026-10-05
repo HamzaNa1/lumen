@@ -282,7 +282,6 @@ test("video folders browse as series, seasons, episodes and movies without requi
       id: newUuid(),
       libraryId: ids.showsId,
       userId: ids.viewerId,
-      role: "user",
       capabilities: ["library:read"],
       canDownload: false,
       expiresAtMs: null,

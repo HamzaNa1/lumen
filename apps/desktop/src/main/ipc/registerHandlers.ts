@@ -4,8 +4,10 @@ import {
   ConnectionInput,
   EpisodeOrderSelection,
   IpcPlayerSurfaceBounds,
+  LibraryAccess,
   PlayerDisplay,
   type ServerDiscovery,
+  UserRole,
   WatchAction,
 } from "@lumen/contracts";
 import { Schema } from "effect";
@@ -96,7 +98,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
     await dependencies.player.stop();
   };
-  const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: "admin" | "user" | "guest" }): Promise<ServerClient> => {
+  const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: UserRole }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) return validateClient(cached).then(() => cached);
     const pending = restoring.get(account.connectionId);
@@ -155,7 +157,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       throw new Error("Server identity changed; connect to the server again");
     const deviceId = deviceIdForAccount(dependencies.installationId, identity.serverId, input.username);
     const setupRequired = await client.setupRequired(discovery.setupRequired);
-    const session = await (setupRequired || input.signUp === true
+    const session = await (setupRequired
       ? client.register(input, deviceId)
       : client.login(input, deviceId));
     const user = await client.me();
@@ -176,7 +178,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         accessExpiresAtMs: current.accessExpiresAtMs,
       });
     } catch (cause) {
-      throw new Error(`${setupRequired || input.signUp === true ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
+      throw new Error(`${setupRequired ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
     }
     dependencies.clients.set(connectionId, client);
     watch.connect(client, connectionId);
@@ -248,7 +250,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
           username: Schema.String,
           displayName: Schema.String,
           password: Schema.String,
-          role: Schema.optional(Schema.Literals(["admin", "user", "guest"])),
+          role: Schema.optional(UserRole),
+          libraryAccess: Schema.optional(LibraryAccess),
         }),
         raw,
       ),
@@ -260,7 +263,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         userId: Schema.String,
         displayName: Schema.optional(Schema.String),
         password: Schema.optional(Schema.String),
-        role: Schema.optional(Schema.Literals(["admin", "user", "guest"])),
+        role: Schema.optional(UserRole),
+        libraryAccess: Schema.optional(LibraryAccess),
         isActive: Schema.optional(Schema.Boolean),
       }),
       raw,

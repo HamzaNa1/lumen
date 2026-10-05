@@ -15,7 +15,7 @@ test("group membership does not grant control of media a user cannot access", as
       username: "guest",
       displayName: "Guest",
       password: "correct horse battery staple",
-      role: "guest",
+      role: "user",
     });
     const owner = await fixture.connect(admin);
     const guest = await fixture.connect(await fixture.login("guest"));
@@ -41,7 +41,7 @@ test("visibility is checked for existing members, late joins, and revoked librar
       username: "guest",
       displayName: "Guest",
       password: "correct horse battery staple",
-      role: "guest",
+      role: "user",
     });
     const guestServer = await fixture.login("guest");
     const guest = await fixture.connect(guestServer);
@@ -62,7 +62,6 @@ test("visibility is checked for existing members, late joins, and revoked librar
       id: crypto.randomUUID(),
       libraryId: fixture.libraryId,
       userId: user.id,
-      role: "guest",
       capabilities: ["library:read"],
       canDownload: false,
       expiresAtMs: null,
@@ -218,7 +217,7 @@ test("slow recipient visibility checks coalesce state and cannot publish an olde
   const principal = { user, sessionId: crypto.randomUUID(), deviceId: crypto.randomUUID() };
   const guestPrincipal = {
     ...principal,
-    user: { ...user, id: crypto.randomUUID(), role: "guest" as const },
+    user: { ...user, id: crypto.randomUUID(), role: "user" as const },
   };
   let releaseCheck: () => void = () => undefined;
   const check = new Promise<void>((resolve) => {
@@ -235,7 +234,7 @@ test("slow recipient visibility checks coalesce state and cannot publish an olde
     catalog: {
       itemDetails: (viewer) =>
         Effect.promise(async () => {
-          if (viewer.user.role === "guest") {
+          if (viewer.user.role === "user") {
             checks += 1;
             activeChecks += 1;
             maximumChecks = Math.max(maximumChecks, activeChecks);
@@ -317,7 +316,7 @@ test("discovery publishes playback changes only to viewers with current media ac
   const fixture = await watchFixture();
   try {
     const admin = await fixture.login();
-    await admin.createUser({ username: "guest", displayName: "Guest", password: "correct horse battery staple", role: "guest" });
+    await admin.createUser({ username: "guest", displayName: "Guest", password: "correct horse battery staple", role: "user" });
     const owner = await fixture.connect(admin);
     const viewer = await fixture.connect(await fixture.login());
     const guest = await fixture.connect(await fixture.login("guest"));
@@ -352,7 +351,7 @@ test.each([true, false])("slow discovery progresses under sustained updates with
   const details = await admin.itemDetails(fixture.itemId);
   const otherItemId = crypto.randomUUID();
   const principal = { user, sessionId: crypto.randomUUID(), deviceId: crypto.randomUUID() };
-  const guestPrincipal = { ...principal, user: { ...user, id: crypto.randomUUID(), role: "guest" as const } };
+  const guestPrincipal = { ...principal, user: { ...user, id: crypto.randomUUID(), role: "user" as const } };
   let gate = Promise.withResolvers<void>();
   let gated = true;
   let waiting = false;
@@ -366,7 +365,7 @@ test.each([true, false])("slow discovery progresses under sustained updates with
         const itemDetails = itemId === fixture.itemId
           ? details
           : { ...details, item: { ...details.item, id: otherItemId, title: "Restricted movie" } };
-        if (viewer.user.role !== "guest") return Effect.succeed(itemDetails);
+        if (viewer.user.role !== "user") return Effect.succeed(itemDetails);
         return Effect.promise(async () => {
           activeChecks += 1;
           maximumChecks = Math.max(maximumChecks, activeChecks);

@@ -66,7 +66,7 @@ export class BrowserAccounts implements AccountsRuntime {
         deviceName: DEVICE_NAME,
         platform: "web" as const,
       };
-      const session = await (discovery.setupRequired || input.signUp === true
+      const session = await (discovery.setupRequired
         ? this.api.browserRegister(input, device)
         : this.api.browserLogin(input, device));
       if (generation !== this.generation) return this.snapshot();

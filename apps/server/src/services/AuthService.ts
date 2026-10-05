@@ -94,20 +94,17 @@ export const makeAuthService = Effect.gen(function* () {
       yield* database.transaction((transaction) =>
         Effect.gen(function* () {
           const existing = yield* transaction.select({ count: count() }).from(users).get();
-          const duplicate = yield* transaction
-            .select({ id: users.id })
-            .from(users)
-            .where(eq(users.usernameNormalized, normalized))
-            .get();
-          if (duplicate != null) return yield* conflict("Username is already taken");
-          const role = (existing?.count ?? 0) === 0 ? "admin" : "user";
+          if ((existing?.count ?? 0) > 0)
+            return yield* forbidden(
+              "This server is already set up. Ask an administrator for an account.",
+            );
           yield* transaction.insert(users).values({
             id: newUuid(),
             username,
             usernameNormalized: normalized,
             displayName: input.displayName.trim(),
             passwordHash,
-            role,
+            role: "admin",
             isActive: true,
             createdAtMs: nowMs,
             updatedAtMs: nowMs,

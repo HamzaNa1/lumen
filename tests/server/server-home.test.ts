@@ -62,8 +62,8 @@ const fixture = async (items: ReadonlyArray<FixtureItem>, allowed: ReadonlyArray
         yield* db.run(sql`INSERT INTO library_roots(id, library_id, path, is_enabled, priority, created_at_ms, updated_at_ms)
         VALUES (${libraryId}, ${libraryId}, ${join(root, libraryId)}, 1, 0, 1, 1)`);
         if (allowed.includes(libraryId))
-          yield* db.run(sql`INSERT INTO library_grants(id, library_id, user_id, role, capabilities_json, created_at_ms, updated_at_ms)
-        VALUES (${newUuid()}, ${libraryId}, ${userId}, 'user', '["library:read"]', 1, 1)`);
+          yield* db.run(sql`INSERT INTO library_grants(id, library_id, user_id, capabilities_json, created_at_ms, updated_at_ms)
+        VALUES (${newUuid()}, ${libraryId}, ${userId}, '["library:read"]', 1, 1)`);
       }
       for (const item of items) {
         const kind = item.kind ?? "movie";
@@ -410,25 +410,8 @@ test("Home returns account-specific content and handles no library access", asyn
   const libraryId = newUuid();
   const home = await fixture([{ id: newUuid(), libraryId, title: "A movie" }], [libraryId]);
   expect((await home.json<HomeContent>("/api/v1/home")).latest[0]?.items[0]?.title).toBe("A movie");
-  const registration = await home.request("/api/v1/auth/register", {
-    method: "POST",
-    body: JSON.stringify({
-      username: "other",
-      displayName: "Other",
-      password: "correct horse battery staple",
-      deviceId: newUuid(),
-      deviceName: "Home test",
-      platform: "desktop",
-      platformDeviceId: null,
-    }),
-  });
-  expect(registration.status).toBe(201);
-  const { accessToken } = (await registration.json()) as { accessToken: string };
-  expect(
-    await home.json<HomeContent>("/api/v1/home", {
-      headers: { authorization: `Bearer ${accessToken}` },
-    }),
-  ).toEqual({
+  const withoutAccess = await fixture([{ id: newUuid(), libraryId, title: "A movie" }], []);
+  expect(await withoutAccess.json<HomeContent>("/api/v1/home")).toEqual({
     libraryCount: 0,
     libraries: [],
     continueWatching: [],

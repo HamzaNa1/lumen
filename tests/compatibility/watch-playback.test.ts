@@ -355,13 +355,12 @@ test("restored media visibility and an explicit new membership resume playback a
       username: "guest",
       displayName: "Guest",
       password: "correct horse battery staple",
-      role: "guest",
+      role: "user",
     });
     const grant = {
       id: crypto.randomUUID(),
       libraryId: fixture.libraryId,
       userId: user.id,
-      role: "guest",
       capabilities: ["library:read", "playback:control"],
       canDownload: false,
       expiresAtMs: null,

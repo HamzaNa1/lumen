@@ -8,7 +8,9 @@ import {
   type EpisodeOrderSelection,
   HomeContent,
   JobLogEntry,
+  type LibraryAccess,
   type LibrarySummary,
+  ManagedUser,
   PlayableStream,
   type PlayerSession,
   type PlayerState,
@@ -16,6 +18,7 @@ import {
   type ServerDiscovery,
   ServerInfo,
   User,
+  UserRole,
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import {
@@ -31,7 +34,7 @@ export type ServerIdentity = ServerInfo;
 /** A token session, as returned to clients that store and present the token themselves. */
 export interface AccountSession {
   readonly userId: string;
-  readonly role: "admin" | "user" | "guest";
+  readonly role: UserRole;
   readonly sessionId: string;
   readonly accessToken: string;
   readonly accessExpiresAtMs: number;
@@ -42,7 +45,7 @@ export interface AccountSession {
  * and "session" also reports a rejected session to the owner of this client.
  */
 type RequestAuth = "none" | "credentials" | "session";
-export type UserRole = User["role"];
+export type { UserRole };
 export type LibraryKind = LibrarySummary["kind"];
 export type ScanMode = ScanRun["mode"];
 
@@ -100,12 +103,14 @@ export interface CreateUserInput {
   readonly displayName: string;
   readonly password: string;
   readonly role?: UserRole;
+  readonly libraryAccess?: LibraryAccess;
 }
 
 export interface UpdateUserInput {
   readonly displayName?: string;
   readonly password?: string;
   readonly role?: UserRole;
+  readonly libraryAccess?: LibraryAccess;
   readonly isActive?: boolean;
 }
 
@@ -141,7 +146,7 @@ export interface ArtworkImage {
 
 const sessionSchema = Schema.Struct({
   userId: Schema.String,
-  role: Schema.optional(Schema.Literals(["admin", "user", "guest"])),
+  role: Schema.optional(UserRole),
   sessionId: Schema.String,
   accessToken: Schema.String,
   accessExpiresAtMs: Schema.Number,
@@ -565,19 +570,19 @@ export class ServerApi {
     );
   }
 
-  async users(): Promise<ReadonlyArray<User>> {
-    return this.request("/api/v1/users", {}, Schema.Array(User));
+  async users(): Promise<ReadonlyArray<ManagedUser>> {
+    return this.request("/api/v1/users", {}, Schema.Array(ManagedUser));
   }
 
-  async createUser(input: CreateUserInput): Promise<User> {
-    return this.request("/api/v1/users", jsonBody("POST", input), User);
+  async createUser(input: CreateUserInput): Promise<ManagedUser> {
+    return this.request("/api/v1/users", jsonBody("POST", input), ManagedUser);
   }
 
-  async updateUser(userId: string, input: UpdateUserInput): Promise<User> {
+  async updateUser(userId: string, input: UpdateUserInput): Promise<ManagedUser> {
     return this.request(
       `/api/v1/users/${encodeURIComponent(userId)}`,
       jsonBody("PATCH", input),
-      User,
+      ManagedUser,
     );
   }
 

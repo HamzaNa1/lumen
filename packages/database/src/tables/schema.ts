@@ -24,6 +24,7 @@ export const users = sqliteTable(
     displayName: text("display_name").notNull(),
     passwordHash: text("password_hash").notNull(),
     role: text("role").notNull().default("user"),
+    allLibraries: integer("all_libraries", { mode: "boolean" }).notNull().default(false),
     isActive: integer("is_active", { mode: "boolean" }).notNull().default(true),
     createdAtMs: createdAt(),
     updatedAtMs: updatedAt(),
@@ -36,7 +37,7 @@ export const users = sqliteTable(
       sql`length(${table.usernameNormalized}) > 0 and ${table.usernameNormalized} not glob '*[^a-z0-9._-]*'`,
     ),
     check("users_display_name_nonempty_chk", sql`length(trim(${table.displayName})) > 0`),
-    check("users_role_chk", sql`${table.role} in ('admin', 'user', 'guest')`),
+    check("users_role_chk", sql`${table.role} in ('admin', 'user')`),
     check("users_timestamps_chk", sql`${table.updatedAtMs} >= ${table.createdAtMs}`),
   ],
 );
@@ -208,7 +209,6 @@ export const libraryGrants = sqliteTable(
     id: text("id").primaryKey(),
     libraryId: text("library_id").notNull(),
     userId: text("user_id").notNull(),
-    role: text("role").notNull(),
     capabilitiesJson: text("capabilities_json").notNull().default("[]"),
     canDownload: integer("can_download", { mode: "boolean" }).notNull().default(false),
     expiresAtMs: nullableTimestamp("expires_at_ms"),
@@ -228,7 +228,6 @@ export const libraryGrants = sqliteTable(
     }).onDelete("cascade"),
     uniqueIndex("library_grants_library_user_uq").on(table.libraryId, table.userId),
     index("library_grants_user_idx").on(table.userId),
-    check("library_grants_role_chk", sql`${table.role} in ('admin', 'user', 'guest')`),
     check("library_grants_capabilities_json_chk", sql`json_valid(${table.capabilitiesJson})`),
     check(
       "library_grants_expiry_chk",
