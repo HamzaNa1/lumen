@@ -1,4 +1,4 @@
-import type { PlayerAction } from "@lumen/client/runtime";
+import type { LumenRuntime, PlayerAction } from "@lumen/client/runtime";
 import type {
   AccountSummary,
   CatalogItem,
@@ -44,6 +44,16 @@ export const useWorkspace = (): WorkspaceValue => {
   if (value === null) throw new Error("Workspace is unavailable without an active account");
   return value;
 };
+
+export const itemDetailsQuery = (
+  runtime: LumenRuntime,
+  scope: readonly unknown[],
+  itemId: string | null | undefined,
+) => ({
+  queryKey: [...scope, "item", itemId],
+  queryFn: () => runtime.catalog.itemDetails(itemId ?? ""),
+  enabled: itemId != null,
+});
 
 /** The page for an item. Movies and other standalone titles share one. */
 export const itemPage = (item: Pick<CatalogItem, "id" | "kind">) => {

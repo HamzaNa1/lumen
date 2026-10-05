@@ -12,11 +12,12 @@ import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-rout
 import { CircleAlert, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
-import { errorMessage } from "./format";
+import { episodeContext, errorMessage } from "./format";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
 import {
+  itemDetailsQuery,
   itemPage,
   refreshWatchProgress,
   WorkspaceContext,
@@ -238,17 +239,23 @@ export const App = (): React.ReactElement => {
           ]);
       });
   }, [active, onPlayerRoute, queryClient, updatePlayer, runtime]);
-  const watchTitle = watchStatus?.group?.playback?.title;
-  const serverLabel = active?.serverLabel;
+  const watchPlayback = watchStatus?.group?.playback;
+  const watchTitle = watchPlayback?.title;
+  // Every way into the player names the item, but only some know the show it belongs to.
+  const playingDetails = useQuery(
+    itemDetailsQuery(runtime, scope ?? [], scope === null ? null : (playingItem?.id ?? watchPlayback?.itemId)),
+  );
+  const playingContext =
+    playingDetails.data?.item.kind === "episode" ? episodeContext(playingDetails.data.item) : "";
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
       title: playingItem?.title ?? watchTitle ?? "Now playing",
-      context: `${serverLabel ?? "Lumen"} · Original quality`,
+      context: playingContext,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
     }),
-    [serverLabel, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
+    [playingContext, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
   );
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
