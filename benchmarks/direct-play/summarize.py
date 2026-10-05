@@ -58,7 +58,7 @@ green, red, muted = "#087f8c", "#c44e38", "#4b5563"
 
 for ax, metric, count, higher_better, title in [
     (axes[0, 0], "throughputMiBps", 4, True, "Throughput by transfer size"),
-    (axes[0, 1], "bridgeCpuMs", 3, False, "Bridge CPU time"),
+    (axes[0, 1], "serverCpuMs", 4, False, "Server CPU time"),
 ]:
     for i, mode in enumerate(modes[:count]):
         item = summary["transport"][mode][metric]

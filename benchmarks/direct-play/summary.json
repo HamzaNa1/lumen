@@ -1,490 +1,494 @@
 {
   "refs": {
     "baseline": "4d4a5c6d20a89e26232f1406b55504a5a25ade49",
+    "candidate": "fcc3c1a0a82718d80424ef1eacbc219fb3f56e67"
+  },
+  "cacheRefs": {
+    "baseline": "4d4a5c6d20a89e26232f1406b55504a5a25ade49",
     "candidate": "84f091a9ba3fa308146b055342752e55a43b3a06"
   },
   "transport": {
     "bridge_1_reader": {
       "throughputMiBps": {
-        "baselineMedian": 1505.1198326730077,
-        "candidateMedian": 1712.7863094180227,
-        "changePercent": 13.797338407016468,
+        "baselineMedian": 1502.8642876182134,
+        "candidateMedian": 1589.6241851484003,
+        "changePercent": 5.772969538566031,
         "pairedBootstrap95Percent": [
-          12.328657845191703,
-          16.620978271660757
+          -2.740141733902457,
+          7.556231140009251
         ],
         "baselineMinMax": [
-          1492.4606325249315,
-          1552.5488102848774
+          1476.5072796956342,
+          1526.6513580509063
         ],
         "candidateMinMax": [
-          1616.0102886325158,
-          1767.7960707189839
+          1411.2850920586168,
+          1636.5328234050505
         ]
       },
       "bridgeCpuMs": {
-        "baselineMedian": 525.062,
-        "candidateMedian": 450.183,
-        "changePercent": -14.260982512541375,
+        "baselineMedian": 520.367,
+        "candidateMedian": 510.677,
+        "changePercent": -1.8621472921995341,
         "pairedBootstrap95Percent": [
-          -19.476637876069603,
-          -9.93768354975223
+          -8.39934805042002,
+          7.135361017213393
         ],
         "baselineMinMax": [
-          522.277,
-          544.358
+          512.482,
+          527.997
         ],
         "candidateMinMax": [
-          420.555,
-          475.949
+          463.062,
+          578.434
         ]
       },
       "bridgePeakRssMiB": {
-        "baselineMedian": 184.71875,
-        "candidateMedian": 183.265625,
-        "changePercent": -0.786668922348166,
+        "baselineMedian": 182.90625,
+        "candidateMedian": 185.859375,
+        "changePercent": 1.6145566376217335,
         "pairedBootstrap95Percent": [
-          -3.0896759608138646,
-          1.8021865391185443
+          0.6220707285896854,
+          3.5050132830576786
         ],
         "baselineMinMax": [
-          182.75,
-          187.234375
+          182.328125,
+          187.109375
         ],
         "candidateMinMax": [
-          176.734375,
-          188.21875
+          183.875,
+          195.953125
         ]
       },
       "serverCpuMs": {
-        "baselineMedian": 99.41,
-        "candidateMedian": 97.119,
-        "changePercent": -2.3045971230258533,
+        "baselineMedian": 97.518,
+        "candidateMedian": 186.767,
+        "changePercent": 91.52053979778091,
         "pairedBootstrap95Percent": [
-          -10.707386961815569,
-          -0.7226683766425324
+          85.92545708831427,
+          102.24754290882385
         ],
         "baselineMinMax": [
-          96.98,
-          113.67
+          93.736,
+          98.7
         ],
         "candidateMinMax": [
-          96.044,
-          98.987
+          178.88,
+          198.892
         ]
       },
       "serverPeakRssMiB": {
-        "baselineMedian": 71.125,
-        "candidateMedian": 71.21875,
-        "changePercent": 0.13181019332162425,
+        "baselineMedian": 71.453125,
+        "candidateMedian": 122.984375,
+        "changePercent": 72.1189591078067,
         "pairedBootstrap95Percent": [
-          -2.5443660466110796,
-          1.8014059753954204
+          67.1519964703287,
+          76.60550458715596
         ],
         "baselineMinMax": [
-          70.84375,
-          81.015625
+          69.671875,
+          72.609375
         ],
         "candidateMinMax": [
-          70.625,
-          72.421875
+          111.453125,
+          127.484375
         ]
       },
       "firstByteMedianMs": {
-        "baselineMedian": 1.0852289999997993,
-        "candidateMedian": 1.2589579999994385,
-        "changePercent": 16.00851064610984,
+        "baselineMedian": 1.0882289999999557,
+        "candidateMedian": 1.446042000000034,
+        "changePercent": 32.88030368608932,
         "pairedBootstrap95Percent": [
-          0.4646780970523512,
-          17.0789870751614
+          24.497003847518094,
+          42.35016481556259
         ],
         "baselineMinMax": [
-          1.050728999999592,
-          1.3109374999999943
+          1.0640005000004749,
+          1.100291499999912
         ],
         "candidateMinMax": [
-          1.2318744999993214,
-          1.3728540000001885
+          1.3357290000001285,
+          1.8312084999988656
         ]
       },
       "firstByteP95Ms": {
-        "baselineMedian": 1.7107870499999307,
-        "candidateMedian": 1.5217000000002372,
-        "changePercent": -11.052635101469887,
+        "baselineMedian": 1.5171705999994625,
+        "candidateMedian": 1.8314148999998676,
+        "changePercent": 20.71252237556649,
         "pairedBootstrap95Percent": [
-          -22.549059898171066,
-          7.698115146080475
+          3.291076824238126,
+          64.54618623634747
         ],
         "baselineMinMax": [
-          1.12510385000096,
-          2.0204415499999584
+          1.1556415500005641,
+          1.7143937499997264
         ],
         "candidateMinMax": [
-          1.3409129499996197,
-          2.1290521999998417
+          1.5174142500000243,
+          2.9612643500002376
         ]
       }
     },
     "bridge_4_readers": {
       "throughputMiBps": {
-        "baselineMedian": 1483.109709356154,
-        "candidateMedian": 1677.8702190325246,
-        "changePercent": 13.131901736448048,
+        "baselineMedian": 1511.545647682175,
+        "candidateMedian": 1558.5643064500382,
+        "changePercent": 3.110634392018663,
         "pairedBootstrap95Percent": [
-          10.604759482056503,
-          14.8238324230751
+          -0.17819170191260003,
+          4.1955668349066055
         ],
         "baselineMinMax": [
-          1410.2135370953074,
-          1531.8842131540764
+          1477.5245629656881,
+          1527.9239684024421
         ],
         "candidateMinMax": [
-          1653.632153448373,
-          1705.2075319496334
+          1459.1096656451411,
+          1593.734218976831
         ]
       },
       "bridgeCpuMs": {
-        "baselineMedian": 536.511,
-        "candidateMedian": 487.472,
-        "changePercent": -9.140353133486546,
+        "baselineMedian": 520.885,
+        "candidateMedian": 546.04,
+        "changePercent": 4.829280935331215,
         "pairedBootstrap95Percent": [
-          -11.899572394698122,
-          -4.139570067289888
+          -1.4985404193729845,
+          7.0591630479080125
         ],
         "baselineMinMax": [
-          507.538,
-          553.783
+          510.675,
+          543.874
         ],
         "candidateMinMax": [
-          459.228,
-          509.895
+          504.085,
+          554.192
         ]
       },
       "bridgePeakRssMiB": {
-        "baselineMedian": 238.703125,
-        "candidateMedian": 238.71875,
-        "changePercent": 0.006545787785561252,
+        "baselineMedian": 242.921875,
+        "candidateMedian": 228.875,
+        "changePercent": -5.782466070624559,
         "pairedBootstrap95Percent": [
-          -4.401121470952596,
-          1.3637868255544472
+          -10.055438730644239,
+          -3.177461889753652
         ],
         "baselineMinMax": [
-          233.765625,
-          265.84375
+          236.828125,
+          247.171875
         ],
         "candidateMinMax": [
-          225.96875,
-          241.21875
+          220.265625,
+          242.28125
         ]
       },
       "serverCpuMs": {
-        "baselineMedian": 103.523,
-        "candidateMedian": 99.407,
-        "changePercent": -3.9759280546352027,
+        "baselineMedian": 96.652,
+        "candidateMedian": 205.017,
+        "changePercent": 112.11873525638372,
         "pairedBootstrap95Percent": [
-          -7.417460721388114,
-          1.2884295171181392
+          103.87768379960964,
+          117.4526530952778
         ],
         "baselineMinMax": [
-          97.727,
-          110.197
+          94.493,
+          103.494
         ],
         "candidateMinMax": [
-          94.875,
-          100.587
+          199.15,
+          214.195
         ]
       },
       "serverPeakRssMiB": {
-        "baselineMedian": 73.390625,
-        "candidateMedian": 73.703125,
-        "changePercent": 0.4258037044922336,
+        "baselineMedian": 73.546875,
+        "candidateMedian": 169.625,
+        "changePercent": 130.6352241342681,
         "pairedBootstrap95Percent": [
-          -2.66473869035323,
-          1.7716115261472876
+          125.20118593816179,
+          135.82978723404256
         ],
         "baselineMinMax": [
-          72.65625,
-          82.984375
+          71.78125,
+          74.84375
         ],
         "candidateMinMax": [
-          72.71875,
-          74.953125
+          159.46875,
+          173.703125
         ]
       },
       "firstByteMedianMs": {
-        "baselineMedian": 5.967834000000039,
-        "candidateMedian": 6.489542000000029,
-        "changePercent": 8.74199919099603,
+        "baselineMedian": 6.3573749999995925,
+        "candidateMedian": 5.509457999999995,
+        "changePercent": -13.33753317996267,
         "pairedBootstrap95Percent": [
-          -26.05860845446942,
-          47.05927541568629
+          -21.854770693865667,
+          38.70784835646668
         ],
         "baselineMinMax": [
-          4.360083499999746,
-          8.797416500000054
+          4.49316699999963,
+          8.29883399999926
         ],
         "candidateMinMax": [
-          4.747812499999782,
-          7.5719164999991335
+          5.266937500000495,
+          8.279833499998858
         ]
       },
       "firstByteP95Ms": {
-        "baselineMedian": 14.442726849999735,
-        "candidateMedian": 13.675470949998452,
-        "changePercent": -5.31240331531505,
+        "baselineMedian": 14.836131699999395,
+        "candidateMedian": 14.38057040000003,
+        "changePercent": -3.0706204906457146,
         "pairedBootstrap95Percent": [
-          -18.61636445812459,
-          2.6915521797879816
+          -10.694663574876472,
+          14.248858851165958
         ],
         "baselineMinMax": [
-          12.492456149999839,
-          16.257835750000048
+          13.347410199999103,
+          16.862039150001234
         ],
         "candidateMinMax": [
-          12.089354149999643,
-          15.557324999999489
+          10.926268649999656,
+          18.08138749999971
         ]
       }
     },
     "bridge_64KiB_ranges": {
       "throughputMiBps": {
-        "baselineMedian": 152.61150476135975,
-        "candidateMedian": 134.18498868338227,
-        "changePercent": -12.074133012967291,
+        "baselineMedian": 150.31395653343273,
+        "candidateMedian": 120.90238578642536,
+        "changePercent": -19.5667597509255,
         "pairedBootstrap95Percent": [
-          -14.22458751220005,
-          -10.385609030714082
+          -20.16491835970354,
+          -18.679435883496076
         ],
         "baselineMinMax": [
-          144.3690438013241,
-          159.49075876651935
+          144.6354917580051,
+          159.27595856925754
         ],
         "candidateMinMax": [
-          130.49422272714745,
-          136.08991045309472
+          118.77593941245223,
+          133.1227863344656
         ]
       },
       "bridgeCpuMs": {
-        "baselineMedian": 114.579,
-        "candidateMedian": 138.011,
-        "changePercent": 20.450518855985834,
+        "baselineMedian": 122.559,
+        "candidateMedian": 144.073,
+        "changePercent": 17.55399440269585,
         "pairedBootstrap95Percent": [
-          8.904131750088972,
-          34.348881100026965
+          10.433422698838246,
+          35.27233528630889
         ],
         "baselineMinMax": [
-          93.639,
-          124.954
+          93.85,
+          126.142
         ],
         "candidateMinMax": [
-          131.973,
-          147.63
+          134.522,
+          156.094
         ]
       },
       "bridgePeakRssMiB": {
-        "baselineMedian": 241.203125,
-        "candidateMedian": 256.296875,
-        "changePercent": 6.257692556843941,
+        "baselineMedian": 246.5625,
+        "candidateMedian": 241.296875,
+        "changePercent": -2.1356147021546312,
         "pairedBootstrap95Percent": [
-          -0.8432211046196514,
-          7.411741759313428
+          -3.0859522907989434,
+          1.6936153895315442
         ],
         "baselineMinMax": [
-          237.671875,
-          272.5
+          237.5,
+          257.0
         ],
         "candidateMinMax": [
-          242.15625,
-          258.390625
+          231.328125,
+          258.421875
         ]
       },
       "serverCpuMs": {
-        "baselineMedian": 57.036,
-        "candidateMedian": 51.292,
-        "changePercent": -10.070832456694012,
+        "baselineMedian": 57.408,
+        "candidateMedian": 66.525,
+        "changePercent": 15.881061872909697,
         "pairedBootstrap95Percent": [
-          -12.567014370621587,
-          -8.420997264885344
+          13.609756097560965,
+          18.24874149721236
         ],
         "baselineMinMax": [
-          55.638,
-          58.58
+          54.764,
+          59.689
         ],
         "candidateMinMax": [
-          50.804,
-          52.362
+          61.047,
+          69.138
         ]
       },
       "serverPeakRssMiB": {
-        "baselineMedian": 78.125,
-        "candidateMedian": 76.859375,
-        "changePercent": -1.6199999999999992,
+        "baselineMedian": 77.8125,
+        "candidateMedian": 173.5,
+        "changePercent": 122.97188755020079,
         "pairedBootstrap95Percent": [
-          -4.831199068684522,
-          0.16135538523598392
+          116.14457831325299,
+          128.97590361445782
         ],
         "baselineMinMax": [
-          76.75,
-          86.625
+          76.171875,
+          78.703125
         ],
         "candidateMinMax": [
-          75.953125,
-          78.515625
+          163.890625,
+          178.53125
         ]
       },
       "firstByteMedianMs": {
-        "baselineMedian": 0.3563334999998915,
-        "candidateMedian": 0.4215205000000424,
-        "changePercent": 18.293817449151064,
+        "baselineMedian": 0.355771000000459,
+        "candidateMedian": 0.4395620000004783,
+        "changePercent": 23.551947741640312,
         "pairedBootstrap95Percent": [
-          16.92452429902225,
-          19.34827084103965
+          21.4535157177391,
+          24.88689701446505
         ],
         "baselineMinMax": [
-          0.3413124999997308,
-          0.3604169999989608
+          0.3512494999995397,
+          0.366166499999963
         ],
         "candidateMinMax": [
-          0.4149795000002996,
-          0.4365625000000364
+          0.37977049999972223,
+          0.4454999999998108
         ]
       },
       "firstByteP95Ms": {
-        "baselineMedian": 0.6292082499994649,
-        "candidateMedian": 0.6581352499997593,
-        "changePercent": 4.59736502188568,
+        "baselineMedian": 0.7014372500002537,
+        "candidateMedian": 0.7097289999992427,
+        "changePercent": 1.1821085918927166,
         "pairedBootstrap95Percent": [
-          -11.15841044321948,
-          11.400455887071438
+          -5.910512582558624,
+          21.92525580406357
         ],
         "baselineMinMax": [
-          0.562927000000002,
-          0.7708025000001726
+          0.5460417500003132,
+          0.808166749999998
         ],
         "candidateMinMax": [
-          0.6091562500002965,
-          0.7103642500001115
+          0.6111247499998171,
+          0.9500310000003083
         ]
       }
     },
     "direct_64KiB_ranges": {
       "throughputMiBps": {
-        "baselineMedian": 418.44150155117956,
-        "candidateMedian": 409.42574840147824,
-        "changePercent": -2.1546030009641837,
+        "baselineMedian": 407.6974086141402,
+        "candidateMedian": 329.7549765951119,
+        "changePercent": -19.117715828504544,
         "pairedBootstrap95Percent": [
-          -4.690018703442056,
-          1.9451036381055609
+          -20.08805094919578,
+          -17.51117600835669
         ],
         "baselineMinMax": [
-          403.55931242371145,
-          444.890372894877
+          399.90293356045225,
+          422.40739212936273
         ],
         "candidateMinMax": [
-          399.96083383534665,
-          438.9745412050794
+          322.3285530397292,
+          413.3481270628079
         ]
       },
       "bridgeCpuMs": {
-        "baselineMedian": 0.222,
-        "candidateMedian": 0.192,
-        "changePercent": -13.513513513513509,
+        "baselineMedian": 0.207,
+        "candidateMedian": 0.237,
+        "changePercent": 14.492753623188403,
         "pairedBootstrap95Percent": [
-          -23.529411764705877,
-          4.918032786885251
+          -19.661016949152543,
+          42.70270270270271
         ],
         "baselineMinMax": [
-          0.178,
-          0.25
+          0.183,
+          0.429
         ],
         "candidateMinMax": [
-          0.166,
-          0.246
+          0.196,
+          0.356
         ]
       },
       "bridgePeakRssMiB": {
-        "baselineMedian": 241.234375,
-        "candidateMedian": 256.34375,
-        "changePercent": 6.263359025843651,
+        "baselineMedian": 246.578125,
+        "candidateMedian": 241.328125,
+        "changePercent": -2.129142639883408,
         "pairedBootstrap95Percent": [
-          -0.9026356962330007,
-          7.215625202777232
+          -3.085757556635327,
+          1.9740161453077665
         ],
         "baselineMinMax": [
-          237.703125,
-          272.53125
+          237.546875,
+          257.203125
         ],
         "candidateMinMax": [
-          242.15625,
-          258.40625
+          231.34375,
+          258.5
         ]
       },
       "serverCpuMs": {
-        "baselineMedian": 32.717,
-        "candidateMedian": 33.31,
-        "changePercent": 1.8125133722529663,
+        "baselineMedian": 33.841,
+        "candidateMedian": 43.093,
+        "changePercent": 27.339617623592694,
         "pairedBootstrap95Percent": [
-          -2.41973283337239,
-          8.751733255941453
+          25.303262277705805,
+          36.454341009153964
         ],
         "baselineMinMax": [
-          29.699,
-          34.157
+          30.605,
+          34.238
         ],
         "candidateMinMax": [
-          30.655,
-          34.052
+          36.48,
+          43.944
         ]
       },
       "serverPeakRssMiB": {
-        "baselineMedian": 79.15625,
-        "candidateMedian": 79.390625,
-        "changePercent": 0.2960915909988149,
+        "baselineMedian": 79.078125,
+        "candidateMedian": 174.484375,
+        "changePercent": 120.64809326220116,
         "pairedBootstrap95Percent": [
-          -3.9204545454545436,
-          2.571770334928236
+          113.86314336422797,
+          127.02161729383508
         ],
         "baselineMinMax": [
-          77.703125,
-          87.0
+          77.59375,
+          79.90625
         ],
         "candidateMinMax": [
-          78.390625,
-          81.46875
+          164.953125,
+          179.875
         ]
       },
       "firstByteMedianMs": {
-        "baselineMedian": 0.13358299999981682,
-        "candidateMedian": 0.13514550000036252,
-        "changePercent": 1.169684765687129,
+        "baselineMedian": 0.13629150000087975,
+        "candidateMedian": 0.17075000000022555,
+        "changePercent": 25.282941341993713,
         "pairedBootstrap95Percent": [
-          -1.5679639851690519,
-          2.6043733109565093
+          23.929780436344174,
+          27.157157863354286
         ],
         "baselineMinMax": [
-          0.12927049999996143,
-          0.13699999999880674
+          0.1336665000000039,
+          0.1368124999999054
         ],
         "candidateMinMax": [
-          0.13152100000115752,
-          0.13733300000012605
+          0.13185449999946286,
+          0.17162499999994907
         ]
       },
       "firstByteP95Ms": {
-        "baselineMedian": 0.2248649999992267,
-        "candidateMedian": 0.26030225000022256,
-        "changePercent": 15.759344496083294,
+        "baselineMedian": 0.22834399999999277,
+        "candidateMedian": 0.2160625000001346,
+        "changePercent": -5.378507865264059,
         "pairedBootstrap95Percent": [
-          6.959580005556543,
-          40.739731326547734
+          -18.318110958012625,
+          4.0429772356377125
         ],
         "baselineMinMax": [
-          0.18723950000094192,
-          0.2614269999994576
+          0.18809375000091677,
+          0.2948129999997491
         ],
         "candidateMinMax": [
-          0.2478439999999864,
-          0.2981562500003747
+          0.20121874999949796,
+          0.2284267500003807
         ]
       }
     }
@@ -559,7 +563,7 @@
         "429": 20
       },
       "requests": 20,
-      "elapsedMs": 23.603666999999405
+      "elapsedMs": 23.299708000002283
     },
     {
       "version": "baseline",
@@ -568,7 +572,7 @@
         "206": 200
       },
       "requests": 200,
-      "elapsedMs": 110.95904200000223
+      "elapsedMs": 115.14225000000079
     },
     {
       "version": "candidate",
@@ -577,7 +581,7 @@
         "206": 20
       },
       "requests": 20,
-      "elapsedMs": 34.47579200000109
+      "elapsedMs": 48.45137500000055
     },
     {
       "version": "candidate",
@@ -587,7 +591,7 @@
         "429": 135
       },
       "requests": 200,
-      "elapsedMs": 120.47070800000074
+      "elapsedMs": 143.96470799999952
     }
   ],
   "cancellation": [
@@ -616,21 +620,21 @@
       "version": "candidate",
       "round": 0,
       "upstreamAbortedWithin1000ms": true,
-      "abortLatencyMs": 3.141750000002503,
+      "abortLatencyMs": 2.596000000001368,
       "activeTransfers": 0
     },
     {
       "version": "candidate",
       "round": 1,
       "upstreamAbortedWithin1000ms": true,
-      "abortLatencyMs": 3.2371250000032887,
+      "abortLatencyMs": 2.489417000000685,
       "activeTransfers": 0
     },
     {
       "version": "candidate",
       "round": 2,
       "upstreamAbortedWithin1000ms": true,
-      "abortLatencyMs": 3.308791999999812,
+      "abortLatencyMs": 2.764999999999418,
       "activeTransfers": 0
     }
   ],
