@@ -3,6 +3,7 @@ import {
   PLAYBACK_REPORT_INTERVAL_MS,
   type PlaybackSessionApi,
   type PlayerBuffer,
+  type WatchPlaybackSample,
   PlaybackSessionReporter,
   PlaybackUnsupportedError,
   ServerHttpError,
@@ -280,6 +281,28 @@ export class HtmlMediaPlayer {
     active.heldPlay = null;
     await this.play(active);
     if (this.active === active) this.publish(active);
+  }
+
+  sample(sessionId: string): WatchPlaybackSample {
+    const active = this.requireActive(sessionId);
+    const state = this.snapshot(active);
+    return {
+      ...state,
+      sampledAtMs: performance.now(),
+      speed: this.element.playbackRate,
+      advancing:
+        !state.paused &&
+        !this.element.ended &&
+        !this.element.seeking &&
+        !active.buffering &&
+        !active.suspended &&
+        !active.awaitingInteraction &&
+        this.element.readyState >= HAVE_FUTURE_DATA,
+    };
+  }
+
+  recordSynchronization(fields: Parameters<PlaybackDiagnostics["record"]>[1]): void {
+    this.diagnostics.record("watch_synchronization", fields);
   }
 
   getState(): PlayerState | null {

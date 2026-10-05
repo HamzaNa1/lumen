@@ -1,7 +1,7 @@
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { expect, test } from "bun:test";
 import type { PlayerState } from "@lumen/contracts";
-import { watchCorrection, watchPosition } from "../../packages/contracts/src/watch-groups";
+import { watchPosition } from "../../packages/contracts/src/watch-groups";
 import {
   type PlayerBuffer,
   type ServerApi,
@@ -45,6 +45,12 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   }
   getState() {
     return this.state;
+  }
+  sample() {
+    return this.state === null ? null : {
+      ...this.state, sampledAtMs: performance.now(), speed: this.rate,
+      advancing: !this.state.paused && !this.starved,
+    };
   }
   seeks = 0;
   async seek(_sessionId: string, positionSeconds: number) {
@@ -149,14 +155,7 @@ test("a temporary native playback failure recovers without another group command
   }
 });
 
-test("small delays change speed, large delays seek, and paused playback never speeds up", () => {
-  expect(watchCorrection(10, 10.5, false)).toEqual({ seek: null, speed: 1.05 });
-  expect(watchCorrection(10.5, 10, false)).toEqual({ seek: null, speed: 0.95 });
-  expect(watchCorrection(10, 11.2, false)).toEqual({ seek: 11.2, speed: 1 });
-  expect(watchCorrection(11.2, 10, false)).toEqual({ seek: 10, speed: 1 });
-  expect(watchCorrection(10, 11, false)).toEqual({ seek: 11, speed: 1 });
-  expect(watchCorrection(10, 10.04, false)).toEqual({ seek: null, speed: 1 });
-  expect(watchCorrection(10, 10.5, true)).toEqual({ seek: 10.5, speed: 1 });
+test("the shared group clock advances only while playing", () => {
   expect(
     watchPosition(
       { itemId: "video", title: "Movie", positionSeconds: 10, paused: false, updatedAtMs: 1000 },

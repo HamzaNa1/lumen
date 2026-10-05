@@ -466,6 +466,7 @@ test("a watch group is not told the browser is ready until it holds five seconds
       start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
       stop: () => player.stop(),
       getState: () => player.getState(),
+      sample: (sessionId) => player.sample(sessionId),
       seek: (sessionId, positionSeconds) => {
         seeks += 1;
         return player.seek(sessionId, positionSeconds);
@@ -523,6 +524,7 @@ const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefin
       start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
       stop: () => player.stop(),
       getState: () => player.getState(),
+      sample: (sessionId) => player.sample(sessionId),
       seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
       pause: (sessionId, paused) => player.pause(sessionId, paused),
       speed: (sessionId, speed) => player.speed(sessionId, speed),
@@ -670,4 +672,31 @@ test("browser failure diagnostics export after teardown and isolate the next pla
   await player.start({ itemId: "other-title" });
   expect(JSON.parse(player.playbackDiagnostics()).playbackTimeline).toHaveLength(0);
   await player.stop();
+});
+
+test("browser synchronization samples fresh positions and halts projection across playback lifecycle", async () => {
+  const { player, element } = setup();
+  await player.start({ itemId: "item" });
+  const sessionId = player.getState()?.sessionId ?? "";
+  element.currentTime = 17;
+  await player.speed(sessionId, 0.99);
+  expect(player.sample(sessionId)).toMatchObject({ positionSeconds: 17, speed: 0.99, advancing: true });
+  element.seeking = true;
+  expect(player.sample(sessionId).advancing).toBe(false);
+  element.seeking = false;
+  element.emit("waiting");
+  expect(player.sample(sessionId).advancing).toBe(false);
+  element.emit("playing");
+  await player.pause(sessionId, true);
+  expect(player.sample(sessionId).advancing).toBe(false);
+  await player.pause(sessionId, false);
+  expect(player.sample(sessionId).advancing).toBe(true);
+  element.ended = true;
+  expect(player.sample(sessionId).advancing).toBe(false);
+  element.ended = false;
+  player.leave();
+  expect(player.sample(sessionId).advancing).toBe(false);
+  await player.stop();
+  expect(element.playbackRate).toBe(1);
+  expect(() => player.sample(sessionId)).toThrow();
 });

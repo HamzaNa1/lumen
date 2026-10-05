@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { mpvCacheArguments } from "./MpvCache";
 import { LibMpv } from "./LibMpv";
+import { mpvPitchArguments } from "./MpvSynchronization";
 
 export interface MpvProcessOptions {
   readonly cwd: string;
@@ -66,6 +67,7 @@ export class MpvProcess {
       "--load-scripts=no",
       "--idle=yes",
       "--no-terminal",
+      ...mpvPitchArguments,
       // Read ahead of playback whatever the source, paused or not: a watch group waits for it.
       ...mpvCacheArguments,
       `--input-ipc-server=${socketPath}`,

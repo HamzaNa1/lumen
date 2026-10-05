@@ -1,13 +1,18 @@
 import {
   initialWatchStatus,
   WATCH_READY_BUFFER_SECONDS,
-  watchCorrection,
   watchPosition,
-  type PlayerState,
   type WatchAction,
   type WatchGroup,
   type WatchStatus,
 } from "@lumen/contracts";
+import {
+  WatchDriftCorrection,
+  watchSamplePosition,
+  type WatchPlaybackSample,
+  type WatchPlayerState,
+} from "./WatchSynchronization.ts";
+import type { PlaybackDiagnosticEvent } from "../playback/PlaybackDiagnostics.ts";
 import { PlaybackUnsupportedError } from "../errors.ts";
 import { type WatchConnection, WatchGroupClient } from "./WatchGroupClient.ts";
 
@@ -38,10 +43,11 @@ export interface WatchPlayer<Server extends WatchServer> {
     readonly paused?: boolean;
   }) => Promise<unknown>;
   readonly stop: () => Promise<void>;
-  readonly getState: () => Pick<
-    PlayerState,
-    "sessionId" | "itemId" | "positionSeconds" | "durationSeconds" | "paused"
-  > | null;
+  readonly getState: () => WatchPlayerState | null;
+  readonly sample: (
+    sessionId: string,
+  ) => WatchPlaybackSample | null | Promise<WatchPlaybackSample | null>;
+  readonly recordSynchronization?: (fields: PlaybackDiagnosticEvent["fields"]) => void;
   readonly seek: (sessionId: string, positionSeconds: number) => Promise<unknown>;
   readonly pause: (sessionId: string, paused: boolean) => Promise<unknown>;
   readonly speed: (sessionId: string, speed: number) => Promise<void>;
@@ -78,6 +84,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private failures = 0;
   private surfaceReady = false;
   private speed = 1;
+  private speedSessionId: string | null = null;
+  private speedQueue: Promise<void> = Promise.resolve();
+  private readonly correction = new WatchDriftCorrection();
+  private correctionSessionId: string | null = null;
+  private lastDiagnosticMs = 0;
   private generation = 0;
   private pendingStop: Promise<void> | null = null;
   private stoppedPlayback: { groupId: string; revision: number } | null = null;
@@ -129,7 +140,12 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         status.group?.playback?.itemId !== this.status.group?.playback?.itemId
       )
         this.playbackError = null;
+      const reset =
+        status.connection !== "connected" ||
+        status.group?.id !== this.status.group?.id ||
+        status.group?.revision !== this.status.group?.revision;
       this.status = { ...status, error: status.error ?? this.playbackError };
+      if (reset) void this.resetSpeed().catch(() => undefined);
       this.onStatus(this.status);
       void this.synchronize();
     };
@@ -139,6 +155,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
 
   disconnect(): void {
     this.generation += 1;
+    this.correction.reset();
     this.pendingStop = null;
     this.stoppedPlayback = null;
     this.reported = null;
@@ -156,7 +173,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.heldPosition = null;
     this.retryAt = 0;
     this.failures = 0;
-    void this.setSpeed(1).catch(() => undefined);
+    void this.resetSpeed().catch(() => undefined);
   }
 
   close(): void {
@@ -174,7 +191,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       this.stoppedAfterFailure = false;
       void this.synchronize();
     }
-    if (action.type === "leave") await this.setSpeed(1);
+    if (action.type === "leave") await this.resetSpeed();
     if (action.type === "create") {
       const state = this.player.getState();
       if (state !== null) {
@@ -196,6 +213,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
 
   async stop(): Promise<void> {
     this.generation += 1;
+    this.correction.reset();
     const client = this.client;
     const group = this.status.group;
     // A viewer whose own player failed is only giving up locally. Everyone else is still
@@ -232,6 +250,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         });
       this.pendingStop = pending;
     }
+    void this.resetSpeed().catch(() => undefined);
     await this.player.stop();
   }
 
@@ -251,6 +270,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   }
 
   private recordFailure(cause: unknown): void {
+    this.correction.reset();
+    void this.resetSpeed().catch(() => undefined);
     // A file this device cannot play will not start working on its own: wait for the group
     // to move on, or for the viewer to ask again.
     this.retryAt =
@@ -264,12 +285,18 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
 
   /** Call after the device slept or lost its network, to reconnect and catch up immediately. */
   resume(): void {
+    this.generation += 1;
+    void this.resetSpeed().catch(() => undefined);
     this.client?.resume();
     this.retry();
   }
 
   setSurfaceReady(ready: boolean): void {
     this.surfaceReady = ready;
+    if (!ready) {
+      this.generation += 1;
+      void this.resetSpeed().catch(() => undefined);
+    }
     if (ready) void this.synchronize();
   }
 
@@ -324,11 +351,28 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.readinessTimer = setTimeout(() => void this.synchronize(), READINESS_INTERVAL_MS);
   }
 
-  private async setSpeed(speed: number): Promise<void> {
-    if (speed === this.speed) return;
-    const state = this.player.getState();
-    if (state !== null) await this.player.speed(state.sessionId, speed);
-    this.speed = speed;
+  private resetSpeed(valid: () => boolean = () => true): Promise<void> {
+    this.correction.reset();
+    return this.setSpeed(1, valid);
+  }
+
+  private setSpeed(speed: number, valid: () => boolean = () => true): Promise<void> {
+    const sessionId = this.player.getState()?.sessionId;
+    const operation = this.speedQueue
+      .catch(() => undefined)
+      .then(async () => {
+        if (!valid() || sessionId === undefined || this.player.getState()?.sessionId !== sessionId)
+          return;
+        if (speed === this.speed && sessionId === this.speedSessionId) return;
+        this.speedSessionId = null;
+        await this.player.speed(sessionId, speed);
+        if (this.player.getState()?.sessionId !== sessionId) return;
+        this.speed = speed;
+        this.speedSessionId = sessionId;
+        this.player.recordSynchronization?.({ speed, event: "speed_applied" });
+      });
+    this.speedQueue = operation;
+    return operation;
   }
 
   private async synchronize(): Promise<void> {
@@ -340,9 +384,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     const client = this.client;
     const group = this.status.group;
     const generation = this.generation;
+    let sessionId: string | null = null;
     // The same playback may arrive again with other members or a shorter wait; that is no
     // reason to abandon applying it.
     const current = (): boolean =>
+      (sessionId === null || this.player.getState()?.sessionId === sessionId) &&
       this.generation === generation &&
       this.client === client &&
       this.status.group?.id === group?.id &&
@@ -356,32 +402,38 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       group === null ||
       this.status.connection !== "connected"
     ) {
-      await this.setSpeed(1).catch(() => undefined);
+      await this.resetSpeed().catch(() => undefined);
       return;
     }
     if (this.stoppedHere(group)) {
+      await this.resetSpeed().catch(() => undefined);
       this.reportReady(client, group);
       return;
     }
     if (this.stoppedPlayback?.groupId === group.id) this.stoppedPlayback = null;
-    if (this.appliedGroup !== group.id) {
-      this.appliedGroup = group.id;
-      this.startedPlayback = false;
-      this.appliedRevision = -1;
-      this.heldPosition = null;
-      this.retryAt = 0;
-      this.failures = 0;
-    }
-    if (Date.now() < this.retryAt) {
+    if (this.appliedGroup === group.id && Date.now() < this.retryAt) {
       // The group should not wait on a player that is failing here.
       this.reportReady(client, group);
       return;
     }
     this.syncing = true;
     try {
+      if (this.appliedGroup !== group.id) {
+        this.correction.reset();
+        await this.resetSpeed();
+        if (!current()) return;
+        this.appliedGroup = group.id;
+        this.startedPlayback = false;
+        this.appliedRevision = -1;
+        this.heldPosition = null;
+        this.retryAt = 0;
+        this.failures = 0;
+      }
       const playback = group.playback;
       let state = this.player.getState();
       if (playback === null) {
+        await this.resetSpeed();
+        if (!current()) return;
         // A freshly created empty group doesn't interrupt the creator's current video.
         if ((group.revision > 0 || this.startedPlayback) && state !== null)
           await this.player.stop();
@@ -389,7 +441,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         this.appliedRevision = group.revision;
         return;
       }
-      if (!this.surfaceReady) return;
+      if (!this.surfaceReady) {
+        await this.resetSpeed(current);
+        return;
+      }
       if (state === null || state.itemId !== playback.itemId) {
         this.startedPlayback = true;
         await this.player.start({
@@ -399,7 +454,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
           startAtSeconds: watchPosition(playback, client.serverNow),
           paused: true,
         });
-        this.speed = 1;
+        this.correction.reset();
         if (
           this.generation !== generation ||
           this.client !== client ||
@@ -412,6 +467,13 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         state = this.player.getState();
       }
       if (state === null) return;
+      sessionId = state.sessionId;
+      if (this.correctionSessionId !== sessionId) {
+        this.correction.reset();
+        this.correctionSessionId = sessionId;
+        await this.resetSpeed(current);
+        if (!current()) return;
+      }
       const awaited = this.awaited(group);
       if (
         awaited &&
@@ -419,6 +481,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         !(await this.buffered(state.sessionId))
       ) {
         // Still buffering the position the group holds at; another seek would start that over.
+        await this.resetSpeed(current);
         this.checkReadinessSoon();
         return;
       }
@@ -430,25 +493,79 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       ) {
         // Chasing the group's clock would only move this player further from what it holds.
         // The group stops for it instead, and plays on once it has buffered enough.
+        await this.resetSpeed(current);
         if (current()) this.report(client, group, "buffering");
         return;
       }
       if (!current()) return;
-      const target = Math.min(
+      const revisionChanged = this.appliedRevision !== group.revision;
+      // A held group starts from where the player waits; seeking there would load it again.
+      const released = !playback.paused && this.heldPosition === playback.positionSeconds;
+      let target = Math.min(
         watchPosition(playback, client.serverNow),
         state.durationSeconds ?? Infinity,
       );
-      const correction = watchCorrection(state.positionSeconds, target, playback.paused);
-      // A held group that starts playing does so from where this player already waits; seeking
-      // there again would only make it load again.
-      const released = !playback.paused && this.heldPosition === playback.positionSeconds;
-      const reposition =
-        correction.seek !== null || (this.appliedRevision !== group.revision && !released);
-      if (reposition) await this.player.seek(state.sessionId, target);
+      let correction: { seek: number | null; speed: number };
+      if (revisionChanged) {
+        // Explicit actions do not wait for a drift measurement, even when IPC is under load.
+        this.correction.reset();
+        correction = { seek: released ? null : target, speed: 1 };
+        this.player.recordSynchronization?.({
+          event: "group_action",
+          seek: !released,
+          paused: playback.paused,
+          chosenSpeed: 1,
+        });
+      } else {
+        // Buffer IPC can take time. Measure afterwards and compare both clocks at one instant.
+        const sample = await this.player.sample(state.sessionId);
+        if (!current()) return;
+        const nowMs = performance.now();
+        const position = sample === null ? null : watchSamplePosition(sample, nowMs);
+        if (sample === null || sample.sessionId !== state.sessionId || position === null) {
+          if (nowMs - this.lastDiagnosticMs >= 1000) {
+            this.player.recordSynchronization?.({ event: "sample_unavailable" });
+            this.lastDiagnosticMs = nowMs;
+          }
+          await this.resetSpeed(current);
+          return;
+        }
+        state = sample;
+        if (!sample.advancing) this.correction.reset();
+        target = Math.min(
+          watchPosition(playback, client.serverNow),
+          state.durationSeconds ?? Infinity,
+        );
+        correction =
+          !playback.paused && !sample.advancing
+            ? { seek: null, speed: 1 }
+            : this.correction.update(position, target, playback.paused, nowMs);
+        if (
+          nowMs - this.lastDiagnosticMs >= 1000 ||
+          correction.seek !== null ||
+          correction.speed !== this.speed
+        ) {
+          this.player.recordSynchronization?.({
+            event: "drift_sample",
+            driftSeconds: target - position,
+            sampleAgeMs: nowMs - sample.sampledAtMs,
+            measuredSpeed: sample.speed,
+            chosenSpeed: correction.speed,
+            advancing: sample.advancing,
+            seek: correction.seek !== null,
+          });
+          this.lastDiagnosticMs = nowMs;
+        }
+      }
+      const reposition = correction.seek !== null;
+      if (reposition) {
+        this.correction.reset();
+        await this.player.seek(state.sessionId, target);
+      }
       if (!current()) return;
-      await this.setSpeed(reposition ? 1 : correction.speed);
+      await this.setSpeed(reposition ? 1 : correction.speed, current);
       if (!current()) return;
-      if (state.paused !== playback.paused)
+      if (revisionChanged || state.paused !== playback.paused)
         await this.player.pause(state.sessionId, playback.paused);
       if (!current()) return;
       this.appliedRevision = group.revision;
@@ -469,6 +586,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     } catch (cause) {
       if (current()) this.recordFailure(cause);
     } finally {
+      if (!current()) await this.resetSpeed().catch(() => undefined);
       this.syncing = false;
       if (this.resync) {
         this.resync = false;
