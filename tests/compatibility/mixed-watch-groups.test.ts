@@ -7,7 +7,8 @@ import {
   type WatchPlayer,
   type WatchServer,
 } from "../../packages/client/src/index.ts";
-import { eventually, watchFixture } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
+import { watchFixture } from "../helpers/watch-groups";
 
 const NativeWebSocket = globalThis.WebSocket;
 afterEach(() => {

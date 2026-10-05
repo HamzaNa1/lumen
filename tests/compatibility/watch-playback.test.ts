@@ -9,7 +9,8 @@ import {
   type WatchPlayer,
   type WatchServer,
 } from "../../packages/client/src/index.ts";
-import { eventually, watchFixture, watchProxy } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
+import { watchFixture, watchProxy } from "../helpers/watch-groups";
 
 class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   state: PlayerState | null = null;

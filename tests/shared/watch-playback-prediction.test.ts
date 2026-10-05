@@ -5,7 +5,7 @@ import {
   type WatchPlayer,
   type WatchServer,
 } from "../../packages/client/src/index.ts";
-import { eventually } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
 
 const fixture = async (group: WatchGroup) => {
   const requests: { requestId: string; action: WatchAction }[] = [];

@@ -5,7 +5,8 @@ import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { WatchGroupClient } from "../../packages/client/src/index.ts";
 import { forbidden } from "../../apps/server/src/core/Errors";
 import { WatchGroups, type WatchSocketData } from "../../apps/server/src/watch-groups/WatchGroups";
-import { eventually, watchFixture } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
+import { watchFixture } from "../helpers/watch-groups";
 
 test("group membership does not grant control of media a user cannot access", async () => {
   const fixture = await watchFixture();

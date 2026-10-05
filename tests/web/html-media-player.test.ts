@@ -5,7 +5,8 @@ import {
   ServerHttpError,
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
-import { eventually, watchFixture } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
+import { watchFixture } from "../helpers/watch-groups";
 import type { PlayerSession, PlayerState } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;

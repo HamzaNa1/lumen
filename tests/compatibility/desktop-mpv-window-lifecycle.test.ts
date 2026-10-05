@@ -7,7 +7,8 @@ import {
   PlaybackSessionReporter,
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
-import { eventually, watchFixture } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
+import { watchFixture } from "../helpers/watch-groups";
 import { electronTestExports } from "../helpers/electron";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 

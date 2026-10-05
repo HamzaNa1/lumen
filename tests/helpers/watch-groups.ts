@@ -9,14 +9,7 @@ import {
   WatchGroupClient,
 } from "../../packages/client/src/index.ts";
 import { seedPlaybackFixture } from "./playback";
-
-export const eventually = async (ready: () => boolean, timeout = 5000): Promise<void> => {
-  const deadline = Date.now() + timeout;
-  while (!ready()) {
-    if (Date.now() >= deadline) throw new Error("Condition did not become true");
-    await Bun.sleep(10);
-  }
-};
+import { eventually } from "./eventually";
 
 export const watchFixture = async () => {
   const root = await mkdtemp(join(tmpdir(), "lumen-watch-test-"));

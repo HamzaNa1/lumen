@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
-import { eventually, watchFixture, watchProxy } from "../helpers/watch-groups";
+import { eventually } from "../helpers/eventually";
+import { watchFixture, watchProxy } from "../helpers/watch-groups";
 
 const fixtureWithGroup = async () => {
   const fixture = await watchFixture();
