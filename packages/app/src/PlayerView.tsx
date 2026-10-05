@@ -33,8 +33,9 @@ export const PlayerView = ({
     setControlsVisible(true);
     if (hideTimer.current !== null) clearTimeout(hideTimer.current);
     const hideWhenIdle = (): void => {
+      // Focus left behind by a click is not use: only the pointer, keyboard focus or an open menu is.
       const controlsInUse = document.querySelector(
-        ".media-player-header:hover, .media-player-console:hover, .media-player-header:focus-within, .media-player-console:focus-within, .media-player-header:has([data-popup-open])",
+        ":is(.media-player-header, .media-player-console):is(:hover, :has(:focus-visible), :has([data-popup-open]))",
       );
       if (controlsInUse !== null) hideTimer.current = setTimeout(hideWhenIdle, 1_000);
       else setControlsVisible(false);

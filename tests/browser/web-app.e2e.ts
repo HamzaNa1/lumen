@@ -192,21 +192,25 @@ test("a file the browser cannot play says so instead of loading forever", async 
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
 });
 
-test("supported media plays under the shared controls", async ({ page, browserName }) => {
-  // Playwright's WebKit and Firefox builds ship without the proprietary H.264/AAC decoders.
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
-  await signIn(page);
-  await page.goto("/web/library");
+/** Starts the fixture film from a page that lists it, and waits until it is really playing. */
+const playFilm = async (page: Page): Promise<void> => {
   await page.getByRole("button", { name: "Play Film" }).first().click({ force: true });
   await expect(page).toHaveURL(/\/web\/player$/u);
-  const player = page.getByRole("region", { name: "Media player" });
-  await expect(player).toBeVisible();
+  await expect(page.getByRole("region", { name: "Media player" })).toBeVisible();
   // Headless browsers refuse unprompted playback with sound; the player then asks for a click.
   const start = page.getByRole("button", { name: "Play", exact: true });
   if (await start.isVisible().catch(() => false)) await start.click();
   await expect
     .poll(() => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0))
     .toBeGreaterThan(0.2);
+};
+
+test("supported media plays under the shared controls", async ({ page, browserName }) => {
+  // Playwright's WebKit and Firefox builds ship without the proprietary H.264/AAC decoders.
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  await playFilm(page);
   // The grant that authorises the stream stays in the element, out of the address bar and storage.
   const exposure = await page.evaluate(() => ({
     href: location.href,
@@ -232,6 +236,36 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   await expect.poll(() => page.evaluate(() => document.querySelector("video"))).toBeNull();
 });
 
+test("the player controls hide once the viewer is done with the settings", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  await playFilm(page);
+  const player = page.getByRole("region", { name: "Media player" });
+  const settings = page.getByRole("button", { name: "Playback settings", exact: true });
+  const panel = page.locator(".media-player-settings-panel");
+
+  // Closed again from its own button, which the click leaves focused.
+  await settings.click();
+  await expect(panel).toBeVisible();
+  await settings.click();
+  await page.mouse.move(300, 300);
+  await expect(player).not.toHaveClass(/controls-visible/u, { timeout: 8_000 });
+
+  // Left open while the pointer rests on the video.
+  await page.mouse.move(320, 320);
+  await settings.click();
+  await expect(panel).toBeVisible();
+  await page.mouse.move(300, 300);
+  await expect(player).not.toHaveClass(/controls-visible/u, { timeout: 8_000 });
+  await page.mouse.move(320, 320);
+  await expect(player).toHaveClass(/controls-visible/u);
+  await expect(panel).toBeHidden();
+});
+
 test("a watch group's film starts playing in the browser", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
@@ -244,12 +278,6 @@ test("a watch group's film starts playing in the browser", async ({ page, browse
 
   // Membership lives in this page, so reach the library without loading another.
   await page.getByRole("link", { name: "Movies", exact: true }).click();
-  await page.getByRole("button", { name: "Play Film" }).first().click({ force: true });
-  await expect(page).toHaveURL(/\/web\/player$/u);
-  const start = page.getByRole("button", { name: "Play", exact: true });
-  if (await start.isVisible().catch(() => false)) await start.click();
-  await expect
-    .poll(() => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0))
-    .toBeGreaterThan(0.2);
+  await playFilm(page);
   await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
 });
