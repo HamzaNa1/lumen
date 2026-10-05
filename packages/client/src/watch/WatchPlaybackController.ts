@@ -192,6 +192,27 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     void this.synchronize();
   }
 
+  /**
+   * The local player stopped working on its own, after the group's playback had been applied.
+   * Until this is recorded the failure looks like the viewer choosing to stop, and stopping
+   * would be passed on to the whole group.
+   */
+  playerFailed(cause: unknown): void {
+    if (this.status.group?.playback != null) this.recordFailure(cause);
+  }
+
+  private recordFailure(cause: unknown): void {
+    // A file this device cannot play will not start working on its own: wait for the group
+    // to move on, or for the viewer to ask again.
+    this.retryAt =
+      cause instanceof PlaybackUnsupportedError
+        ? Number.POSITIVE_INFINITY
+        : Date.now() + Math.min(10_000, 1000 * 2 ** this.failures++);
+    this.playbackError = cause instanceof Error ? cause.message : "Could not synchronize playback";
+    this.status = { ...this.status, error: this.playbackError };
+    this.onStatus(this.status);
+  }
+
   /** Call after the device slept or lost its network, to reconnect and catch up immediately. */
   resume(): void {
     this.client?.resume();
@@ -301,18 +322,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         this.onStatus(this.status);
       }
     } catch (cause) {
-      if (current()) {
-        // A file this device cannot play will not start working on its own: wait for the group
-        // to move on, or for the viewer to ask again.
-        this.retryAt =
-          cause instanceof PlaybackUnsupportedError
-            ? Number.POSITIVE_INFINITY
-            : Date.now() + Math.min(10_000, 1000 * 2 ** this.failures++);
-        this.playbackError =
-          cause instanceof Error ? cause.message : "Could not synchronize playback";
-        this.status = { ...this.status, error: this.playbackError };
-        this.onStatus(this.status);
-      }
+      if (current()) this.recordFailure(cause);
     } finally {
       this.syncing = false;
     }

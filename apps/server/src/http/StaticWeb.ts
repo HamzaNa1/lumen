@@ -162,7 +162,11 @@ export const makeStaticWebHandler = (
         cacheControl: path.startsWith(HASHED_ASSETS)
           ? "public, max-age=31536000, immutable"
           : "no-cache",
-        headers: { "referrer-policy": "no-referrer" },
+        // Any HTML document gets the page's policy, however it was asked for.
+        headers:
+          extname(path).toLowerCase() === ".html"
+            ? pageHeaders(request)
+            : { "referrer-policy": "no-referrer" },
       });
     }
     const page = await locate(ENTRY);

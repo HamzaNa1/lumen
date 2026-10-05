@@ -121,7 +121,7 @@ const setup = (streams: PlayerSession["streams"] = []) => {
     element,
     api,
     onState: (state) => states.push(state),
-    onFailure: (message) => failures.push(message),
+    onFailure: (cause) => failures.push(cause.message),
     loadTimeoutMs: 80,
   });
   return { element, api, player, calls, states, failures };
@@ -201,6 +201,26 @@ describe("browser playback lifecycle", () => {
       expect(calls).toContain(`stop ${session}`);
     // No state from a replaced session is ever published.
     expect(states.every((state) => state === null || state.itemId === "item-3")).toBe(true);
+  });
+
+  test("a start replaced while its file is still loading leaves the replacement's source alone", async () => {
+    const { element, player } = setup();
+    element.loadOutcome = "hang";
+    const first = player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
+    // Let the first start reach the element before it is replaced.
+    await Bun.sleep(5);
+    expect(element.src).toContain("/api/v1/media/item-1");
+    const second = player.start({ itemId: "item-2" });
+    await Bun.sleep(5);
+    expect(element.src).toContain("/api/v1/media/item-2");
+    // The first start notices it was replaced and gives up; the second's source must survive.
+    expect(((await first) as Error).message).toBe("Playback was cancelled");
+    expect(element.src).toContain("/api/v1/media/item-2");
+    element.duration = 100;
+    element.emit("loadedmetadata");
+    await second;
+    expect(player.getState()).toMatchObject({ itemId: "item-2", paused: false });
+    expect(element.src).toContain("/api/v1/media/item-2");
   });
 
   test("events from a stopped session cannot update the next one", async () => {

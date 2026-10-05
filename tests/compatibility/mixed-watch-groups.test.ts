@@ -162,6 +162,42 @@ test("a browser that cannot play the file leaves the group's playback untouched"
   }
 });
 
+test("a player that breaks mid-playback is not mistaken for the viewer stopping the group", async () => {
+  const fixture = await watchFixture();
+  const origin = fixture.running.server.url.origin;
+  const player = new BrowserPlayer();
+  const browser = new WatchPlaybackController(player, () => undefined);
+  try {
+    const desktop = await fixture.connect(await fixture.login());
+    await desktop.action({ type: "create", name: "Movie night", password: "" });
+    await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 5 });
+    browserSockets({ cookie: await browserLogin(origin), origin });
+    browser.connect(cookieServer(origin), "web");
+    browser.setSurfaceReady(true);
+    await eventually(() => browser.status.connection === "connected");
+    await browser.action({ type: "join", groupId: desktop.status.group?.id ?? "", password: "" });
+    await eventually(() => player.state !== null);
+    await eventually(() => desktop.status.group?.members.length === 2);
+    const before = desktop.status.group;
+
+    // The browser hits a frame it cannot decode: its player gives up and reports why.
+    player.state = null;
+    player.unsupported = true;
+    browser.playerFailed(new PlaybackUnsupportedError("This browser can’t play this file’s format."));
+    expect(browser.status.error).toContain("can’t play this file’s format");
+    const starts = player.starts;
+    // The viewer presses Back.
+    await browser.stop();
+    await Bun.sleep(700);
+    expect(desktop.status.group?.revision).toBe(before?.revision);
+    expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
+    expect(player.starts).toBe(starts);
+  } finally {
+    browser.close();
+    await fixture.close();
+  }
+});
+
 test("a suspended browser tab reconnects, rejoins and catches up when it resumes", async () => {
   const fixture = await watchFixture();
   const origin = fixture.running.server.url.origin;

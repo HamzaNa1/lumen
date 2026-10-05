@@ -106,7 +106,7 @@ export class BrowserAccounts implements AccountsRuntime {
     // Undefined means the server could not be asked; only a definite "no session" signs out.
     if (session === null) this.sessionRejected();
     else if (session !== undefined && session.user.id !== this.account.userId) {
-      this.adopt(session);
+      await this.replace(session);
       this.notify();
     }
   }
@@ -121,12 +121,25 @@ export class BrowserAccounts implements AccountsRuntime {
       this.identity ??= await this.api.identity();
       const session = await this.api.browserSession();
       if (session === null) this.account = null;
-      else this.adopt(session);
+      else await this.replace(session);
       this.restored = true;
     })().finally(() => {
       this.restoring = null;
     });
     return this.restoring;
+  }
+
+  /**
+   * Takes on the account the cookie now belongs to. When that is a different person, as after
+   * another tab signed out and someone else signed in, everything the previous account had
+   * running is ended first so none of it continues under the new one.
+   */
+  private async replace(session: BrowserSession): Promise<void> {
+    if (this.account !== null && this.account.userId !== session.user.id) {
+      this.api.cancelPending();
+      await this.endAccountActivity().catch(() => undefined);
+    }
+    this.adopt(session);
   }
 
   private adopt(session: BrowserSession): void {

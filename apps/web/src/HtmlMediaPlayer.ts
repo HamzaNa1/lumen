@@ -55,7 +55,7 @@ export interface HtmlMediaPlayerOptions {
   readonly api: BrowserPlaybackApi;
   readonly onState: (state: PlayerState | null) => void;
   /** Playback that had started can no longer continue. */
-  readonly onFailure: (message: string) => void;
+  readonly onFailure: (cause: Error) => void;
   readonly loadTimeoutMs?: number;
 }
 
@@ -117,7 +117,7 @@ export class HtmlMediaPlayer {
   private readonly element: MediaElementLike;
   private readonly api: BrowserPlaybackApi;
   private readonly onState: (state: PlayerState | null) => void;
-  private readonly onFailure: (message: string) => void;
+  private readonly onFailure: (cause: Error) => void;
   private readonly loadTimeoutMs: number;
   private active: ActiveSession | null = null;
   private generation = 0;
@@ -282,8 +282,12 @@ export class HtmlMediaPlayer {
     try {
       this.assertAudioSupported(session.streams);
       await this.load(generation, session);
+      // The element is shared: metadata may have arrived for a newer start's source.
+      if (generation !== this.generation) throw cancelled();
     } catch (cause) {
-      this.unload();
+      // Only the latest start owns the element. A replaced one must leave its successor's
+      // source alone and just close the session it opened.
+      if (generation === this.generation) this.unload();
       await reporter.end();
       throw cause;
     }
@@ -425,7 +429,7 @@ export class HtmlMediaPlayer {
     const nowMs = Date.now();
     this.recoveries = this.recoveries.filter((at) => nowMs - at < RECOVERY_WINDOW_MS);
     if (code !== MEDIA_ERR_NETWORK || this.recoveries.length >= MAX_RECOVERIES) {
-      await this.fail(describeMediaError(code).message);
+      await this.fail(describeMediaError(code));
       return;
     }
     this.recoveries.push(nowMs);
@@ -448,14 +452,14 @@ export class HtmlMediaPlayer {
       if (generation !== this.generation) return;
       // The old session was retired quietly; now that nothing replaces it, say that it is gone.
       this.onState(null);
-      await this.fail(cause instanceof Error ? cause.message : "Playback could not resume.");
+      await this.fail(cause instanceof Error ? cause : new Error("Playback could not resume."));
     }
   }
 
-  private async fail(message: string): Promise<void> {
+  private async fail(cause: Error): Promise<void> {
     this.generation += 1;
     await this.stopActive();
-    this.onFailure(message);
+    this.onFailure(cause);
   }
 
   private stopActive({

@@ -36,7 +36,7 @@ export class SessionChannel {
   }
 
   close(): void {
-    this.channel?.close();
-    window.removeEventListener("storage", this.onStorage);
+    if (this.channel !== null) this.channel.close();
+    else window.removeEventListener("storage", this.onStorage);
   }
 }

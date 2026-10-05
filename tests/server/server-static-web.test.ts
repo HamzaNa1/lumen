@@ -77,6 +77,16 @@ describe("static web app", () => {
     expect(policy).toContain("connect-src 'self' ws://lumen.test;");
   });
 
+  test("the page keeps its policy when it is requested by file name", async () => {
+    const { get } = await handler();
+    const response = await get("/web/index.html");
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-security-policy")).toContain("frame-ancestors 'none'");
+    expect(response.headers.get("x-frame-options")).toBe("DENY");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+  });
+
   test("hashed assets are served with their type and cached immutably", async () => {
     const { get } = await handler();
     const script = await get("/web/assets/index-abc123.js");

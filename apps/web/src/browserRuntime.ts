@@ -56,11 +56,18 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
   video.controls = false;
   video.disablePictureInPicture = true;
 
+  // Assigned below; the player is what the watch controller drives, so it has to exist first.
+  let watchController: WatchPlaybackController | null = null;
   const player = new HtmlMediaPlayer({
     element: video,
     api,
     onState: playerStates.emit,
-    onFailure: playerFailures.emit,
+    onFailure: (cause) => {
+      // The group must learn that this viewer's player failed, or leaving the player afterwards
+      // would be taken as a request to stop playback for everyone.
+      watchController?.playerFailed(cause);
+      playerFailures.emit(cause.message);
+    },
   });
 
   const watchServer: WatchServer = {
@@ -79,6 +86,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     speed: (sessionId, speed) => player.speed(sessionId, speed),
   };
   const watch = new WatchPlaybackController(watchPlayer, watchStates.emit);
+  watchController = watch;
 
   accounts = new BrowserAccounts(api, async () => {
     watch.disconnect();
