@@ -3,6 +3,7 @@ import { EventEmitter } from "node:events";
 import type { AccountSummary } from "@lumen/contracts";
 import type { AccountRegistry } from "../../apps/desktop/src/main/accounts/AccountRegistry";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { errorMessage } from "../../packages/app/src/format";
 import { electronTestExports, ipcHandlers } from "../helpers/electron";
 
 mock.module("electron", () => electronTestExports);
@@ -30,6 +31,60 @@ const account = (username: string): AccountSummary => ({
   role: "user",
   secureStorageAvailable: true,
   lastConnectedAtMs: null,
+});
+
+test.each([false, true])("desktop sign-in retry feedback survives Electron IPC (setup=%s)", async (setupRequired) => {
+  let authAttempts = 0;
+  let saves = 0;
+  const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v1/server")
+      return Response.json({ serverId, displayName: "Test", apiVersion: "1.0.0" });
+    if (path === "/api/v1/auth/setup") return Response.json({ setupRequired });
+    if (path === `/api/v1/auth/${setupRequired ? "register" : "login"}`) {
+      authAttempts += 1;
+      return Response.json({ message: "Rate limit exceeded" }, {
+        status: 429, headers: { "retry-after": "25" },
+      });
+    }
+    throw new Error(`Unexpected request ${path}`);
+  });
+  const window = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false,
+    webContents: { send: () => undefined },
+  });
+  registerIpcHandlers({
+    registry: { save: async () => { saves += 1; } },
+    clients: new Map(),
+    installationId: crypto.randomUUID(),
+    window,
+    overlay: { window },
+    player: { getState: () => null },
+  } as unknown as Parameters<typeof registerIpcHandlers>[0]);
+  const invoke = async (name: string, ...args: unknown[]) => {
+    const handler = ipcHandlers.get(name);
+    if (handler === undefined) throw new Error(`Missing handler ${name}`);
+    try {
+      return await handler({ senderFrame: { url: "file:///renderer/index.html" } }, ...args);
+    } catch (cause) {
+      // Electron preserves only the thrown error's message when crossing processes.
+      throw new Error(`Error invoking remote method '${name}': ${(cause as Error).name}: ${(cause as Error).message}`);
+    }
+  };
+  try {
+    await invoke("accounts:discover-server", origin);
+    const failure = await invoke("accounts:connect", {
+      origin, serverLabel: "Test", username: "admin", password: "password",
+    }).catch((cause: unknown) => cause);
+    expect(errorMessage(failure, "Could not sign in"))
+      .toBe("Rate limit exceeded Try again in 25 seconds.");
+    expect(authAttempts).toBe(1);
+    expect(saves).toBe(0);
+  } finally {
+    window.emit("closed");
+    unregisterIpcHandlers();
+    fetchMock.mockRestore();
+  }
 });
 
 for (const change of [

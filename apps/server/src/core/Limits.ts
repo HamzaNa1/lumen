@@ -1,8 +1,14 @@
 import { Data, Effect } from "effect";
 
-interface Bucket {
+type RequestKind = "request" | "login";
+
+interface RateWindow {
   count: number;
   resetAt: number;
+}
+
+interface Bucket {
+  readonly windows: Partial<Record<RequestKind, RateWindow>>;
   active: number;
 }
 
@@ -26,43 +32,45 @@ export class RequestLimiter {
     this.#maxActive = options.maxActive;
   }
 
-  readonly check = (key: string, nowMs: number, kind: "request" | "login" = "request") =>
+  readonly check = (key: string, nowMs: number, kind: RequestKind = "request") =>
     Effect.suspend(() => {
-      const existing = this.#buckets.get(key);
-      const bucket = existing && existing.resetAt > nowMs
+      const bucket: Bucket = this.#buckets.get(key) ?? { windows: {}, active: 0 };
+      const existing = bucket.windows[kind];
+      const window = existing && existing.resetAt > nowMs
         ? existing
-        : { count: 0, resetAt: nowMs + 60_000, active: 0 };
+        : { count: 0, resetAt: nowMs + 60_000 };
       const limit = kind === "login" ? this.#loginRequests : this.#maxRequests;
-      if (bucket.count >= limit) {
-        return Effect.fail(new LimitExceeded({ retryAfterSeconds: Math.ceil((bucket.resetAt - nowMs) / 1000) }));
+      if (window.count >= limit) {
+        return Effect.fail(new LimitExceeded({ retryAfterSeconds: Math.ceil((window.resetAt - nowMs) / 1000) }));
       }
-      bucket.count += 1;
+      window.count += 1;
+      bucket.windows[kind] = window;
       this.#buckets.set(key, bucket);
       return Effect.void;
     });
 
   readonly run = <A, E>(key: string, effect: Effect.Effect<A, E>) =>
     Effect.acquireUseRelease(
-      Effect.sync(() => {
-        const bucket = this.#buckets.get(key) ?? { count: 0, resetAt: 0, active: 0 };
+      Effect.suspend(() => {
+        const bucket: Bucket = this.#buckets.get(key) ?? { windows: {}, active: 0 };
         if (bucket.active >= this.#maxActive) {
-          throw new LimitExceeded({ retryAfterSeconds: 1 });
+          return Effect.fail(new LimitExceeded({ retryAfterSeconds: 1 }));
         }
         bucket.active += 1;
         this.#buckets.set(key, bucket);
-        return bucket;
+        return Effect.succeed(bucket);
       }),
       () => effect,
-      () =>
+      (bucket) =>
         Effect.sync(() => {
-          const bucket = this.#buckets.get(key);
-          if (bucket !== undefined) bucket.active = Math.max(0, bucket.active - 1);
+          bucket.active -= 1;
         }),
     );
 
   sweep(nowMs: number): void {
     for (const [key, bucket] of this.#buckets) {
-      if (bucket.resetAt <= nowMs && bucket.active === 0) this.#buckets.delete(key);
+      if (bucket.active === 0 && Object.values(bucket.windows).every((window) => window.resetAt <= nowMs))
+        this.#buckets.delete(key);
     }
   }
 }

@@ -3,12 +3,15 @@ import {
   bearerCredentials,
   cookieCredentials,
   IncompatibleServerError,
+  parseRetryAfterSeconds,
   PlaybackSessionReporter,
   RequestCancelledError,
   ServerApi,
+  ServerHttpError,
   ServerUnreachableError,
 } from "../../packages/client/src/index.ts";
 import type { PlayerState } from "../../packages/contracts/src/index.ts";
+import { errorMessage } from "../../packages/app/src/format.ts";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => undefined;
@@ -17,6 +20,96 @@ const deferred = <T>() => {
   });
   return { promise, resolve };
 };
+
+describe("HTTP retry feedback", () => {
+  const input = { username: "admin", password: "password" };
+  const device = { deviceId: "test", deviceName: "Test", platform: "web" as const };
+
+  test.each(["tokenLogin", "tokenRegister", "browserLogin", "browserRegister", "migrateLegacyToken"] as const)(
+    "%s exposes retry timing without retrying authentication",
+    async (method) => {
+      let attempts = 0;
+      const api = new ServerApi({
+        origin: "https://media.example",
+        credentials: cookieCredentials(),
+        fetchImpl: async () => {
+          attempts += 1;
+          return Response.json({ message: "Rate limit exceeded" }, {
+            status: 429, headers: { "retry-after": "42" },
+          });
+        },
+      });
+      const failure = await (method === "migrateLegacyToken"
+        ? api[method]("legacy-token")
+        : api[method](input, device)).catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(ServerHttpError);
+      expect(failure).toMatchObject({ status: 429, retryAfterSeconds: 42 });
+      expect(errorMessage(failure, "Could not sign in"))
+        .toBe("Rate limit exceeded Try again in 42 seconds.");
+      expect(attempts).toBe(1);
+    },
+  );
+
+  test("HTTP dates are relative to the response time, rounded up and never negative", () => {
+    const nowMs = Date.parse("Mon, 05 Oct 2026 12:00:00 GMT") + 100;
+    expect(parseRetryAfterSeconds("Mon, 05 Oct 2026 12:00:42 GMT", nowMs)).toBe(42);
+    expect(parseRetryAfterSeconds("Mon, 05 Oct 2026 11:59:59 GMT", nowMs)).toBe(0);
+    expect(parseRetryAfterSeconds("Monday, 05-Oct-26 12:00:42 GMT", nowMs)).toBe(42);
+    expect(parseRetryAfterSeconds("Mon Oct  5 12:00:42 2026", nowMs)).toBe(42);
+    expect(new ServerHttpError("Rate limit exceeded", 429, 1).message).toContain("in 1 second.");
+    expect(new ServerHttpError("Rate limit exceeded", 429, 0).message).toContain("Try again now.");
+  });
+
+  test.each([
+    ["Asia/Damascus", -180],
+    ["America/New_York", 240],
+  ] as const)("asctime retry dates use UTC when the client timezone is %s", (timezone, offset) => {
+    const errorsModule = new URL("../../packages/client/src/errors.ts", import.meta.url).href;
+    const result = Bun.spawnSync([process.execPath, "--eval", `
+      import { parseRetryAfterSeconds, ServerHttpError } from ${JSON.stringify(errorsModule)};
+      const nowMs = Date.parse("2026-10-05T12:00:00.100Z");
+      const retryAfterSeconds = parseRetryAfterSeconds("Mon Oct  5 12:00:42 2026", nowMs);
+      console.log(JSON.stringify({
+        offset: new Date(nowMs).getTimezoneOffset(),
+        retryAfterSeconds,
+        message: new ServerHttpError("Rate limit exceeded", 429, retryAfterSeconds).message,
+      }));
+    `], { env: { ...process.env, TZ: timezone } });
+    expect(result.exitCode).toBe(0);
+    expect(JSON.parse(result.stdout.toString())).toEqual({
+      offset,
+      retryAfterSeconds: 42,
+      message: "Rate limit exceeded Try again in 42 seconds.",
+    });
+  });
+
+  test.each([null, "", "invalid", "-1", "1.5", "Infinity", "1e2", "99999999999999999999"])(
+    "missing or invalid Retry-After %s keeps the server's error message",
+    async (header) => {
+      const api = new ServerApi({
+        origin: "https://media.example",
+        credentials: cookieCredentials(),
+        fetchImpl: async () => Response.json({ message: "Rate limit exceeded" }, {
+          status: 429, headers: header === null ? {} : { "retry-after": header },
+        }),
+      });
+      const failure = await api.browserLogin(input, device).catch((cause: unknown) => cause);
+      expect(failure).toMatchObject({ retryAfterSeconds: null, message: "Rate limit exceeded" });
+    },
+  );
+
+  test("a rate limit with a non-JSON body still exposes its retry duration", async () => {
+    const api = new ServerApi({
+      origin: "https://media.example",
+      credentials: cookieCredentials(),
+      fetchImpl: async () => new Response("Too many requests", {
+        status: 429, headers: { "retry-after": "10" },
+      }),
+    });
+    await expect(api.browserLogin(input, device)).rejects
+      .toThrow("Server request failed (429) Try again in 10 seconds.");
+  });
+});
 
 describe("ServerApi sessions", () => {
   test("a response that arrives for a previous session never reaches the next one", async () => {

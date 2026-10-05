@@ -1,6 +1,38 @@
 import { expect, test } from "bun:test";
 import { BrowserAccounts } from "../../apps/web/src/BrowserAccounts";
-import type { ServerApi } from "../../packages/client/src/index.ts";
+import { cookieCredentials, ServerApi } from "../../packages/client/src/index.ts";
+import { errorMessage } from "../../packages/app/src/format";
+
+test.each([false, true])("browser sign-in exposes retry feedback (setup=%s)", async (setupRequired) => {
+  let authAttempts = 0;
+  const api = new ServerApi({
+    origin: "http://lumen.test",
+    credentials: cookieCredentials(),
+    fetchImpl: async (url) => {
+      if (url.pathname === "/api/v1/server")
+        return Response.json({ serverId: "server", displayName: "Test", apiVersion: "1.0.0" });
+      if (url.pathname === "/api/v1/auth/setup") return Response.json({ setupRequired });
+      if (url.pathname === `/api/v1/auth/browser/${setupRequired ? "register" : "login"}`) {
+        authAttempts += 1;
+        return Response.json({ message: "Rate limit exceeded" }, {
+          status: 429, headers: { "retry-after": "25" },
+        });
+      }
+      throw new Error(`Unexpected request ${url.pathname}`);
+    },
+  });
+  const accounts = new BrowserAccounts(api, async () => undefined);
+  try {
+    const failure = await accounts.connect({
+      origin: api.serverOrigin, serverLabel: "Test", username: "admin", password: "password",
+    }).catch((cause: unknown) => cause);
+    expect(errorMessage(failure, "Could not sign in"))
+      .toBe("Rate limit exceeded Try again in 25 seconds.");
+    expect(authAttempts).toBe(1);
+  } finally {
+    accounts.dispose();
+  }
+});
 
 const user = (id: string, username: string) => ({
   id,
