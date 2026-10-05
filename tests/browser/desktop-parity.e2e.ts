@@ -637,6 +637,21 @@ test("the desktop player controls are what they were before the extraction", asy
   // The last state is still showing: open its menus.
   for (const { page } of builds.desktops)
     await page.getByRole("button", { name: "Playback settings", exact: true }).click();
+  await expect(
+    builds.desktop.page.getByRole("button", { name: "Export playback diagnostics", exact: true }),
+  ).toBeVisible();
+  // Diagnostics now include playback failures. Compare the rest of the menu against the
+  // fixed baseline while explicitly accounting for this intentional label change.
+  if (builds.baseline !== null) {
+    const previousLabel = builds.baseline.page.getByRole("button", {
+      name: "Copy audio diagnostics",
+      exact: true,
+    });
+    await expect(previousLabel).toBeVisible();
+    await previousLabel.evaluate((button) => {
+      button.textContent = "Export playback diagnostics";
+    });
+  }
   await expectDesktopUnchanged(testInfo, "playback settings", builds);
   for (const { page } of builds.desktops) {
     await page.getByRole("button", { name: "Playback settings", exact: true }).click();

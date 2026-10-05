@@ -20,7 +20,7 @@ metrics = {
     "firstByteP95Ms": lambda row: np.percentile([r["firstByteMs"] for r in row["transfers"]], 95),
 }
 rng = np.random.default_rng(20261005)
-summary = {"refs": transport["refs"], "transport": {}, "cache": {}, "policy": transport["policy"], "cancellation": transport["cancellation"]}
+summary = {"refs": transport["refs"], "cacheRefs": {"baseline": cache["base"], "candidate": cache["candidate"]}, "transport": {}, "cache": {}, "policy": transport["policy"], "cancellation": transport["cancellation"]}
 
 for mode in modes:
     rows = {
@@ -57,8 +57,8 @@ fig.patch.set_facecolor("#f8fafc")
 green, red, muted = "#087f8c", "#c44e38", "#4b5563"
 
 for ax, metric, count, higher_better, title in [
-    (axes[0, 0], "throughputMiBps", 4, True, "Throughput: larger transfers improve"),
-    (axes[0, 1], "bridgeCpuMs", 3, False, "CPU: small requests cost more"),
+    (axes[0, 0], "throughputMiBps", 4, True, "Throughput by transfer size"),
+    (axes[0, 1], "bridgeCpuMs", 3, False, "Bridge CPU time"),
 ]:
     for i, mode in enumerate(modes[:count]):
         item = summary["transport"][mode][metric]
@@ -72,7 +72,8 @@ for ax, metric, count, higher_better, title in [
     ax.set_yticks(range(count), names[:count])
     ax.invert_yaxis()
     ax.axvline(0, color="#9ca3af", lw=0.8)
-    ax.set_xlim(-32, 49)
+    bounds = [value for mode in modes[:count] for value in summary["transport"][mode][metric]["pairedBootstrap95Percent"]]
+    ax.set_xlim(min(-10, min(bounds) - 15), max(10, max(bounds) + 15))
     ax.set_xlabel("Change (%) · whiskers: paired 95% bootstrap interval")
     ax.set_title(title, loc="left", pad=16, weight="bold")
     ax.grid(axis="x", alpha=0.14)
@@ -95,9 +96,13 @@ ax = axes[1, 1]
 ax.axis("off")
 ax.set_title("Reliability and default admission", loc="left", pad=16, weight="bold")
 latency = np.median([row["abortLatencyMs"] for row in transport["cancellation"] if row["abortLatencyMs"] is not None])
+def successes(scenario):
+    rows = {row["version"]: row for row in transport["policy"] if row["scenario"] == scenario}
+    return " → ".join(f"{rows[version]['statuses'].get('206', 0)}/{rows[version]['requests']}" for version in ["baseline", "candidate"])
+
 blocks = [
-    ("After exhausting the API request budget", "Media successes: 0/20 → 20/20", green),
-    ("Immediate 200-request media burst", "Media successes: 200/200 → 65/200", red),
+    ("After exhausting the API request budget", f"Media successes: {successes('api_budget_exhaustion')}", green),
+    ("Immediate 200-request media burst", f"Media successes: {successes('immediate_range_burst')}", red),
     ("Revoke while the downstream reader is paused", f"Upstream release: >1000 ms → {latency:.2f} ms", green),
     ("64 KiB bridge ranges: first-byte latency", f"{summary['transport']['bridge_64KiB_ranges']['firstByteMedianMs']['baselineMedian']:.3f} ms → {summary['transport']['bridge_64KiB_ranges']['firstByteMedianMs']['candidateMedian']:.3f} ms", red),
 ]
@@ -107,8 +112,8 @@ for i, (label, value, color) in enumerate(blocks):
     ax.text(0, y - 0.075, value, transform=ax.transAxes, fontsize=12.5, weight="bold", color=color)
 
 fig.suptitle("Direct-play benchmark: gains and regressions", x=0.045, ha="left", fontsize=22, weight="bold", color="#111827")
-fig.text(0.045, 0.928, f"Before {transport['refs']['baseline'][:7]} → after {transport['refs']['candidate'][:7]} · Apple M2 · macOS · Node 24.21.0 / Bun 1.4.2", color=muted)
-fig.text(0.045, 0.025, "9 alternating paired transport runs; warm 64 MiB file; real handler + native bridge; fixed grant metadata replaces DB authorization.\nLoopback/headless measurements, not WAN or packaged UI. Throughput tests relax rate limits equally; admission tests use defaults.\nRSS is sampled process memory, not allocation volume. All regressions are reported; implementation was not tuned after measuring.", fontsize=9, color=muted, linespacing=1.5)
+fig.text(0.045, 0.928, f"Transport: {transport['refs']['baseline'][:7]} → {transport['refs']['candidate'][:7]} · Apple M2 · macOS · Node 24.21.0 / Bun 1.4.2", color=muted)
+fig.text(0.045, 0.025, f"9 alternating paired transport runs; warm 64 MiB file; real handler + native bridge; fixed grant metadata replaces DB authorization.\nCache measurements retained from {cache['base'][:7]} → {cache['candidate'][:7]}; cache profile unchanged. Loopback/headless, not WAN or packaged UI.\nThroughput tests relax limits equally; admission uses defaults. RSS is sampled memory. No performance tuning after measurement.", fontsize=9, color=muted, linespacing=1.5)
 fig.subplots_adjust(left=0.16, right=0.95, top=0.855, bottom=0.16, hspace=0.50, wspace=0.80)
 fig.savefig(ROOT / "comparison.png", dpi=160, facecolor=fig.get_facecolor())
 plt.close(fig)

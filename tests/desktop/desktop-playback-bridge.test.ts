@@ -70,6 +70,7 @@ describe("real HTTP playback bridge", () => {
           size: bytes.length,
           modifiedAtMs: 1000,
           mimeType: "application/octet-stream",
+          preserveIdleTimeout: true,
         }),
     });
     const bridge = new PlaybackBridge();
@@ -217,7 +218,7 @@ describe("real HTTP playback bridge", () => {
   });
 });
 
-test("Bun.file survives a downstream pause longer than the server's default idle timeout", async () => {
+test("authorized media survives a downstream pause longer than the server's default idle timeout", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "bridge-pause-"));
   const path = join(workspace, "media.bin");
   const size = 32 * 1024 * 1024;

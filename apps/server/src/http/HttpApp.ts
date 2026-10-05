@@ -320,6 +320,7 @@ export const makeHttpHandler = (
           size: media.size,
           modifiedAtMs: media.modifiedAtMs ?? Date.now(),
           mimeType: media.mimeType,
+          preserveIdleTimeout: true,
         });
       } finally {
         release();

@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repo = resolve(here, "../..");
-const [base = "4d4a5c6", candidate = "84f091a", destination = join(here, "results.json")] =
+const [base = "4d4a5c6", candidate = "HEAD", destination = join(here, "results.json")] =
   process.argv.slice(2);
 const rounds = Number(process.env.BENCH_ROUNDS ?? 9);
 const workspace = await mkdtemp(join(tmpdir(), "lumen-playback-bench-"));
