@@ -21,6 +21,11 @@ export interface PlayerBuffer {
   readonly aheadSeconds: number;
   /** It is meant to be playing but has stopped, having run out of media. */
   readonly starved: boolean;
+  /**
+   * It can play on from where it is and has stopped fetching: however little it holds, it will
+   * hold no more until it plays.
+   */
+  readonly settled: boolean;
 }
 
 /** The part of a player that watch groups drive. Any platform's player can stand behind it. */
@@ -305,9 +310,13 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     if (this.awaited(group)) this.report(client, group, "ready");
   }
 
-  /** Whether the player holds enough beyond where it is for the group to play on from there. */
+  /**
+   * Whether the player holds enough beyond where it is for the group to play on from there, or
+   * as much as it is going to hold while it waits.
+   */
   private async buffered(sessionId: string): Promise<boolean> {
-    return (await this.player.buffer(sessionId)).aheadSeconds >= WATCH_READY_BUFFER_SECONDS;
+    const buffer = await this.player.buffer(sessionId);
+    return buffer.aheadSeconds >= WATCH_READY_BUFFER_SECONDS || buffer.settled;
   }
 
   private checkReadinessSoon(): void {

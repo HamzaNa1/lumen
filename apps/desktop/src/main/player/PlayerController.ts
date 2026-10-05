@@ -335,10 +335,11 @@ export class PlayerController extends EventEmitter {
     const active = this.requireActive(sessionId);
     // Until a seek has finished, the cache still describes the position MPV is leaving.
     if ((await this.command(active, ["get_property", "seeking"])) !== false)
-      return { aheadSeconds: 0, starved: false };
+      return { aheadSeconds: 0, starved: false, settled: false };
     const cache = await this.command(active, ["get_property", "demuxer-cache-state"]);
     const starved = (await this.command(active, ["get_property", "paused-for-cache"])) === true;
-    return { aheadSeconds: bufferedAheadFrom(cache), starved };
+    // MPV is set to read ahead of playback, paused or not, so it never rests short of that.
+    return { aheadSeconds: bufferedAheadFrom(cache), starved, settled: false };
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {
