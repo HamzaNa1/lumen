@@ -17,6 +17,7 @@ import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
 import {
+  ACCOUNTS_KEY,
   itemDetailsQuery,
   itemPage,
   refreshWatchProgress,
@@ -24,7 +25,6 @@ import {
   type WorkspaceValue,
 } from "./Workspace";
 
-const ACCOUNTS_KEY = ["accounts"] as const;
 
 export const App = (): React.ReactElement => {
   const runtime = useRuntime();
@@ -315,7 +315,7 @@ export const App = (): React.ReactElement => {
           </div>
           <section className="connect-card">
             <header className="connect-heading">
-              <h1>Connecting to {active?.serverLabel ?? "server"}…</h1>
+              <h1>Connecting to {active?.serverName ?? "server"}…</h1>
               <p>Opening your last server.</p>
             </header>
             <LoaderCircle className="spinner" aria-hidden="true" size={22} />

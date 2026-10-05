@@ -36,7 +36,6 @@ export const ConnectPage = ({
   // A platform tied to one server skips the address step and goes straight to signing in.
   const fixedOrigin = runtime.accounts.fixedOrigin;
   const [origin, setOrigin] = useState(fixedOrigin ?? "http://127.0.0.1:3210");
-  const [serverLabel, setServerLabel] = useState("Home server");
   const [username, setUsername] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [password, setPassword] = useState("");
@@ -53,7 +52,6 @@ export const ConnectPage = ({
     mutationFn: () => runtime.accounts.discoverServer(origin),
     onSuccess: (result) => {
       setServer(result);
-      if (fixedOrigin !== null) setServerLabel(result.identity.displayName);
       setError(null);
     },
     onError: (cause) => setError(errorMessage(cause, "Could not reach that server")),
@@ -63,7 +61,6 @@ export const ConnectPage = ({
       if (server === null) throw new Error("Connect to a server first");
       return runtime.accounts.connect({
         origin: server.origin,
-        serverLabel,
         username,
         displayName: creatingAccount ? displayName || username : undefined,
         password,
@@ -108,7 +105,6 @@ export const ConnectPage = ({
   };
   const signInAgain = useCallback(async (account: AccountSummary): Promise<void> => {
     setOrigin(account.origin);
-    setServerLabel(account.serverLabel);
     setUsername(account.username);
     setError(null);
     try {
@@ -142,7 +138,7 @@ export const ConnectPage = ({
             title: "Create the admin account",
             body: "This server is new. The first account manages its users and libraries.",
           }
-        : { title: "Sign in", body: `Sign in to ${serverLabel}.` };
+        : { title: "Sign in", body: `Sign in to ${server.identity.displayName}.` };
 
   const errorBanner =
     error === null ? null : (
@@ -185,7 +181,7 @@ export const ConnectPage = ({
                         <Server aria-hidden="true" size={16} />
                       </span>
                       <span className="server-row-text">
-                        <strong>{account.serverLabel}</strong>
+                        <strong>{account.serverName}</strong>
                         <span>
                           {account.username} · {hostOf(account.origin)}
                         </span>
@@ -201,7 +197,7 @@ export const ConnectPage = ({
                       className="server-row-remove"
                       variant="icon"
                       size="sm"
-                      aria-label={`Remove ${account.serverLabel}`}
+                      aria-label={`Remove ${account.serverName}`}
                       onClick={() => setRemoving(account)}
                     >
                       <Trash2 aria-hidden="true" size={15} />
@@ -256,22 +252,13 @@ export const ConnectPage = ({
                 placeholder="http://192.168.1.10:3210"
                 autoFocus
               />
-              <TextField
-                label="Name"
-                value={serverLabel}
-                onValueChange={setServerLabel}
-                placeholder="Living room"
-                description="How this server appears on this device."
-              />
               {errorBanner}
               <Button
                 className="button-wide"
                 variant="primary"
                 size="lg"
                 type="submit"
-                disabled={
-                  discoverServer.isPending || origin.trim() === "" || serverLabel.trim() === ""
-                }
+                disabled={discoverServer.isPending || origin.trim() === ""}
               >
                 {discoverServer.isPending ? "Connecting…" : "Continue"}
               </Button>
@@ -301,7 +288,7 @@ export const ConnectPage = ({
                   <Server aria-hidden="true" size={15} />
                 </span>
                 <span className="server-row-text">
-                  <strong>{serverLabel}</strong>
+                  <strong>{server.identity.displayName}</strong>
                   <span>{hostOf(server.origin)}</span>
                 </span>
                 {fixedOrigin === null ? (
@@ -364,7 +351,7 @@ export const ConnectPage = ({
         onOpenChange={(open) => {
           if (!open) setRemoving(null);
         }}
-        title={`Remove ${removing?.serverLabel ?? "server"}?`}
+        title={`Remove ${removing?.serverName ?? "server"}?`}
         description="This removes the saved sign-in from this device. Nothing on the server is deleted."
       >
         <div className="dialog-actions">

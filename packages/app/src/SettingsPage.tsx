@@ -1,8 +1,10 @@
-import { Button } from "@lumen/ui";
-import type { ReactNode } from "react";
-import { hostOf, roleLabels } from "./format";
+import { Button, Form, Modal, TextField } from "@lumen/ui";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { CircleAlert } from "lucide-react";
+import { type ReactNode, useState } from "react";
+import { errorMessage, hostOf, roleLabels } from "./format";
 import { useRuntime } from "./Runtime";
-import { PageHeader, useWorkspace } from "./Workspace";
+import { ACCOUNTS_KEY, PageHeader, useWorkspace } from "./Workspace";
 
 const SettingsRow = ({
   label,
@@ -21,6 +23,68 @@ const SettingsRow = ({
     <div className="settings-row-value">{children}</div>
   </div>
 );
+
+const RenameServer = ({ serverName }: { readonly serverName: string }): React.ReactElement => {
+  const runtime = useRuntime();
+  const queryClient = useQueryClient();
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(serverName);
+  const rename = useMutation({
+    mutationFn: () => runtime.admin.renameServer(name.trim()),
+    onSuccess: async () => {
+      setOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
+    },
+  });
+  return (
+    <>
+      <Button
+        size="sm"
+        onClick={() => {
+          rename.reset();
+          setName(serverName);
+          setOpen(true);
+        }}
+      >
+        Rename…
+      </Button>
+      <Modal
+        open={open}
+        onOpenChange={setOpen}
+        title="Rename server"
+        description="Everyone who connects to this server sees this name."
+      >
+        <Form
+          className="dialog-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            rename.mutate();
+          }}
+        >
+          <TextField label="Server name" value={name} onValueChange={setName} autoFocus />
+          {rename.isError ? (
+            <p className="form-error" role="alert">
+              <CircleAlert aria-hidden="true" size={15} />
+              <span>{errorMessage(rename.error, "Could not rename the server")}</span>
+            </p>
+          ) : null}
+          <div className="dialog-actions">
+            <Button variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={rename.isPending || name.trim() === "" || name.trim() === serverName}
+            >
+              {rename.isPending ? "Renaming…" : "Rename"}
+            </Button>
+          </div>
+        </Form>
+      </Modal>
+    </>
+  );
+};
 
 export const SettingsPage = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
@@ -66,7 +130,8 @@ export const SettingsPage = (): React.ReactElement => {
         <h2 id="settings-server">Server</h2>
         <div className="settings-card">
           <SettingsRow label="Connected to" description={hostOf(account.origin)}>
-            {account.serverLabel}
+            {account.serverName}
+            {account.role === "admin" ? <RenameServer serverName={account.serverName} /> : null}
           </SettingsRow>
           <SettingsRow label="Signed in as">{account.username}</SettingsRow>
           <SettingsRow label="Role">{roleLabels[account.role]}</SettingsRow>

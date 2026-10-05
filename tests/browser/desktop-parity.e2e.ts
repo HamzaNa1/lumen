@@ -330,7 +330,11 @@ test("the desktop and web builds draw the shared pages identically", async ({
     // Navigation is shared; the account menu beneath it differs by design and is left out.
     await expectAlike(testInfo, name, ".nav", [web, desktop]);
     // The users page has listed each account's libraries only since the baseline was taken.
-    if (name !== "users") await expectDesktopUnchanged(testInfo, name, builds);
+    // Administrators have been able to rename the server from settings only since then, too.
+    if (name !== "users")
+      await expectDesktopUnchanged(testInfo, name, builds, {
+        style: ".settings-row-value button { display: none !important; }",
+      });
     if (name !== "settings") {
       await expectAlike(testInfo, name, ".main-content", [web, desktop]);
       continue;
@@ -378,16 +382,24 @@ test("the connection forms are drawn identically", async ({
     await gotoDesktop(page, files, "/", { signedOut: true });
     await settled(page, ".connect-form");
   }
-  await expectDesktopUnchanged(testInfo, "server address form", builds);
+  // The baseline still asks the viewer to name the server, which now names itself.
+  await expectDesktopUnchanged(testInfo, "server address form", builds, {
+    style: '.connect-form > :has(input[placeholder="Living room"]) { display: none !important; }',
+  });
 
   for (const { page } of builds.desktops) {
     await page.getByLabel("Server address").fill(baseURL ?? "");
     await page.getByRole("button", { name: "Continue" }).click();
+    // The button sits higher without the baseline's name field, so the pointer it leaves
+    // behind would rest on a different part of the next form in each build.
+    await page.mouse.move(0, 0);
     await page.getByLabel("Username").focus();
   }
-  // The baseline still offers to create an account on a server that is already set up.
+  // The baseline still offers to create an account on a server that is already set up, and
+  // shows the name typed on the device where the server's own name now appears.
   await expectDesktopUnchanged(testInfo, "sign-in form", builds, {
-    style: ".connect-switch { display: none !important; }",
+    style:
+      ".connect-switch { display: none !important; } .server-chip strong, .connect-heading p { visibility: hidden !important; }",
   });
 
   const signedOut = await newSignedOutPage(browser, baseURL ?? "");
@@ -396,7 +408,7 @@ test("the connection forms are drawn identically", async ({
     await signedOut.goto("/web/");
     await settled(signedOut, ".connect-form");
     await signedOut.getByLabel("Username").focus();
-    // Only the desktop lets the viewer name the server and offers to change it.
+    // Only the desktop offers to change the server.
     const style = ".server-chip { visibility: hidden !important; }";
     await expectAlike(testInfo, "sign-in form", ".connect-form", [web, desktop], { style });
     await expect(signedOut.getByRole("button", { name: "Create an account" })).toHaveCount(0);
@@ -432,7 +444,7 @@ test("switching accounts keeps the new account's libraries subscribed", async ({
           connectionId: "replacement",
           userId: "replacement-user",
           username: "replacement",
-          serverLabel: "Replacement",
+          serverName: "Replacement",
         },
       ];
     });

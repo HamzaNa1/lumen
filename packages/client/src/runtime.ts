@@ -88,6 +88,8 @@ export interface AdminRuntime {
     input: UpdateUserInput & { readonly userId: string },
   ) => Promise<ManagedUser>;
   readonly listLibraries: () => Promise<ReadonlyArray<LibrarySummary>>;
+  /** Renames the server for everyone; the platform's accounts then carry the new name. */
+  readonly renameServer: (name: string) => Promise<void>;
   readonly metadataSettings: () => Promise<MetadataSettings>;
   readonly updateMetadataSettings: (input: {
     readonly tmdbApiKey: string | null;

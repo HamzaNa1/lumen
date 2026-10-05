@@ -24,7 +24,7 @@ test.each([false, true])("browser sign-in exposes retry feedback (setup=%s)", as
   const accounts = new BrowserAccounts(api, async () => undefined);
   try {
     const failure = await accounts.connect({
-      origin: api.serverOrigin, serverLabel: "Test", username: "admin", password: "password",
+      origin: api.serverOrigin, username: "admin", password: "password",
     }).catch((cause: unknown) => cause);
     expect(errorMessage(failure, "Could not sign in"))
       .toBe("Rate limit exceeded Try again in 25 seconds.");
@@ -254,6 +254,19 @@ test("revalidating the same account disturbs nothing, and a lost session signs o
     await Bun.sleep(1);
     expect(events).toEqual(["cancel requests", "changed", "end activity"]);
     expect((await accounts.list()).accounts).toEqual([]);
+  } finally {
+    accounts.dispose();
+  }
+});
+
+test("shows the server's own name, and its new one once renamed here", async () => {
+  const { accounts } = setup();
+  try {
+    expect((await accounts.list()).accounts[0]?.serverName).toBe("Lumen");
+    accounts.serverRenamed("Living room");
+    expect((await accounts.list()).accounts[0]?.serverName).toBe("Living room");
+    // Asking the server again keeps the new name rather than the one first read.
+    expect((await accounts.activate()).accounts[0]?.serverName).toBe("Living room");
   } finally {
     accounts.dispose();
   }

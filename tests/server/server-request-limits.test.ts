@@ -84,6 +84,7 @@ const handler = () => {
       authenticate: () => Effect.fail(unauthorized()),
     },
     identity: { installationId: crypto.randomUUID() },
+    serverName: { name: () => Effect.succeed("Lumen") },
   } as unknown as HttpServices, decodeConfig({}), createLogger({
     level: "error",
     format: "json",

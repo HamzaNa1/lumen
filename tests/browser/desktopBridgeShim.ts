@@ -45,6 +45,8 @@ const accounts = async () => {
       {
         connectionId,
         serverId: identity.serverId,
+        serverName: identity.displayName,
+        // The baseline renderer reads the name from where the device's own label used to be.
         serverLabel: identity.displayName,
         origin: api.serverOrigin,
         username: session.user.username,
@@ -99,6 +101,7 @@ const bridge: DesktopBridge = {
     createUser: (input) => api.createUser(input),
     updateUser: ({ userId, ...input }) => api.updateUser(userId, input),
     listLibraries: () => api.adminLibraries(),
+    renameServer: async (name) => void (await api.renameServer(name)),
     metadataSettings: () => api.metadataSettings(),
     updateMetadataSettings: ({ tmdbApiKey }) => api.updateMetadataSettings(tmdbApiKey),
     createLibrary: (input) => api.createLibrary(input),

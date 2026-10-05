@@ -8,7 +8,8 @@ import { ServerInfo } from "./server.ts";
 export const AccountSummary = Schema.Struct({
   connectionId: Schema.String.check(Schema.isMinLength(1)),
   serverId: Schema.String.check(Schema.isMinLength(1)),
-  serverLabel: Schema.String.check(Schema.isMinLength(1)),
+  /** The name the server gives itself. */
+  serverName: Schema.String.check(Schema.isMinLength(1)),
   origin: Schema.String.check(Schema.isMinLength(1)),
   username: Schema.String.check(Schema.isMinLength(1)),
   userId: Schema.String.check(Schema.isMinLength(1)),
@@ -36,7 +37,6 @@ export const ConnectionInput = Schema.Struct({
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
   displayName: Schema.optional(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200))),
   password: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(1024)),
-  serverLabel: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
 });
 export type ConnectionInput = Schema.Schema.Type<typeof ConnectionInput>;
 

@@ -82,6 +82,10 @@ export const SearchQuery = Schema.Struct({
   ),
 });
 
+export const ServerRenameBody = Schema.Struct({
+  displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+});
+
 export const CreateUserBody = Schema.Struct({
   username: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100)),
   displayName: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),

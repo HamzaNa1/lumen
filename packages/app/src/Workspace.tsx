@@ -19,6 +19,9 @@ import { createContext, type ReactNode, useContext } from "react";
 import { errorMessage } from "./format";
 import { useRuntime } from "./Runtime";
 
+/** The saved accounts, which also carry each server's name. */
+export const ACCOUNTS_KEY = ["accounts"] as const;
+
 export interface WorkspaceValue {
   readonly account: AccountSummary;
   readonly scope: readonly unknown[];

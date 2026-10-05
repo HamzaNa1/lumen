@@ -47,6 +47,7 @@ const api: DesktopBridge = {
     createUser: (input) => invoke("admin:createUser", input),
     updateUser: (input) => invoke("admin:updateUser", input),
     listLibraries: () => invoke("admin:listLibraries"),
+    renameServer: (name) => invoke("admin:renameServer", name),
     metadataSettings: () => invoke("admin:metadataSettings"),
     updateMetadataSettings: (input) => invoke("admin:updateMetadataSettings", input),
     createLibrary: (input) => invoke("admin:createLibrary", input),

@@ -26,7 +26,7 @@ const account = (username: string): AccountSummary => ({
   serverId,
   origin,
   username,
-  serverLabel: username,
+  serverName: username,
   userId: crypto.randomUUID(),
   role: "user",
   secureStorageAvailable: true,
@@ -74,12 +74,88 @@ test.each([false, true])("desktop sign-in retry feedback survives Electron IPC (
   try {
     await invoke("accounts:discover-server", origin);
     const failure = await invoke("accounts:connect", {
-      origin, serverLabel: "Test", username: "admin", password: "password",
+      origin, username: "admin", password: "password",
     }).catch((cause: unknown) => cause);
     expect(errorMessage(failure, "Could not sign in"))
       .toBe("Rate limit exceeded Try again in 25 seconds.");
     expect(authAttempts).toBe(1);
     expect(saves).toBe(0);
+  } finally {
+    window.emit("closed");
+    unregisterIpcHandlers();
+    fetchMock.mockRestore();
+  }
+});
+
+test("desktop saves the server's own name, at sign-in and when an administrator renames it", async () => {
+  const user = account("admin");
+  let serverName = "Living room";
+  const saved: string[] = [];
+  const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const path = new URL(String(input)).pathname;
+    if (path === "/api/v1/server")
+      return Response.json({ serverId, displayName: serverName, apiVersion: "1.0.0" });
+    if (path === "/api/v1/auth/setup") return Response.json({ setupRequired: false });
+    if (path === "/api/v1/auth/login") {
+      const sessionId = crypto.randomUUID();
+      return Response.json({
+        userId: user.userId,
+        role: "admin",
+        sessionId,
+        accessToken: `${sessionId}.${"x".repeat(43)}`,
+        accessExpiresAtMs: Date.now() + 60_000,
+      });
+    }
+    if (path === "/api/v1/auth/me")
+      return Response.json({
+        id: user.userId,
+        username: user.username,
+        displayName: user.username,
+        role: "admin",
+        libraryAccess: { scope: "all" },
+        isActive: true,
+        createdAtMs: 1,
+        updatedAtMs: 1,
+      });
+    if (path === "/api/v1/admin/server" && init?.method === "PUT") {
+      serverName = (JSON.parse(String(init.body)) as { displayName: string }).displayName;
+      return Response.json({ displayName: serverName });
+    }
+    throw new Error(`Unexpected request ${path}`);
+  });
+  const window = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false,
+    webContents: { send: () => undefined },
+  });
+  let active: { connectionId: string; serverId: string } | null = null;
+  registerIpcHandlers({
+    registry: {
+      list: async () => ({ accounts: [], activeConnectionId: active?.connectionId ?? null }),
+      active: () => active,
+      save: async (input: { connectionId: string; serverId: string; serverName: string }) => {
+        active = input;
+        saved.push(input.serverName);
+      },
+      updateServerName: async (id: string, name: string) => {
+        saved.push(`${id === serverId ? "renamed" : "other"}:${name}`);
+      },
+    },
+    clients: new Map(),
+    installationId: crypto.randomUUID(),
+    window,
+    overlay: { window },
+    player: { getState: () => null, stop: async () => undefined },
+  } as unknown as Parameters<typeof registerIpcHandlers>[0]);
+  const invoke = async (name: string, ...args: unknown[]) => {
+    const handler = ipcHandlers.get(name);
+    if (handler === undefined) throw new Error(`Missing handler ${name}`);
+    return handler({ senderFrame: { url: "file:///renderer/index.html" } }, ...args);
+  };
+  try {
+    await invoke("accounts:discover-server", origin);
+    await invoke("accounts:connect", { origin, username: "admin", password: "password" });
+    await invoke("admin:renameServer", "Den");
+    expect(saved).toEqual(["Living room", "renamed:Den"]);
   } finally {
     window.emit("closed");
     unregisterIpcHandlers();
@@ -212,7 +288,7 @@ for (const change of [
         await invoke("accounts:discover-server", origin);
         await invoke("accounts:connect", {
           origin,
-          serverLabel: "Test",
+         
           username: replacing.username,
           password: "password",
         });

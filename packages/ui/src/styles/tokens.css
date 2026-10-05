@@ -1762,7 +1762,10 @@ body:has(.app-shell) {
   font-size: 12.5px;
 }
 .settings-row-value {
+  display: flex;
   flex: none;
+  align-items: center;
+  gap: 10px;
   color: var(--text-secondary);
   font-size: 13.5px;
   text-align: right;

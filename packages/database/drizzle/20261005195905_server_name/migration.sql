@@ -1,0 +1,1 @@
+ALTER TABLE `server_identity` ADD `name` text DEFAULT 'Lumen Server' NOT NULL;

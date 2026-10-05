@@ -8,7 +8,7 @@ import type { AccountSession } from "../api/ServerClient";
 interface StoredAccount {
   readonly connectionId: string;
   readonly serverId: string;
-  readonly serverLabel: string;
+  readonly serverName: string;
   readonly origin: string;
   readonly username: string;
   readonly userId: string;
@@ -22,6 +22,16 @@ interface RegistryData {
 }
 
 const emptyRegistry: RegistryData = { activeConnectionId: null, accounts: [] };
+
+/** Earlier versions stored a name chosen on this device, where the server's own name is now kept. */
+const storedAccount = ({
+  serverLabel,
+  ...account
+}: StoredAccount & { readonly serverLabel?: string }): StoredAccount => ({
+  ...account,
+  serverName: account.serverName ?? serverLabel ?? "Lumen Server",
+  role: account.role === "admin" ? "admin" : "user",
+});
 
 export class AccountRegistry {
   private readonly path: string;
@@ -39,7 +49,7 @@ export class AccountRegistry {
       const data = JSON.parse(await readFile(path, "utf8")) as RegistryData;
       return new AccountRegistry(path, {
         activeConnectionId: data.activeConnectionId ?? null,
-        accounts: Array.isArray(data.accounts) ? data.accounts.map((account) => ({ ...account, role: account.role === "admin" ? "admin" : "user" })) : [],
+        accounts: Array.isArray(data.accounts) ? data.accounts.map(storedAccount) : [],
       });
     } catch {
       return new AccountRegistry(path, emptyRegistry);
@@ -73,7 +83,7 @@ export class AccountRegistry {
   async save(input: {
     readonly connectionId: string;
     readonly serverId: string;
-    readonly serverLabel: string;
+    readonly serverName: string;
     readonly origin: string;
     readonly username: string;
     readonly userId: string;
@@ -85,7 +95,7 @@ export class AccountRegistry {
     const record: StoredAccount = {
       connectionId: input.connectionId,
       serverId: input.serverId,
-      serverLabel: input.serverLabel,
+      serverName: input.serverName,
       origin: input.origin,
       username: input.username,
       userId: input.userId,
@@ -119,6 +129,16 @@ export class AccountRegistry {
     this.data = {
       ...this.data,
       accounts: this.data.accounts.map((account) => account.connectionId === connectionId ? { ...account, role } : account),
+    };
+    await writePrivateJson(this.path, this.data);
+  }
+
+  /** Records what a server now calls itself on every account that connects to it. */
+  async updateServerName(serverId: string, serverName: string): Promise<void> {
+    if (this.data.accounts.every((account) => account.serverId !== serverId || account.serverName === serverName)) return;
+    this.data = {
+      ...this.data,
+      accounts: this.data.accounts.map((account) => account.serverId === serverId ? { ...account, serverName } : account),
     };
     await writePrivateJson(this.path, this.data);
   }

@@ -36,6 +36,7 @@ import {
   MetadataSettingsLive,
   type MetadataSettingsShape,
 } from "./services/MetadataSettings";
+import { ServerName, ServerNameLive, type ServerNameShape } from "./services/ServerName";
 import { isTrustedOrigin } from "./http/BrowserSession";
 import { makeHttpHandler, type HttpServices } from "./http/HttpApp";
 import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
@@ -58,6 +59,7 @@ export interface ServerServices {
   readonly scheduledJobs: ScheduledJobServiceShape;
   readonly database: Database["Service"];
   readonly identity: ServerIdentity;
+  readonly serverName: ServerNameShape;
   readonly tmdb: TmdbProvider["Service"];
   readonly metadataSettings: MetadataSettingsShape;
 }
@@ -98,6 +100,7 @@ export const makeLayers = (
   const scheduledJobs = ScheduledJobServiceLiveWithConfig(config).pipe(Layer.provide(dependencies));
   const events = EventServiceLive.pipe(Layer.provide(dependencies));
   const identity = ServerIdentityLive.pipe(Layer.provide(dependencies));
+  const serverName = ServerNameLive.pipe(Layer.provide(Layer.mergeAll(dependencies, identity)));
   return Layer.mergeAll(
     dependencies,
     auth,
@@ -113,6 +116,7 @@ export const makeLayers = (
     jobs,
     scheduledJobs,
     identity,
+    serverName,
     metadataSettings,
     tmdb,
   ).pipe(Layer.provide(Layer.succeed(ServerLogger, logger)));
@@ -136,6 +140,7 @@ const makeServices = Effect.gen(function* () {
     scheduledJobs: yield* ScheduledJobService,
     database,
     identity,
+    serverName: yield* ServerName,
     metadataSettings: yield* MetadataSettings,
     tmdb: yield* TmdbProvider,
   };
@@ -229,6 +234,7 @@ const startConfiguredServer = async (
       playback: services.playback,
       jobs: services.jobs,
       identity: services.identity,
+      serverName: services.serverName,
       metadataSettings: services.metadataSettings,
       tmdb: services.tmdb,
       startedAtMs: Date.now(),

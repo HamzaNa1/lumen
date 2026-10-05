@@ -35,7 +35,7 @@ test("independently released apps can discover, authenticate, restore sessions, 
       origin,
       username: "owner",
       password: "compatibility test password",
-      serverLabel: "Test",
+     
     };
     const session = await client.register(credentials, deviceId);
     expect((await client.me()).role).toBe("admin");

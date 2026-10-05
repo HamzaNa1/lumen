@@ -511,6 +511,8 @@ export const serverIdentity = sqliteTable(
   {
     singleton: integer("singleton").primaryKey(),
     installationId: text("installation_id").notNull(),
+    // What people call this server; every client shows it for its connections.
+    name: text("name").notNull().default("Lumen Server"),
     createdAtMs: millis("created_at_ms"),
     updatedAtMs: millis("updated_at_ms"),
   },
