@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { PlayableStream } from "../../packages/contracts/src/index.ts";
-import { streamLabels } from "../../packages/ui/src/PlayerFormatting.ts";
+import { formatEndsAt, streamLabels } from "../../packages/ui/src/PlayerFormatting.ts";
 
 const stream = (overrides: Partial<PlayableStream>): PlayableStream => ({
   id: "00000000-0000-4000-8000-000000000000",
@@ -50,5 +50,27 @@ describe("streamLabels", () => {
         stream({ language: "qaa", title: "English" }),
       ]),
     ).toEqual(["PCM", "Track 2", "QAA · English"]);
+  });
+});
+
+describe("formatEndsAt", () => {
+  const clockTime = (date: Date): string =>
+    new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" }).format(date);
+
+  test("adds what is left to play to the current time", () => {
+    expect(formatEndsAt(90 * 60, new Date(2026, 0, 1, 8, 26).getTime())).toBe(
+      `Ends at ${clockTime(new Date(2026, 0, 1, 9, 56))}`,
+    );
+  });
+
+  test("carries past midnight", () => {
+    expect(formatEndsAt(45 * 60, new Date(2026, 0, 1, 23, 30).getTime())).toBe(
+      `Ends at ${clockTime(new Date(2026, 0, 2, 0, 15))}`,
+    );
+  });
+
+  test("never ends in the past", () => {
+    const now = new Date(2026, 0, 1, 8, 26).getTime();
+    expect(formatEndsAt(-30, now)).toBe(`Ends at ${clockTime(new Date(now))}`);
   });
 });

@@ -61,3 +61,9 @@ export const formatPlayerTime = (seconds: number): string => {
     ? `${Math.floor(value / 3_600)}:${String(minutes % 60).padStart(2, "0")}:${secondsPart}`
     : `${minutes}:${secondsPart}`;
 };
+
+const clockTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+
+/** The wall-clock time playback would finish if it ran uninterrupted from now, e.g. "Ends at 9:56 PM". */
+export const formatEndsAt = (remainingSeconds: number, nowMs: number): string =>
+  `Ends at ${clockTimeFormatter.format(nowMs + Math.max(0, remainingSeconds) * 1_000)}`;

@@ -17,7 +17,8 @@ import {
 import { type ReactNode, type Ref, useEffect, useState } from "react";
 import { Button } from "./Button";
 import { SelectField } from "./Controls";
-import { formatPlayerTime, streamLabels } from "./PlayerFormatting";
+import { formatEndsAt, formatPlayerTime, streamLabels } from "./PlayerFormatting";
+import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
 
 interface MediaPlayerProps {
@@ -110,6 +111,8 @@ export const MediaPlayer = ({
   const seekValue = Math.min(seekPreview ?? position, duration ?? Math.max(position, 1));
   const volumeValue = volumePreview ?? volume;
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
+  // A paused player still finishes later with every second that passes.
+  const now = useNow(1_000);
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
   const status =
@@ -285,6 +288,9 @@ export const MediaPlayer = ({
                 </span>
               </Button>
             </div>
+            {inactive || remaining === null ? null : (
+              <span className="media-player-ends-at">{formatEndsAt(remaining, now)}</span>
+            )}
             <div className="media-player-actions">
               <div className="media-player-volume">
                 <Button
