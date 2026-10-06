@@ -1,8 +1,10 @@
 import {
   CatalogItemDetails,
+  WATCH_BUFFER_REPORT_INTERVAL_MS,
   WatchRequest,
   watchPosition,
   type WatchGroup,
+  type WatchMemberBuffer,
   type WatchMessage,
   type WatchPlayback,
 } from "@lumen/contracts";
@@ -22,6 +24,12 @@ export interface WatchSocketData {
   principal: AuthPrincipal | null;
   /** This client says when it has buffered a position, so its group can wait for it. */
   readiness: boolean;
+  /** This client asked to be told how its group's members are buffered. */
+  buffers: boolean;
+  /** How this member's player last said it was buffered, and for which item. */
+  buffer: (Omit<WatchMemberBuffer, "memberId"> & { itemId: string; reportedAtMs: number }) | null;
+  /** The `buffers` this socket was last sent, serialized, so that only changes are sent. */
+  sentBuffers: string;
   groupId: string | null;
   queue: Promise<void>;
   pending: number;
@@ -52,14 +60,21 @@ type WatchServices = {
 };
 // A desktop client presents its token. A browser cannot read its own token, so it asks the
 // server to use the session cookie that arrived with the upgrade request.
-const Readiness = { readiness: Schema.optional(Schema.Boolean) };
+const Abilities = {
+  readiness: Schema.optional(Schema.Boolean),
+  buffers: Schema.optional(Schema.Boolean),
+};
 const Authentication = Schema.Union([
   Schema.Struct({
     token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
-    ...Readiness,
+    ...Abilities,
   }),
-  Schema.Struct({ session: Schema.Literal("cookie"), ...Readiness }),
+  Schema.Struct({ session: Schema.Literal("cookie"), ...Abilities }),
 ]);
+const BUFFER_SHARE_INTERVAL_MS = 1000;
+// A player that has gone quiet is no longer described by what it last said.
+const BUFFER_REPORT_LIFETIME_MS = 3 * WATCH_BUFFER_REPORT_INTERVAL_MS;
+const NO_BUFFERS = "[]";
 
 type TrustedOrigin = (request: Request, origin: string) => boolean;
 
@@ -84,6 +99,7 @@ export class WatchGroups {
     maxActive: 4,
   });
   private readonly timer: ReturnType<typeof setInterval>;
+  private readonly bufferTimer: ReturnType<typeof setInterval>;
 
   constructor(
     private readonly services: WatchServices,
@@ -98,6 +114,8 @@ export class WatchGroups {
       }
     }, 5000);
     this.timer.unref();
+    this.bufferTimer = setInterval(() => this.shareBuffers(), BUFFER_SHARE_INTERVAL_MS);
+    this.bufferTimer.unref();
   }
 
   upgrade(request: Request, server: Bun.Server<WatchSocketData>): Response | undefined {
@@ -116,6 +134,9 @@ export class WatchGroups {
         token: null,
         principal: null,
         readiness: false,
+        buffers: false,
+        buffer: null,
+        sentBuffers: NO_BUFFERS,
         groupId: null,
         queue: Promise.resolve(),
         pending: 0,
@@ -166,6 +187,7 @@ export class WatchGroups {
 
   close(): void {
     clearInterval(this.timer);
+    clearInterval(this.bufferTimer);
     for (const socket of this.sockets) socket.close(1001, "Server stopping");
     this.groups.clear();
   }
@@ -313,6 +335,9 @@ export class WatchGroups {
   private leave(socket: ServerWebSocket<WatchSocketData>): void {
     const group = this.groups.get(socket.data.groupId ?? "");
     socket.data.groupId = null;
+    socket.data.buffer = null;
+    // A client forgets the buffers of a group it has left.
+    socket.data.sentBuffers = NO_BUFFERS;
     if (group !== undefined) {
       group.state = {
         ...group.state,
@@ -324,6 +349,39 @@ export class WatchGroups {
       this.directory();
     }
     this.send(socket, { type: "state", group: null });
+  }
+
+  /**
+   * Tells the members that asked how each other's players are buffered, where that has changed.
+   * It goes out on its own clock rather than with the group's state: players report often, and
+   * none of it bears on what the group plays.
+   */
+  private shareBuffers(): void {
+    const now = Date.now();
+    const buffers = new Map<string, WatchMemberBuffer[]>();
+    for (const { data } of this.sockets) {
+      if (data.groupId === null || data.buffer === null) continue;
+      const { itemId, reportedAtMs, ...buffer } = data.buffer;
+      if (
+        this.groups.get(data.groupId)?.state.playback?.itemId !== itemId ||
+        now - reportedAtMs > BUFFER_REPORT_LIFETIME_MS
+      ) {
+        data.buffer = null;
+        continue;
+      }
+      const group = buffers.get(data.groupId) ?? [];
+      group.push({ memberId: data.id, ...buffer });
+      buffers.set(data.groupId, group);
+    }
+    for (const socket of this.sockets) {
+      const { data } = socket;
+      if (!data.buffers || data.groupId === null) continue;
+      const group = buffers.get(data.groupId) ?? [];
+      const serialized = JSON.stringify(group);
+      if (serialized === data.sentBuffers) continue;
+      data.sentBuffers = serialized;
+      this.send(socket, { type: "buffers", buffers: group });
+    }
   }
 
   /**
@@ -431,11 +489,13 @@ export class WatchGroups {
       socket.data.token = token;
       socket.data.principal = principal;
       socket.data.readiness = authentication.readiness === true;
+      socket.data.buffers = authentication.buffers === true;
       clearTimeout(socket.data.authTimer);
       this.send(socket, {
         type: "ready",
         memberId: socket.data.id,
         holdsForBuffering: true,
+        sharesBuffers: true,
         displayName: principal.user.displayName,
       });
       void this.list(socket);
@@ -460,6 +520,11 @@ export class WatchGroups {
           this.directory();
           void this.publish(group);
         }
+      } else if (action.type === "buffer") {
+        const { type: _type, ...buffer } = action;
+        // A report about something the group has moved on from describes nothing it has on.
+        if (this.groups.get(socket.data.groupId ?? "")?.state.playback?.itemId === action.itemId)
+          socket.data.buffer = { ...buffer, reportedAtMs: Date.now() };
       } else if (action.type === "list") await this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {

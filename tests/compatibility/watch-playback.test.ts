@@ -724,3 +724,45 @@ test("a viewer who runs out of buffered media holds the group until they have bu
     await fixture.close();
   }
 });
+
+test("members are told how much each other's players have buffered, for as long as they say", async () => {
+  const fixture = await watchFixture();
+  const viewers: WatchPlaybackController[] = [];
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Movie night", password: "" });
+    const groupId = owner.status.group?.id ?? "";
+    const ample = await groupViewer(fixture, groupId, "ample");
+    const thin = await groupViewer(fixture, groupId, "thin");
+    viewers.push(ample.playback, thin.playback);
+    thin.native.aheadSeconds = 12.7;
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    const shared = (status: typeof owner.status) =>
+      [...status.buffers].sort((a, b) => a.aheadSeconds - b.aheadSeconds);
+    const expected = (thinSeconds: number) => [
+      { memberId: ample.playback.status.memberId, aheadSeconds: 0, toEnd: true },
+      { memberId: thin.playback.status.memberId, aheadSeconds: thinSeconds, toEnd: false },
+    ];
+    // The owner plays nothing itself, so it has no buffer to speak of, and sees the others'.
+    await eventually(() => owner.status.buffers.length === 2, 8000);
+    expect(shared(owner.status)).toEqual(expected(12));
+    await eventually(() => thin.playback.status.buffers.length === 2);
+    expect(shared(thin.playback.status)).toEqual(expected(12));
+
+    thin.native.aheadSeconds = 6;
+    await eventually(() => shared(owner.status)[1]?.aheadSeconds === 6, 8000);
+
+    // A member who leaves is no longer described, and no longer hears about the others.
+    await thin.playback.action({ type: "leave" });
+    expect(thin.playback.status.buffers).toEqual([]);
+    await eventually(() => owner.status.buffers.length === 1);
+    expect(owner.status.buffers[0]?.memberId).toBe(ample.playback.status.memberId);
+
+    // Nothing is buffered for a group with nothing on.
+    await owner.action({ type: "stop", itemId: fixture.itemId });
+    await eventually(() => owner.status.buffers.length === 0);
+  } finally {
+    for (const viewer of viewers) viewer.close();
+    await fixture.close();
+  }
+}, 30_000);

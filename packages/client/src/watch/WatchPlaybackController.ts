@@ -1,5 +1,6 @@
 import {
   initialWatchStatus,
+  WATCH_BUFFER_REPORT_INTERVAL_MS,
   WATCH_READY_BUFFER_SECONDS,
   watchPosition,
   type WatchAction,
@@ -66,6 +67,7 @@ const READINESS_INTERVAL_MS = 100;
  * sends the group a pause, seek or stop on the player's behalf. The one thing a player does tell
  * the group is how its buffer stands: that it has run out of media while playing, so the group
  * holds for it, and that it has buffered the position the group holds at, so playback can begin.
+ * It also says how much it holds, which the group only shows to its members.
  */
 export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private client: WatchGroupClient | null = null;
@@ -98,6 +100,9 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private heldPosition: number | null = null;
   private readinessTimer: ReturnType<typeof setTimeout> | undefined;
   private readonly timer: ReturnType<typeof setInterval>;
+  private readonly bufferTimer: ReturnType<typeof setInterval>;
+  /** A report of this viewer's buffer is on its way to the group. */
+  private sharingBuffer = false;
   status: WatchStatus = initialWatchStatus();
 
   constructor(
@@ -105,6 +110,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     private readonly onStatus: (status: WatchStatus) => void,
   ) {
     this.timer = setInterval(() => void this.synchronize(), SYNCHRONIZE_INTERVAL_MS);
+    this.bufferTimer = setInterval(() => void this.shareBuffer(), WATCH_BUFFER_REPORT_INTERVAL_MS);
   }
 
   connect(server: Server, connectionId: string): void {
@@ -178,6 +184,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
 
   close(): void {
     clearInterval(this.timer);
+    clearInterval(this.bufferTimer);
     this.disconnect();
   }
 
@@ -344,6 +351,38 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private async buffered(sessionId: string): Promise<boolean> {
     const buffer = await this.player.buffer(sessionId);
     return buffer.aheadSeconds >= WATCH_READY_BUFFER_SECONDS || buffer.settled;
+  }
+
+  /** Tells the group how much of what it has on this viewer's player holds, for members to see. */
+  private async shareBuffer(): Promise<void> {
+    const client = this.client;
+    const state = this.player.getState();
+    if (
+      this.sharingBuffer ||
+      client === null ||
+      !client.sharesBuffers ||
+      state === null ||
+      this.status.connection !== "connected" ||
+      this.status.group?.playback?.itemId !== state.itemId
+    )
+      return;
+    this.sharingBuffer = true;
+    try {
+      const { aheadSeconds } = await this.player.buffer(state.sessionId);
+      if (this.client !== client) return;
+      const toEnd = aheadSeconds === Number.POSITIVE_INFINITY;
+      await client.action({
+        type: "buffer",
+        itemId: state.itemId,
+        // Whole seconds are all a member is shown, and say the same thing for longer.
+        aheadSeconds: toEnd ? 0 : Math.floor(Math.min(604800, Math.max(0, aheadSeconds))),
+        toEnd,
+      });
+    } catch {
+      // The next report stands in for one the player or the connection could not make.
+    } finally {
+      this.sharingBuffer = false;
+    }
   }
 
   private checkReadinessSoon(): void {
