@@ -303,6 +303,31 @@ test("a watch group's film starts playing in the browser", async ({ page, browse
   await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
 });
 
+test("older servers keep settings usable without requesting unsupported track memory endpoints", async ({ page }) => {
+  const unsupportedRequests: string[] = [];
+  await page.route("**/api/v1/server", async (route) => {
+    const response = await route.fetch();
+    const identity = await response.json();
+    delete identity.capabilities.trackMemory;
+    await route.fulfill({ response, json: identity });
+  });
+  for (const path of ["**/api/v1/me/track-preferences", "**/api/v1/playback/sessions/*/track-choice"])
+    await page.route(path, async (route) => {
+      unsupportedRequests.push(new URL(route.request().url()).pathname);
+      await route.fulfill({ status: 404, json: { message: "Not found" } });
+    });
+  await signIn(page);
+  await page.goto("/web/settings");
+  await expect(page.getByText("This server does not support saved audio and subtitle settings.")).toBeVisible();
+  await expect(page.getByRole("combobox", { name: "Preferred audio language" })).toHaveCount(0);
+  await expect(page.getByRole("combobox", { name: "Preferred subtitles" })).toHaveCount(0);
+  await expect(page.getByText("Browser cookie")).toBeVisible();
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByText("This server does not support saved audio and subtitle settings.")).toBeVisible();
+  expect(unsupportedRequests).toEqual([]);
+});
+
 test("audio and subtitle settings persist after reload", async ({ page }) => {
   await signIn(page);
   await page.goto("/web/settings");

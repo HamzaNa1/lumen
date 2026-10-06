@@ -412,6 +412,7 @@ describe("direct-play HTTP delivery", () => {
     const base = new URL(running.server.url);
     const identity = await fetch(new URL("/api/v1/server", base));
     expect(identity.status).toBe(200);
+    expect(await identity.json()).toMatchObject({ capabilities: { trackMemory: true } });
     const deviceId = newUuid();
     const login = await fetch(new URL("/api/v1/auth/login", base), {
       method: "POST",

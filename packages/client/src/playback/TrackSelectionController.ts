@@ -14,7 +14,8 @@ export interface TrackSelectionOptions {
   readonly streams: ReadonlyArray<PlayableStream>;
   readonly assertActive: () => void;
   readonly apply: (kind: TrackKind, streamId: string | null) => Promise<void>;
-  readonly save: (input: TrackChoiceInput) => Promise<TrackMemory>;
+  /** Null means persistence is unsupported; the local selection remains in effect. */
+  readonly save: (input: TrackChoiceInput) => Promise<TrackMemory | null>;
   readonly onError: (message: string | null) => void;
 }
 
@@ -77,7 +78,7 @@ export class TrackSelectionController {
 
   private async persist(input: TrackChoiceInput): Promise<void> {
     this.pending.set(input.kind, input);
-    let memory: TrackMemory;
+    let memory: TrackMemory | null;
     try {
       memory = await this.options.save(input);
     } catch {
@@ -88,9 +89,9 @@ export class TrackSelectionController {
       return;
     }
     this.options.assertActive();
-    this.memory = memory;
+    if (memory !== null) this.memory = memory;
     this.pending.delete(input.kind);
-    if (input.choice === null) {
+    if (input.choice === null && memory !== null) {
       const selected = resolveTrackSelection(
         this.options.streams,
         this.options.sourceId,

@@ -113,6 +113,8 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
         <Button onClick={() => void preferences.refetch()}>Retry</Button>
       </div>
     );
+  if (preferences.data === null)
+    return <p>This server does not support saved audio and subtitle settings.</p>;
   const options = [...languageOptions];
   for (const language of [preferences.data.audioLanguage, preferences.data.subtitleLanguage]) {
     if (language !== null && !options.some((option) => option.value === language))

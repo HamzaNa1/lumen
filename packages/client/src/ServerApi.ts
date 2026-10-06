@@ -296,6 +296,10 @@ export class ServerApi {
     return this.serverIdentity?.capabilities?.watchGroups === true;
   }
 
+  get supportsTrackMemory(): boolean {
+    return this.serverIdentity?.capabilities?.trackMemory === true;
+  }
+
   /**
    * Ends the current session's request scope: outstanding requests are aborted, and a response
    * that still arrives is rejected instead of reaching the next session's caches.
@@ -660,13 +664,17 @@ export class ServerApi {
     return this.request(`/api/v1/admin/jobs?${query}`, {}, Schema.Array(JobLogEntry));
   }
 
-  async trackPreferences(): Promise<TrackPreferences> {
+  async trackPreferences(): Promise<TrackPreferences | null> {
+    if (!this.supportsTrackMemory) return null;
     return this.request("/api/v1/me/track-preferences", {}, TrackPreferences);
   }
   async updateTrackPreferences(input: TrackPreferencesPatch): Promise<TrackPreferences> {
+    if (!this.supportsTrackMemory)
+      throw new Error("This server does not support saved audio and subtitle settings.");
     return this.request("/api/v1/me/track-preferences", jsonBody("PATCH", input), TrackPreferences);
   }
-  async saveTrackChoice(sessionId: string, input: TrackChoiceInput): Promise<TrackMemory> {
+  async saveTrackChoice(sessionId: string, input: TrackChoiceInput): Promise<TrackMemory | null> {
+    if (!this.supportsTrackMemory) return null;
     return this.request(
       `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/track-choice`,
       jsonBody("PUT", input),

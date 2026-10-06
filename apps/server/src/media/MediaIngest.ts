@@ -15,7 +15,7 @@ import {
   streams as streamTable,
   tracks,
 } from "@lumen/database";
-import { and, count, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, count, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
@@ -651,6 +651,30 @@ export const makeMediaIngest = Effect.gen(function* () {
           }),
         );
       }
+    }
+    if (existingTrack !== undefined && !needsStreamRefresh) {
+      yield* database.transaction((transaction) =>
+        Effect.gen(function* () {
+          for (const stream of probe.streams) {
+            yield* transaction
+              .update(streamTable)
+              .set(probedStreamValues(stream, defaultOrdinals.has(stream.ordinal)))
+              .where(
+                and(
+                  eq(streamTable.sourceId, sourceId),
+                  eq(streamTable.kind, stream.kind),
+                  eq(streamTable.ordinal, stream.ordinal),
+                  or(
+                    isNull(streamTable.commentary),
+                    isNull(streamTable.forced),
+                    isNull(streamTable.hearingImpaired),
+                    and(eq(streamTable.kind, "audio"), isNull(streamTable.channels)),
+                  ),
+                ),
+              );
+          }
+        }),
+      );
     }
     const fingerprint = createHash("sha256")
       .update(`${source.absolutePath}:${details.size}:${Math.trunc(details.mtimeMs)}`)

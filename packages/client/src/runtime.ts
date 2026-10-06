@@ -141,7 +141,8 @@ export interface NativeAudioRuntime {
 }
 
 export interface TrackSettingsRuntime {
-  readonly read: () => Promise<TrackPreferences>;
+  /** Null when the connected server does not advertise track memory support. */
+  readonly read: () => Promise<TrackPreferences | null>;
   readonly update: (input: TrackPreferencesPatch) => Promise<TrackPreferences>;
 }
 

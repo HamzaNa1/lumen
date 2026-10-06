@@ -49,7 +49,7 @@ export interface MediaElementLike {
 
 export interface BrowserPlaybackApi {
   readonly serverOrigin: string;
-  readonly saveTrackChoice: (sessionId: string, input: TrackChoiceInput) => Promise<TrackMemory>;
+  readonly saveTrackChoice: (sessionId: string, input: TrackChoiceInput) => Promise<TrackMemory | null>;
   readonly startPlayback: (itemId: string) => Promise<PlayerSession>;
   readonly heartbeat: (sessionId: string, state: PlayerState) => Promise<void>;
   readonly progress: (
