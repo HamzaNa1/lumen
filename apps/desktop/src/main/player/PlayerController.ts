@@ -659,7 +659,7 @@ export class PlayerController extends EventEmitter {
       ]);
       // A stop, replacement session, or user action makes this sample stale.
       if (this.active !== active || this.state !== state) return;
-      const next: PlayerState = {
+      let next: PlayerState = {
         ...state,
         positionSeconds: typeof value === "number" && value >= 0 ? value : state.positionSeconds,
         durationSeconds:
@@ -669,6 +669,14 @@ export class PlayerController extends EventEmitter {
         ended: ended === true,
       };
       if (seeking !== null && pausedForCache !== null) {
+        // A seek waits on data just as a drained cache does, so the viewer sees both as buffering.
+        next = {
+          ...next,
+          buffering:
+            (pausedForCache === true || seeking === true) &&
+            ended !== true &&
+            !this.intentionalPause,
+        };
         const starved =
           pausedForCache === true && seeking !== true && ended !== true && !this.intentionalPause;
         const now = Date.now();
