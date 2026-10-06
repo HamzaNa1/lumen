@@ -12,10 +12,12 @@ import {
   PlaybackSessionReporter,
   type PlayerBuffer,
   type WatchPlayer,
+  type WatchPlaybackSample,
 } from "@lumen/client";
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
+import { sampleMpvPlayback } from "./MpvSynchronization";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
@@ -70,6 +72,8 @@ interface ActiveSession {
   readonly cancellation: AbortController;
   readonly reporter: PlaybackSessionReporter;
   trackIds: ReadonlyMap<string, number>;
+  motionRevision: number;
+  pendingMotion: number;
   stopping: Promise<void> | null;
 }
 
@@ -205,6 +209,8 @@ export class PlayerController extends EventEmitter {
         cancellation: new AbortController(),
         reporter,
         trackIds: new Map(),
+        motionRevision: 0,
+        pendingMotion: 0,
         stopping: null,
       };
       startedActive = active;
@@ -333,7 +339,7 @@ export class PlayerController extends EventEmitter {
     const active = this.requireActive(sessionId);
     const previous = this.requireState();
     try {
-      await this.command(active, ["set_property", "pause", paused ? "yes" : "no"]);
+      await this.motion(active, ["set_property", "pause", paused ? "yes" : "no"]);
     } catch (cause) {
       this.emitError(cause);
       throw cause;
@@ -357,7 +363,7 @@ export class PlayerController extends EventEmitter {
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
     this.state = { ...this.requireState(), positionSeconds, ended: false };
-    await this.command(active, ["seek", positionSeconds, "absolute+exact"]);
+    await this.motion(active, ["seek", positionSeconds, "absolute+exact"]);
     this.assertActive(sessionId);
     this.publish();
     return this.requireState();
@@ -378,7 +384,7 @@ export class PlayerController extends EventEmitter {
     const active = this.requireActive(sessionId);
     if (!Number.isFinite(speed) || speed < 0.9 || speed > 1.1)
       throw new Error("Invalid playback speed");
-    await this.command(active, ["set_property", "speed", speed]);
+    await this.motion(active, ["set_property", "speed", speed]);
   }
 
   volume(sessionId: string, volume: number, muted = false): PlayerState {
@@ -507,6 +513,37 @@ export class PlayerController extends EventEmitter {
       null,
       2,
     );
+  }
+
+  async sample(sessionId: string): Promise<WatchPlaybackSample | null> {
+    const active = this.requireActive(sessionId);
+    const revision = active.motionRevision;
+    if (active.pendingMotion > 0) return null;
+    const sample = await sampleMpvPlayback(
+      { command: (args) => this.command(active, args) },
+      this.requireState(),
+    );
+    return this.active === active &&
+      active.motionRevision === revision &&
+      active.pendingMotion === 0
+      ? sample
+      : null;
+  }
+
+  recordSynchronization(fields: Parameters<PlaybackDiagnostics["record"]>[1]): void {
+    this.diagnostics.record("watch_synchronization", fields);
+  }
+
+  private async motion(active: ActiveSession, args: ReadonlyArray<string | number>): Promise<void> {
+    active.motionRevision += 1;
+    active.pendingMotion += 1;
+    try {
+      await this.command(active, args);
+      this.assertActive(active.session.sessionId);
+    } finally {
+      active.motionRevision += 1;
+      active.pendingMotion -= 1;
+    }
   }
 
   getState(): PlayerState | null {
@@ -719,6 +756,8 @@ export const watchPlayerFor = (controller: PlayerController): WatchPlayer<Server
   start: ({ server, ...input }) => controller.start({ client: server, ...input }),
   stop: () => controller.stop(),
   getState: () => controller.getState(),
+  sample: (sessionId) => controller.sample(sessionId),
+  recordSynchronization: (fields) => controller.recordSynchronization(fields),
   seek: (sessionId, positionSeconds) => controller.seek(sessionId, positionSeconds),
   pause: (sessionId, paused) => controller.pause(sessionId, paused),
   speed: (sessionId, speed) => controller.speed(sessionId, speed),

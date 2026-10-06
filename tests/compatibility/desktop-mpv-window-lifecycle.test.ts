@@ -87,6 +87,9 @@ const withPlayback = async (
     ["duration", 60],
     ["pause", false],
     ["eof-reached", false],
+    ["paused-for-cache", false],
+    ["seeking", false],
+    ["speed", 1],
   ]);
   let failLoad = false;
   let disconnectStart = false;
@@ -102,6 +105,17 @@ const withPlayback = async (
     if (args[0] === "loadfile") {
       queueMicrotask(() => this.emit(failLoad ? "end-file" : "file-loaded", { reason: "error", file_error: "network failure" }));
     }
+    if (args[0] === "expand-text") {
+      const sample = properties.get("watch-sample");
+      if (sample instanceof Promise) return sample;
+      return Promise.resolve(String(args[1]).replace(/\$\{=([^}]+)\}/g, (_match, property) => {
+        const value = properties.get(property);
+        return typeof value === "boolean" ? value ? "yes" : "no" : String(value);
+      }));
+    }
+    if (args[0] === "seek") properties.set("time-pos", args[1]);
+    if (args[0] === "set_property" && ["speed", "pause"].includes(String(args[1])))
+      properties.set(String(args[1]), args[2] === "yes" ? true : args[2] === "no" ? false : args[2]);
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
       return Promise.race([
@@ -955,5 +969,30 @@ test("desktop export retains runtime and startup failure diagnostics without a l
     const startup = JSON.parse(await controller.audioDiagnostics(""));
     expect(startup.playbackTimeline.some((event: { fields: { stage?: string } }) => event.fields.stage === "startup")).toBe(true);
     expect(startup.playbackTimeline.some((event: { fields: { stage?: string } }) => event.fields.stage === "runtime")).toBe(false);
+  });
+});
+
+
+test("native watch samples are invalidated by pause, seek, speed and replacement during IPC", async () => {
+  await withPlayback(async ({ controller, properties, restart }) => {
+    expect(await controller.sample("session-1")).toMatchObject({ positionSeconds: 12.25, speed: 1, advancing: true });
+    for (const motion of [
+      () => controller.pause("session-1", true),
+      () => controller.seek("session-1", 20),
+      () => controller.speed("session-1", 0.99),
+      restart,
+    ]) {
+      let release = (_value: string) => {};
+      properties.set("watch-sample", new Promise<string>((resolve) => { release = resolve; }));
+      const pending = controller.sample("session-1");
+      await motion();
+      release("12.25\tno\tno\tno\tno\t1");
+      expect(await pending).toBeNull();
+      properties.delete("watch-sample");
+    }
+    expect(await controller.sample("session-2")).toMatchObject({ sessionId: "session-2" });
+    properties.set("watch-sample", Promise.reject(new MpvIpcFailure("MPV command timed out")));
+    await expect(controller.sample("session-2")).rejects.toThrow("MPV command timed out");
+    expect(controller.getState()).toBeNull();
   });
 });

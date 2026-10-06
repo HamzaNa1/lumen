@@ -110,14 +110,3 @@ export const watchPosition = (playback: WatchPlayback, nowMs: number): number =>
     playback.positionSeconds +
       (playback.paused ? 0 : Math.max(0, nowMs - playback.updatedAtMs) / 1000),
   );
-
-export const watchCorrection = (
-  positionSeconds: number,
-  targetSeconds: number,
-  paused: boolean,
-): { readonly seek: number | null; readonly speed: number } => {
-  const drift = targetSeconds - positionSeconds;
-  if (Math.abs(drift) >= 1 || (paused && Math.abs(drift) > 0.08))
-    return { seek: targetSeconds, speed: 1 };
-  return { seek: null, speed: paused || Math.abs(drift) <= 0.08 ? 1 : drift > 0 ? 1.05 : 0.95 };
-};

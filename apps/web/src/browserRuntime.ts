@@ -83,6 +83,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
     stop: () => player.stop(),
     getState: () => player.getState(),
+    sample: (sessionId) => player.sample(sessionId),
+    recordSynchronization: (fields) => player.recordSynchronization(fields),
     seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
     pause: (sessionId, paused) => player.pause(sessionId, paused),
     speed: (sessionId, speed) => player.speed(sessionId, speed),

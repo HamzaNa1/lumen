@@ -330,6 +330,17 @@ async function run(): Promise<void> {
     assert.equal(diagnostics.properties["audio-out-params"]["channel-count"], 2);
     assert.equal(diagnostics.properties["audio-out-params"].format, "float");
     assert.equal(diagnostics.properties.aid, diagnostics.expectedAudioTrack);
+    for (const speed of [1.01, 1.006, 1, 0.99, 0.994, 1]) {
+      await controller.speed(state.sessionId, speed);
+      await delay(200);
+      const sample = await controller.sample(state.sessionId);
+      assert(sample, "Fresh Windows MPV synchronization sample unavailable");
+      assert.equal(sample.speed, speed);
+      const pitch = JSON.parse(await controller.audioDiagnostics(state.sessionId));
+      assert.equal(pitch.properties["audio-pitch-correction"], true);
+      assert.deepEqual(pitch.properties.af.map((filter: { name: string }) => filter.name), ["scaletempo2"]);
+      observations.push({ label: `watch-speed-${fixture.name}-${speed}`, sample, pitch: pitch.properties });
+    }
     await controller.stop();
     const audio = readFileSync(join(evidence, `audio-${index}.pcm`));
     assert(audio.length > 4_800 && audio.some((value) => value !== 0), `${fixture.name} is silent`);

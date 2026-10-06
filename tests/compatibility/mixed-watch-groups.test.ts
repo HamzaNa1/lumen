@@ -70,6 +70,11 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
   getState() {
     return this.state;
   }
+  sample() {
+    return this.state === null ? null : {
+      ...this.state, sampledAtMs: performance.now(), speed: 1, advancing: !this.state.paused,
+    };
+  }
   async seek(_sessionId: string, positionSeconds: number) {
     if (this.state !== null) this.state = { ...this.state, positionSeconds };
   }
