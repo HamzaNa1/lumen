@@ -2390,6 +2390,8 @@ body:has(.app-shell) {
   position: absolute;
   right: 0;
   bottom: calc(100% + 10px);
+  /* Above the timeline's fill and thumb, which the panel opens over. */
+  z-index: 3;
   width: min(300px, calc(100vw - 28px));
   display: grid;
   gap: 12px;
