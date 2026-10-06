@@ -663,6 +663,11 @@ test("the desktop player controls are what they were before the extraction", asy
     await previousLabel.evaluate((button) => {
       button.textContent = "Export playback diagnostics";
     });
+    // The menu has since been raised above the sliders it opens over, so its shadow now
+    // falls on the volume slider instead of behind it.
+    await builds.baseline.page.addStyleTag({
+      content: ".media-player-settings-panel { z-index: 3; }",
+    });
   }
   await expectDesktopUnchanged(testInfo, "playback settings", builds);
   for (const { page } of builds.desktops) {
@@ -671,6 +676,36 @@ test("the desktop player controls are what they were before the extraction", asy
     await expect(page.getByText("No groups yet")).toBeVisible();
   }
   await expectDesktopUnchanged(testInfo, "watch groups in the player", builds);
+});
+
+test("the playback settings open over the timeline", async ({ context, baseURL }, testInfo) => {
+  const { page } = (await signedInBuilds(context, baseURL ?? "")).desktop;
+  // Far enough along that the played part of the timeline, and its thumb, run under the panel.
+  await gotoDesktop(page, desktopBuild, "/", {
+    overlay: true,
+    display: { ...filmDisplay, loading: false, error: null },
+    player: { ...playing, positionSeconds: 92 },
+  });
+  await page.getByRole("button", { name: "Playback settings", exact: true }).click();
+  const panel = page.locator(".media-player-settings-panel");
+  await expect(panel).toBeVisible();
+  await page.addStyleTag({ content: STILL });
+  await testInfo.attach("playback settings over the timeline", {
+    body: await page.locator(".media-player-console").screenshot(),
+    contentType: "image/png",
+  });
+
+  const thumb = await page.locator(".media-player-timeline .media-slider-thumb").boundingBox();
+  const bounds = await panel.boundingBox();
+  if (thumb === null || bounds === null) throw new Error("The timeline or the panel is not drawn");
+  const point = { x: thumb.x + thumb.width / 2, y: thumb.y + 1 };
+  expect(point.x).toBeGreaterThan(bounds.x);
+  expect(point.y).toBeLessThan(bounds.y + bounds.height);
+  const topmost = await page.evaluate(
+    ({ x, y }) => document.elementFromPoint(x, y)?.closest(".media-player-settings-panel") !== null,
+    point,
+  );
+  expect(topmost, "the settings panel is drawn over the timeline's thumb").toBe(true);
 });
 
 test("the player controls are drawn identically over playing media", async ({
