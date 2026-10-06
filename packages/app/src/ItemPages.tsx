@@ -12,6 +12,7 @@ import {
   kindLabel,
   metadataList,
   plural,
+  resumeLabel,
 } from "./format";
 import { ShowSettings } from "./ShowSettings";
 import {
@@ -81,7 +82,7 @@ const episodeSubtitle = (episode: CatalogItem, seasonNumber: number | null | und
   [
     episodeCode(seasonNumber, episode.indexNumber),
     (episode.resumePositionSeconds ?? 0) > 0
-      ? `Resume at ${formatClock(episode.resumePositionSeconds ?? 0)}`
+      ? resumeLabel(episode.resumePositionSeconds ?? 0)
       : runtimeOf(episode.durationMs === null ? null : episode.durationMs / 1_000),
   ]
     .filter(Boolean)
