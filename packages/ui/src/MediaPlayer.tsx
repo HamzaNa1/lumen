@@ -114,6 +114,8 @@ export const MediaPlayer = ({
   onSelectSubtitle,
 }: MediaPlayerProps): React.ReactElement => {
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
+  // How far along the timeline the pointer rests, from 0 at its start to 1 at its end.
+  const [timelineHover, setTimelineHover] = useState<number | null>(null);
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [audioActionStatus, setAudioActionStatus] = useState<string | null>(null);
@@ -122,7 +124,8 @@ export const MediaPlayer = ({
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
   const audioLabels = streamLabels(audioStreams);
   const subtitleLabels = streamLabels(subtitleStreams);
-  const seekValue = Math.min(seekPreview ?? position, duration ?? Math.max(position, 1));
+  const timelineEnd = duration ?? Math.max(position, 1);
+  const seekValue = Math.min(seekPreview ?? position, timelineEnd);
   const volumeValue = volumePreview ?? volume;
   const onVolumeDrag = useThrottledCallback(onVolume, volumeDragIntervalMs);
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
@@ -130,6 +133,7 @@ export const MediaPlayer = ({
   const now = useNow(1_000);
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
+  const seekable = !inactive && duration !== null && duration > 0;
   const status =
     error !== null
       ? "error"
@@ -233,9 +237,9 @@ export const MediaPlayer = ({
             <Slider.Root
               className="media-player-timeline"
               min={0}
-              max={duration ?? Math.max(position, 1)}
+              max={timelineEnd}
               value={seekValue}
-              disabled={inactive || duration === null || duration <= 0}
+              disabled={!seekable}
               onValueChange={setSeekPreview}
               onValueCommitted={(value) => {
                 setSeekPreview(null);
@@ -243,7 +247,23 @@ export const MediaPlayer = ({
               }}
             >
               <Slider.Label className="sr-only">Playback position</Slider.Label>
-              <Slider.Control className="media-slider-control">
+              <Slider.Control
+                className="media-slider-control"
+                onPointerMove={(event) => {
+                  const { left, width } = event.currentTarget.getBoundingClientRect();
+                  setTimelineHover(width > 0 ? Math.min(1, Math.max(0, (event.clientX - left) / width)) : null);
+                }}
+                onPointerLeave={() => setTimelineHover(null)}
+              >
+                {seekable && timelineHover !== null ? (
+                  <span
+                    className="media-player-timeline-hover"
+                    style={{ left: `${timelineHover * 100}%` }}
+                    aria-hidden="true"
+                  >
+                    {formatPlayerTime(timelineHover * timelineEnd)}
+                  </span>
+                ) : null}
                 <Slider.Track className="media-slider-track">
                   {duration === null || duration <= 0
                     ? null

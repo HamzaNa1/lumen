@@ -2266,6 +2266,7 @@ body:has(.app-shell) {
   min-width: 0;
 }
 .media-slider-control {
+  position: relative;
   width: 100%;
   height: 18px;
   display: flex;
@@ -2307,6 +2308,21 @@ body:has(.app-shell) {
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 6px rgba(0, 0, 0, 0.55);
+}
+.media-player-timeline-hover {
+  position: absolute;
+  bottom: calc(100% + 4px);
+  z-index: 3;
+  padding: 3px 7px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.82);
+  color: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.3;
+  white-space: nowrap;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
 .media-player-timeline[data-disabled],
 .volume-slider[data-disabled] {
