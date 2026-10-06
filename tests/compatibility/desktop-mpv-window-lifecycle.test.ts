@@ -930,6 +930,31 @@ describe("native playback failure recovery", () => {
   }, 15_000);
 });
 
+test("solo playback reports buffering while the cache is drained or a seek is loading, unless paused or ended", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    const buffering = async (): Promise<boolean | undefined> => {
+      await controller.refreshState();
+      return controller.getState()?.buffering;
+    };
+    expect(await buffering()).toBe(false);
+    properties.set("paused-for-cache", true);
+    expect(await buffering()).toBe(true);
+    properties.set("paused-for-cache", false);
+    expect(await buffering()).toBe(false);
+    properties.set("seeking", true);
+    expect(await buffering()).toBe(true);
+    await controller.pause("session-1", true);
+    properties.set("pause", true);
+    expect(await buffering()).toBe(false);
+    await controller.pause("session-1", false);
+    properties.set("pause", false);
+    properties.set("seeking", false);
+    properties.set("paused-for-cache", true);
+    properties.set("eof-reached", true);
+    expect(await buffering()).toBe(false);
+  });
+});
+
 test("solo playback records starvation/recovery and suppresses intentional pause, seek and EOF starvation", async () => {
   await withPlayback(async ({ controller, properties }) => {
     properties.set("demuxer-cache-state", { "cache-duration": 0 });
