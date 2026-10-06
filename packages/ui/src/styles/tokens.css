@@ -2336,6 +2336,16 @@ body:has(.app-shell) {
 .media-player-transport {
   gap: 6px;
 }
+.media-player-ends-at {
+  min-width: 0;
+  margin: 0 auto 0 12px;
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.85);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .media-player-actions {
   gap: 4px;
 }

@@ -224,7 +224,7 @@ const playFilm = async (page: Page): Promise<void> => {
     .toBeGreaterThan(0.2);
 };
 
-test("supported media plays under the shared controls", async ({ page, browserName }) => {
+test("supported media plays under the shared controls", async ({ page, browserName }, testInfo) => {
   // Playwright's WebKit and Firefox builds ship without the proprietary H.264/AAC decoders.
   test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
@@ -249,6 +249,8 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   await page.mouse.move(300, 300);
   await page.getByRole("button", { name: "Pause playback" }).last().click();
   await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(true);
+  await expect(page.getByText(/^Ends at \d{1,2}:\d{2}/u)).toBeVisible();
+  await testInfo.attach("player ends at", { body: await page.screenshot(), contentType: "image/png" });
   await page.mouse.move(320, 320);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();

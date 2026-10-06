@@ -620,6 +620,8 @@ test("the desktop player controls are what they were before the extraction", asy
 }, testInfo) => {
   test.skip(!hasBaseline, "Build the pre-extraction renderer with `bun run test:browser:baseline`");
   const builds = await signedInBuilds(context, baseURL ?? "");
+  // The baseline predates the time playback ends at, which is left out.
+  const withoutEndsAt = { style: ".media-player-ends-at { visibility: hidden !important; }" };
   const states: ReadonlyArray<readonly [string, ParityScenario]> = [
     ["starting", { display: { ...filmDisplay, loading: true, error: null } }],
     [
@@ -643,7 +645,7 @@ test("the desktop player controls are what they were before the extraction", asy
       await page.addStyleTag({ content: STILL });
     }
     // The loading state keeps its spinner; every other state has to have stopped moving.
-    await expectDesktopUnchanged(testInfo, `player ${name}`, builds);
+    await expectDesktopUnchanged(testInfo, `player ${name}`, builds, withoutEndsAt);
   }
 
   // The last state is still showing: open its menus.
@@ -669,13 +671,13 @@ test("the desktop player controls are what they were before the extraction", asy
       content: ".media-player-settings-panel { z-index: 3; }",
     });
   }
-  await expectDesktopUnchanged(testInfo, "playback settings", builds);
+  await expectDesktopUnchanged(testInfo, "playback settings", builds, withoutEndsAt);
   for (const { page } of builds.desktops) {
     await page.getByRole("button", { name: "Playback settings", exact: true }).click();
     await page.locator(".watch-group-chip").click();
     await expect(page.getByText("No groups yet")).toBeVisible();
   }
-  await expectDesktopUnchanged(testInfo, "watch groups in the player", builds);
+  await expectDesktopUnchanged(testInfo, "watch groups in the player", builds, withoutEndsAt);
 });
 
 test("the playback settings open over the timeline", async ({ context, baseURL }, testInfo) => {
