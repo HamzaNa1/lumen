@@ -523,8 +523,12 @@ export class WatchGroups {
       } else if (action.type === "buffer") {
         const { type: _type, ...buffer } = action;
         // A report about something the group has moved on from describes nothing it has on.
-        if (this.groups.get(socket.data.groupId ?? "")?.state.playback?.itemId === action.itemId)
+        if (this.groups.get(socket.data.groupId ?? "")?.state.playback?.itemId === action.itemId) {
+          const first = socket.data.buffer === null;
           socket.data.buffer = { ...buffer, reportedAtMs: Date.now() };
+          // Until a member's player has said anything, the others are shown it as unknown.
+          if (first) this.shareBuffers();
+        }
       } else if (action.type === "list") await this.list(socket);
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {

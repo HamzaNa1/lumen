@@ -26,7 +26,7 @@ export type WatchPlayback = typeof WatchPlayback.Type;
 /** What a member's player holds of the group's media beyond where it is playing. */
 const WatchBuffer = {
   aheadSeconds: Position,
-  /** It holds the rest of the media, however long that is. */
+  /** That is all the media there is left: the player has nothing more to fetch. */
   toEnd: Schema.Boolean,
 };
 export const WatchMemberBuffer = Schema.Struct({ memberId: Uuid, ...WatchBuffer });

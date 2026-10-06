@@ -737,20 +737,20 @@ test("members are told how much each other's players have buffered, for as long 
     viewers.push(ample.playback, thin.playback);
     thin.native.aheadSeconds = 12.7;
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
-    const shared = (status: typeof owner.status) =>
-      [...status.buffers].sort((a, b) => a.aheadSeconds - b.aheadSeconds);
-    const expected = (thinSeconds: number) => [
-      { memberId: ample.playback.status.memberId, aheadSeconds: 0, toEnd: true },
-      { memberId: thin.playback.status.memberId, aheadSeconds: thinSeconds, toEnd: false },
-    ];
+    const of = (status: typeof owner.status, viewer: typeof thin) =>
+      status.buffers.find((buffer) => buffer.memberId === viewer.playback.status.memberId);
     // The owner plays nothing itself, so it has no buffer to speak of, and sees the others'.
     await eventually(() => owner.status.buffers.length === 2, 8000);
-    expect(shared(owner.status)).toEqual(expected(12));
+    expect(of(owner.status, thin)).toMatchObject({ aheadSeconds: 12, toEnd: false });
+    // A player holding the rest of its hundred seconds says how much is left of them to play.
+    expect(of(owner.status, ample)?.toEnd).toBe(true);
+    expect(of(owner.status, ample)?.aheadSeconds).toBeGreaterThan(80);
+    expect(of(owner.status, ample)?.aheadSeconds).toBeLessThanOrEqual(97);
     await eventually(() => thin.playback.status.buffers.length === 2);
-    expect(shared(thin.playback.status)).toEqual(expected(12));
+    expect(of(thin.playback.status, thin)).toMatchObject({ aheadSeconds: 12, toEnd: false });
 
     thin.native.aheadSeconds = 6;
-    await eventually(() => shared(owner.status)[1]?.aheadSeconds === 6, 8000);
+    await eventually(() => of(owner.status, thin)?.aheadSeconds === 6, 8000);
 
     // A member who leaves is no longer described, and no longer hears about the others.
     await thin.playback.action({ type: "leave" });

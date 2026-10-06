@@ -71,14 +71,10 @@ const memberNames = (members: WatchGroup["members"]): string => {
 // A player holding this much is shown as having all the buffer it could want.
 const AMPLE_BUFFER_SECONDS = 30;
 
-const bufferedSummary = ({ aheadSeconds, toEnd }: WatchMemberBuffer): string =>
-  toEnd
-    ? "Fully buffered"
-    : aheadSeconds === 0
-      ? "Buffering…"
-      : aheadSeconds < 60
-        ? `${aheadSeconds}s buffered`
-        : `${Math.floor(aheadSeconds / 60)} min buffered`;
+const bufferedSummary = ({ aheadSeconds }: WatchMemberBuffer): string =>
+  aheadSeconds < 60
+    ? `${aheadSeconds}s buffered`
+    : `${Math.floor(aheadSeconds / 60)}m ${aheadSeconds % 60}s buffered`;
 
 /** How much of the group's media a member's player holds beyond where it is playing. */
 const MemberBuffer = ({ buffer }: { readonly buffer: WatchMemberBuffer }): React.ReactElement => {
@@ -318,8 +314,14 @@ const ActiveGroup = ({
               <Avatar name={member.displayName} size="sm" />
               <span>{member.displayName}</span>
               {member.id === memberId ? <small>You</small> : null}
-              {stillLoading(group, member.id) ? <small>Loading…</small> : null}
-              {buffer === undefined ? null : <MemberBuffer buffer={buffer} />}
+              {buffer !== undefined ? (
+                <MemberBuffer buffer={buffer} />
+              ) : playback === null ? null : stillLoading(group, member.id) ? (
+                <small className="watch-group-buffer">Loading…</small>
+              ) : (
+                // A player that predates buffer reports, or one that is not playing this.
+                <small className="watch-group-buffer">Buffer unknown</small>
+              )}
             </li>
           );
         })}

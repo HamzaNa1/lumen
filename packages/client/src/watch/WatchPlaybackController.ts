@@ -368,14 +368,20 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       return;
     this.sharingBuffer = true;
     try {
-      const { aheadSeconds } = await this.player.buffer(state.sessionId);
+      const buffer = await this.player.buffer(state.sessionId);
       if (this.client !== client) return;
-      const toEnd = aheadSeconds === Number.POSITIVE_INFINITY;
+      const toEnd = buffer.aheadSeconds === Number.POSITIVE_INFINITY;
+      // A player holding the rest of the media holds what is left to play of it.
+      const aheadSeconds = toEnd
+        ? (state.durationSeconds ?? Number.NaN) - state.positionSeconds
+        : buffer.aheadSeconds;
+      // Without a duration there is no saying how much the rest comes to.
+      if (!Number.isFinite(aheadSeconds)) return;
       await client.action({
         type: "buffer",
         itemId: state.itemId,
         // Whole seconds are all a member is shown, and say the same thing for longer.
-        aheadSeconds: toEnd ? 0 : Math.floor(Math.min(604800, Math.max(0, aheadSeconds))),
+        aheadSeconds: Math.floor(Math.min(604800, Math.max(0, aheadSeconds))),
         toEnd,
       });
     } catch {
