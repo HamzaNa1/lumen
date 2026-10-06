@@ -558,6 +558,8 @@ body:has(.app-shell) {
 .select-field {
   min-width: 0;
   display: grid;
+  /* Without this the column grows to fit a long nowrap value instead of truncating it. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 6px;
 }
 .select-trigger {
