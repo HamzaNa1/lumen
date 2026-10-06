@@ -300,6 +300,13 @@ test("a watch group's film starts playing in the browser", async ({ page, browse
   await page.getByRole("link", { name: "Movies", exact: true }).click();
   await playFilm(page);
   await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
+
+  // Each member is shown how much of the film their player holds.
+  await page.mouse.move(400, 400);
+  await page.getByRole("button", { name: "Movie night, 1 person" }).click();
+  await expect(page.locator(".watch-group-members .watch-group-buffer")).toContainText("buffered", {
+    timeout: 10_000,
+  });
 });
 
 test("older servers keep settings usable without requesting unsupported track memory endpoints", async ({ page }) => {

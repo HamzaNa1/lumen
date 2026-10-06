@@ -8,6 +8,8 @@ const Position = Schema.Number.check(
 const Password = Schema.String.check(Schema.isMaxLength(128));
 /** How much media a member must hold beyond the group's position before the group plays on. */
 export const WATCH_READY_BUFFER_SECONDS = 5;
+/** How often a member's player says how it is buffered, while it has the group's media on. */
+export const WATCH_BUFFER_REPORT_INTERVAL_MS = 2000;
 export const WatchPlayback = Schema.Struct({
   itemId: Uuid,
   title: Schema.String,
@@ -21,6 +23,14 @@ export const WatchPlayback = Schema.Struct({
   waitingFor: Schema.optional(Schema.Array(Uuid)),
 });
 export type WatchPlayback = typeof WatchPlayback.Type;
+/** What a member's player holds of the group's media beyond where it is playing. */
+const WatchBuffer = {
+  aheadSeconds: Position,
+  /** That is all the media there is left: the player has nothing more to fetch. */
+  toEnd: Schema.Boolean,
+};
+export const WatchMemberBuffer = Schema.Struct({ memberId: Uuid, ...WatchBuffer });
+export type WatchMemberBuffer = typeof WatchMemberBuffer.Type;
 export const WatchGroup = Schema.Struct({
   id: Uuid,
   name: Schema.String,
@@ -58,6 +68,8 @@ export const WatchAction = Schema.Union([
   Schema.Struct({ type: Schema.Literal("ready"), revision: Schema.Int }),
   /** This member ran out of media to play; the group, as it stood at that revision, holds for it. */
   Schema.Struct({ type: Schema.Literal("buffering"), revision: Schema.Int }),
+  /** How this member's player is buffered for the item the group has on. */
+  Schema.Struct({ type: Schema.Literal("buffer"), itemId: Uuid, ...WatchBuffer }),
   Schema.Struct({ type: Schema.Literal("ping"), sentAtMs: Schema.Number.check(Schema.isFinite()) }),
 ]);
 export type WatchAction = typeof WatchAction.Type;
@@ -68,11 +80,15 @@ export const WatchMessage = Schema.Union([
     memberId: Uuid,
     /** Whether this server takes the `buffering` action; one that predates it would hang up. */
     holdsForBuffering: Schema.optional(Schema.Boolean),
+    /** Whether this server takes the `buffer` action and tells members how each is buffered. */
+    sharesBuffers: Schema.optional(Schema.Boolean),
     /** The name this member goes by in a group. Servers before 0.0.14 do not say. */
     displayName: Schema.optional(Schema.String),
   }),
   Schema.Struct({ type: Schema.Literal("groups"), groups: Schema.Array(WatchGroup) }),
   Schema.Struct({ type: Schema.Literal("state"), group: Schema.NullOr(WatchGroup) }),
+  /** Sent only to clients that asked for it; one that predates it would hang up. */
+  Schema.Struct({ type: Schema.Literal("buffers"), buffers: Schema.Array(WatchMemberBuffer) }),
   Schema.Struct({
     type: Schema.Literal("reply"),
     requestId: Uuid,
@@ -93,6 +109,8 @@ export interface WatchStatus {
   readonly memberId: string | null;
   readonly groups: ReadonlyArray<WatchGroup>;
   readonly group: WatchGroup | null;
+  /** How the group's members are buffered, for those whose players have lately said. */
+  readonly buffers: ReadonlyArray<WatchMemberBuffer>;
   readonly error: string | null;
 }
 
@@ -101,6 +119,7 @@ export const initialWatchStatus = (): WatchStatus => ({
   memberId: null,
   groups: [],
   group: null,
+  buffers: [],
   error: null,
 });
 

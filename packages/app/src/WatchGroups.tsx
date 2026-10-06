@@ -1,7 +1,9 @@
 import {
   initialWatchStatus,
+  WATCH_READY_BUFFER_SECONDS,
   type WatchAction,
   type WatchGroup,
+  type WatchMemberBuffer,
   type WatchPlayback,
   type WatchStatus,
 } from "@lumen/contracts";
@@ -64,6 +66,28 @@ const memberNames = (members: WatchGroup["members"]): string => {
   return members.length > visibleMemberNames
     ? `${names} +${members.length - visibleMemberNames}`
     : names;
+};
+
+// A player holding this much is shown as having all the buffer it could want.
+const AMPLE_BUFFER_SECONDS = 30;
+
+const bufferedSummary = ({ aheadSeconds }: WatchMemberBuffer): string =>
+  aheadSeconds < 60
+    ? `${aheadSeconds}s buffered`
+    : `${Math.floor(aheadSeconds / 60)}m ${aheadSeconds % 60}s buffered`;
+
+/** How much of the group's media a member's player holds beyond where it is playing. */
+const MemberBuffer = ({ buffer }: { readonly buffer: WatchMemberBuffer }): React.ReactElement => {
+  const filled = buffer.toEnd ? 1 : Math.min(1, buffer.aheadSeconds / AMPLE_BUFFER_SECONDS);
+  const low = !buffer.toEnd && buffer.aheadSeconds < WATCH_READY_BUFFER_SECONDS;
+  return (
+    <small className={`watch-group-buffer${low ? " is-low" : ""}`}>
+      {bufferedSummary(buffer)}
+      <span className="watch-group-buffer-meter" aria-hidden="true">
+        <span style={{ width: `${filled * 100}%` }} />
+      </span>
+    </small>
+  );
 };
 
 const peopleCount = (count: number): string => (count === 1 ? "1 person" : `${count} people`);
@@ -242,11 +266,13 @@ const CreateGroupForm = ({
 
 const ActiveGroup = ({
   group,
+  buffers,
   memberId,
   disabled,
   onLeave,
 }: {
   readonly group: WatchGroup;
+  readonly buffers: ReadonlyArray<WatchMemberBuffer>;
   readonly memberId: string | null;
   readonly disabled: boolean;
   readonly onLeave: () => void;
@@ -280,14 +306,25 @@ const ActiveGroup = ({
       </div>
       <h3 className="watch-group-label">{peopleCount(group.members.length)}</h3>
       <ul className="watch-group-members">
-        {group.members.map((member) => (
-          <li key={member.id}>
-            <Avatar name={member.displayName} size="sm" />
-            <span>{member.displayName}</span>
-            {member.id === memberId ? <small>You</small> : null}
-            {stillLoading(group, member.id) ? <small>Loading…</small> : null}
-          </li>
-        ))}
+        {group.members.map((member) => {
+          const buffer =
+            playback === null ? undefined : buffers.find((buffer) => buffer.memberId === member.id);
+          return (
+            <li key={member.id}>
+              <Avatar name={member.displayName} size="sm" />
+              <span>{member.displayName}</span>
+              {member.id === memberId ? <small>You</small> : null}
+              {buffer !== undefined ? (
+                <MemberBuffer buffer={buffer} />
+              ) : playback === null ? null : stillLoading(group, member.id) ? (
+                <small className="watch-group-buffer">Loading…</small>
+              ) : (
+                // A player that predates buffer reports, or one that is not playing this.
+                <small className="watch-group-buffer">Buffer unknown</small>
+              )}
+            </li>
+          );
+        })}
       </ul>
       <footer className="watch-group-footer">
         <p>Playback controls are shared.</p>
@@ -397,6 +434,7 @@ export const WatchGroups = ({
       {group !== null ? (
         <ActiveGroup
           group={group}
+          buffers={status.buffers}
           memberId={status.memberId}
           disabled={disabled}
           onLeave={() => void perform({ type: "leave" })}

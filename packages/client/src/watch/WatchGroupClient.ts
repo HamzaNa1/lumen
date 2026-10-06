@@ -49,6 +49,7 @@ export class WatchGroupClient {
   private bestRtt = Infinity;
   private lastPong = 0;
   private holdsForBuffering = false;
+  private takesBuffers = false;
   private displayName: string | null = null;
   /** The viewer's group as the server last described it. */
   private group: WatchGroup | null = null;
@@ -72,6 +73,11 @@ export class WatchGroupClient {
     return this.holdsForBuffering;
   }
 
+  /** Whether the server passes on how each member's player is buffered. */
+  get sharesBuffers(): boolean {
+    return this.takesBuffers;
+  }
+
   get serverNow(): number {
     return Date.now() + this.offsetMs;
   }
@@ -89,6 +95,7 @@ export class WatchGroupClient {
         JSON.stringify({
           ...this.connection.watchAuthentication(),
           ...(this.readiness ? { readiness: true } : {}),
+          buffers: true,
         }),
       );
     socket.onmessage = (event) => {
@@ -101,6 +108,7 @@ export class WatchGroupClient {
           this.bestRtt = Infinity;
           this.lastPong = Date.now();
           this.holdsForBuffering = message.holdsForBuffering === true;
+          this.takesBuffers = message.sharesBuffers === true;
           this.displayName = message.displayName ?? null;
           this.update({
             connection: "connected",
@@ -135,6 +143,7 @@ export class WatchGroupClient {
             this.offsetMs = message.serverTimeMs - (message.sentAtMs + rtt / 2);
           }
         } else if (message.type === "groups") this.update({ groups: message.groups });
+        else if (message.type === "buffers") this.update({ buffers: message.buffers });
         else this.update({ group: message.group, error: null });
       } catch {
         socket.close(1002, "Invalid server message");
@@ -296,6 +305,9 @@ export class WatchGroupClient {
     for (const prediction of this.predictions.values())
       if (prediction.awaits(group)) group = prediction.apply(group);
     this.status = { ...this.status, ...patch, group };
+    // Buffers describe the members of a group; without one there is nobody to describe.
+    if (group === null && this.status.buffers.length > 0)
+      this.status = { ...this.status, buffers: [] };
     this.onStatus(this.status);
   }
 }

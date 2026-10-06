@@ -305,3 +305,27 @@
   color: var(--text-tertiary);
   font-size: 12px;
 }
+.watch-group-members .watch-group-buffer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+}
+.watch-group-buffer-meter {
+  width: 34px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--bg-active);
+}
+.watch-group-buffer-meter > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--positive);
+  transition: width 400ms ease;
+}
+.watch-group-buffer.is-low .watch-group-buffer-meter > span {
+  background: var(--warning);
+}
