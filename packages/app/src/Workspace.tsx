@@ -146,10 +146,12 @@ export const WatchedButton = ({
 export const CatalogCard = ({
   item,
   subtitle,
+  detail,
   landscape = false,
 }: {
   readonly item: CatalogItem;
   readonly subtitle?: string | null;
+  readonly detail?: string | null;
   /** Wide artwork, for episode stills. */
   readonly landscape?: boolean;
 }): React.ReactElement => {
@@ -159,6 +161,7 @@ export const CatalogCard = ({
     <MediaCard
       title={item.title}
       subtitle={subtitle}
+      detail={detail}
       kind={item.kind}
       landscape={landscape}
       imageUrl={artwork.data ?? null}

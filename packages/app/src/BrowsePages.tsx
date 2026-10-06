@@ -25,7 +25,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { formatClock, kindLabel, libraryCount, plural } from "./format";
+import { kindLabel, libraryCount, plural, resumeLabel } from "./format";
 import {
   CatalogCard,
   PageHeader,
@@ -132,7 +132,11 @@ const Shelf = ({
   );
 };
 
-const homeSubtitle = (item: CatalogItem, resume = false): string | null => {
+/** The lines under a Home card: what the item belongs to, then where it resumes in a resume row. */
+const homeCardText = (
+  item: CatalogItem,
+  resume = false,
+): { readonly subtitle: string | null; readonly detail?: string } => {
   const context =
     item.seriesTitle == null
       ? null
@@ -144,9 +148,9 @@ const homeSubtitle = (item: CatalogItem, resume = false): string | null => {
         ]
           .filter(Boolean)
           .join(" · ");
-  return (
-    context ?? (resume ? `Resume at ${formatClock(item.resumePositionSeconds ?? 0)}` : yearOf(item))
-  );
+  if (!resume) return { subtitle: context ?? yearOf(item) };
+  const resumeAt = resumeLabel(item.resumePositionSeconds ?? 0);
+  return context === null ? { subtitle: resumeAt } : { subtitle: context, detail: resumeAt };
 };
 
 const LibraryTile = ({
@@ -215,7 +219,7 @@ export const HomePage = (): React.ReactElement => {
     items.length === 0 ? null : (
       <Shelf key={title} title={title}>
         {items.map((item) => (
-          <CatalogCard key={item.id} item={item} subtitle={homeSubtitle(item, resume)} />
+          <CatalogCard key={item.id} item={item} {...homeCardText(item, resume)} />
         ))}
       </Shelf>
     );
@@ -268,7 +272,7 @@ export const HomePage = (): React.ReactElement => {
               }
             >
               {row.items.map((item) => (
-                <CatalogCard key={item.id} item={item} subtitle={homeSubtitle(item)} />
+                <CatalogCard key={item.id} item={item} {...homeCardText(item)} />
               ))}
             </Shelf>
           ))}

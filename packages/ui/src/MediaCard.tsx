@@ -41,6 +41,7 @@ export const PosterFallback = ({
 export const MediaCard = ({
   title,
   subtitle,
+  detail,
   imageUrl,
   kind,
   landscape = false,
@@ -52,6 +53,8 @@ export const MediaCard = ({
   readonly action?: ReactNode;
   readonly title: string;
   readonly subtitle?: string | null;
+  /** A second line under the subtitle. */
+  readonly detail?: string | null;
   readonly imageUrl?: string | null;
   readonly kind?: string;
   /** 16:9 artwork, such as an episode still, instead of a 2:3 poster. */
@@ -88,6 +91,9 @@ export const MediaCard = ({
         <span className="media-card-title">{title}</span>
         {subtitle === undefined || subtitle === null ? null : (
           <span className="media-card-subtitle">{subtitle}</span>
+        )}
+        {detail === undefined || detail === null ? null : (
+          <span className="media-card-subtitle">{detail}</span>
         )}
       </button>
       {action == null ? null : <div className="media-card-action">{action}</div>}

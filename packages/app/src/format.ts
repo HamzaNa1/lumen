@@ -97,6 +97,9 @@ export const formatClock = (seconds: number): string => {
     : `${minutes}:${secondsPart}`;
 };
 
+/** Where playback picks up again: "Resume at 1:23". */
+export const resumeLabel = (seconds: number): string => `Resume at ${formatClock(seconds)}`;
+
 /** 5640 seconds → "1h 34m". */
 export const formatRuntime = (seconds: number): string => {
   const minutes = Math.round(seconds / 60);
