@@ -71,26 +71,25 @@ test("every route survives direct navigation and refresh", async ({ page }) => {
     await expect(page.locator(".page").first()).toBeVisible();
   }
   await page.goto("/web/settings");
-  await expect(page.getByText("Browser cookie")).toBeVisible();
   await expect(page.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
 });
 
 test("an administrator renames the server from settings", async ({ page }, testInfo) => {
   await signIn(page);
   await page.goto("/web/settings");
-  const connectedTo = page.locator(".settings-row").filter({ hasText: "Connected to" });
-  await expect(connectedTo).toContainText("Lumen Server");
+  const server = page.getByRole("region", { name: "Server" }).locator(".settings-row").first();
+  await expect(server).toContainText("Lumen Server");
   const rename = async (name: string): Promise<void> => {
-    await connectedTo.getByRole("button", { name: "Rename…" }).click();
+    await server.getByRole("button", { name: "Rename…" }).click();
     await page.getByLabel("Server name").fill(name);
     await testInfo.attach("rename server", { body: await page.screenshot(), contentType: "image/png" });
     await page.getByRole("button", { name: "Rename", exact: true }).click();
-    await expect(connectedTo).toContainText(name);
+    await expect(server).toContainText(name);
   };
   await rename("Living room");
   // The server keeps the name, so a fresh page load reads it back.
   await page.reload();
-  await expect(connectedTo).toContainText("Living room");
+  await expect(server).toContainText("Living room");
   await rename("Lumen Server");
 });
 
@@ -321,7 +320,7 @@ test("older servers keep settings usable without requesting unsupported track me
   await expect(page.getByText("This server does not support saved audio and subtitle settings.")).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Preferred audio language" })).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Preferred subtitles" })).toHaveCount(0);
-  await expect(page.getByText("Browser cookie")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Server" })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.reload();
   await expect(page.getByText("This server does not support saved audio and subtitle settings.")).toBeVisible();

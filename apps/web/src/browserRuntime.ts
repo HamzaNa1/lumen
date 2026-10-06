@@ -167,12 +167,6 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       // embedded in it. The player lists the tracks that really can be switched.
       trackSelection: "audioTracks" in HTMLMediaElement.prototype,
       fullscreen: document.fullscreenEnabled,
-      player: {
-        name: "Browser",
-        description:
-          "Video plays in this browser’s own player, which supports fewer formats than the desktop app.",
-      },
-      signInStorage: "cookie",
     },
     accounts: browserAccounts,
     catalog: {

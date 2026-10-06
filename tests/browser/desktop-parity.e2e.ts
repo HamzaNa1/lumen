@@ -329,51 +329,35 @@ test("the desktop and web builds draw the shared pages identically", async ({
 
     // Navigation is shared; the account menu beneath it differs by design and is left out.
     await expectAlike(testInfo, name, ".nav", [web, desktop]);
-    // The users page has listed each account's libraries only since the baseline was taken.
-    // Administrators have been able to rename the server from settings only since then, too.
-    // The playback preference rows are also new; compare them between today's builds below.
-    if (name !== "users")
-      await expectDesktopUnchanged(testInfo, name, builds, {
-        style: `
-          .settings-row-value button { display: none !important; }
-          #settings-playback + .settings-card > .settings-row:has([role='combobox']) {
-            display: none !important;
-          }
-          #settings-playback + .settings-card > .settings-row:has([role='combobox'])
-            + .settings-row:not(:has([role='combobox'])) {
-            border-top: none !important;
-          }
-        `,
-      });
+    // The users page has listed each account's libraries only since the baseline was taken, and
+    // settings has traded the rows that only reported things for playback preferences since then.
+    if (name !== "users" && name !== "settings")
+      await expectDesktopUnchanged(testInfo, name, builds);
     if (name !== "settings") {
       await expectAlike(testInfo, name, ".main-content", [web, desktop]);
       continue;
     }
-    // Settings is the one page meant to differ, and only in what each platform reports. The
-    // rows that say the same thing on every platform must still be drawn the same.
-    for (const row of [
-      "Preferred audio",
-      "Preferred subtitles",
-      "Quality",
-      "Transcoding",
-      "Connected to",
-      "Signed in as",
-      "Role",
-    ])
+    // Settings is the one page meant to differ: only the desktop can switch servers, so only its
+    // card continues below the server. Everything above that must still be drawn the same.
+    for (const row of ["Preferred audio", "Preferred subtitles"])
       await expectAlike(
         testInfo,
         `settings ${row}`,
         (page) => page.locator(".settings-row").filter({ hasText: row }),
         [web, desktop],
       );
+    await expectAlike(
+      testInfo,
+      "settings server",
+      (page) => page.getByRole("region", { name: "Server" }).locator(".settings-row-text"),
+      [web, desktop],
+    );
     for (const { page } of [web, desktop]) {
       await expect(page.getByRole("combobox", { name: "Preferred audio language" })).toHaveText(
         "English",
       );
       await expect(page.getByRole("combobox", { name: "Preferred subtitles" })).toHaveText("Off");
     }
-    await expect(web.page.getByText("Browser cookie")).toBeVisible();
-    await expect(desktop.page.getByText("MPV", { exact: true })).toBeVisible();
     await expect(desktop.page.getByRole("button", { name: "Switch server…" })).toBeVisible();
     await expect(web.page.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
   }

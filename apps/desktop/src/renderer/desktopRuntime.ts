@@ -41,8 +41,6 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     audioDiagnostics: true,
     trackSelection: true,
     fullscreen: true,
-    player: { name: "MPV", description: "Video plays in the built-in MPV player." },
-    signInStorage: "device",
   },
   accounts: {
     ...bridge.accounts,
