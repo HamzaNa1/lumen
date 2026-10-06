@@ -3,7 +3,7 @@ import { Button, Form, Modal, TextField, SelectField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { errorMessage, hostOf, roleLabels } from "./format";
+import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
 import { ACCOUNTS_KEY, PageHeader, useWorkspace } from "./Workspace";
 
@@ -169,23 +169,6 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
 export const SettingsPage = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
   const { capabilities } = useRuntime();
-  const signInStorage =
-    capabilities.signInStorage === "cookie"
-      ? {
-          label: "Browser cookie",
-          description:
-            "Your sign-in is kept in a cookie that pages and scripts cannot read. Sign out to remove it.",
-        }
-      : account.secureStorageAvailable
-        ? {
-            label: "Encrypted",
-            description: "Your sign-in is encrypted with the system’s secure storage.",
-          }
-        : {
-            label: "Not encrypted",
-            description:
-              "Secure storage is unavailable, so your sign-in is kept in a private file only your user account can read.",
-          };
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" />
@@ -193,31 +176,13 @@ export const SettingsPage = (): React.ReactElement => {
         <h2 id="settings-playback">Playback</h2>
         <div className="settings-card">
           <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
-          <SettingsRow label="Player" description={capabilities.player.description}>
-            {capabilities.player.name}
-          </SettingsRow>
-          <SettingsRow
-            label="Quality"
-            description="Files stream exactly as they are stored on the server."
-          >
-            Original
-          </SettingsRow>
-          <SettingsRow label="Transcoding" description="Lumen never re-encodes your media.">
-            Off
-          </SettingsRow>
         </div>
       </section>
       <section className="settings-group" aria-labelledby="settings-server">
         <h2 id="settings-server">Server</h2>
         <div className="settings-card">
-          <SettingsRow label="Connected to" description={hostOf(account.origin)}>
-            {account.serverName}
+          <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
             {account.role === "admin" ? <RenameServer serverName={account.serverName} /> : null}
-          </SettingsRow>
-          <SettingsRow label="Signed in as">{account.username}</SettingsRow>
-          <SettingsRow label="Role">{roleLabels[account.role]}</SettingsRow>
-          <SettingsRow label="Sign-in storage" description={signInStorage.description}>
-            {signInStorage.label}
           </SettingsRow>
           {capabilities.serverSwitching ? (
             <div className="settings-row settings-row-actions">

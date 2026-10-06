@@ -44,10 +44,6 @@ export interface PlatformCapabilities {
   /** Audio and subtitle tracks inside a file can be switched during playback. */
   readonly trackSelection: boolean;
   readonly fullscreen: boolean;
-  /** The player as settings describe it. */
-  readonly player: { readonly name: string; readonly description: string };
-  /** Where the sign-in is kept: in storage this app manages, or in a cookie the browser manages. */
-  readonly signInStorage: "device" | "cookie";
 }
 
 export interface AccountsRuntime {
