@@ -1,3 +1,4 @@
+import { resolveTrackSelection, type PlayerSession } from "../../packages/contracts/src/index.ts";
 import { seedPlaybackFixture } from "../helpers/playback";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
@@ -17,6 +18,8 @@ afterEach(async () => {
 
 interface PlaybackFixture {
   readonly base: URL;
+  readonly databasePath: string;
+  readonly root: string;
   readonly seeded: Awaited<ReturnType<typeof seedPlaybackFixture>>;
   readonly headers: Record<string, string>;
   readonly sessionUrl: URL;
@@ -93,6 +96,8 @@ const withPlaybackSession = async (
     const sessionUrl = new URL(`/api/v1/playback/sessions/${playback.sessionId}`, base);
     await run({
       base,
+      databasePath,
+      root,
       seeded,
       headers,
       sessionUrl,
@@ -407,6 +412,7 @@ describe("direct-play HTTP delivery", () => {
     const base = new URL(running.server.url);
     const identity = await fetch(new URL("/api/v1/server", base));
     expect(identity.status).toBe(200);
+    expect(await identity.json()).toMatchObject({ capabilities: { trackMemory: true } });
     const deviceId = newUuid();
     const login = await fetch(new URL("/api/v1/auth/login", base), {
       method: "POST",
@@ -529,5 +535,130 @@ describe("direct-play HTTP delivery", () => {
     } finally {
       sqlite.close();
     }
+  });
+});
+
+describe("account track memory HTTP API", () => {
+  const jsonRequest = async (base: URL, headers: Record<string, string>, path: string, method = "GET", input?: unknown) =>
+    fetch(new URL(path, base), { method, headers, ...(input === undefined ? {} : { body: JSON.stringify(input) }) });
+  const start = async (base: URL, headers: Record<string, string>, itemId: string): Promise<PlayerSession> => {
+    const response = await jsonRequest(base, headers, "/api/v1/playback/sessions", "POST", { trackId: itemId });
+    expect(response.status).toBe(201);
+    return response.json();
+  };
+  test("defaults, partial updates, movie revisits and server restart preserve independent choices", async () => {
+    await withPlaybackSession(async ({ base, headers, seeded, sessionUrl, restartServer }) => {
+      const path = "/api/v1/me/track-preferences";
+      expect(await (await jsonRequest(base, headers, path)).json()).toEqual({ audioLanguage: "en", subtitleLanguage: null });
+      expect(await (await jsonRequest(base, headers, path, "PATCH", { subtitleLanguage: "fr" })).json()).toEqual({ audioLanguage: "en", subtitleLanguage: "fr" });
+      const save = async (input: unknown) => {
+        const response = await fetch(`${sessionUrl}/track-choice`, { method: "PUT", headers, body: JSON.stringify(input) });
+        expect(response.status).toBe(200); return response.json();
+      };
+      await save({ kind: "audio", choice: seeded.audioStreamId });
+      await save({ kind: "subtitle", choice: "off" });
+      await jsonRequest(base, headers, path, "PATCH", { audioLanguage: "ja", subtitleLanguage: "en" });
+      const deviceId = newUuid();
+      const login = await jsonRequest(base, headers, "/api/v1/auth/login", "POST", {
+        username: "admin", password: "correct horse battery staple", deviceId,
+        deviceName: "Second device", platform: "desktop", platformDeviceId: deviceId,
+      });
+      expect(login.status).toBe(200);
+      const token = await login.json() as { accessToken: string };
+      const deviceHeaders = { ...headers, authorization: `Bearer ${token.accessToken}` };
+      const otherDevice = await start(base, deviceHeaders, seeded.itemId);
+      expect(otherDevice.trackMemory).toMatchObject({ preferences: { audioLanguage: "ja", subtitleLanguage: "en" }, audio: { streamId: seeded.audioStreamId }, subtitle: "off" });
+      expect((await fetch(`${sessionUrl}/track-choice`, { method: "PUT", headers: deviceHeaders, body: JSON.stringify({ kind: "subtitle", choice: null }) })).status).toBe(403);
+      await restartServer();
+      const revisited = await start(base, headers, seeded.itemId);
+      expect(revisited.trackMemory).toMatchObject({ preferences: { audioLanguage: "ja", subtitleLanguage: "en" }, audio: { streamId: seeded.audioStreamId }, subtitle: "off" });
+      expect(resolveTrackSelection(revisited.streams, revisited.sourceId, revisited.trackMemory)).toMatchObject({ audio: { id: seeded.audioStreamId }, subtitle: null });
+      const resetPath = `/api/v1/playback/sessions/${revisited.sessionId}/track-choice`;
+      const audioReset = await jsonRequest(base, headers, resetPath, "PUT", { kind: "audio", choice: null });
+      expect(await audioReset.json()).toMatchObject({ audio: null, subtitle: "off" });
+      const subtitleReset = await jsonRequest(base, headers, resetPath, "PUT", { kind: "subtitle", choice: null });
+      expect(await subtitleReset.json()).toMatchObject({ audio: null, subtitle: null });
+      const inherited = await start(base, headers, seeded.itemId);
+      expect(resolveTrackSelection(inherited.streams, inherited.sourceId, inherited.trackMemory).subtitle?.id).toBe(seeded.subtitleStreamId);
+      expect((await jsonRequest(base, headers, path, "PATCH", { audioLanguage: "not a language" })).status).toBe(400);
+    });
+  });
+
+  test("show choices span episodes and seasons, survive absence, and match regenerated IDs", async () => {
+    await withPlaybackSession(async ({ base, headers, seeded, sessionUrl, databasePath, root, restartServer }) => {
+      const db = new SqliteDatabase(databasePath);
+      try {
+        const source = db.query("SELECT source_id FROM tracks WHERE id = ?").get(seeded.trackId) as { source_id: string };
+        const show = newUuid(), season1 = newUuid(), season2 = newUuid();
+        const item = (id: string, kind: string, parent: string | null) => db.run(`INSERT INTO catalog_items(id, library_id, kind, parent_id, title, sort_title, added_at_ms, updated_at_ms) VALUES (?, ?, ?, ?, 'Test', 'test', 1, 1)`, [id, seeded.libraryId, kind, parent]);
+        item(show, "show", null); item(season1, "season", show); item(season2, "season", show);
+        db.run("UPDATE catalog_items SET kind = 'episode', parent_id = ? WHERE id = ?", [season1, seeded.itemId]);
+        db.run("UPDATE streams SET commentary = 0, forced = 0, hearing_impaired = 0 WHERE source_id = ?", [source.source_id]);
+        const commentaryId = newUuid();
+        db.run(`INSERT INTO streams(id, source_id, kind, codec, language, title, ordinal, is_default, channels, commentary, forced, hearing_impaired) VALUES (?, ?, 'audio', 'aac', 'eng', 'Commentary', 3, 0, 2, 1, 0, 0)`, [commentaryId, source.source_id]);
+        db.run("UPDATE streams SET hearing_impaired = 1 WHERE id = ?", [seeded.subtitleStreamId]);
+        const episode = async (name: string, season: string, includeCommentary: boolean) => {
+          const sourceId = newUuid(), itemId = newUuid(), videoId = newUuid(), regularId = newUuid(), commentId = newUuid(), subId = newUuid();
+          await Bun.write(join(root, name), "0123456789");
+          db.run(`INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, scanned_at_ms) SELECT ?, library_id, root_id, ?, ?, kind, file_size_bytes, modified_at_ms, scanned_at_ms FROM media_sources WHERE id = ?`, [sourceId, name, join(root, name), source.source_id]);
+          for (const [originalId, nextId, ordinal] of [[seeded.audioStreamId, regularId, 2], [commentaryId, commentId, 1], [seeded.subtitleStreamId, subId, 4]] as const) {
+            if (!includeCommentary && originalId === commentaryId) continue;
+            db.run(`INSERT INTO streams(id, source_id, kind, codec, language, title, ordinal, channels, commentary, forced, hearing_impaired) SELECT ?, ?, kind, codec, language, title, ?, channels, commentary, forced, hearing_impaired FROM streams WHERE id = ?`, [nextId, sourceId, ordinal, originalId]);
+          }
+          db.run("INSERT INTO streams(id, source_id, kind, ordinal) VALUES (?, ?, 'video', 0)", [videoId, sourceId]);
+          db.run(`INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, created_at_ms, updated_at_ms) SELECT ?, library_id, ?, ?, title, normalized_title, duration_ms, 1, 1 FROM tracks WHERE id = ?`, [newUuid(), sourceId, videoId, seeded.trackId]);
+          item(itemId, "episode", season);
+          db.run("INSERT INTO catalog_item_sources(item_id, source_id, is_primary) VALUES (?, ?, 1)", [itemId, sourceId]);
+          return { itemId, sourceId, regularId, commentId, subId };
+        };
+        const second = await episode("second.mkv", season1, false);
+        const third = await episode("third.mkv", season2, true);
+        for (const [kind, choice] of [["audio", commentaryId], ["subtitle", seeded.subtitleStreamId]]) {
+          const response = await fetch(`${sessionUrl}/track-choice`, { method: "PUT", headers, body: JSON.stringify({ kind, choice }) });
+          expect(response.status).toBe(200); await response.arrayBuffer();
+        }
+        const missing = await start(base, headers, second.itemId);
+        expect(resolveTrackSelection(missing.streams, missing.sourceId, missing.trackMemory)).toMatchObject({ audio: { id: second.regularId }, subtitle: { id: second.subId } });
+        expect(missing.trackMemory?.audio?.streamId).toBe(commentaryId);
+        await restartServer();
+        const available = await start(base, headers, third.itemId);
+        expect(resolveTrackSelection(available.streams, available.sourceId, available.trackMemory)).toMatchObject({ audio: { id: third.commentId }, subtitle: { id: third.subId } });
+        const rows = db.query("SELECT item_id FROM media_track_overrides").all();
+        expect(rows).toEqual([{ item_id: show }]);
+        // Rescanning replaces a stream ID, not the saved metadata descriptor.
+        const replacement = newUuid();
+        db.run("UPDATE streams SET id = ? WHERE id = ?", [replacement, third.commentId]);
+        const rescanned = await start(base, headers, third.itemId);
+        expect(resolveTrackSelection(rescanned.streams, rescanned.sourceId, rescanned.trackMemory).audio?.id).toBe(replacement);
+      } finally { db.close(); }
+    });
+  });
+
+  test("accounts and devices are isolated; foreign streams, closed sessions and lost access are rejected", async () => {
+    await withPlaybackSession(async ({ base, headers, seeded, sessionUrl, databasePath }) => {
+      const created = await jsonRequest(base, headers, "/api/v1/users", "POST", { username: "viewer", displayName: "Viewer", password: "correct horse battery staple", libraryAccess: { scope: "all" } });
+      expect(created.status).toBe(201);
+      const user = await created.json() as { id: string };
+      const deviceId = newUuid();
+      const login = await jsonRequest(base, headers, "/api/v1/auth/login", "POST", { username: "viewer", password: "correct horse battery staple", deviceId, deviceName: "test", platform: "desktop", platformDeviceId: deviceId });
+      expect(login.status).toBe(200);
+      const token = await login.json() as { accessToken: string };
+      const otherHeaders = { ...headers, authorization: `Bearer ${token.accessToken}` };
+      const path = "/api/v1/me/track-preferences";
+      await jsonRequest(base, headers, path, "PATCH", { audioLanguage: "fr" });
+      expect(await (await jsonRequest(base, otherHeaders, path)).json()).toMatchObject({ audioLanguage: "en" });
+      const choicePath = `${sessionUrl}/track-choice`;
+      expect((await fetch(choicePath, { method: "PUT", headers: otherHeaders, body: JSON.stringify({ kind: "subtitle", choice: "off" }) })).status).toBe(403);
+      expect((await fetch(choicePath, { method: "PUT", headers, body: JSON.stringify({ kind: "audio", choice: seeded.subtitleStreamId }) })).status).toBe(400);
+      expect((await fetch(choicePath, { method: "PUT", headers, body: JSON.stringify({ kind: "audio", choice: newUuid() }) })).status).toBe(400);
+      expect((await fetch(choicePath, { method: "PUT", headers, body: JSON.stringify({ kind: "audio", choice: "off" }) })).status).toBe(400);
+      const own = await start(base, otherHeaders, seeded.itemId);
+      expect(own.trackMemory?.audio).toBeNull();
+      const db = new SqliteDatabase(databasePath);
+      try { db.run("UPDATE users SET all_libraries = 0 WHERE id = ?", [user.id]); } finally { db.close(); }
+      expect((await jsonRequest(base, otherHeaders, `/api/v1/playback/sessions/${own.sessionId}/track-choice`, "PUT", { kind: "subtitle", choice: "off" })).status).toBe(403);
+      await fetch(sessionUrl, { method: "DELETE", headers });
+      expect((await fetch(choicePath, { method: "PUT", headers, body: JSON.stringify({ kind: "subtitle", choice: "off" }) })).status).toBe(409);
+    });
   });
 });

@@ -629,3 +629,25 @@ export const serverEventLog = sqliteTable(
   },
   (table) => [index("server_event_log_user_id_idx").on(table.userId, table.id)],
 );
+
+export const userTrackPreferences = sqliteTable("user_track_preferences", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => users.id, { onDelete: "cascade" }),
+  audioLanguage: text("audio_language").notNull().default("en"),
+  subtitleLanguage: text("subtitle_language"),
+});
+export const mediaTrackOverrides = sqliteTable(
+  "media_track_overrides",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => catalogItems.id, { onDelete: "cascade" }),
+    audioJson: text("audio_json"),
+    subtitleJson: text("subtitle_json"),
+  },
+  (table) => [primaryKey({ columns: [table.userId, table.itemId] })],
+);

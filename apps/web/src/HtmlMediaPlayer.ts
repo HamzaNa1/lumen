@@ -1,5 +1,12 @@
 import {
+  resolveTrackSelection,
+  type TrackKind,
+  type TrackChoiceInput,
+  type TrackMemory,
+} from "@lumen/contracts";
+import {
   PlaybackDiagnostics,
+  TrackSelectionController,
   PLAYBACK_REPORT_INTERVAL_MS,
   type PlaybackSessionApi,
   type PlayerBuffer,
@@ -42,6 +49,7 @@ export interface MediaElementLike {
 
 export interface BrowserPlaybackApi {
   readonly serverOrigin: string;
+  readonly saveTrackChoice: (sessionId: string, input: TrackChoiceInput) => Promise<TrackMemory | null>;
   readonly startPlayback: (itemId: string) => Promise<PlayerSession>;
   readonly heartbeat: (sessionId: string, state: PlayerState) => Promise<void>;
   readonly progress: (
@@ -74,6 +82,8 @@ interface ActiveSession {
   /** Detaches the element's listeners and the report timer. */
   detach: () => void;
   selectedAudioStreamId: string | null;
+  selection: TrackSelectionController | null;
+  trackMemoryError: string | null;
   buffering: boolean;
   awaitingInteraction: boolean;
   /** A request to play that the browser is holding, having neither started nor refused it. */
@@ -257,15 +267,36 @@ export class HtmlMediaPlayer {
 
   async selectAudioStream(sessionId: string, streamId: string): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
+    await active.selection?.select("audio", streamId);
+    return this.publishIfActive(active);
+  }
+
+  async resetTrack(sessionId: string, kind: TrackKind): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    await active.selection?.reset(kind);
+    return this.publishIfActive(active);
+  }
+
+  async retryTrackMemory(sessionId: string): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    await active.selection?.retry();
+    return this.publishIfActive(active);
+  }
+
+  private applyAudio(active: ActiveSession, streamId: string | null): void {
     const tracks = this.element.audioTracks;
     const index = active.streams.findIndex((stream) => stream.id === streamId);
-    if (tracks === undefined || index < 0) throw new Error("Audio stream is unavailable");
+    if (tracks === undefined || index < 0 || tracks.length !== active.streams.length)
+      throw new Error("Audio stream is unavailable");
+    const stream = active.streams[index];
+    if (stream !== undefined) this.assertAudioSupported([stream]);
     for (let track = 0; track < tracks.length; track += 1) {
       const entry = tracks[track];
       if (entry !== undefined) entry.enabled = track === index;
     }
+    if (tracks[index]?.enabled !== true)
+      throw new Error("This browser could not switch audio tracks");
     active.selectedAudioStreamId = streamId;
-    return this.publish(active);
   }
 
   /**
@@ -388,7 +419,7 @@ export class HtmlMediaPlayer {
       throw cancelled();
     }
     try {
-      this.assertAudioSupported(session.streams);
+      if (this.element.audioTracks === undefined) this.assertAudioSupported(session.streams);
       await this.load(generation, session);
       // The element is shared: metadata may have arrived for a newer start's source.
       if (generation !== this.generation) throw cancelled();
@@ -399,18 +430,20 @@ export class HtmlMediaPlayer {
       await reporter.end();
       throw cause;
     }
-    const audioStreams = session.streams.filter((stream) => stream.kind === "audio");
+    const audioStreams = session.streams
+      .filter((stream) => stream.kind === "audio")
+      .sort((a, b) => a.ordinal - b.ordinal);
     // Offer audio tracks only when the browser exposes exactly the tracks the server lists.
     const switchable =
-      audioStreams.length > 1 && this.element.audioTracks?.length === audioStreams.length;
+      audioStreams.length > 0 && this.element.audioTracks?.length === audioStreams.length;
     const active: ActiveSession = {
       session,
       reporter,
       streams: switchable ? audioStreams : [],
       detach: () => undefined,
-      selectedAudioStreamId: switchable
-        ? ((audioStreams.find((stream) => stream.isDefault) ?? audioStreams[0])?.id ?? null)
-        : null,
+      selectedAudioStreamId: null,
+      selection: null,
+      trackMemoryError: null,
       buffering: false,
       awaitingInteraction: false,
       heldPlay: null,
@@ -418,6 +451,35 @@ export class HtmlMediaPlayer {
       playingBeforeSuspend: false,
     };
     this.active = active;
+    try {
+      const selected = resolveTrackSelection(
+        audioStreams,
+        session.sourceId,
+        session.trackMemory,
+      ).audio;
+      if (switchable && selected !== null) this.applyAudio(active, selected.id);
+      this.assertAudioSupported(switchable && selected !== null ? [selected] : session.streams);
+      active.selection = new TrackSelectionController({
+        sourceId: session.sourceId,
+        ...(session.trackMemory === undefined ? {} : { memory: session.trackMemory }),
+        streams: active.streams,
+        assertActive: () => {
+          if (this.active !== active) throw inactive();
+        },
+        apply: async (kind, streamId) => {
+          // Resetting an unsupported kind still clears its server override for other devices.
+          if (kind === "audio" && switchable) this.applyAudio(active, streamId);
+        },
+        save: (choice) => this.api.saveTrackChoice(session.sessionId, choice),
+        onError: (message) => {
+          active.trackMemoryError = message;
+          this.publishIfActive(active);
+        },
+      });
+    } catch (cause) {
+      await this.stopActive({ saveProgress: false });
+      throw cause;
+    }
     active.detach = this.attach(active);
     if (Number.isFinite(startAtSeconds) && startAtSeconds > 0)
       this.element.currentTime = startAtSeconds;
@@ -697,6 +759,7 @@ export class HtmlMediaPlayer {
       streams: active.streams,
       selectedAudioStreamId: active.selectedAudioStreamId,
       selectedSubtitleStreamId: null,
+      trackMemoryError: active.trackMemoryError,
       // The browser decides the channel layout; this is the closest of the two descriptions.
       audioOutput: "auto-safe",
       buffering: active.buffering && !element.paused,

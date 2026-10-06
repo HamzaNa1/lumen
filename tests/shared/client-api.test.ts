@@ -9,8 +9,9 @@ import {
   ServerApi,
   ServerHttpError,
   ServerUnreachableError,
+  TrackSelectionController,
 } from "../../packages/client/src/index.ts";
-import type { PlayerState } from "../../packages/contracts/src/index.ts";
+import { defaultTrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
 import { errorMessage } from "../../packages/app/src/format.ts";
 
 const deferred = <T>() => {
@@ -222,6 +223,79 @@ describe("ServerApi sessions", () => {
     expect(rejected).toBe(0);
     await expect(api.libraries()).rejects.toThrow();
     expect(rejected).toBe(1);
+  });
+});
+
+describe("track memory capability", () => {
+  test.each([undefined, {}, { trackMemory: false }])(
+    "an older server advertising %j receives no track memory requests",
+    async (capabilities) => {
+      const requests: string[] = [];
+      const api = new ServerApi({
+        origin: "https://media.example",
+        credentials: cookieCredentials(),
+        fetchImpl: async (url) => {
+          requests.push(url.pathname);
+          return url.pathname === "/api/v1/server"
+            ? Response.json({ serverId: "s", displayName: "Old server", apiVersion: "1.0.0", capabilities })
+            : Response.json({ message: "Not found" }, { status: 404 });
+        },
+      });
+      await api.identity();
+      expect(await api.trackPreferences()).toBeNull();
+      await expect(api.updateTrackPreferences({ audioLanguage: "ja" })).rejects.toThrow("does not support");
+      expect(await api.saveTrackChoice("session", { kind: "audio", choice: "audio" })).toBeNull();
+
+      const applied: (string | null)[] = [];
+      const errors: (string | null)[] = [];
+      const controller = new TrackSelectionController({
+        sourceId: "file",
+        streams: [{ id: "audio", kind: "audio", ordinal: 1, language: "ja", title: null, codec: "aac", isDefault: false }],
+        assertActive: () => undefined,
+        apply: async (_kind, id) => { applied.push(id); },
+        save: (input) => api.saveTrackChoice("session", input),
+        onError: (message) => { errors.push(message); },
+      });
+      await controller.select("audio", "audio");
+      await controller.select("subtitle", null);
+      await controller.reset("audio");
+      await controller.retry();
+      expect(applied).toContain("audio");
+      expect(errors.filter((message) => message !== null)).toEqual([]);
+      expect(requests).toEqual(["/api/v1/server"]);
+    },
+  );
+
+  test("advertised support enables reads and writes, and a refreshed handshake can remove it", async () => {
+    let enabled = true;
+    const requests: string[] = [];
+    const memory = defaultTrackMemory();
+    const api = new ServerApi({
+      origin: "https://media.example",
+      credentials: bearerCredentials(() => "token"),
+      fetchImpl: async (url, init) => {
+        requests.push(`${init.method ?? "GET"} ${url.pathname}`);
+        if (url.pathname === "/api/v1/server")
+          return Response.json({ serverId: "s", displayName: "Server", apiVersion: "1.0.0", capabilities: { trackMemory: enabled } });
+        if (url.pathname.endsWith("track-preferences")) return Response.json(memory.preferences);
+        return Response.json(memory);
+      },
+    });
+    await api.identity();
+    expect(await api.trackPreferences()).toEqual(memory.preferences);
+    expect(await api.updateTrackPreferences({ subtitleLanguage: "en" })).toEqual(memory.preferences);
+    expect(await api.saveTrackChoice("session", { kind: "subtitle", choice: "off" })).toEqual(memory);
+    enabled = false;
+    await api.identity();
+    expect(await api.trackPreferences()).toBeNull();
+    expect(await api.saveTrackChoice("session", { kind: "subtitle", choice: null })).toBeNull();
+    expect(requests).toEqual([
+      "GET /api/v1/server",
+      "GET /api/v1/me/track-preferences",
+      "PATCH /api/v1/me/track-preferences",
+      "PUT /api/v1/playback/sessions/session/track-choice",
+      "GET /api/v1/server",
+    ]);
   });
 });
 

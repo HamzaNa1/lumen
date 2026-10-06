@@ -15,19 +15,37 @@ import {
   streams as streamTable,
   tracks,
 } from "@lumen/database";
-import { and, count, eq, isNull, ne, sql } from "drizzle-orm";
+import { and, count, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { createHash } from "node:crypto";
 import { lstat } from "node:fs/promises";
 import { basename, dirname, extname, join } from "node:path";
 import { newUuid } from "../core/Security";
 import { mapRepositoryError } from "../core/Cause";
-import { Ffprobe } from "../media/Ffprobe";
+import { Ffprobe, type FfprobeResult } from "../media/Ffprobe";
 import { parseVideoPath } from "./VideoPaths";
 import { readLocalNfo } from "./LocalMetadata";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
 import { readLocalFile } from "./BoundedInput";
 import { imageInfo } from "./ImageInfo";
+
+const probedStreamValues = (stream: FfprobeResult["streams"][number], isDefault: boolean) => ({
+  kind: stream.kind,
+  container: null,
+  codec: stream.codec,
+  language: stream.language,
+  title: stream.title,
+  ordinal: stream.ordinal,
+  isDefault,
+  bitrate: stream.bitrate,
+  sampleRateHz: stream.sampleRateHz,
+  channels: stream.channels,
+  commentary: stream.commentary ?? null,
+  forced: stream.forced ?? null,
+  hearingImpaired: stream.hearingImpaired ?? null,
+  width: stream.width,
+  height: stream.height,
+});
 
 const hashBytes = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 const normalize = (value: string): string =>
@@ -572,18 +590,7 @@ export const makeMediaIngest = Effect.gen(function* () {
             yield* transaction.insert(streamTable).values({
               id: streamId,
               sourceId,
-              kind: stream.kind,
-              container: null,
-              codec: stream.codec,
-              language: stream.language,
-              title: stream.title,
-              ordinal: stream.ordinal,
-              isDefault: defaultOrdinals.has(stream.ordinal),
-              bitrate: stream.bitrate,
-              sampleRateHz: stream.sampleRateHz,
-              channels: stream.channels,
-              width: stream.width,
-              height: stream.height,
+              ...probedStreamValues(stream, defaultOrdinals.has(stream.ordinal)),
             });
             if (primary == null && (stream.kind === "audio" || stream.kind === "video"))
               primary = streamId;
@@ -625,20 +632,7 @@ export const makeMediaIngest = Effect.gen(function* () {
               );
             yield* transaction
               .update(streamTable)
-              .set({
-                kind: primary.kind,
-                container: null,
-                codec: primary.codec,
-                language: primary.language,
-                title: primary.title,
-                ordinal: primary.ordinal,
-                isDefault: defaultOrdinals.has(primary.ordinal),
-                bitrate: primary.bitrate,
-                sampleRateHz: primary.sampleRateHz,
-                channels: primary.channels,
-                width: primary.width,
-                height: primary.height,
-              })
+              .set(probedStreamValues(primary, defaultOrdinals.has(primary.ordinal)))
               .where(
                 and(eq(streamTable.id, currentPrimaryStreamId), eq(streamTable.sourceId, sourceId)),
               );
@@ -647,18 +641,7 @@ export const makeMediaIngest = Effect.gen(function* () {
               yield* transaction.insert(streamTable).values({
                 id: newUuid(),
                 sourceId,
-                kind: stream.kind,
-                container: null,
-                codec: stream.codec,
-                language: stream.language,
-                title: stream.title,
-                ordinal: stream.ordinal,
-                isDefault: defaultOrdinals.has(stream.ordinal),
-                bitrate: stream.bitrate,
-                sampleRateHz: stream.sampleRateHz,
-                channels: stream.channels,
-                width: stream.width,
-                height: stream.height,
+                ...probedStreamValues(stream, defaultOrdinals.has(stream.ordinal)),
               });
             }
             yield* transaction
@@ -668,6 +651,30 @@ export const makeMediaIngest = Effect.gen(function* () {
           }),
         );
       }
+    }
+    if (existingTrack !== undefined && !needsStreamRefresh) {
+      yield* database.transaction((transaction) =>
+        Effect.gen(function* () {
+          for (const stream of probe.streams) {
+            yield* transaction
+              .update(streamTable)
+              .set(probedStreamValues(stream, defaultOrdinals.has(stream.ordinal)))
+              .where(
+                and(
+                  eq(streamTable.sourceId, sourceId),
+                  eq(streamTable.kind, stream.kind),
+                  eq(streamTable.ordinal, stream.ordinal),
+                  or(
+                    isNull(streamTable.commentary),
+                    isNull(streamTable.forced),
+                    isNull(streamTable.hearingImpaired),
+                    and(eq(streamTable.kind, "audio"), isNull(streamTable.channels)),
+                  ),
+                ),
+              );
+          }
+        }),
+      );
     }
     const fingerprint = createHash("sha256")
       .update(`${source.absolutePath}:${details.size}:${Math.trunc(details.mtimeMs)}`)

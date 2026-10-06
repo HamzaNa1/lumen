@@ -1,4 +1,12 @@
-import type { PlayableStream, PlaybackProgress, PlaybackSession } from "@lumen/contracts";
+import type {
+  TrackMemory,
+  TrackPreferences,
+  TrackPreferencesPatch,
+  TrackChoiceInput,
+  PlayableStream,
+  PlaybackProgress,
+  PlaybackSession,
+} from "@lumen/contracts";
 import {
   catalogItems,
   catalogItemSources,
@@ -31,12 +39,15 @@ type PlaybackInput = Schema.Schema.Type<typeof StartPlaybackBody>;
 type HeartbeatInput = Schema.Schema.Type<typeof HeartbeatBody>;
 type ProgressInput = Schema.Schema.Type<typeof ProgressBody>;
 
+import { makeTrackMemoryStore } from "./TrackMemoryStore";
+
 const playbackLifetimeMs = 3_600_000;
 
 export type PlaybackStream = PlayableStream;
 
 export interface PlaybackStartResponse {
   readonly session: PlaybackSession;
+  readonly trackMemory: TrackMemory;
   readonly grantToken: string;
   readonly itemId: string;
   readonly sourceId: string;
@@ -49,6 +60,17 @@ export interface PlaybackStartResponse {
 }
 
 export interface PlaybackServiceShape {
+  readonly preferences: (principal: AuthPrincipal) => Effect.Effect<TrackPreferences, unknown>;
+  readonly updatePreferences: (
+    principal: AuthPrincipal,
+    input: TrackPreferencesPatch,
+  ) => Effect.Effect<TrackPreferences, unknown>;
+  readonly saveChoice: (
+    principal: AuthPrincipal,
+    sessionId: string,
+    input: TrackChoiceInput,
+    nowMs: number,
+  ) => Effect.Effect<TrackMemory, unknown>;
   readonly start: (
     principal: AuthPrincipal,
     input: PlaybackInput,
@@ -92,6 +114,7 @@ export const makePlaybackService = Effect.gen(function* () {
   const database = yield* Database;
   const repositories = yield* Repositories;
   const access = yield* AccessControl;
+  const trackMemory = yield* makeTrackMemoryStore;
   const resolveTrack = Effect.fn("Playback.resolveTrack")(function* (requestedId: string) {
     const row = yield* database
       .select({ id: tracks.id })
@@ -192,6 +215,10 @@ export const makePlaybackService = Effect.gen(function* () {
           language: streamTable.language,
           title: streamTable.title,
           isDefault: streamTable.isDefault,
+          channels: streamTable.channels,
+          commentary: streamTable.commentary,
+          forced: streamTable.forced,
+          hearingImpaired: streamTable.hearingImpaired,
         })
         .from(streamTable)
         .where(
@@ -204,6 +231,7 @@ export const makePlaybackService = Effect.gen(function* () {
         .orderBy(asc(streamTable.ordinal))) as ReadonlyArray<PlaybackStream>;
       return {
         session,
+        trackMemory: yield* trackMemory.memory(principal, trackId),
         grantToken,
         itemId: input.trackId,
         sourceId: source.sourceId,
@@ -458,7 +486,16 @@ export const makePlaybackService = Effect.gen(function* () {
     return { ...row, size: row.size, absolutePath: file };
   });
 
-  return { start, heartbeat, stop, progress, authorizeGrant };
+  return {
+    start,
+    heartbeat,
+    stop,
+    progress,
+    authorizeGrant,
+    preferences: trackMemory.preferences,
+    updatePreferences: trackMemory.updatePreferences,
+    saveChoice: trackMemory.saveChoice,
+  };
 });
 
 export class PlaybackService extends Context.Service<PlaybackService, PlaybackServiceShape>()(

@@ -1,5 +1,6 @@
 import type {
   AccountsRuntime,
+  TrackSettingsRuntime,
   AdminRuntime,
   CatalogRuntime,
   PlayerAction,
@@ -8,6 +9,7 @@ import type {
 } from "@lumen/client/runtime";
 import type {
   AudioOutput,
+  TrackKind,
   IpcPlayerSurfaceBounds,
   PlayerDisplay,
   PlayerState,
@@ -20,6 +22,7 @@ import type {
  */
 export interface DesktopBridge {
   readonly watch: WatchRuntime;
+  readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: Pick<
     AccountsRuntime,
     "list" | "discoverServer" | "connect" | "activate" | "remove"
@@ -31,6 +34,8 @@ export interface DesktopBridge {
   };
   readonly admin: AdminRuntime;
   readonly player: {
+    readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
+    readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
     readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<unknown>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;

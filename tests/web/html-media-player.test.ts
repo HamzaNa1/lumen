@@ -7,7 +7,7 @@ import {
 } from "../../packages/client/src/index.ts";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
-import type { PlayerSession, PlayerState } from "../../packages/contracts/src/index.ts";
+import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
 
@@ -40,6 +40,7 @@ class FakeMedia implements MediaElementLike {
       return this.element.bufferedRange?.[1] ?? 0;
     },
   };
+  audioTracks?: { readonly length: number; [index: number]: { enabled: boolean } };
   sources: string[] = [];
   /** What happens when a source is loaded: metadata arrives, an error, or nothing yet. */
   loadOutcome: "loaded" | "unsupported" | "hang" = "loaded";
@@ -112,6 +113,17 @@ const setup = (streams: PlayerSession["streams"] = []) => {
   let sessions = 0;
   const api = {
     serverOrigin: "http://lumen.test",
+    memory: defaultTrackMemory(),
+    saveFailure: false,
+    saves: [] as TrackChoiceInput[],
+    saveTrackChoice: async (_sessionId: string, input: TrackChoiceInput): Promise<TrackMemory> => {
+      api.saves.push(input);
+      if (api.saveFailure) throw new Error("offline");
+      const stream = streams.find((candidate) => candidate.id === input.choice);
+      if (input.choice !== null && input.choice !== "off" && stream === undefined) throw new Error("Missing test stream");
+      api.memory = { ...api.memory, [input.kind]: input.choice === null ? null : input.choice === "off" ? "off" : stream === undefined ? null : describeTrack("source", stream) };
+      return api.memory;
+    },
     heartbeatFailure: null as Error | null,
     startGate: Promise.resolve(),
     /** Holds back the next progress write until the test lets it through. */
@@ -130,6 +142,7 @@ const setup = (streams: PlayerSession["streams"] = []) => {
         streams,
         grantExpiresInSeconds: 3600,
         grantToken: `grant-${sessions}`,
+        trackMemory: api.memory,
       };
     },
     heartbeat: async (sessionId: string) => {
@@ -699,4 +712,69 @@ test("browser synchronization samples fresh positions and halts projection acros
   await player.stop();
   expect(element.playbackRate).toBe(1);
   expect(() => player.sample(sessionId)).toThrow();
+});
+
+
+describe("browser track memory", () => {
+  const streams = [
+    { id: "fr", kind: "audio", ordinal: 1, codec: "aac", language: "fra", title: null, isDefault: true },
+    { id: "en", kind: "audio", ordinal: 2, codec: "aac", language: "eng", title: null, isDefault: false },
+    { id: "sub", kind: "subtitle", ordinal: 3, codec: "subrip", language: "eng", title: null, isDefault: true },
+  ] as const satisfies PlayerSession["streams"];
+  test("supported audio is selected before play, and startup never saves", async () => {
+    const f = setup(streams);
+    f.element.audioTracks = { length: 2, 0: { enabled: true }, 1: { enabled: false } };
+    await f.player.start({ itemId: "movie" });
+    expect(f.element.audioTracks[0]?.enabled).toBe(false);
+    expect(f.element.audioTracks[1]?.enabled).toBe(true);
+    expect(f.player.getState()?.selectedAudioStreamId).toBe("en");
+    expect(f.api.saves).toEqual([]);
+    // Even selecting the current preference is an explicit media override.
+    await f.player.selectAudioStream("session-1", "en");
+    expect(f.api.memory.audio?.streamId).toBe("en");
+    await f.player.resetTrack("session-1", "audio");
+    expect(f.api.memory.audio).toBeNull();
+    await f.player.stop();
+  });
+  test("unsupported subtitle and audio choices survive startup and reopening", async () => {
+    const f = setup(streams);
+    f.api.memory = { ...defaultTrackMemory(), audio: describeTrack("source", streams[1]), subtitle: describeTrack("source", streams[2]) };
+    await f.player.start({ itemId: "movie" });
+    expect(f.player.getState()?.streams).toEqual([]);
+    expect(f.player.getState()?.selectedSubtitleStreamId).toBeNull();
+    expect(f.api.saves).toEqual([]);
+    f.player.leave(); await f.player.reconcile();
+    expect(f.api.memory.subtitle).not.toBeNull(); expect(f.api.memory.audio?.streamId).toBe("en");
+    // An explicit reset can still clear an unsupported choice on the server.
+    await f.player.resetTrack("session-2", "subtitle");
+    expect(f.api.memory.subtitle).toBeNull(); expect(f.api.memory.audio?.streamId).toBe("en");
+    await f.player.stop();
+  });
+  test("mismatched browser track counts do not guess track identity", async () => {
+    const f = setup(streams);
+    f.element.audioTracks = { length: 1, 0: { enabled: true } };
+    await f.player.start({ itemId: "movie" });
+    expect(f.player.getState()?.streams).toEqual([]);
+    await expect(f.player.selectAudioStream("session-1", "en")).rejects.toThrow("unavailable");
+    expect(f.api.saves).toEqual([]); await f.player.stop();
+  });
+  test("a codec the browser cannot decode is not selected or saved", async () => {
+    const f = setup(streams.map((stream) => stream.id === "fr" ? { ...stream, codec: "ac3" } : stream));
+    f.element.audioTracks = { length: 2, 0: { enabled: false }, 1: { enabled: true } };
+    await f.player.start({ itemId: "movie" });
+    await expect(f.player.selectAudioStream("session-1", "fr")).rejects.toThrow("AC3 audio");
+    expect(f.api.saves).toEqual([]); expect(f.element.audioTracks[1]?.enabled).toBe(true);
+    await f.player.stop();
+  });
+  test("save failures leave audio playing with a retryable error", async () => {
+    const f = setup(streams);
+    f.element.audioTracks = { length: 2, 0: { enabled: true }, 1: { enabled: false } };
+    await f.player.start({ itemId: "movie" }); f.api.saveFailure = true;
+    const state = await f.player.selectAudioStream("session-1", "fr");
+    expect(state).toMatchObject({ selectedAudioStreamId: "fr", paused: false });
+    expect(state.trackMemoryError).toContain("Retry"); expect(f.failures).toEqual([]);
+    f.api.saveFailure = false; await f.player.retryTrackMemory("session-1");
+    expect(f.api.memory.audio?.streamId).toBe("fr"); expect(f.player.getState()?.trackMemoryError).toBeNull();
+    await f.player.stop();
+  });
 });

@@ -1,5 +1,6 @@
-import { Button, Form, Modal, TextField } from "@lumen/ui";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import type { TrackPreferencesPatch } from "@lumen/contracts";
+import { Button, Form, Modal, TextField, SelectField } from "@lumen/ui";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { errorMessage, hostOf, roleLabels } from "./format";
@@ -86,6 +87,85 @@ const RenameServer = ({ serverName }: { readonly serverName: string }): React.Re
   );
 };
 
+const languageNames = new Intl.DisplayNames(["en"], { type: "language" });
+const letters = Array.from({ length: 26 }, (_, index) => String.fromCharCode(97 + index));
+const languageCodes = letters
+  .flatMap((first) => letters.map((second) => first + second))
+  .filter((code) => languageNames.of(code) !== code && new Intl.Locale(code).language === code);
+const languageOptions = languageCodes
+  .map((value) => ({ value, label: languageNames.of(value) ?? value }))
+  .sort((a, b) => a.label.localeCompare(b.label));
+
+const TrackSettings = ({ connectionId }: { readonly connectionId: string }): React.ReactElement => {
+  const runtime = useRuntime();
+  const queryClient = useQueryClient();
+  const queryKey = ["track-preferences", connectionId];
+  const preferences = useQuery({ queryKey, queryFn: () => runtime.trackSettings.read() });
+  const update = useMutation({
+    mutationFn: (input: TrackPreferencesPatch) => runtime.trackSettings.update(input),
+    onSuccess: (value) => queryClient.setQueryData(queryKey, value),
+  });
+  if (preferences.isPending) return <p role="status">Loading audio and subtitle settings…</p>;
+  if (preferences.isError)
+    return (
+      <div role="alert">
+        {errorMessage(preferences.error, "Could not load playback settings")}
+        <Button onClick={() => void preferences.refetch()}>Retry</Button>
+      </div>
+    );
+  if (preferences.data === null)
+    return <p>This server does not support saved audio and subtitle settings.</p>;
+  const options = [...languageOptions];
+  for (const language of [preferences.data.audioLanguage, preferences.data.subtitleLanguage]) {
+    if (language !== null && !options.some((option) => option.value === language))
+      options.push({ value: language, label: languageNames.of(language) ?? language });
+  }
+  return (
+    <>
+      <SettingsRow
+        label="Preferred audio"
+        description="Used when this show or movie has no available saved choice."
+      >
+        <SelectField
+          label="Preferred audio language"
+          hideLabel
+          value={preferences.data.audioLanguage}
+          disabled={update.isPending}
+          options={options}
+          onValueChange={(audioLanguage) => update.mutate({ audioLanguage })}
+        />
+      </SettingsRow>
+      <SettingsRow
+        label="Preferred subtitles"
+        description="Your saved show and movie choices stay in place when you change these settings."
+      >
+        <SelectField
+          label="Preferred subtitles"
+          hideLabel
+          value={preferences.data.subtitleLanguage ?? "off"}
+          disabled={update.isPending}
+          options={[{ value: "off", label: "Off" }, ...options]}
+          onValueChange={(value) =>
+            update.mutate({ subtitleLanguage: value === "off" ? null : value })
+          }
+        />
+      </SettingsRow>
+      {update.isError ? (
+        <p className="form-error" role="alert">
+          {errorMessage(update.error, "Could not save playback settings")}
+          <Button
+            onClick={() => {
+              if (update.variables !== undefined) update.mutate(update.variables);
+            }}
+          >
+            Retry
+          </Button>
+        </p>
+      ) : null}
+    </>
+  );
+};
+
 export const SettingsPage = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
   const { capabilities } = useRuntime();
@@ -112,6 +192,7 @@ export const SettingsPage = (): React.ReactElement => {
       <section className="settings-group" aria-labelledby="settings-playback">
         <h2 id="settings-playback">Playback</h2>
         <div className="settings-card">
+          <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
           <SettingsRow label="Player" description={capabilities.player.description}>
             {capabilities.player.name}
           </SettingsRow>

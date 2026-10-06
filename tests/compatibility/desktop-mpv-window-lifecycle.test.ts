@@ -1,6 +1,6 @@
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import type { PlayerState } from "@lumen/contracts";
+import { defaultTrackMemory, describeTrack, type PlayerSession, type TrackChoiceInput, type TrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
 import type { BrowserWindow } from "electron";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import {
@@ -64,12 +64,14 @@ const withPlayback = async (
     progress: ReturnType<typeof mock>;
     request: ReturnType<typeof mock>;
     stopProcess: ReturnType<typeof mock>;
+    saveChoice: ReturnType<typeof mock>;
     connections: InstanceType<typeof MpvIpc>[];
     exits: (() => void)[];
     restart: () => Promise<unknown>;
     failNextLoad: () => void;
     disconnectNextStart: () => void;
   }) => Promise<void>,
+  trackOptions?: { streams: PlayerSession["streams"]; memory?: TrackMemory },
 ): Promise<void> => {
   const stopProcess = mock(async () => undefined);
   const exits: (() => void)[] = [];
@@ -91,6 +93,7 @@ const withPlayback = async (
     ["seeking", false],
     ["speed", 1],
   ]);
+  if (trackOptions !== undefined) properties.set("track-list", trackOptions.streams.map((stream) => ({ id: stream.ordinal + 10, type: stream.kind === "audio" ? "audio" : "sub", "ff-index": stream.ordinal })));
   let failLoad = false;
   let disconnectStart = false;
   const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
@@ -114,7 +117,7 @@ const withPlayback = async (
       }));
     }
     if (args[0] === "seek") properties.set("time-pos", args[1]);
-    if (args[0] === "set_property" && ["speed", "pause"].includes(String(args[1])))
+    if (args[0] === "set_property")
       properties.set(String(args[1]), args[2] === "yes" ? true : args[2] === "no" ? false : args[2]);
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
@@ -128,17 +131,27 @@ const withPlayback = async (
   const heartbeat = mock(async () => undefined);
   const progress = mock(async () => undefined);
   const request = mock(async () => undefined);
+  let memory = trackOptions?.memory ?? defaultTrackMemory();
+  const saveChoice = mock(async (_id: string, input: TrackChoiceInput) => {
+    const stream = trackOptions?.streams.find((candidate) => candidate.id === input.choice);
+    if (input.choice !== null && input.choice !== "off" && stream === undefined) throw new Error("Missing test stream");
+    memory = { ...memory, [input.kind]: input.choice === null ? null : input.choice === "off" ? "off" : stream === undefined ? null : describeTrack("source", stream) };
+    return memory;
+  });
   let sessionNumber = 0;
   const client = {
     serverOrigin: "http://localhost:3000",
     startPlayback: async () => ({
       sessionId: `session-${++sessionNumber}`,
       itemId: "item-1",
+      sourceId: "source",
+      trackMemory: memory,
       streamUrl: "/stream",
       grantToken: "grant",
       durationSeconds: 60,
-      streams: [],
+      streams: trackOptions?.streams ?? [],
     }),
+    saveTrackChoice: saveChoice,
     stopPlayback: request,
     heartbeat,
     progress,
@@ -159,7 +172,7 @@ const withPlayback = async (
   try {
     await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
     states.length = 0;
-    await run({ controller, states, properties, heartbeat, progress, request, stopProcess, connections, exits,
+    await run({ controller, states, properties, heartbeat, progress, request, stopProcess, saveChoice, connections, exits,
       restart: () => controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]),
       failNextLoad: () => { failLoad = true; },
       disconnectNextStart: () => { disconnectStart = true; },
@@ -994,5 +1007,40 @@ test("native watch samples are invalidated by pause, seek, speed and replacement
     properties.set("watch-sample", Promise.reject(new MpvIpcFailure("MPV command timed out")));
     await expect(controller.sample("session-2")).rejects.toThrow("MPV command timed out");
     expect(controller.getState()).toBeNull();
+  });
+});
+
+
+describe("native track memory", () => {
+  const streams = [
+    { id: "fr", kind: "audio", ordinal: 1, codec: "aac", language: "fr", title: null, isDefault: true },
+    { id: "en-first", kind: "audio", ordinal: 2, codec: "aac", language: "eng", title: "Commentary", isDefault: false },
+    { id: "en-last", kind: "audio", ordinal: 3, codec: "aac", language: "en", title: null, isDefault: false },
+    { id: "sub", kind: "subtitle", ordinal: 4, codec: "subrip", language: "en", title: null, isDefault: true },
+  ] as const satisfies PlayerSession["streams"];
+  test("startup maps resolved file tracks to MPV IDs, defaults subtitles Off, and never saves", async () => {
+    await withPlayback(async ({ controller, properties, saveChoice }) => {
+      expect(controller.getState()).toMatchObject({ selectedAudioStreamId: "en-first", selectedSubtitleStreamId: null });
+      expect(properties.get("aid")).toBe(12); expect(properties.get("sid")).toBe(false);
+      expect(saveChoice).not.toHaveBeenCalled();
+      await controller.selectAudioStream("session-1", "en-last");
+      expect(properties.get("aid")).toBe(13);
+      expect(saveChoice).toHaveBeenCalledWith("session-1", { kind: "audio", choice: "en-last" });
+      await controller.selectSubtitleStream("session-1", null);
+      expect(saveChoice).toHaveBeenCalledWith("session-1", { kind: "subtitle", choice: "off" });
+      await controller.resetTrack("session-1", "audio");
+      expect(controller.getState()?.selectedAudioStreamId).toBe("en-first");
+    }, { streams });
+  });
+  test("revisits honor exact overrides; a failed save leaves playback active and can be retried", async () => {
+    await withPlayback(async ({ controller, properties, saveChoice, restart }) => {
+      expect(properties.get("aid")).toBe(13); expect(properties.get("sid")).toBe(14);
+      saveChoice.mockRejectedValueOnce(new Error("offline"));
+      const result = await controller.selectAudioStream("session-1", "fr");
+      expect(result.selectedAudioStreamId).toBe("fr"); expect(result.trackMemoryError).toContain("Retry");
+      await controller.retryTrackMemory("session-1");
+      expect(controller.getState()?.trackMemoryError).toBeNull();
+      await restart(); expect(controller.getState()?.selectedAudioStreamId).toBe("fr");
+    }, { streams, memory: { ...defaultTrackMemory(), audio: describeTrack("source", streams[2]), subtitle: describeTrack("source", streams[3]) } });
   });
 });

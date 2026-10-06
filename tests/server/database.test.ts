@@ -41,7 +41,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.foreignKeys?.foreign_keys).toBe(1);
-    expect(result.migrations?.count).toBe(8);
+    expect(result.migrations?.count).toBe(9);
     expect(result.fts?.value).toBe(1);
     expect(result.tables.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -82,6 +82,8 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         "track_metadata",
         "tracks",
         "users",
+        "user_track_preferences",
+        "media_track_overrides",
         "watch_states",
       ]),
     );
@@ -186,6 +188,51 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+
+  test("track memory migration preserves existing streams with unknown roles and enforces ownership", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lumen-track-migration-"));
+    const filename = join(root, "server.sqlite");
+    const earlier = join(root, "earlier");
+    const latest = "20261006061748_true_songbird";
+    const migrateTo = (folder?: string) => Effect.runPromise(Effect.scoped(
+      Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
+    ));
+    try {
+      cpSync(defaultMigrationsFolder, earlier, { recursive: true, filter: (source) => !source.includes(latest) });
+      await migrateTo(earlier);
+      const before = new SqliteDatabase(filename);
+      before.exec(`
+        INSERT INTO users(id, username, username_normalized, display_name, password_hash, created_at_ms, updated_at_ms)
+        VALUES ('owner', 'Owner', 'owner', 'Owner', 'hash', 1, 1);
+        INSERT INTO libraries(id, name, slug, created_at_ms, updated_at_ms) VALUES ('library', 'Movies', 'movies', 1, 1);
+        INSERT INTO library_roots(id, library_id, path, created_at_ms, updated_at_ms) VALUES ('root', 'library', '/media', 1, 1);
+        INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, scanned_at_ms)
+        VALUES ('source', 'library', 'root', 'film.mkv', '/media/film.mkv', 1);
+        INSERT INTO streams(id, source_id, kind, codec, language, ordinal, is_default)
+        VALUES ('stream', 'source', 'audio', 'aac', 'eng', 1, 1);
+        INSERT INTO catalog_items(id, library_id, kind, title, sort_title, added_at_ms, updated_at_ms)
+        VALUES ('movie', 'library', 'movie', 'Movie', 'movie', 1, 1);
+      `);
+      before.close(); await migrateTo();
+      const after = new SqliteDatabase(filename);
+      try {
+        after.exec("PRAGMA foreign_keys = ON");
+        expect(after.query("SELECT id, language, commentary, forced, hearing_impaired FROM streams").all()).toEqual([
+          { id: "stream", language: "eng", commentary: null, forced: null, hearing_impaired: null },
+        ]);
+        after.exec("INSERT INTO user_track_preferences(user_id) VALUES ('owner')");
+        expect(after.query("SELECT * FROM user_track_preferences").all()).toEqual([
+          { user_id: "owner", audio_language: "en", subtitle_language: null },
+        ]);
+        after.exec(`INSERT INTO media_track_overrides(user_id, item_id, subtitle_json) VALUES ('owner', 'movie', '"off"')`);
+        expect(() => after.exec("INSERT INTO user_track_preferences(user_id) VALUES ('missing')")).toThrow();
+        after.exec("DELETE FROM users WHERE id = 'owner'");
+        expect(after.query("SELECT * FROM user_track_preferences").all()).toEqual([]);
+        expect(after.query("SELECT * FROM media_track_overrides").all()).toEqual([]);
+        expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      } finally { after.close(); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
   });
 
   test("persists deterministic repository fixtures and searches FTS5", async () => {

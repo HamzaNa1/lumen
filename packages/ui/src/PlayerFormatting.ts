@@ -35,7 +35,17 @@ const baseLabel = (stream: PlayableStream, index: number): string => {
   for (const part of [
     languageName(stream.language),
     stream.title,
+    stream.commentary === true ? "Commentary" : null,
+    stream.forced === true ? "Forced" : null,
+    stream.hearingImpaired === true ? "Hearing impaired" : null,
     stream.kind === "audio" ? audioCodec(stream.codec) : null,
+    stream.kind === "audio" && stream.channels != null
+      ? stream.channels === 1
+        ? "Mono"
+        : stream.channels === 2
+          ? "Stereo"
+          : `${stream.channels} channels`
+      : null,
   ]) {
     if (part === null || part === "") continue;
     if (!parts.some((existing) => existing.toLowerCase() === part.toLowerCase())) parts.push(part);

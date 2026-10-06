@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
+import { TrackMemory } from "./track-memory.ts";
 import { ServerInfo } from "./server.ts";
 
 // Application models shared by every client. They describe what the apps render, independent of
@@ -118,6 +119,10 @@ export const PlayableStream = Schema.Struct({
   language: Schema.NullOr(Schema.String),
   title: Schema.NullOr(Schema.String),
   isDefault: Schema.Boolean,
+  channels: Schema.optional(Schema.NullOr(Schema.Number)),
+  commentary: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  forced: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  hearingImpaired: Schema.optional(Schema.NullOr(Schema.Boolean)),
 });
 export type PlayableStream = Schema.Schema.Type<typeof PlayableStream>;
 
@@ -131,6 +136,7 @@ export const PlayerSession = Schema.Struct({
   streams: Schema.Array(PlayableStream),
   grantExpiresInSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   grantToken: Schema.String.check(Schema.isMinLength(1)),
+  trackMemory: Schema.optional(TrackMemory),
 });
 export type PlayerSession = Schema.Schema.Type<typeof PlayerSession>;
 
@@ -157,6 +163,7 @@ export const PlayerState = Schema.Struct({
   selectedAudioStreamId: Schema.NullOr(Uuid),
   selectedSubtitleStreamId: Schema.NullOr(Uuid),
   audioOutput: AudioOutput,
+  trackMemoryError: Schema.optional(Schema.NullOr(Schema.String)),
   /** Playback stalled waiting for data. */
   buffering: Schema.optional(Schema.Boolean),
   /** The platform refuses to start playback until the viewer interacts with the player. */

@@ -331,9 +331,19 @@ test("the desktop and web builds draw the shared pages identically", async ({
     await expectAlike(testInfo, name, ".nav", [web, desktop]);
     // The users page has listed each account's libraries only since the baseline was taken.
     // Administrators have been able to rename the server from settings only since then, too.
+    // The playback preference rows are also new; compare them between today's builds below.
     if (name !== "users")
       await expectDesktopUnchanged(testInfo, name, builds, {
-        style: ".settings-row-value button { display: none !important; }",
+        style: `
+          .settings-row-value button { display: none !important; }
+          #settings-playback + .settings-card > .settings-row:has([role='combobox']) {
+            display: none !important;
+          }
+          #settings-playback + .settings-card > .settings-row:has([role='combobox'])
+            + .settings-row:not(:has([role='combobox'])) {
+            border-top: none !important;
+          }
+        `,
       });
     if (name !== "settings") {
       await expectAlike(testInfo, name, ".main-content", [web, desktop]);
@@ -341,13 +351,27 @@ test("the desktop and web builds draw the shared pages identically", async ({
     }
     // Settings is the one page meant to differ, and only in what each platform reports. The
     // rows that say the same thing on every platform must still be drawn the same.
-    for (const row of ["Quality", "Transcoding", "Connected to", "Signed in as", "Role"])
+    for (const row of [
+      "Preferred audio",
+      "Preferred subtitles",
+      "Quality",
+      "Transcoding",
+      "Connected to",
+      "Signed in as",
+      "Role",
+    ])
       await expectAlike(
         testInfo,
         `settings ${row}`,
         (page) => page.locator(".settings-row").filter({ hasText: row }),
         [web, desktop],
       );
+    for (const { page } of [web, desktop]) {
+      await expect(page.getByRole("combobox", { name: "Preferred audio language" })).toHaveText(
+        "English",
+      );
+      await expect(page.getByRole("combobox", { name: "Preferred subtitles" })).toHaveText("Off");
+    }
     await expect(web.page.getByText("Browser cookie")).toBeVisible();
     await expect(desktop.page.getByText("MPV", { exact: true })).toBeVisible();
     await expect(desktop.page.getByRole("button", { name: "Switch server…" })).toBeVisible();
