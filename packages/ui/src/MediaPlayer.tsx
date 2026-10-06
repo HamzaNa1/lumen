@@ -20,6 +20,10 @@ import { SelectField } from "./Controls";
 import { formatEndsAt, formatPlayerTime, streamLabels } from "./PlayerFormatting";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
+import { useThrottledCallback } from "./useThrottledCallback";
+
+/** How often a drag of the volume slider reaches the player. */
+const volumeDragIntervalMs = 50;
 
 interface MediaPlayerProps {
   readonly headerActions?: ReactNode;
@@ -110,6 +114,7 @@ export const MediaPlayer = ({
   const subtitleLabels = streamLabels(subtitleStreams);
   const seekValue = Math.min(seekPreview ?? position, duration ?? Math.max(position, 1));
   const volumeValue = volumePreview ?? volume;
+  const onVolumeDrag = useThrottledCallback(onVolume, volumeDragIntervalMs);
   const remaining = duration === null ? null : Math.max(0, duration - seekValue);
   // A paused player still finishes later with every second that passes.
   const now = useNow(1_000);
@@ -311,8 +316,12 @@ export const MediaPlayer = ({
                   max={100}
                   value={volumeValue}
                   disabled={inactive}
-                  onValueChange={setVolumePreview}
+                  onValueChange={(value) => {
+                    setVolumePreview(value);
+                    onVolumeDrag(value, value === 0);
+                  }}
                   onValueCommitted={(value) => {
+                    onVolumeDrag.cancel();
                     setVolumePreview(null);
                     onVolume(value, value === 0);
                   }}
