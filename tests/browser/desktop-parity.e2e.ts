@@ -718,6 +718,44 @@ test("the playback settings open over the timeline", async ({ context, baseURL }
   expect(topmost, "the settings panel is drawn over the timeline's thumb").toBe(true);
 });
 
+test("hovering the timeline shows the time under the pointer", async ({ context, baseURL }, testInfo) => {
+  const { page } = (await signedInBuilds(context, baseURL ?? "")).desktop;
+  await gotoDesktop(page, desktopBuild, "/", {
+    overlay: true,
+    display: { ...filmDisplay, duration: 5_400, loading: false, error: null },
+    player: { ...playing, positionSeconds: 1_200, durationSeconds: 5_400, bufferedRanges: [] },
+  });
+  const hover = page.locator(".media-player-timeline-hover");
+  const control = await page.locator(".media-player-timeline .media-slider-control").boundingBox();
+  if (control === null) throw new Error("The timeline is not drawn");
+  const y = control.y + control.height / 2;
+  await expect(hover).toHaveCount(0);
+
+  await page.mouse.move(control.x + control.width * 0.75, y);
+  await expect(hover).toHaveText("1:07:30");
+  const label = await hover.boundingBox();
+  if (label === null) throw new Error("The hovered time is not drawn");
+  expect(Math.abs(label.x + label.width / 2 - (control.x + control.width * 0.75))).toBeLessThan(2);
+  expect(label.y + label.height).toBeLessThanOrEqual(control.y);
+  await testInfo.attach("timeline hover", {
+    body: await page.locator(".media-player-console").screenshot(),
+    contentType: "image/png",
+  });
+
+  await page.mouse.move(control.x + control.width * 0.1, y);
+  // The pointer lands on a whole pixel, which can fall a moment short of the tenth it aims for.
+  await expect(hover).toHaveText(/^(8:59|9:00)$/u);
+  await testInfo.attach("timeline hover near the start", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+
+  // Hovering only previews a time; playback stays where it was.
+  await expect(page.locator(".media-player-time").first()).toHaveText("20:00");
+  await page.mouse.move(control.x + control.width / 2, control.y - 200);
+  await expect(hover).toHaveCount(0);
+});
+
 test("the player controls are drawn identically over playing media", async ({
   context,
   baseURL,
