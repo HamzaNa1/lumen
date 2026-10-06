@@ -8,3 +8,5 @@ export * from "./watch/WatchSynchronization.ts";
 export * from "./watch/viewerPlayback.ts";
 export * from "./watch/watchPrediction.ts";
 export * from "./playback/PlaybackDiagnostics.ts";
+
+export * from "./playback/TrackSelectionController.ts";

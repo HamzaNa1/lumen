@@ -302,3 +302,26 @@ test("a watch group's film starts playing in the browser", async ({ page, browse
   await playFilm(page);
   await expect.poll(() => page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
 });
+
+test("audio and subtitle settings persist after reload", async ({ page }) => {
+  await signIn(page);
+  await page.goto("/web/settings");
+  const audio = page.getByRole("combobox", { name: "Preferred audio language" });
+  const subtitles = page.getByRole("combobox", { name: "Preferred subtitles" });
+  await expect(audio).toContainText("English");
+  await expect(subtitles).toContainText("Off");
+  await audio.click();
+  await page.getByRole("option", { name: "Japanese", exact: true }).click();
+  await expect(audio).toContainText("Japanese");
+  await subtitles.click();
+  await page.getByRole("option", { name: "English", exact: true }).click();
+  await expect(subtitles).toContainText("English");
+  await page.reload();
+  await expect(audio).toContainText("Japanese");
+  await expect(subtitles).toContainText("English");
+  // Restore the shared fixture's preferences for the next browser project.
+  await audio.click(); await page.getByRole("option", { name: "English", exact: true }).click();
+  await expect(audio).toContainText("English");
+  await subtitles.click(); await page.getByRole("option", { name: "Off", exact: true }).click();
+  await expect(subtitles).toContainText("Off");
+});

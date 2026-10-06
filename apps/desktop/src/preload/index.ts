@@ -15,6 +15,10 @@ const subscribe =
   };
 
 const api: DesktopBridge = {
+  trackSettings: {
+    read: () => invoke("track-settings:read"),
+    update: (input) => invoke("track-settings:update", input),
+  },
   watch: {
     retry: () => invoke("watch:retry"),
     state: () => invoke("watch:state"),
@@ -61,7 +65,10 @@ const api: DesktopBridge = {
     jobLog: () => invoke("admin:jobLog"),
   },
   player: {
-    start: (itemId, startAtSeconds, title) => invoke("player:start", { itemId, startAtSeconds, title }),
+    resetTrack: (sessionId, kind) => invoke("player:reset-track", { sessionId, kind }),
+    retryTrackMemory: (sessionId) => invoke("player:retry-track-memory", sessionId),
+    start: (itemId, startAtSeconds, title) =>
+      invoke("player:start", { itemId, startAtSeconds, title }),
     pause: (sessionId, paused) => invoke("player:pause", { sessionId, paused }),
     seek: (sessionId, positionSeconds) => invoke("player:seek", { sessionId, positionSeconds }),
     volume: (sessionId, volume, muted) => invoke("player:volume", { sessionId, volume, muted }),

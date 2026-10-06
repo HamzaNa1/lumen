@@ -2,22 +2,26 @@ import { Context, Effect, Layer, Schema } from "effect";
 import type { ServerConfig } from "../config/Config";
 
 const FfprobeOutput = Schema.Struct({
-  format: Schema.optional(Schema.Struct({
-    duration: Schema.optional(Schema.String),
-    tags: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-  })),
-  streams: Schema.Array(Schema.Struct({
-    index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
-    codec_type: Schema.String,
-    codec_name: Schema.optional(Schema.String),
-    bit_rate: Schema.optional(Schema.String),
-    sample_rate: Schema.optional(Schema.String),
-    channels: Schema.optional(Schema.Int),
-    width: Schema.optional(Schema.Int),
-    height: Schema.optional(Schema.Int),
-    tags: Schema.optional(Schema.Record(Schema.String, Schema.String)),
-    disposition: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
-  })),
+  format: Schema.optional(
+    Schema.Struct({
+      duration: Schema.optional(Schema.String),
+      tags: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+    }),
+  ),
+  streams: Schema.Array(
+    Schema.Struct({
+      index: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+      codec_type: Schema.String,
+      codec_name: Schema.optional(Schema.String),
+      bit_rate: Schema.optional(Schema.String),
+      sample_rate: Schema.optional(Schema.String),
+      channels: Schema.optional(Schema.Int),
+      width: Schema.optional(Schema.Int),
+      height: Schema.optional(Schema.Int),
+      tags: Schema.optional(Schema.Record(Schema.String, Schema.String)),
+      disposition: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
+    }),
+  ),
 });
 
 export interface FfprobeResult {
@@ -34,6 +38,9 @@ export interface FfprobeResult {
     readonly language: string | null;
     readonly title: string | null;
     readonly isDefault: boolean;
+    readonly commentary?: boolean | null;
+    readonly forced?: boolean | null;
+    readonly hearingImpaired?: boolean | null;
   }>;
   readonly tags: Readonly<Record<string, string>>;
 }
@@ -44,32 +51,46 @@ const asNumber = (value: string | undefined): number | null => {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
-const parse = (output: unknown): FfprobeResult => {
+export const parseFfprobeOutput = (output: unknown): FfprobeResult => {
   const value = Schema.decodeUnknownSync(FfprobeOutput)(output);
   const duration = asNumber(value.format?.duration);
   return {
     durationMs: duration === null ? null : Math.round(duration * 1000),
     tags: value.format?.tags ?? {},
     streams: value.streams.flatMap((stream) => {
-      if (stream.codec_type !== "audio" && stream.codec_type !== "video" && stream.codec_type !== "subtitle") return [];
-      return [{
-        kind: stream.codec_type,
-        ordinal: stream.index,
-        codec: stream.codec_name ?? null,
-        bitrate: asNumber(stream.bit_rate),
-        sampleRateHz: asNumber(stream.sample_rate),
-        channels: asNumber(stream.channels?.toString()),
-        width: asNumber(stream.width?.toString()),
-        height: asNumber(stream.height?.toString()),
-        language: stream.tags?.language ?? null,
-        title: stream.tags?.title ?? null,
-        isDefault: stream.disposition?.default === 1,
-      }];
+      if (
+        stream.codec_type !== "audio" &&
+        stream.codec_type !== "video" &&
+        stream.codec_type !== "subtitle"
+      )
+        return [];
+      return [
+        {
+          kind: stream.codec_type,
+          ordinal: stream.index,
+          codec: stream.codec_name ?? null,
+          bitrate: asNumber(stream.bit_rate),
+          sampleRateHz: asNumber(stream.sample_rate),
+          channels: asNumber(stream.channels?.toString()),
+          width: asNumber(stream.width?.toString()),
+          height: asNumber(stream.height?.toString()),
+          language: stream.tags?.language ?? null,
+          title: stream.tags?.title ?? null,
+          isDefault: stream.disposition?.default === 1,
+          commentary: stream.disposition === undefined ? null : stream.disposition.comment === 1,
+          forced: stream.disposition === undefined ? null : stream.disposition.forced === 1,
+          hearingImpaired:
+            stream.disposition === undefined ? null : stream.disposition.hearing_impaired === 1,
+        },
+      ];
     }),
   };
 };
 
-const readBounded = async (stream: ReadableStream<Uint8Array>, maxBytes: number): Promise<string> => {
+const readBounded = async (
+  stream: ReadableStream<Uint8Array>,
+  maxBytes: number,
+): Promise<string> => {
   const reader = stream.getReader();
   const chunks: Uint8Array[] = [];
   let length = 0;
@@ -98,11 +119,25 @@ export const probeFile = (
   timeoutMs: number,
   maxOutputBytes: number,
 ): Promise<FfprobeResult> => {
-  const child = Bun.spawn([executable, "-v", "error", "-protocol_whitelist", "file,pipe", "-print_format", "json", "-show_format", "-show_streams", absolutePath], {
-    stdin: "ignore",
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+  const child = Bun.spawn(
+    [
+      executable,
+      "-v",
+      "error",
+      "-protocol_whitelist",
+      "file,pipe",
+      "-print_format",
+      "json",
+      "-show_format",
+      "-show_streams",
+      absolutePath,
+    ],
+    {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+    },
+  );
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
@@ -115,7 +150,7 @@ export const probeFile = (
       const output = await readBounded(child.stdout as ReadableStream<Uint8Array>, maxOutputBytes);
       const exitCode = await child.exited;
       if (exitCode !== 0) throw new Error(`ffprobe exited with ${exitCode}`);
-      return parse(JSON.parse(output) as unknown);
+      return parseFfprobeOutput(JSON.parse(output) as unknown);
     })(),
     timeout,
   ]).finally(() => {
@@ -127,15 +162,22 @@ export interface FfprobeShape {
   readonly probe: (absolutePath: string) => Effect.Effect<FfprobeResult, unknown>;
 }
 
-export const makeFfprobe = (config: ServerConfig) => Effect.gen(function* () {
-  const probe: FfprobeShape["probe"] = Effect.fn("Ffprobe.probe")(function* (absolutePath) {
-    return yield* Effect.tryPromise({
-      try: () => probeFile(process.env.LUMEN_FFPROBE_PATH ?? "ffprobe", absolutePath, config.ffprobeTimeoutMs, config.ffprobeMaxOutputBytes),
-      catch: (cause) => cause instanceof Error ? cause : new Error("ffprobe failed"),
+export const makeFfprobe = (config: ServerConfig) =>
+  Effect.gen(function* () {
+    const probe: FfprobeShape["probe"] = Effect.fn("Ffprobe.probe")(function* (absolutePath) {
+      return yield* Effect.tryPromise({
+        try: () =>
+          probeFile(
+            process.env.LUMEN_FFPROBE_PATH ?? "ffprobe",
+            absolutePath,
+            config.ffprobeTimeoutMs,
+            config.ffprobeMaxOutputBytes,
+          ),
+        catch: (cause) => (cause instanceof Error ? cause : new Error("ffprobe failed")),
+      });
     });
+    return { probe };
   });
-  return { probe };
-});
 
 export class Ffprobe extends Context.Service<Ffprobe, FfprobeShape>()("@lumen/server/Ffprobe") {}
 export const FfprobeLive = (config: ServerConfig) => Layer.effect(Ffprobe, makeFfprobe(config));

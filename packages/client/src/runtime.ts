@@ -1,5 +1,8 @@
 import type {
   AccountList,
+  TrackKind,
+  TrackPreferences,
+  TrackPreferencesPatch,
   AudioOutput,
   CatalogItem,
   CatalogItemDetails,
@@ -137,7 +140,14 @@ export interface NativeAudioRuntime {
   readonly copyDiagnostics: (sessionId: string) => Promise<void>;
 }
 
+export interface TrackSettingsRuntime {
+  readonly read: () => Promise<TrackPreferences>;
+  readonly update: (input: TrackPreferencesPatch) => Promise<TrackPreferences>;
+}
+
 export interface PlaybackRuntime {
+  readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
+  readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
   /** Starts an item, or asks the watch group to when the viewer is in one. */
   readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<void>;
   readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
@@ -175,6 +185,7 @@ export interface WatchRuntime {
 /** Everything the shared application needs from the platform it runs on. */
 export interface LumenRuntime {
   readonly capabilities: PlatformCapabilities;
+  readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: AccountsRuntime;
   readonly catalog: CatalogRuntime;
   readonly admin: AdminRuntime;

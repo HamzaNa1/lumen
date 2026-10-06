@@ -24,6 +24,10 @@ export const PlayerView = ({
   const [watchStatus] = useWatchStatus();
   const waiting = waitingSummary(watchStatus.group);
   const [player, setPlayer] = useState<PlayerState | null>(null);
+  const [trackActionError, setTrackActionError] = useState<string | null>(null);
+  const trackRequest = useRef(0);
+  const currentSession = useRef<string | null>(null);
+  currentSession.current = player?.sessionId ?? null;
   const [fullscreen, toggleFullscreen] = useFullscreen();
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -60,15 +64,40 @@ export const PlayerView = ({
 
   useEffect(() => {
     if (display === null) return;
-    if (display.loading) setPlayer(null);
+    if (display.loading) {
+      setPlayer(null);
+      setTrackActionError(null);
+    }
     revealControls();
   }, [display, revealControls]);
+
+  const trackAction = (action: (sessionId: string) => Promise<PlayerState>): void => {
+    if (player === null) return;
+    const sessionId = player.sessionId;
+    const request = ++trackRequest.current;
+    setTrackActionError(null);
+    void action(sessionId).then(
+      (state) => {
+        if (currentSession.current === sessionId && trackRequest.current === request)
+          setPlayer(state);
+      },
+      (cause: unknown) => {
+        if (currentSession.current === sessionId && trackRequest.current === request)
+          setTrackActionError(cause instanceof Error ? cause.message : "Could not change track");
+      },
+    );
+  };
 
   if (display === null) return <div className="player-overlay" />;
 
   return (
     <div className="player-overlay">
       <MediaPlayer
+        trackMemoryError={player?.trackMemoryError ?? null}
+        trackActionError={trackActionError}
+        onRetryTrackMemory={() => trackAction((id) => runtime.playback.retryTrackMemory(id))}
+        onResetTrack={(kind) => trackAction((id) => runtime.playback.resetTrack(id, kind))}
+        subtitleSelection={capabilities.nativeAudioOutput}
         headerActions={<WatchGroups placement="player" />}
         title={display.title}
         subtitle={display.context}
@@ -108,7 +137,13 @@ export const PlayerView = ({
         awaitingInteraction={player?.awaitingInteraction === true}
         onStartPlayback={() => void runtime.playback.allowPlayback().catch(() => undefined)}
         surfaceRef={surfaceRef}
-        controlsVisible={controlsVisible || display.loading || display.error !== null}
+        controlsVisible={
+          controlsVisible ||
+          display.loading ||
+          display.error !== null ||
+          player?.trackMemoryError != null ||
+          trackActionError !== null
+        }
         fullscreen={fullscreen}
         onBack={() => {
           void runtime.playback
@@ -142,20 +177,12 @@ export const PlayerView = ({
               .then(setPlayer)
               .catch(() => undefined);
         }}
-        onSelectAudio={(streamId) => {
-          if (player !== null)
-            void runtime.playback
-              .selectAudio(player.sessionId, streamId)
-              .then(setPlayer)
-              .catch(() => undefined);
-        }}
-        onSelectSubtitle={(streamId) => {
-          if (player !== null)
-            void runtime.playback
-              .selectSubtitle(player.sessionId, streamId)
-              .then(setPlayer)
-              .catch(() => undefined);
-        }}
+        onSelectAudio={(streamId) =>
+          trackAction((id) => runtime.playback.selectAudio(id, streamId))
+        }
+        onSelectSubtitle={(streamId) =>
+          trackAction((id) => runtime.playback.selectSubtitle(id, streamId))
+        }
       />
     </div>
   );

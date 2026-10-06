@@ -34,6 +34,7 @@ const mountNativeSurface = (
 
 /** The shared application's platform on desktop: everything goes through the main process. */
 export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
+  trackSettings: bridge.trackSettings,
   capabilities: {
     serverSwitching: true,
     nativeAudioOutput: true,
@@ -71,6 +72,8 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     seek: bridge.player.seek,
     volume: bridge.player.volume,
     selectAudio: bridge.player.selectAudio,
+    resetTrack: bridge.player.resetTrack,
+    retryTrackMemory: bridge.player.retryTrackMemory,
     selectSubtitle: bridge.player.selectSubtitle,
     // MPV starts playback without waiting for the viewer, so there is never anything to allow.
     allowPlayback: async () => undefined,

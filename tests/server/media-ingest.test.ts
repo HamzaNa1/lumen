@@ -29,9 +29,9 @@ describe("media ingest", () => {
           durationMs: 60_000,
           streams: [
             { kind: "video", ordinal: 0, codec: "h264", bitrate: null, sampleRateHz: null, channels: null, width: 1920, height: 1080, language: null, title: null, isDefault: false },
-            { kind: "subtitle", ordinal: 1, codec: "subrip", bitrate: null, sampleRateHz: null, channels: null, width: null, height: null, language: "eng", title: "English", isDefault: false },
-            { kind: "subtitle", ordinal: 2, codec: "ass", bitrate: null, sampleRateHz: null, channels: null, width: null, height: null, language: "eng", title: "English (SDH)", isDefault: false },
-            { kind: "audio", ordinal: 3, codec: "aac", bitrate: 128_000, sampleRateHz: 48_000, channels: 2, width: null, height: null, language: "eng", title: "English", isDefault: false },
+            { kind: "subtitle", ordinal: 1, codec: "subrip", bitrate: null, sampleRateHz: null, channels: null, width: null, height: null, language: "eng", title: "English", isDefault: false, commentary: false, forced: true, hearingImpaired: false },
+            { kind: "subtitle", ordinal: 2, codec: "ass", bitrate: null, sampleRateHz: null, channels: null, width: null, height: null, language: "eng", title: "English (SDH)", isDefault: false, commentary: false, forced: false, hearingImpaired: true },
+            { kind: "audio", ordinal: 3, codec: "aac", bitrate: 128_000, sampleRateHz: 48_000, channels: 2, width: null, height: null, language: "eng", title: "English", isDefault: false, commentary: true, forced: false, hearingImpaired: false },
           ],
           tags: {},
         }),
@@ -51,14 +51,14 @@ describe("media ingest", () => {
       yield* ingest.ingest(sourceId);
       yield* database.run(sql`UPDATE streams SET ordinal = NULL WHERE source_id = ${sourceId}`);
       yield* ingest.ingest(sourceId);
-      return yield* database.all<{ kind: string; language: string | null }>(sql`SELECT kind, language FROM streams WHERE source_id = ${sourceId} ORDER BY rowid`);
+      return yield* database.all<{ kind: string; language: string | null }>(sql`SELECT kind, language, channels, commentary, forced, hearing_impaired FROM streams WHERE source_id = ${sourceId} ORDER BY rowid`);
     }).pipe(Effect.provide(layer)));
 
     expect(result).toEqual([
-      { kind: "video", language: null },
-      { kind: "subtitle", language: "eng" },
-      { kind: "subtitle", language: "eng" },
-      { kind: "audio", language: "eng" },
+      { kind: "video", language: null, channels: null, commentary: null, forced: null, hearing_impaired: null },
+      { kind: "subtitle", language: "eng", channels: null, commentary: 0, forced: 1, hearing_impaired: 0 },
+      { kind: "subtitle", language: "eng", channels: null, commentary: 0, forced: 0, hearing_impaired: 1 },
+      { kind: "audio", language: "eng", channels: 2, commentary: 1, forced: 0, hearing_impaired: 0 },
     ]);
   });
 });

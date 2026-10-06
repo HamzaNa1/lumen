@@ -155,6 +155,10 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
 
   return {
     api,
+    trackSettings: {
+      read: () => api.trackPreferences(),
+      update: (input) => api.updateTrackPreferences(input),
+    },
     capabilities: {
       serverSwitching: false,
       nativeAudioOutput: false,
@@ -210,6 +214,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       pause: commands.pause,
       seek: commands.seek,
       volume: (sessionId, volume, muted) => player.volume(sessionId, volume, muted),
+      resetTrack: (sessionId, kind) => player.resetTrack(sessionId, kind),
+      retryTrackMemory: (sessionId) => player.retryTrackMemory(sessionId),
       selectAudio: (sessionId, streamId) => player.selectAudioStream(sessionId, streamId),
       selectSubtitle: async () => {
         throw new Error("This browser cannot show this file’s subtitles");

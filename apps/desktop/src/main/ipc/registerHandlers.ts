@@ -1,6 +1,8 @@
 import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
   AudioOutput,
+  TrackPreferencesPatch,
+  TrackKind,
   ConnectionInput,
   EpisodeOrderSelection,
   IpcPlayerSurfaceBounds,
@@ -25,12 +27,16 @@ const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unkn
 const requestId = (): string => crypto.randomUUID();
 const hasSessionToken = (session: AccountSession | null): boolean =>
   typeof session?.accessToken === "string" &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/u.test(session.accessToken);
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/u.test(
+    session.accessToken,
+  );
 
 const validateClient = async (client: ServerClient) => {
-  try { return await client.me(); }
-  catch (cause) {
-    if (cause instanceof ServerHttpError && cause.status === 401) throw new Error("Sign-in required");
+  try {
+    return await client.me();
+  } catch (cause) {
+    if (cause instanceof ServerHttpError && cause.status === 401)
+      throw new Error("Sign-in required");
     throw cause;
   }
 };
@@ -93,14 +99,21 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const discoveredServers = new Map<string, ServerDiscovery>();
   const restoring = new Map<string, Promise<ServerClient>>();
   let playerDisplay: PlayerDisplay | null = null;
-  const endAccountActivity = async (...connectionIds: ReadonlyArray<string | undefined>): Promise<void> => {
+  const endAccountActivity = async (
+    ...connectionIds: ReadonlyArray<string | undefined>
+  ): Promise<void> => {
     watch.disconnect();
     for (const connectionId of new Set(connectionIds)) {
       if (connectionId !== undefined) dependencies.clients.get(connectionId)?.cancelPending();
     }
     await dependencies.player.stop();
   };
-  const restoreClient = (account: { readonly connectionId: string; readonly origin: string; readonly serverId: string; readonly role: UserRole }): Promise<ServerClient> => {
+  const restoreClient = (account: {
+    readonly connectionId: string;
+    readonly origin: string;
+    readonly serverId: string;
+    readonly role: UserRole;
+  }): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) return validateClient(cached).then(() => cached);
     const pending = restoring.get(account.connectionId);
@@ -108,13 +121,15 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const next = (async () => {
       const client = new ServerClient({ origin: account.origin });
       const identity = await client.identity();
-      if (identity.serverId !== account.serverId) throw new Error("Server identity changed; remove this connection and enroll it again");
+      if (identity.serverId !== account.serverId)
+        throw new Error("Server identity changed; remove this connection and enroll it again");
       await dependencies.registry.updateServerName(identity.serverId, identity.displayName);
       const session = await dependencies.registry.session(account.connectionId);
       if (session !== null && hasSessionToken(session)) client.setSession(session);
       else if (session !== null && typeof session.refreshToken === "string") {
         const migrated = await client.migrateLegacySession(session.refreshToken).catch((cause) => {
-          if (cause instanceof ServerHttpError && cause.status === 401) throw new Error("Sign-in required");
+          if (cause instanceof ServerHttpError && cause.status === 401)
+            throw new Error("Sign-in required");
           throw cause;
         });
         await dependencies.registry.updateSession(account.connectionId, migrated);
@@ -127,7 +142,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       }
       dependencies.clients.set(account.connectionId, client);
       return client;
-    })().finally(() => { restoring.delete(account.connectionId); });
+    })().finally(() => {
+      restoring.delete(account.connectionId);
+    });
     restoring.set(account.connectionId, next);
     return next;
   };
@@ -142,6 +159,17 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     });
   };
 
+  handle("track-settings:read", async () => activeClient(dependencies).trackPreferences());
+  handle("track-settings:update", async (_event, raw) =>
+    activeClient(dependencies).updateTrackPreferences(decode(TrackPreferencesPatch, raw)),
+  );
+  handle("player:reset-track", async (_event, raw) => {
+    const input = decode(Schema.Struct({ sessionId: Schema.String, kind: TrackKind }), raw);
+    return dependencies.player.resetTrack(input.sessionId, input.kind);
+  });
+  handle("player:retry-track-memory", async (_event, raw) =>
+    dependencies.player.retryTrackMemory(decode(Schema.String, raw)),
+  );
   handle("accounts:list", async () => dependencies.registry.list());
   handle("accounts:discover-server", async (_event, raw) => {
     const input = decode(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)), raw);
@@ -158,14 +186,21 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const identity = await client.identity();
     if (identity.serverId !== discovery.identity.serverId)
       throw new Error("Server identity changed; connect to the server again");
-    const deviceId = deviceIdForAccount(dependencies.installationId, identity.serverId, input.username);
+    const deviceId = deviceIdForAccount(
+      dependencies.installationId,
+      identity.serverId,
+      input.username,
+    );
     const setupRequired = await client.setupRequired(discovery.setupRequired);
     const session = await (setupRequired
       ? client.register(input, deviceId)
       : client.login(input, deviceId));
     const user = await client.me();
     const current = client.currentSession ?? session;
-    connectionId = (await dependencies.registry.list()).accounts.find((account) => account.serverId === identity.serverId && account.userId === session.userId)?.connectionId ?? connectionId;
+    connectionId =
+      (await dependencies.registry.list()).accounts.find(
+        (account) => account.serverId === identity.serverId && account.userId === session.userId,
+      )?.connectionId ?? connectionId;
     await endAccountActivity(dependencies.registry.active()?.connectionId, connectionId);
     try {
       await dependencies.registry.save({
@@ -181,7 +216,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         accessExpiresAtMs: current.accessExpiresAtMs,
       });
     } catch (cause) {
-      throw new Error(`${setupRequired ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`, { cause });
+      throw new Error(
+        `${setupRequired ? "Account created" : "Sign-in succeeded"}, but this device could not save the connection. Sign in with the same credentials to retry.`,
+        { cause },
+      );
     }
     dependencies.clients.set(connectionId, client);
     watch.connect(client, connectionId);
@@ -202,7 +240,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("accounts:remove", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
-    if (dependencies.registry.active()?.connectionId === connectionId) await endAccountActivity(connectionId);
+    if (dependencies.registry.active()?.connectionId === connectionId)
+      await endAccountActivity(connectionId);
     else dependencies.clients.get(connectionId)?.cancelPending();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
@@ -217,7 +256,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     );
     return activeClient(dependencies).items(input.libraryId, input.cursor);
   });
-  handle("library:item-details", async (_event, raw) => activeClient(dependencies).itemDetails(decode(Schema.String, raw)));
+  handle("library:item-details", async (_event, raw) =>
+    activeClient(dependencies).itemDetails(decode(Schema.String, raw)),
+  );
   handle("library:episode-order", async (_event, raw) =>
     activeClient(dependencies).episodeOrder(decode(Schema.String, raw)),
   );
@@ -229,15 +270,22 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     return activeClient(dependencies).setEpisodeOrder(input.itemId, input.selection);
   });
   handle("library:item-children", async (_event, raw) => {
-    const input = decode(Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }), raw);
+    const input = decode(
+      Schema.Struct({ itemId: Schema.String, cursor: Schema.NullOr(Schema.String) }),
+      raw,
+    );
     return activeClient(dependencies).itemChildren(input.itemId, input.cursor);
   });
   handle("library:set-watched", async (_event, raw) => {
     const input = decode(Schema.Struct({ itemId: Schema.String, completed: Schema.Boolean }), raw);
     return activeClient(dependencies).setWatched(input.itemId, input.completed);
   });
-  handle("library:next-up", async (_event, raw) => activeClient(dependencies).nextUp(decode(Schema.String, raw)));
-  handle("library:artwork", async (_event, raw) => activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)));
+  handle("library:next-up", async (_event, raw) =>
+    activeClient(dependencies).nextUp(decode(Schema.String, raw)),
+  );
+  handle("library:artwork", async (_event, raw) =>
+    activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)),
+  );
   handle("library:search", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ query: Schema.String, libraryId: Schema.NullOr(Schema.String) }),

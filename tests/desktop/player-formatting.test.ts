@@ -32,6 +32,14 @@ describe("streamLabels", () => {
     ).toEqual(["English", "Spanish"]);
   });
 
+  test("names distinguishing roles and channels even when titles are missing", () => {
+    expect(streamLabels([
+      stream({ language: "eng", commentary: true, channels: 6, codec: "aac" }),
+      stream({ kind: "subtitle", language: "eng", forced: true }),
+      stream({ kind: "subtitle", language: "eng", hearingImpaired: true }),
+    ])).toEqual(["English · Commentary · AAC · 6 channels", "English · Forced", "English · Hearing impaired"]);
+  });
+
   test("numbers tracks that would otherwise share a label", () => {
     expect(
       streamLabels([

@@ -1,3 +1,4 @@
+import { resolveTrackSelection, type TrackKind } from "@lumen/contracts";
 import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import type {
@@ -9,6 +10,7 @@ import type {
 } from "@lumen/contracts";
 import {
   PlaybackDiagnostics,
+  TrackSelectionController,
   PlaybackSessionReporter,
   type PlayerBuffer,
   type WatchPlayer,
@@ -72,6 +74,7 @@ interface ActiveSession {
   readonly cancellation: AbortController;
   readonly reporter: PlaybackSessionReporter;
   trackIds: ReadonlyMap<string, number>;
+  selection: TrackSelectionController | null;
   motionRevision: number;
   pendingMotion: number;
   stopping: Promise<void> | null;
@@ -209,6 +212,7 @@ export class PlayerController extends EventEmitter {
         cancellation: new AbortController(),
         reporter,
         trackIds: new Map(),
+        selection: null,
         motionRevision: 0,
         pendingMotion: 0,
         stopping: null,
@@ -273,18 +277,20 @@ export class PlayerController extends EventEmitter {
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       active.trackIds = trackIds;
       const streams = session.streams.filter((stream) => trackIds.has(stream.id));
-      const selectedAudioStream =
-        streams.find((stream) => stream.kind === "audio" && stream.isDefault) ??
-        streams.find((stream) => stream.kind === "audio");
-      const selectedSubtitleStream =
-        streams.find((stream) => stream.kind === "subtitle" && stream.isDefault) ?? null;
-      if (selectedAudioStream !== undefined)
-        await ipc.command(["set_property", "aid", trackIds.get(selectedAudioStream.id) ?? "no"]);
+      const { audio: selectedAudioStream, subtitle: selectedSubtitleStream } =
+        resolveTrackSelection(streams, session.sourceId, session.trackMemory);
+      await ipc.command([
+        "set_property",
+        "aid",
+        selectedAudioStream === null ? "no" : (trackIds.get(selectedAudioStream.id) ?? "no"),
+      ]);
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       await ipc.command([
         "set_property",
         "sid",
         selectedSubtitleStream === null ? "no" : (trackIds.get(selectedSubtitleStream.id) ?? "no"),
       ]);
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       // Seek while still paused so the first frame shown is the resume point.
       const startAtSeconds =
         input.startAtSeconds !== undefined &&
@@ -293,6 +299,7 @@ export class PlayerController extends EventEmitter {
           ? input.startAtSeconds
           : 0;
       if (startAtSeconds > 0) await ipc.command(["seek", startAtSeconds, "absolute"]);
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       await ipc.command(["set_property", "pause", input.paused === true ? "yes" : "no"]);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.surface.show();
@@ -311,6 +318,20 @@ export class PlayerController extends EventEmitter {
         selectedSubtitleStreamId: selectedSubtitleStream?.id ?? null,
         audioOutput: this.audioOutput,
       };
+      active.selection = new TrackSelectionController({
+        sourceId: session.sourceId,
+        ...(session.trackMemory === undefined ? {} : { memory: session.trackMemory }),
+        streams,
+        assertActive: () => {
+          if (this.active !== active) throw new Error("Playback session is not active");
+        },
+        apply: (kind, streamId) => this.applyTrack(active, kind, streamId),
+        save: (choice) => active.client.saveTrackChoice(session.sessionId, choice),
+        onError: (trackMemoryError) => {
+          this.state = { ...this.requireState(), trackMemoryError };
+          this.publish();
+        },
+      });
       this.intentionalPause = input.paused ?? false;
       this.publish();
       return this.sanitized(session);
@@ -408,40 +429,50 @@ export class PlayerController extends EventEmitter {
 
   async selectAudioStream(sessionId: string, streamId: string): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
-    const state = this.requireState();
-    const stream = state.streams.find(
-      (candidate) => candidate.id === streamId && candidate.kind === "audio",
-    );
-    const trackId = stream === undefined ? undefined : active.trackIds.get(streamId);
-    if (stream === undefined || trackId === undefined)
-      throw new Error("Audio stream is unavailable");
-    await this.command(active, ["set_property", "aid", trackId]);
+    if (active.selection === null) throw new Error("Playback is starting");
+    await active.selection.select("audio", streamId);
     this.assertActive(sessionId);
-    const currentState = this.requireState();
-    this.state = { ...currentState, selectedAudioStreamId: streamId };
-    this.publish();
     return this.requireState();
   }
 
   async selectSubtitleStream(sessionId: string, streamId: string | null): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
-    const state = this.requireState();
-    const stream =
-      streamId === null
-        ? null
-        : state.streams.find(
-            (candidate) => candidate.id === streamId && candidate.kind === "subtitle",
-          );
-    const trackId =
-      stream === null || stream === undefined ? null : active.trackIds.get(streamId ?? "");
-    if (streamId !== null && (stream === undefined || trackId === undefined))
-      throw new Error("Subtitle stream is unavailable");
-    await this.command(active, ["set_property", "sid", trackId ?? "no"]);
+    if (active.selection === null) throw new Error("Playback is starting");
+    await active.selection.select("subtitle", streamId);
     this.assertActive(sessionId);
-    const currentState = this.requireState();
-    this.state = { ...currentState, selectedSubtitleStreamId: stream?.id ?? null };
-    this.publish();
     return this.requireState();
+  }
+
+  async resetTrack(sessionId: string, kind: TrackKind): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    if (active.selection === null) throw new Error("Playback is starting");
+    await active.selection.reset(kind);
+    this.assertActive(sessionId);
+    return this.requireState();
+  }
+
+  async retryTrackMemory(sessionId: string): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    if (active.selection === null) throw new Error("Playback is starting");
+    await active.selection.retry();
+    this.assertActive(sessionId);
+    return this.requireState();
+  }
+
+  private async applyTrack(
+    active: ActiveSession,
+    kind: TrackKind,
+    streamId: string | null,
+  ): Promise<void> {
+    const trackId = streamId === null ? "no" : active.trackIds.get(streamId);
+    if (trackId === undefined) throw new Error("Stream is unavailable");
+    await this.command(active, ["set_property", kind === "audio" ? "aid" : "sid", trackId]);
+    this.assertActive(active.session.sessionId);
+    this.state = {
+      ...this.requireState(),
+      [kind === "audio" ? "selectedAudioStreamId" : "selectedSubtitleStreamId"]: streamId,
+    };
+    this.publish();
   }
 
   async setAudioOutput(sessionId: string, output: AudioOutput): Promise<PlayerState> {

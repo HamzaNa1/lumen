@@ -1,4 +1,10 @@
 import {
+  TrackPreferences,
+  TrackMemory,
+  type TrackPreferencesPatch,
+  type TrackChoiceInput,
+} from "@lumen/contracts";
+import {
   BROWSER_CSRF_HEADER,
   BrowserSession,
   type CatalogItem,
@@ -205,6 +211,7 @@ const playerSessionSchema = Schema.Struct({
   streams: Schema.Array(PlayableStream),
   grantExpiresInSeconds: Schema.Number,
   grantToken: Schema.String,
+  trackMemory: Schema.optional(TrackMemory),
 });
 
 const serverNameSchema = Schema.Struct({ displayName: Schema.String.check(Schema.isMinLength(1)) });
@@ -237,7 +244,10 @@ const decodeSession = (value: unknown): AccountSession => {
 
 const readJson = async (response: Response): Promise<unknown> => {
   if (!response.ok) {
-    const retryAfterSeconds = parseRetryAfterSeconds(response.headers.get("retry-after"), Date.now());
+    const retryAfterSeconds = parseRetryAfterSeconds(
+      response.headers.get("retry-after"),
+      Date.now(),
+    );
     let message = `Server request failed (${response.status})`;
     try {
       const body = (await response.json()) as { message?: unknown };
@@ -310,7 +320,9 @@ export class ServerApi {
         headers,
         redirect: "manual",
         signal,
-        ...(this.credentials.cookies === undefined ? {} : { credentials: this.credentials.cookies }),
+        ...(this.credentials.cookies === undefined
+          ? {}
+          : { credentials: this.credentials.cookies }),
       });
     } catch (cause) {
       if (scope.signal.aborted) throw new RequestCancelledError();
@@ -413,7 +425,10 @@ export class ServerApi {
 
   // Browser sessions: the server keeps the token in an HttpOnly cookie and answers with the account.
 
-  async browserRegister(input: CredentialsInput, device: DeviceDescription): Promise<BrowserSession> {
+  async browserRegister(
+    input: CredentialsInput,
+    device: DeviceDescription,
+  ): Promise<BrowserSession> {
     return this.signIn(
       "/api/v1/auth/browser/register",
       jsonBody("POST", {
@@ -643,6 +658,20 @@ export class ServerApi {
   async jobLog(limit = 100): Promise<ReadonlyArray<JobLogEntry>> {
     const query = new URLSearchParams({ limit: String(limit) });
     return this.request(`/api/v1/admin/jobs?${query}`, {}, Schema.Array(JobLogEntry));
+  }
+
+  async trackPreferences(): Promise<TrackPreferences> {
+    return this.request("/api/v1/me/track-preferences", {}, TrackPreferences);
+  }
+  async updateTrackPreferences(input: TrackPreferencesPatch): Promise<TrackPreferences> {
+    return this.request("/api/v1/me/track-preferences", jsonBody("PATCH", input), TrackPreferences);
+  }
+  async saveTrackChoice(sessionId: string, input: TrackChoiceInput): Promise<TrackMemory> {
+    return this.request(
+      `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/track-choice`,
+      jsonBody("PUT", input),
+      TrackMemory,
+    );
   }
 
   // Playback sessions

@@ -27,6 +27,10 @@ const volumeDragIntervalMs = 50;
 
 interface MediaPlayerProps {
   readonly headerActions?: ReactNode;
+  readonly trackMemoryError?: string | null;
+  readonly trackActionError?: string | null;
+  readonly onResetTrack?: (kind: "audio" | "subtitle") => void;
+  readonly onRetryTrackMemory?: () => void;
   readonly title: string;
   readonly subtitle?: string;
   readonly paused: boolean;
@@ -47,6 +51,7 @@ interface MediaPlayerProps {
   readonly onCopyAudioDiagnostics?: () => Promise<void>;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
   readonly trackSelection?: boolean;
+  readonly subtitleSelection?: boolean;
   /** Playback stalled waiting for data. */
   readonly buffering?: boolean;
   /** Says what playback is waiting on, when that is something other than its own data. */
@@ -70,6 +75,10 @@ interface MediaPlayerProps {
 
 export const MediaPlayer = ({
   headerActions,
+  trackMemoryError,
+  trackActionError,
+  onResetTrack,
+  onRetryTrackMemory,
   title,
   subtitle,
   paused,
@@ -87,6 +96,7 @@ export const MediaPlayer = ({
   onAudioOutput,
   onCopyAudioDiagnostics,
   trackSelection = true,
+  subtitleSelection = true,
   buffering = false,
   bufferingMessage,
   awaitingInteraction = false,
@@ -167,7 +177,13 @@ export const MediaPlayer = ({
           <button
             className="media-player-video-hit-target"
             type="button"
-            aria-label={settingsOpen ? "Close playback settings" : paused ? "Resume playback" : "Pause playback"}
+            aria-label={
+              settingsOpen
+                ? "Close playback settings"
+                : paused
+                  ? "Resume playback"
+                  : "Pause playback"
+            }
             disabled={!settingsOpen && inactive}
             onClick={() => {
               if (settingsOpen) setSettingsOpen(false);
@@ -238,7 +254,10 @@ export const MediaPlayer = ({
                           <span
                             key={`${startSeconds}-${endSeconds}`}
                             className="media-slider-buffered"
-                            style={{ left: `${(start / duration) * 100}%`, width: `${((end - start) / duration) * 100}%` }}
+                            style={{
+                              left: `${(start / duration) * 100}%`,
+                              width: `${((end - start) / duration) * 100}%`,
+                            }}
                             aria-hidden="true"
                           />
                         ) : null;
@@ -373,27 +392,47 @@ export const MediaPlayer = ({
                         label="Audio track"
                         modal={false}
                         value={selectedAudioStreamId}
-                        options={audioStreams.map((stream, index) => ({
-                          value: stream.id,
-                          label: audioLabels[index] ?? "",
-                        }))}
-                        onValueChange={onSelectAudio}
+                        disabled={inactive}
+                        options={[
+                          ...(onResetTrack === undefined
+                            ? []
+                            : [{ value: "settings", label: "Use my settings" }]),
+                          ...audioStreams.map((stream, index) => ({
+                            value: stream.id,
+                            label: audioLabels[index] ?? "",
+                          })),
+                        ]}
+                        onValueChange={(value) =>
+                          value === "settings" ? onResetTrack?.("audio") : onSelectAudio(value)
+                        }
                       />
                     ) : null}
-                    {subtitleStreams.length > 0 ? (
+                    {subtitleStreams.length > 0 ||
+                    (onResetTrack !== undefined && subtitleSelection) ? (
                       <SelectField
                         label="Subtitles"
                         modal={false}
                         value={selectedSubtitleStreamId ?? "off"}
+                        disabled={inactive}
                         options={[
+                          ...(onResetTrack === undefined
+                            ? []
+                            : [{ value: "settings", label: "Use my settings" }]),
                           { value: "off", label: "Off" },
                           ...subtitleStreams.map((stream, index) => ({
                             value: stream.id,
                             label: subtitleLabels[index] ?? "",
                           })),
                         ]}
-                        onValueChange={(value) => onSelectSubtitle(value === "off" ? null : value)}
+                        onValueChange={(value) =>
+                          value === "settings"
+                            ? onResetTrack?.("subtitle")
+                            : onSelectSubtitle(value === "off" ? null : value)
+                        }
                       />
+                    ) : null}
+                    {!subtitleSelection ? (
+                      <p>This browser can’t select embedded subtitles.</p>
                     ) : null}
                     {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
                       <p>
@@ -402,6 +441,21 @@ export const MediaPlayer = ({
                           : "This player can’t switch audio or subtitle tracks."}
                       </p>
                     ) : null}
+                    {onResetTrack === undefined ||
+                    (audioStreams.length > 0 && subtitleSelection) ? null : (
+                      <>
+                        {audioStreams.length === 0 ? (
+                          <Button disabled={inactive} onClick={() => onResetTrack("audio")}>
+                            Audio: Use my settings
+                          </Button>
+                        ) : null}
+                        {!subtitleSelection ? (
+                          <Button disabled={inactive} onClick={() => onResetTrack("subtitle")}>
+                            Subtitles: Use my settings
+                          </Button>
+                        ) : null}
+                      </>
+                    )}
                     {onCopyAudioDiagnostics === undefined ? null : (
                       <Button
                         onClick={() => {
@@ -414,6 +468,13 @@ export const MediaPlayer = ({
                       >
                         Export playback diagnostics
                       </Button>
+                    )}
+                    {trackActionError == null ? null : <p role="alert">{trackActionError}</p>}
+                    {trackMemoryError == null ? null : (
+                      <p role="alert">
+                        {trackMemoryError}
+                        <Button onClick={onRetryTrackMemory}>Retry saving choice</Button>
+                      </p>
                     )}
                     {audioActionStatus === null ? null : <p role="status">{audioActionStatus}</p>}
                   </div>

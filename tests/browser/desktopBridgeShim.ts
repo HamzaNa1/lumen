@@ -61,6 +61,7 @@ const accounts = async () => {
 };
 
 const bridge: DesktopBridge = {
+  trackSettings: { read: () => api.trackPreferences(), update: (input) => api.updateTrackPreferences(input) },
   watch: {
     state: async () => {
       watchClient.connect();
@@ -115,6 +116,8 @@ const bridge: DesktopBridge = {
     jobLog: () => api.jobLog(),
   },
   player: {
+    resetTrack: unavailable,
+    retryTrackMemory: unavailable,
     start: unavailable,
     pause: unavailable,
     seek: unavailable,

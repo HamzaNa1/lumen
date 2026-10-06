@@ -1,5 +1,7 @@
 import {
   API_VERSION,
+  TrackPreferencesPatch,
+  TrackChoiceInput,
   BrowserSession,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
@@ -863,6 +865,40 @@ export const makeHttpHandler = (
           ),
         ),
       );
+    if (url.pathname === "/api/v1/me/track-preferences") {
+      if (method === "GET")
+        return unknownJson(await call(services.playback.preferences(principal)));
+      if (method === "PATCH")
+        return unknownJson(
+          await call(
+            services.playback.updatePreferences(
+              principal,
+              decode(TrackPreferencesPatch, await body(request, config.maxRequestBodyBytes)),
+            ),
+          ),
+        );
+    }
+    if (
+      method === "PUT" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "playback" &&
+      parts[3] === "sessions" &&
+      parts[4] !== undefined &&
+      parts[5] === "track-choice" &&
+      parts[6] === undefined
+    ) {
+      return unknownJson(
+        await call(
+          services.playback.saveChoice(
+            principal,
+            parts[4],
+            decode(TrackChoiceInput, await body(request, config.maxRequestBodyBytes)),
+            Date.now(),
+          ),
+        ),
+      );
+    }
     if (
       method === "POST" &&
       parts[0] === "api" &&
@@ -883,6 +919,7 @@ export const makeHttpHandler = (
           streamUrl: result.streamPath,
           durationSeconds: result.durationSeconds,
           streams: result.streams,
+          trackMemory: result.trackMemory,
           grantExpiresInSeconds: result.grantExpiresInSeconds,
           grantToken: result.grantToken,
           mode: "DirectPlay",
