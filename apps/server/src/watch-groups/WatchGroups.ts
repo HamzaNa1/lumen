@@ -1,6 +1,10 @@
 import {
   CatalogItemDetails,
   WATCH_BUFFER_REPORT_INTERVAL_MS,
+  WATCH_CONNECTION_REPLACED,
+  WATCH_HEARTBEAT_INTERVAL_MS,
+  WATCH_MEMBER_TIMEOUT_MS,
+  WatchConnect,
   WatchRequest,
   watchPosition,
   type WatchGroup,
@@ -12,15 +16,19 @@ import { Effect, Schema } from "effect";
 import type { ServerWebSocket, WebSocketHandler } from "bun";
 import type { HttpServices } from "../http/HttpApp";
 import type { AuthPrincipal } from "../services/AuthService";
+import type { Logger } from "../core/Logger";
 import { RequestLimiter } from "../core/Limits";
 import { hashPassword, verifyPassword } from "../core/Security";
 import { requestOrigin, sessionCookieToken } from "../http/BrowserSession";
 
 export interface WatchSocketData {
   readonly id: string;
+  readonly sequence: number;
   /** The session cookie sent with a same-origin browser's upgrade request, if any. */
   readonly cookieToken: string | null;
   token: string | null;
+  clientKey: string | null;
+  lastActivityAtMs: number;
   principal: AuthPrincipal | null;
   /** This client says when it has buffered a position, so its group can wait for it. */
   readiness: boolean;
@@ -37,6 +45,11 @@ export interface WatchSocketData {
   messages: number;
   closed: boolean;
   authTimer?: ReturnType<typeof setTimeout>;
+}
+interface ClientConnection {
+  socket: ServerWebSocket<WatchSocketData> | null;
+  readonly sequence: number;
+  retiredAtMs: number | null;
 }
 interface Group {
   state: WatchGroup;
@@ -58,19 +71,6 @@ type WatchServices = {
   readonly catalog: Pick<HttpServices["catalog"], "itemDetails">;
   readonly access: Pick<HttpServices["access"], "requireLibrary">;
 };
-// A desktop client presents its token. A browser cannot read its own token, so it asks the
-// server to use the session cookie that arrived with the upgrade request.
-const Abilities = {
-  readiness: Schema.optional(Schema.Boolean),
-  buffers: Schema.optional(Schema.Boolean),
-};
-const Authentication = Schema.Union([
-  Schema.Struct({
-    token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
-    ...Abilities,
-  }),
-  Schema.Struct({ session: Schema.Literal("cookie"), ...Abilities }),
-]);
 const BUFFER_SHARE_INTERVAL_MS = 1000;
 // A player that has gone quiet is no longer described by what it last said.
 const BUFFER_REPORT_LIFETIME_MS = 3 * WATCH_BUFFER_REPORT_INTERVAL_MS;
@@ -89,6 +89,10 @@ class WatchGroupsBusy extends Error {
 
 export class WatchGroups {
   private readonly sockets = new Set<ServerWebSocket<WatchSocketData>>();
+  private readonly clients = new Map<string, ClientConnection>();
+  private nextSequence = 0;
+  private readonly now: () => number;
+  private readonly logger: Logger | undefined;
   private readonly groups = new Map<string, Group>();
   private readonly deliveries = new Map<ServerWebSocket<WatchSocketData>, StateDelivery>();
   private readonly directories = new Map<ServerWebSocket<WatchSocketData>, DirectoryDelivery>();
@@ -105,14 +109,11 @@ export class WatchGroups {
     private readonly services: WatchServices,
     private readonly trustedOrigin: TrustedOrigin = (request, origin) =>
       origin === requestOrigin(request),
+    options: { readonly now?: () => number; readonly logger?: Logger } = {},
   ) {
-    this.timer = setInterval(() => {
-      this.attempts.sweep(Date.now());
-      for (const [id, group] of this.groups) {
-        if (group.emptySince !== null && Date.now() - group.emptySince > 30_000)
-          this.groups.delete(id);
-      }
-    }, 5000);
+    this.now = options.now ?? Date.now;
+    this.logger = options.logger;
+    this.timer = setInterval(() => this.sweep(), WATCH_HEARTBEAT_INTERVAL_MS);
     this.timer.unref();
     this.bufferTimer = setInterval(() => this.shareBuffers(), BUFFER_SHARE_INTERVAL_MS);
     this.bufferTimer.unref();
@@ -128,10 +129,13 @@ export class WatchGroups {
     const upgraded = server.upgrade(request, {
       data: {
         id: crypto.randomUUID(),
+        sequence: this.nextSequence++,
         // Only a browser on this origin may stand on its cookie; a socket without an Origin
         // header is not a browser page and must present a token.
         cookieToken: origin === null ? null : sessionCookieToken(request),
         token: null,
+        clientKey: null,
+        lastActivityAtMs: this.now(),
         principal: null,
         readiness: false,
         buffers: false,
@@ -140,7 +144,7 @@ export class WatchGroups {
         groupId: null,
         queue: Promise.resolve(),
         pending: 0,
-        windowStart: Date.now(),
+        windowStart: this.now(),
         messages: 0,
         closed: false,
       },
@@ -155,41 +159,124 @@ export class WatchGroups {
     closeOnBackpressureLimit: true,
     open: (socket) => {
       this.sockets.add(socket);
-      socket.data.authTimer = setTimeout(() => socket.close(1008, "Authentication required"), 5000);
+      socket.data.authTimer = setTimeout(
+        () => this.retire(socket, 1008, "Authentication required"),
+        5000,
+      );
     },
     message: (socket, raw) => {
       const data = socket.data;
-      if (Date.now() - data.windowStart >= 60_000) {
-        data.windowStart = Date.now();
+      if (data.closed) return;
+      if (this.now() - data.windowStart >= 60_000) {
+        data.windowStart = this.now();
         data.messages = 0;
       }
       if (++data.messages > 240 || data.pending >= 8 || typeof raw !== "string") {
-        socket.close(1008, "Request limit exceeded");
+        this.retire(socket, 1008, "Request limit exceeded");
         return;
       }
+      data.lastActivityAtMs = this.now();
       data.pending += 1;
       data.queue = data.queue
         .then(() => this.receive(socket, raw))
         .catch(() => {
-          socket.close(1008, "Invalid watch group request");
+          this.retire(socket, 1008, "Invalid watch group request");
         })
         .finally(() => {
           data.pending -= 1;
         });
     },
-    close: (socket) => {
-      socket.data.closed = true;
-      clearTimeout(socket.data.authTimer);
-      this.sockets.delete(socket);
-      this.leave(socket);
-    },
+    close: (socket) => this.retire(socket),
   };
+
+  /** Also called by the periodic maintenance timer; transport pongs do not renew this lease. */
+  sweep(): void {
+    const now = this.now();
+    this.attempts.sweep(now);
+    for (const socket of this.sockets) {
+      if (now - socket.data.lastActivityAtMs >= WATCH_MEMBER_TIMEOUT_MS)
+        this.retire(socket, 1001, "Watch client heartbeat expired");
+    }
+    for (const [key, client] of this.clients) {
+      if (client.retiredAtMs !== null && now - client.retiredAtMs >= WATCH_MEMBER_TIMEOUT_MS)
+        this.clients.delete(key);
+    }
+    for (const [id, group] of this.groups) {
+      if (group.emptySince !== null && now - group.emptySince > 30_000) this.groups.delete(id);
+    }
+  }
 
   close(): void {
     clearInterval(this.timer);
     clearInterval(this.bufferTimer);
-    for (const socket of this.sockets) socket.close(1001, "Server stopping");
+    for (const socket of this.sockets) this.retire(socket, 1001, "Server stopping");
     this.groups.clear();
+    this.clients.clear();
+  }
+
+  /** Retire immediately, without waiting for the transport's close callback or pending work. */
+  private retire(socket: ServerWebSocket<WatchSocketData>, code?: number, reason?: string): void {
+    const data = socket.data;
+    if (data.closed) return;
+    data.closed = true;
+    clearTimeout(data.authTimer);
+    this.sockets.delete(socket);
+    const client = this.clients.get(data.clientKey ?? "");
+    if (client?.socket === socket) {
+      // Keep the generation briefly: authentication from an older upgrade can finish late,
+      // even after the successor has left. It must not reclaim this logical client.
+      client.socket = null;
+      client.retiredAtMs = this.now();
+    }
+    this.deliveries.delete(socket);
+    this.directories.delete(socket);
+    this.logger?.info("watch_connection_retired", {
+      memberId: data.id,
+      groupId: data.groupId,
+      userId: data.principal?.user.id,
+      reason: reason ?? "Connection closed",
+    });
+    this.leave(socket);
+    data.token = null;
+    data.principal = null;
+    if (code !== undefined) socket.close(code, reason);
+  }
+
+  /** Claim only after authentication: independent clients, users, and sessions stay separate. */
+  private claim(
+    socket: ServerWebSocket<WatchSocketData>,
+    principal: AuthPrincipal,
+    authentication: typeof WatchConnect.Type,
+  ): void {
+    if (authentication.clientId === undefined) return;
+    const key = JSON.stringify([principal.user.id, principal.sessionId, authentication.clientId]);
+    const current = this.clients.get(key);
+    if (current !== undefined && current.sequence > socket.data.sequence) {
+      this.retire(socket, WATCH_CONNECTION_REPLACED, "Watch connection replaced");
+      return;
+    }
+    const previous = current?.socket;
+    socket.data.clientKey = key;
+    this.clients.set(key, { socket, sequence: socket.data.sequence, retiredAtMs: null });
+    if (previous == null) return;
+    const group = this.groups.get(previous.data.groupId ?? "");
+    if (group !== undefined && authentication.resumeGroupId === group.state.id) {
+      // Install the successor before retiring the old socket. Its wait and buffer are fresh,
+      // and removing the old member can never briefly release an existing readiness hold.
+      previous.data.groupId = null;
+      this.enterGroup(socket, group, principal.user.displayName, previous.data.id);
+    }
+    this.logger?.info("watch_connection_replaced", {
+      memberId: socket.data.id,
+      previousMemberId: previous.data.id,
+      groupId: group?.state.id,
+      userId: principal.user.id,
+    });
+    this.retire(previous, WATCH_CONNECTION_REPLACED, "Watch connection replaced");
+    if (group !== undefined) {
+      this.directory();
+      void this.publish(group);
+    }
   }
 
   private send(socket: ServerWebSocket<WatchSocketData>, message: WatchMessage): void {
@@ -202,48 +289,56 @@ export class WatchGroups {
       running.revision += 1;
       return running.promise;
     }
-    const delivery: DirectoryDelivery = { revision: 0, sentRevision: -1, promise: Promise.resolve() };
+    const delivery: DirectoryDelivery = {
+      revision: 0,
+      sentRevision: -1,
+      promise: Promise.resolve(),
+    };
     delivery.promise = this.visibleDirectory(socket, delivery)
       .then(() => {
         this.directories.delete(socket);
-        if (!socket.data.closed && socket.data.token !== null && delivery.sentRevision !== delivery.revision)
+        if (
+          !socket.data.closed &&
+          socket.data.token !== null &&
+          delivery.sentRevision !== delivery.revision
+        )
           void this.list(socket);
       })
       .catch(() => {
         this.directories.delete(socket);
-        socket.close(1011, "Could not check media access");
+        this.retire(socket, 1011, "Could not check media access");
       });
     this.directories.set(socket, delivery);
     return delivery.promise;
   }
 
-  private async authenticate(socket: ServerWebSocket<WatchSocketData>): Promise<AuthPrincipal | null> {
+  private async authenticate(
+    socket: ServerWebSocket<WatchSocketData>,
+  ): Promise<AuthPrincipal | null> {
     const token = socket.data.token;
     if (token === null || socket.data.closed) return null;
     try {
-      const principal = await Effect.runPromise(this.services.auth.authenticate(token, Date.now()));
+      const principal = await Effect.runPromise(this.services.auth.authenticate(token, this.now()));
       if (socket.data.closed || socket.data.token !== token) return null;
       socket.data.principal = principal;
       return principal;
     } catch {
-      socket.data.token = null;
-      this.leave(socket);
-      socket.data.principal = null;
-      socket.close(1008, "Sign-in required");
+      this.retire(socket, 1008, "Sign-in required");
       return null;
     }
   }
 
   private mediaVisible(principal: AuthPrincipal, itemId: string): Promise<boolean> {
     return Effect.runPromise(
-      this.services.catalog.itemDetails(principal, itemId, false, Date.now())
+      this.services.catalog
+        .itemDetails(principal, itemId, false, this.now())
         .pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })),
     );
   }
 
   private async visibleGroup(principal: AuthPrincipal, state: WatchGroup): Promise<WatchGroup> {
     if (state.playback === null) return state;
-    return await this.mediaVisible(principal, state.playback.itemId)
+    return (await this.mediaVisible(principal, state.playback.itemId))
       ? state
       : { ...state, playback: null };
   }
@@ -255,9 +350,11 @@ export class WatchGroups {
     const revision = delivery.revision;
     const principal = await this.authenticate(socket);
     if (principal === null) return;
-    const itemIds = new Set([...this.groups.values()]
-      .filter(({ state }) => state.members.length > 0)
-      .flatMap(({ state }) => state.playback === null ? [] : [state.playback.itemId]));
+    const itemIds = new Set(
+      [...this.groups.values()]
+        .filter(({ state }) => state.members.length > 0)
+        .flatMap(({ state }) => (state.playback === null ? [] : [state.playback.itemId])),
+    );
     const visibility = new Map<string, boolean>();
     for (const itemId of itemIds) {
       visibility.set(itemId, await this.mediaVisible(principal, itemId));
@@ -267,9 +364,11 @@ export class WatchGroups {
     const groups = [...this.groups.values()]
       .map(({ state }) => state)
       .filter((state) => state.members.length > 0)
-      .map((state) => state.playback === null || visibility.get(state.playback.itemId) === true
-        ? state
-        : { ...state, playback: null });
+      .map((state) =>
+        state.playback === null || visibility.get(state.playback.itemId) === true
+          ? state
+          : { ...state, playback: null },
+      );
     this.send(socket, { type: "groups", groups });
     delivery.sentRevision = revision;
   }
@@ -301,7 +400,7 @@ export class WatchGroups {
       })
       .catch(() => {
         this.deliveries.delete(socket);
-        socket.close(1011, "Could not check media access");
+        this.retire(socket, 1011, "Could not check media access");
       });
     this.deliveries.set(socket, delivery);
     return delivery.promise;
@@ -332,6 +431,40 @@ export class WatchGroups {
     for (const socket of this.sockets) if (socket.data.token !== null) void this.list(socket);
   }
 
+  private enterGroup(
+    socket: ServerWebSocket<WatchSocketData>,
+    group: Group,
+    displayName: string,
+    replaces?: string,
+  ): void {
+    socket.data.groupId = group.state.id;
+    group.emptySince = null;
+    const member = { id: socket.data.id, displayName };
+    const playback = group.state.playback;
+    group.state = {
+      ...group.state,
+      members:
+        replaces === undefined
+          ? [...group.state.members, member]
+          : group.state.members.map((previous) => (previous.id === replaces ? member : previous)),
+      // Preserve the hold's position and revision. Existing viewers are still loading there,
+      // but the successor must report its own readiness, even if its predecessor was ready.
+      playback:
+        playback?.waitingFor === undefined
+          ? playback
+          : {
+              ...playback,
+              waitingFor: [
+                ...playback.waitingFor.filter((id) => id !== replaces),
+                ...(socket.data.readiness ? [socket.data.id] : []),
+              ],
+            },
+    };
+    if (socket.data.readiness && playback !== null) this.hold(group, group.state.revision);
+    else if (group.state.playback?.waitingFor?.length === 0)
+      this.release(group, group.state.revision);
+  }
+
   private leave(socket: ServerWebSocket<WatchSocketData>): void {
     const group = this.groups.get(socket.data.groupId ?? "");
     socket.data.groupId = null;
@@ -343,11 +476,12 @@ export class WatchGroups {
         ...group.state,
         members: group.state.members.filter((member) => member.id !== socket.data.id),
       };
-      if (group.state.members.length === 0) group.emptySince = Date.now();
+      if (group.state.members.length === 0) group.emptySince = this.now();
       this.ready(group, socket.data.id, group.state.revision);
       void this.publish(group);
       this.directory();
     }
+    this.shareBuffers();
     this.send(socket, { type: "state", group: null });
   }
 
@@ -357,7 +491,7 @@ export class WatchGroups {
    * none of it bears on what the group plays.
    */
   private shareBuffers(): void {
-    const now = Date.now();
+    const now = this.now();
     const buffers = new Map<string, WatchMemberBuffer[]>();
     for (const { data } of this.sockets) {
       if (data.groupId === null || data.buffer === null) continue;
@@ -405,7 +539,7 @@ export class WatchGroups {
       playback: {
         ...position,
         paused: held,
-        updatedAtMs: Date.now(),
+        updatedAtMs: this.now(),
         ...(held ? { waitingFor } : {}),
       },
     };
@@ -419,7 +553,7 @@ export class WatchGroups {
     group.state = {
       ...group.state,
       revision: group.state.revision + 1,
-      playback: position === null ? null : { ...position, paused: true, updatedAtMs: Date.now() },
+      playback: position === null ? null : { ...position, paused: true, updatedAtMs: this.now() },
     };
   }
 
@@ -432,7 +566,7 @@ export class WatchGroups {
     this.playFrom(group, {
       itemId: playback.itemId,
       title: playback.title,
-      positionSeconds: watchPosition(playback, Date.now()),
+      positionSeconds: watchPosition(playback, this.now()),
     });
     return true;
   }
@@ -445,7 +579,7 @@ export class WatchGroups {
     group.state = {
       ...group.state,
       revision: revision + 1,
-      playback: { ...position, paused: false, updatedAtMs: Date.now() },
+      playback: { ...position, paused: false, updatedAtMs: this.now() },
     };
     this.directory();
     void this.publish(group);
@@ -481,16 +615,18 @@ export class WatchGroups {
     if (socket.data.closed) return;
     const value: unknown = JSON.parse(raw);
     if (socket.data.token === null) {
-      const authentication = Schema.decodeUnknownSync(Authentication)(value);
+      const authentication = Schema.decodeUnknownSync(WatchConnect)(value);
       const token = "token" in authentication ? authentication.token : socket.data.cookieToken;
       if (token === null) throw new Error("Sign-in required");
-      const principal = await Effect.runPromise(this.services.auth.authenticate(token, Date.now()));
+      const principal = await Effect.runPromise(this.services.auth.authenticate(token, this.now()));
       if (socket.data.closed) return;
       socket.data.token = token;
       socket.data.principal = principal;
       socket.data.readiness = authentication.readiness === true;
       socket.data.buffers = authentication.buffers === true;
       clearTimeout(socket.data.authTimer);
+      this.claim(socket, principal, authentication);
+      if (socket.data.closed) return;
       this.send(socket, {
         type: "ready",
         memberId: socket.data.id,
@@ -509,7 +645,7 @@ export class WatchGroups {
         const group = this.groups.get(socket.data.groupId ?? "");
         void this.list(socket);
         if (group !== undefined) void this.deliverState(socket, group);
-        this.send(socket, { type: "pong", sentAtMs: action.sentAtMs, serverTimeMs: Date.now() });
+        this.send(socket, { type: "pong", sentAtMs: action.sentAtMs, serverTimeMs: this.now() });
       } else if (action.type === "ready") {
         const group = this.groups.get(socket.data.groupId ?? "");
         if (group !== undefined) this.ready(group, socket.data.id, action.revision);
@@ -525,7 +661,7 @@ export class WatchGroups {
         // A report about something the group has moved on from describes nothing it has on.
         if (this.groups.get(socket.data.groupId ?? "")?.state.playback?.itemId === action.itemId) {
           const first = socket.data.buffer === null;
-          socket.data.buffer = { ...buffer, reportedAtMs: Date.now() };
+          socket.data.buffer = { ...buffer, reportedAtMs: this.now() };
           // Until a member's player has said anything, the others are shown it as unknown.
           if (first) this.shareBuffers();
         }
@@ -533,13 +669,14 @@ export class WatchGroups {
       else if (action.type === "leave") this.leave(socket);
       else if (action.type === "create" || action.type === "join") {
         const retrySeconds = await Effect.runPromise(
-          this.attempts.check(principal.user.id, Date.now()).pipe(
+          this.attempts.check(principal.user.id, this.now()).pipe(
             Effect.match({
               onFailure: (failure) => failure.retryAfterSeconds,
               onSuccess: () => 0,
             }),
           ),
         );
+        if (socket.data.closed) return;
         if (retrySeconds > 0)
           throw new WatchGroupsBusy(
             "Too many attempts. Try again shortly.",
@@ -581,29 +718,15 @@ export class WatchGroups {
             throw new Error("This group is no longer available");
         }
         if (socket.data.closed) return;
-        if (group.state.members.length >= 32) throw new WatchGroupsBusy("This group is full", 5000);
+        const alreadyJoined = socket.data.groupId === group.state.id;
+        if (!alreadyJoined && group.state.members.length >= 32)
+          throw new WatchGroupsBusy("This group is full", 5000);
         if (action.type === "create" && this.groups.size >= 64)
           throw new Error("Too many watch groups. Try again later.");
-        this.leave(socket);
-        this.groups.set(group.state.id, group);
-        group.emptySince = null;
-        socket.data.groupId = group.state.id;
-        group.state = {
-          ...group.state,
-          members: [
-            ...group.state.members,
-            { id: socket.data.id, displayName: principal.user.displayName },
-          ],
-        };
-        const playback = group.state.playback;
-        if (socket.data.readiness && playback !== null) {
-          if (playback.waitingFor !== undefined) {
-            // Keep the position and revision: existing members are already buffering there.
-            group.state = {
-              ...group.state,
-              playback: { ...playback, waitingFor: [...playback.waitingFor, socket.data.id] },
-            };
-          } else this.hold(group, group.state.revision);
+        if (!alreadyJoined) {
+          this.leave(socket);
+          this.groups.set(group.state.id, group);
+          this.enterGroup(socket, group, principal.user.displayName);
         }
         this.directory();
         await this.publish(group);
@@ -613,7 +736,7 @@ export class WatchGroups {
         const previous = group.state;
         const details = Schema.decodeUnknownSync(CatalogItemDetails)(
           await Effect.runPromise(
-            this.services.catalog.itemDetails(principal, action.itemId, false, Date.now()),
+            this.services.catalog.itemDetails(principal, action.itemId, false, this.now()),
           ),
         );
         await Effect.runPromise(
@@ -621,7 +744,7 @@ export class WatchGroups {
             principal,
             details.item.libraryId,
             "playback:control",
-            Date.now(),
+            this.now(),
           ),
         );
         if (socket.data.closed || socket.data.groupId !== group.state.id) return;

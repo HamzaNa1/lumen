@@ -43,8 +43,8 @@ export const watchFixture = async () => {
       watchAuthentication: () => ({ token: session.accessToken }),
     });
   };
-  const connect = async (server: WatchConnection) => {
-    const client = new WatchGroupClient(server, () => undefined);
+  const connect = async (server: WatchConnection, readiness = false) => {
+    const client = new WatchGroupClient(server, () => undefined, readiness);
     clients.push(client);
     client.connect();
     await eventually(() => client.status.connection === "connected");
@@ -64,8 +64,11 @@ export const watchFixture = async () => {
 };
 
 export const watchProxy = (origin: URL) => {
-  type Connection = { upstream: WebSocket; ready: Promise<void> };
+  type Connection = { upstream: WebSocket; ready: Promise<void>; detached: boolean };
+  const retained = new Set<WebSocket>();
   const sockets = new Set<import("bun").ServerWebSocket<Connection>>();
+  let stallServerMessages = false;
+  const stalledMessages: { socket: import("bun").ServerWebSocket<Connection>; raw: string }[] = [];
   let dropJoin = false;
   let busyJoin = false;
   let retryAfterMs = 20;
@@ -85,17 +88,23 @@ export const watchProxy = (origin: URL) => {
       const ready = new Promise<void>((resolve) =>
         upstream.addEventListener("open", () => resolve(), { once: true }),
       );
-      if (server.upgrade(request, { data: { upstream, ready } })) return;
+      if (server.upgrade(request, { data: { upstream, ready, detached: false } })) return;
       upstream.close();
       return new Response(null, { status: 400 });
     },
     websocket: {
       open(socket) {
         sockets.add(socket);
-        socket.data.upstream.onmessage = (event) => socket.send(String(event.data));
+        socket.data.upstream.onmessage = (event) => {
+          if (socket.data.detached) return;
+          const raw = String(event.data);
+          if (stallServerMessages) stalledMessages.push({ socket, raw });
+          else socket.send(raw);
+        };
         socket.data.upstream.onclose = () => socket.close();
       },
       async message(socket, message) {
+        if (socket.data.detached) return;
         const raw = String(message);
         const request = JSON.parse(raw) as { requestId?: string; action?: { type?: string } };
         if (stopStalled && request.action?.type === "stop") {
@@ -124,12 +133,34 @@ export const watchProxy = (origin: URL) => {
       },
       close(socket) {
         sockets.delete(socket);
-        socket.data.upstream.close();
+        if (!socket.data.detached) socket.data.upstream.close();
       },
     },
   });
   return {
     origin: server.url.toString(),
+    stallServerMessages() {
+      stallServerMessages = true;
+    },
+    hasStalledReady() {
+      return stalledMessages.some(({ raw }) => JSON.parse(raw).type === "ready");
+    },
+    releaseServerMessages() {
+      stallServerMessages = false;
+      for (const { socket, raw } of stalledMessages.splice(0)) {
+        if (!socket.data.detached) socket.send(raw);
+      }
+    },
+    retainUpstreamAndDisconnect() {
+      const upstreams: WebSocket[] = [];
+      for (const socket of sockets) {
+        socket.data.detached = true;
+        retained.add(socket.data.upstream);
+        upstreams.push(socket.data.upstream);
+        socket.close();
+      }
+      return upstreams;
+    },
     stallStop() {
       stopStalled = true;
     },
@@ -149,6 +180,7 @@ export const watchProxy = (origin: URL) => {
       for (const socket of sockets) socket.close();
     },
     async close() {
+      for (const upstream of retained) upstream.close();
       await server.stop(true);
     },
   };

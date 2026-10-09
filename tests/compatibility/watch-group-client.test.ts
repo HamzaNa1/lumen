@@ -142,3 +142,143 @@ test("an action the server refuses is withdrawn from what the viewer sees", asyn
     await fixture.close();
   }
 });
+
+test.each([true, false])(
+  "automatic rejoin replaces a retained upstream (already held: %s)",
+  async (held) => {
+    const fixture = await watchFixture();
+    const proxy = watchProxy(fixture.running.server.url);
+    try {
+      const account = await fixture.login();
+      const viewer = await fixture.connect(
+        {
+          serverOrigin: proxy.origin,
+          watchAuthentication: account.watchAuthentication,
+        },
+        true,
+      );
+      const friend = await fixture.connect(await fixture.login(), true);
+      await viewer.action({ type: "create", name: "Retained connection", password: "together" });
+      const groupId = viewer.status.group?.id ?? "";
+      await friend.action({ type: "join", groupId, password: "together" });
+      await viewer.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
+      await friend.action({ type: "ready", revision: viewer.status.group?.revision ?? 0 });
+      // The old viewer is the only remaining wait. Replacing it must not release that hold.
+      await eventually(() => viewer.status.group?.playback?.waitingFor?.length === 1);
+      if (!held) {
+        await viewer.action({ type: "ready", revision: viewer.status.group?.revision ?? 0 });
+        await eventually(() => viewer.status.group?.playback?.paused === false);
+      }
+      const revision = viewer.status.group?.revision ?? 0;
+      const oldMemberId = viewer.status.memberId;
+      await viewer.action({
+        type: "buffer",
+        itemId: fixture.itemId,
+        aheadSeconds: 30,
+        toEnd: false,
+      });
+      const retained = proxy.retainUpstreamAndDisconnect();
+      expect(retained[0]?.readyState).toBe(WebSocket.OPEN);
+      await eventually(
+        () =>
+          viewer.status.connection === "connected" &&
+          viewer.status.memberId !== oldMemberId &&
+          viewer.status.group?.id === groupId,
+      );
+      expect(viewer.status.group?.members).toHaveLength(2);
+      expect(viewer.status.group?.members.some((member) => member.id === oldMemberId)).toBe(false);
+      expect(viewer.status.group?.revision).toBe(revision + (held ? 0 : 1));
+      expect(viewer.status.group?.playback?.paused).toBe(true);
+      const expectedWait = held
+        ? [viewer.status.memberId]
+        : [viewer.status.memberId, friend.status.memberId];
+      expect(viewer.status.group?.playback?.waitingFor).toHaveLength(expectedWait.length);
+      expect(viewer.status.group?.playback?.waitingFor).toEqual(
+        expect.arrayContaining(expectedWait),
+      );
+      expect(viewer.status.buffers.some((buffer) => buffer.memberId === oldMemberId)).toBe(false);
+      await viewer.action({
+        type: "buffer",
+        itemId: fixture.itemId,
+        aheadSeconds: 30,
+        toEnd: false,
+      });
+      await friend.action({
+        type: "buffer",
+        itemId: fixture.itemId,
+        aheadSeconds: 30,
+        toEnd: false,
+      });
+      if (!held)
+        await friend.action({ type: "ready", revision: viewer.status.group?.revision ?? 0 });
+      await viewer.action({ type: "ready", revision: viewer.status.group?.revision ?? 0 });
+      await eventually(
+        () => viewer.status.group?.playback?.paused === false && viewer.status.buffers.length === 2,
+      );
+      await eventually(() => retained[0]?.readyState === WebSocket.CLOSED);
+      expect(viewer.status.group?.members).toHaveLength(2);
+    } finally {
+      await proxy.close();
+      await fixture.close();
+    }
+  },
+);
+
+test("a lost leave request does not resume membership on the next connection", async () => {
+  const fixture = await watchFixture();
+  const proxy = watchProxy(fixture.running.server.url);
+  try {
+    const account = await fixture.login();
+    const viewer = await fixture.connect({
+      serverOrigin: proxy.origin,
+      watchAuthentication: account.watchAuthentication,
+    });
+    const friend = await fixture.connect(await fixture.login());
+    await viewer.action({ type: "create", name: "Leaving", password: "" });
+    await friend.action({ type: "join", groupId: viewer.status.group?.id ?? "", password: "" });
+    const memberId = viewer.status.memberId;
+    proxy.retainUpstreamAndDisconnect();
+    await viewer.action({ type: "leave" }).catch(() => undefined);
+    await eventually(
+      () => viewer.status.connection === "connected" && viewer.status.memberId !== memberId,
+    );
+    await eventually(() => friend.status.group?.members.length === 1);
+    expect(viewer.status.group).toBeNull();
+    expect(viewer.rejoining).toBe(false);
+  } finally {
+    await proxy.close();
+    await fixture.close();
+  }
+});
+
+test("leaving after a reconnect handshake withdraws its already-sent resume intent", async () => {
+  const fixture = await watchFixture();
+  const proxy = watchProxy(fixture.running.server.url);
+  try {
+    const account = await fixture.login();
+    const viewer = await fixture.connect({
+      serverOrigin: proxy.origin,
+      watchAuthentication: account.watchAuthentication,
+    });
+    const friend = await fixture.connect(await fixture.login());
+    await viewer.action({ type: "create", name: "Leaving during authentication", password: "" });
+    await friend.action({ type: "join", groupId: viewer.status.group?.id ?? "", password: "" });
+    proxy.stallServerMessages();
+    proxy.retainUpstreamAndDisconnect();
+    await eventually(() => proxy.hasStalledReady());
+    expect(viewer.status.connection).toBe("connecting");
+    // The server accepted the resume intent, but the client has not received authentication.
+    await viewer.action({ type: "leave" }).catch(() => undefined);
+    proxy.releaseServerMessages();
+    await eventually(
+      () =>
+        viewer.status.connection === "connected" &&
+        viewer.status.group === null &&
+        friend.status.group?.members.length === 1,
+    );
+    expect(viewer.rejoining).toBe(false);
+  } finally {
+    await proxy.close();
+    await fixture.close();
+  }
+});

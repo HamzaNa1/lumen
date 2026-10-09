@@ -1,6 +1,8 @@
 import {
   initialWatchStatus,
   WatchMessage,
+  WATCH_CONNECTION_REPLACED,
+  WATCH_HEARTBEAT_INTERVAL_MS,
   type WatchAction,
   type WatchGroup,
   type WatchStatus,
@@ -34,6 +36,7 @@ class WatchRequestRejected extends Error {
 }
 
 export class WatchGroupClient {
+  private readonly clientId = randomId();
   private socket: WebSocket | null = null;
   private stopped = false;
   private rejoinTimer: ReturnType<typeof setTimeout> | undefined;
@@ -90,14 +93,20 @@ export class WatchGroupClient {
     const socket = new WebSocket(url);
     this.socket = socket;
     const timeout = setTimeout(() => socket.close(), 7000);
-    socket.onopen = () =>
+    let resumeGroupId: string | undefined;
+    socket.onopen = () => {
+      if (this.socket !== socket || this.stopped) return;
+      resumeGroupId = this.desiredGroup?.groupId;
       socket.send(
         JSON.stringify({
           ...this.connection.watchAuthentication(),
           ...(this.readiness ? { readiness: true } : {}),
           buffers: true,
+          clientId: this.clientId,
+          ...(resumeGroupId === undefined ? {} : { resumeGroupId }),
         }),
       );
+    };
     socket.onmessage = (event) => {
       if (this.socket !== socket) return;
       try {
@@ -123,8 +132,14 @@ export class WatchGroupClient {
               return;
             }
             void this.request({ type: "ping", sentAtMs: Date.now() }).catch(() => socket.close());
-          }, 5000);
-          void this.rejoin();
+          }, WATCH_HEARTBEAT_INTERVAL_MS);
+          // A leave can arrive while authentication is in flight, after resume intent was
+          // sent. Withdraw any transferred membership before recovering the current intent.
+          if (resumeGroupId !== undefined && this.desiredGroup?.groupId !== resumeGroupId)
+            void this.request({ type: "leave" })
+              .then(() => this.rejoin())
+              .catch(() => socket.close());
+          else void this.rejoin();
         } else if (message.type === "reply") {
           const pending = this.pending.get(message.requestId);
           if (pending !== undefined) {
@@ -150,8 +165,13 @@ export class WatchGroupClient {
       }
     };
     socket.onerror = () => socket.close();
-    socket.onclose = () => {
+    socket.onclose = (event) => {
       clearTimeout(timeout);
+      if (this.socket === socket && event.code === WATCH_CONNECTION_REPLACED) {
+        this.close();
+        this.update({ connection: "unavailable", error: "Watch client connected elsewhere." });
+        return;
+      }
       this.disconnected(socket);
     };
   }
