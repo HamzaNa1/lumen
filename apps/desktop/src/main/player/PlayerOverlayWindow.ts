@@ -1,5 +1,6 @@
 import { BrowserWindow } from "electron";
 import { MacPlayerFocus } from "./MacPlayerFocus";
+import { observePlayerFocus, playerContentBounds } from "./PlayerWindowState";
 
 export class PlayerOverlayWindow {
   readonly window: BrowserWindow;
@@ -48,7 +49,10 @@ export class PlayerOverlayWindow {
       if (!this.window.isDestroyed()) this.window.hide();
     });
     parent.on("restore", () => this.show());
-    parent.on("focus", () => this.show());
+    const stopObservingFocus = observePlayerFocus(parent, this.window, (focused) => {
+      if (focused) this.show();
+    });
+    this.window.once("closed", stopObservingFocus);
     parent.once("closed", () => {
       if (!this.window.isDestroyed()) this.window.destroy();
     });
@@ -79,6 +83,11 @@ export class PlayerOverlayWindow {
     if (!this.window.isDestroyed() && this.window.isVisible()) this.window.moveTop();
   }
 
+  syncBounds(): void {
+    if (this.window.isDestroyed() || this.parent.isDestroyed()) return;
+    this.window.setBounds(playerContentBounds(this.parent));
+  }
+
   private show(): void {
     if (
       this.window.isDestroyed() ||
@@ -94,8 +103,7 @@ export class PlayerOverlayWindow {
   }
 
   private sync(): void {
-    if (this.window.isDestroyed() || this.parent.isDestroyed()) return;
-    this.window.setBounds(this.parent.getContentBounds());
+    this.syncBounds();
     if (this.visible) this.moveAboveVideo();
   }
 }

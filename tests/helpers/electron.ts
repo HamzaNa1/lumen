@@ -6,8 +6,13 @@ export const ipcHandlers = new Map<string, IpcHandler>();
 // share this shape so a later test can use IPC after a native-window test has loaded it.
 export const electronTestExports = {
   BaseWindow: class {},
+  BrowserWindow: class {},
   app: { getVersion: () => "test" },
-  screen: {},
+  screen: {
+    getDisplayMatching: (bounds: { x: number; y: number; width: number; height: number }) => ({
+      bounds,
+    }),
+  },
   clipboard: {},
   ipcMain: {
     handle: (name: string, handler: IpcHandler) => ipcHandlers.set(name, handler),

@@ -74,14 +74,7 @@ jobs:
       - name: Bundle MPV (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: |
-          choco install mpvio.portable --version 0.41.0 --yes --no-progress
-          "LUMEN_MPV_VERSION=0.41.0" >> $env:GITHUB_ENV
-          $source = Get-ChildItem "$env:ChocolateyInstall\lib\mpvio.portable\tools" -Filter mpv.exe -Recurse | Select-Object -First 1
-          if ($null -eq $source) { throw "Chocolatey did not install mpv.exe" }
-          $native = "apps/desktop/resources/native"
-          New-Item -ItemType Directory -Force -Path $native | Out-Null
-          Copy-Item "$($source.DirectoryName)\*" $native -Recurse -Force
+        run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
       - name: Seal and verify native MPV files
         shell: bash
         run: |

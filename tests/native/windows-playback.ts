@@ -15,7 +15,7 @@ import {
   nativeImage,
   screen,
 } from "electron";
-import { load } from "koffi";
+import { load, out, pointer, struct } from "koffi";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -93,6 +93,13 @@ async function run(): Promise<void> {
   const user32 = load("user32.dll");
   const getSystemMetrics = user32.func("int __stdcall GetSystemMetrics(int)");
   const isWindow = user32.func("int __stdcall IsWindow(uintptr_t)");
+  const rectType = struct("PlayerSmokeRect", {
+    left: "int32_t",
+    top: "int32_t",
+    right: "int32_t",
+    bottom: "int32_t",
+  });
+  const getWindowRect = user32.func("GetWindowRect", "int", ["uintptr_t", out(pointer(rectType))]);
   await new Promise<void>((resolve) => upstream.listen(0, "127.0.0.1", resolve));
   const address = upstream.address();
   assert(address && typeof address !== "string");
@@ -169,7 +176,16 @@ async function run(): Promise<void> {
     progress: async () => undefined,
   } as unknown as ServerClient;
 
-  async function inspect(label: string, sampleX = 0.5): Promise<boolean> {
+  async function inspect(
+    label: string,
+    sampleX = 0.5,
+    bottomEdge?: "video" | "gradient",
+  ): Promise<boolean> {
+    if (bottomEdge === "gradient") {
+      await overlay.window.webContents.executeJavaScript(
+        `window.dispatchEvent(new MouseEvent('mousemove'))`,
+      );
+    }
     await delay(750);
     const active = Reflect.get(controller, "active") as { ipc: MpvIpc };
     await active.ipc
@@ -222,6 +238,59 @@ async function run(): Promise<void> {
     for (let i = 0; i < bitmap.length; i += 4) {
       if (bitmap[i + 2] > 150 && bitmap[i + 1] < 80 && bitmap[i] < 80) redPixels++;
     }
+    if (bottomEdge !== undefined) {
+      // One-to-one desktop pixels are required to detect a single exposed row.
+      assert.equal(scaleX, 1);
+      assert.equal(scaleY, 1);
+      const monitor = screen.dipToScreenRect(
+        parent,
+        screen.getDisplayMatching(parent.getBounds()).bounds,
+      );
+      const row = (offset: number): number => {
+        const pixels = thumbnail
+          .crop({
+            x: monitor.x + Math.floor(monitor.width / 2) - 40,
+            y: monitor.y + monitor.height - 1 - offset,
+            width: 80,
+            height: 1,
+          })
+          .toBitmap();
+        let red = 0;
+        for (let i = 2; i < pixels.length; i += 4) red += pixels[i] ?? 0;
+        return red / 80;
+      };
+      const bottom = row(0);
+      const above = row(1);
+      observations.push({ label: `${label}-edge`, bottom, above, expected: bottomEdge });
+      if (bottomEdge === "video")
+        assert(bottom > 150, "The fixture does not cover the last monitor row");
+      else {
+        assert(bottom < 90 && bottom > 20, "The gradient does not cover the last video row");
+        assert(Math.abs(bottom - above) < 12, "A bright seam remains below the controls gradient");
+        assert.deepEqual(
+          overlay.window.getBounds(),
+          screen.getDisplayMatching(parent.getBounds()).bounds,
+        );
+        const host = Reflect.get(surface, "host") as { getNativeWindowHandle(): Buffer };
+        for (const handle of [
+          overlay.window.getNativeWindowHandle(),
+          host.getNativeWindowHandle(),
+        ]) {
+          const rect = { left: 0, top: 0, right: 0, bottom: 0 };
+          assert(getWindowRect(handle.readBigUInt64LE(), rect));
+          assert.deepEqual(
+            rect,
+            {
+              left: monitor.x,
+              top: monitor.y,
+              right: monitor.x + monitor.width,
+              bottom: monitor.y + monitor.height,
+            },
+            "The video and controls must both cover the full monitor",
+          );
+        }
+      }
+    }
     observations.push({
       label,
       properties,
@@ -268,6 +337,28 @@ async function run(): Promise<void> {
     }
   }
 
+  async function inspectFullscreenFocusCycles(): Promise<void> {
+    const state = controller.getState();
+    assert(state);
+    await controller.pause(state.sessionId, true);
+    const { ipc } = Reflect.get(controller, "active") as { ipc: MpvIpc };
+    // Fill the monitor with the solid red fixture, including its last row.
+    await ipc.command(["set_property", "panscan", 1]);
+    overlay.setVisible(false);
+    visible.push(await inspect("fullscreen-edge-uncovered", 0.5, "video"));
+    overlay.setVisible(true);
+    for (let cycle = 1; cycle <= 3; cycle++) {
+      await inspectUnfocused(`fullscreen-away-${cycle}`);
+      visible.push(await inspect(`fullscreen-parent-return-${cycle}`, 0.5, "gradient"));
+      overlay.window.focus();
+      await delay(100);
+      assert(overlay.window.isFocused(), "The controls window did not acquire focus");
+      visible.push(await inspect(`fullscreen-controls-return-${cycle}`, 0.5, "gradient"));
+    }
+    await ipc.command(["set_property", "panscan", 0]);
+    await controller.pause(state.sessionId, false);
+  }
+
   for (let iteration = 0; iteration < 3; iteration++) {
     await controller.start({ client, connectionId: "test", itemId: "test-item" });
     visible.push(await inspect(`play-${iteration}`));
@@ -290,6 +381,7 @@ async function run(): Promise<void> {
       await delay(250);
       syncSurface();
       visible.push(await inspect("fullscreen"));
+      if (scale === "1") await inspectFullscreenFocusCycles();
       parent.setFullScreen(false);
       await delay(250);
       syncSurface();
@@ -338,8 +430,15 @@ async function run(): Promise<void> {
       assert.equal(sample.speed, speed);
       const pitch = JSON.parse(await controller.audioDiagnostics(state.sessionId));
       assert.equal(pitch.properties["audio-pitch-correction"], true);
-      assert.deepEqual(pitch.properties.af.map((filter: { name: string }) => filter.name), ["scaletempo2"]);
-      observations.push({ label: `watch-speed-${fixture.name}-${speed}`, sample, pitch: pitch.properties });
+      assert.deepEqual(
+        pitch.properties.af.map((filter: { name: string }) => filter.name),
+        ["scaletempo2"],
+      );
+      observations.push({
+        label: `watch-speed-${fixture.name}-${speed}`,
+        sample,
+        pitch: pitch.properties,
+      });
     }
     await controller.stop();
     const audio = readFileSync(join(evidence, `audio-${index}.pcm`));
@@ -492,7 +591,7 @@ const timeout = setTimeout(() => {
   observations.push({ error: "Smoke test timed out" });
   writeFileSync(join(evidence, "results.json"), JSON.stringify(observations, null, 2));
   app.exit(1);
-}, 90_000);
+}, 120_000);
 void run().then(
   () => finish(0),
   (error: unknown) => {

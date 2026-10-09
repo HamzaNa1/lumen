@@ -49,8 +49,49 @@ class FakeBaseWindow {
   }
 }
 
-mock.module("electron", () => ({ ...electronTestExports, BaseWindow: FakeBaseWindow }));
+class FakeOverlayWindow extends EventEmitter {
+  private bounds = { x: 0, y: 0, width: 1, height: 1 };
+  private visible = false;
+  private destroyed = false;
+  focused = false;
+  readonly webContents = Object.assign(new EventEmitter(), {
+    setWindowOpenHandler: () => undefined,
+  });
+  setBounds(bounds: typeof this.bounds): void {
+    this.bounds = bounds;
+  }
+  getBounds(): typeof this.bounds {
+    return this.bounds;
+  }
+  isDestroyed(): boolean {
+    return this.destroyed;
+  }
+  isVisible(): boolean {
+    return this.visible;
+  }
+  isFocused(): boolean {
+    return this.focused;
+  }
+  showInactive(): void {
+    this.visible = true;
+  }
+  hide(): void {
+    this.visible = false;
+  }
+  moveTop(): void {}
+  destroy(): void {
+    this.destroyed = true;
+    this.emit("closed");
+  }
+}
+
+mock.module("electron", () => ({
+  ...electronTestExports,
+  BaseWindow: FakeBaseWindow,
+  BrowserWindow: FakeOverlayWindow,
+}));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
+const { PlayerOverlayWindow } = await import("../../apps/desktop/src/main/player/PlayerOverlayWindow");
 const { PlayerController, startNativePlayer, watchPlayerFor } = await import("../../apps/desktop/src/main/player/PlayerController");
 const { MpvIpc, MpvIpcFailure } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
@@ -448,6 +489,7 @@ describe("Windows player surface visibility", () => {
       isVisible: () => state.visible,
       getContentSize: () => [800, 600],
       getContentBounds: () => ({ x: 0, y: 0, width: 800, height: 600 }),
+      isFullScreen: () => false,
     });
     const overlayWindow = Object.assign(new EventEmitter(), {
       isDestroyed: () => false,
@@ -456,6 +498,7 @@ describe("Windows player surface visibility", () => {
     const surface = new MpvSurface(parent as unknown as BrowserWindow, {
       window: overlayWindow,
       moveAboveVideo: () => undefined,
+      syncBounds: () => undefined,
     } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
     const host = new FakeBaseWindow();
     // Exercise the Windows surface policy on any OS without loading user32.dll.
@@ -494,6 +537,7 @@ describe("Windows player surface visibility", () => {
 
         state.focused = true;
         parent.emit("focus");
+        await Bun.sleep(10);
         expect(host.isVisible()).toBe(true);
         expect(show).toHaveBeenCalledTimes(1);
       } finally {
@@ -544,6 +588,112 @@ describe("Windows player surface visibility", () => {
     });
   });
 });
+
+describe("player activation geometry", () => {
+  test("repeated fullscreen activation keeps both windows on the complete monitor viewport", async () => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    Object.defineProperty(process, "platform", { value: "win32" });
+    const monitor = { x: -800, y: 120, width: 800, height: 600 };
+    let nativeBounds = { ...monitor };
+    let focused = true;
+    let fullscreen = true;
+    const parent = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      isFocused: () => focused,
+      isFullScreen: () => fullscreen,
+      isMinimized: () => false,
+      isVisible: () => true,
+      getBounds: () => nativeBounds,
+      getContentBounds: () => nativeBounds,
+      getContentSize: () => [nativeBounds.width, nativeBounds.height],
+    });
+    const display = spyOn(electronTestExports.screen, "getDisplayMatching").mockReturnValue({
+      bounds: monitor,
+    });
+    const overlay = new PlayerOverlayWindow(parent as unknown as BrowserWindow, "preload");
+    const controls = overlay.window as unknown as FakeOverlayWindow;
+    const surface = new MpvSurface(parent as unknown as BrowserWindow, overlay);
+    const host = new FakeBaseWindow();
+    const setBounds = spyOn(host, "setBounds");
+    Reflect.set(surface, "host", host);
+    try {
+      overlay.setVisible(true);
+      surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
+      surface.prepare();
+      for (let cycle = 0; cycle < 3; cycle++) {
+        focused = false;
+        parent.emit("blur");
+        nativeBounds = { ...monitor, height: monitor.height - 1 };
+        await Bun.sleep(10);
+
+        // Parent focus arrives before Chromium restores its bounds. No resize
+        // event follows this restoration, so synchronous copies stay short.
+        focused = true;
+        parent.emit("focus");
+        nativeBounds = { ...monitor };
+        await Bun.sleep(10);
+        expect(controls.getBounds()).toEqual(monitor);
+        expect(setBounds).toHaveBeenLastCalledWith(monitor);
+
+        // Controls can activate instead of the fullscreen HWND. Chromium then
+        // keeps the owner's native bounds short, while its viewport stays full.
+        focused = false;
+        parent.emit("blur");
+        controls.focused = true;
+        controls.emit("focus");
+        nativeBounds = { ...monitor, height: monitor.height - 1 };
+        await Bun.sleep(10);
+        expect(controls.getBounds()).toEqual(monitor);
+        expect(setBounds).toHaveBeenLastCalledWith(monitor);
+        controls.focused = false;
+        controls.emit("blur");
+      }
+      fullscreen = false;
+      nativeBounds = { x: 42, y: 60, width: 640, height: 480 };
+      surface.setBounds({ x: 8, y: 12, width: 600, height: 400 });
+      expect(controls.getBounds()).toEqual(nativeBounds);
+      expect(setBounds).toHaveBeenLastCalledWith({ x: 50, y: 72, width: 600, height: 400 });
+    } finally {
+      surface.dispose();
+      controls.destroy();
+      display.mockRestore();
+      if (platform) Object.defineProperty(process, "platform", platform);
+    }
+  });
+
+  test("windowed activation copies geometry after the native focus handler finishes", async () => {
+    await withDeferredWindowedActivation();
+  });
+});
+
+async function withDeferredWindowedActivation(): Promise<void> {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  Object.defineProperty(process, "platform", { value: "win32" });
+  let bounds = { x: 0, y: 0, width: 800, height: 599 };
+  const parent = Object.assign(new EventEmitter(), {
+    isDestroyed: () => false,
+    isFocused: () => true,
+    isFullScreen: () => false,
+    isMinimized: () => false,
+    isVisible: () => true,
+    getContentBounds: () => bounds,
+  });
+  const overlay = new PlayerOverlayWindow(parent as unknown as BrowserWindow, "preload");
+  try {
+    overlay.setVisible(true);
+    parent.emit("focus");
+    bounds = { ...bounds, height: 600 };
+    await Bun.sleep(10);
+    expect(overlay.window.getBounds()).toEqual(bounds);
+    parent.emit("focus");
+    overlay.window.destroy();
+    await Bun.sleep(10);
+    expect(parent.listenerCount("focus")).toBe(0);
+  } finally {
+    if (!overlay.window.isDestroyed()) overlay.window.destroy();
+    if (platform) Object.defineProperty(process, "platform", platform);
+  }
+}
 
 describe("player surface shutdown", () => {
   for (const stopped of [false, true]) {
