@@ -109,7 +109,10 @@ export const MetadataMatch = ({
           event.preventDefault();
           setChosen(undefined);
           save.reset();
-          setQuery(text.trim() || null);
+          const next = text.trim() || null;
+          // Searching again for the same thing is a retry, which a state change alone would skip.
+          if (next === query) void options.refetch();
+          else setQuery(next);
         }}
       >
         <TextField
