@@ -9,7 +9,6 @@ import {
   libraryRootStates,
   mediaSources,
   Repositories,
-  scanJobs,
   scanRuns,
   serverLibraryWatchState,
 } from "@lumen/database";
@@ -20,6 +19,7 @@ import { mapRepositoryError } from "../core/Cause";
 import { conflict, notFound } from "../core/Errors";
 import { assertNoRootOverlap, canonicalPath } from "../core/Paths";
 import { newUuid } from "../core/Security";
+import { insertScanRun } from "../jobs/ScanJobs";
 import { purgeLibrary, purgeSources } from "./CatalogPurge";
 import type { CreateLibraryBody, CreateRootBody, UpdateLibraryBody } from "../http/Schemas";
 import type { Schema } from "effect";
@@ -322,29 +322,22 @@ export const makeLibraryService = Effect.gen(function* () {
             })
             .where(eq(libraryRootStates.rootId, root.id));
         }
-        yield* transaction.insert(scanRuns).values({
-          id: runId,
-          libraryId: input.libraryId,
-          mode: input.mode,
-          status: "running",
-          startedAtMs: nowMs,
-          createdAtMs: nowMs,
-        });
-        for (const root of enabledRoots) {
-          yield* transaction.insert(scanJobs).values({
-            id: newUuid(),
+        yield* insertScanRun(
+          transaction,
+          {
             runId,
-            parentJobId: null,
-            sourceId: null,
-            dedupeKey: `discover:${root.id}`,
-            operation: "discover",
-            status: "queued",
-            priority: 100,
-            attempts: 0,
-            maxAttempts: 3,
-            availableAtMs: nowMs,
-          });
-        }
+            libraryId: input.libraryId,
+            mode: input.mode,
+            jobs: enabledRoots.map((root) => ({
+              sourceId: null,
+              dedupeKey: `discover:${root.id}`,
+              operation: "discover",
+              priority: 100,
+              maxAttempts: 3,
+            })),
+          },
+          nowMs,
+        );
         for (const observation of observations) {
           yield* transaction
             .update(serverLibraryWatchState)

@@ -24,6 +24,8 @@ const messages: Readonly<Record<string, string>> = {
   job_failed:
     "{operation} failed after {durationMs} (attempt {attempt}/{maxAttempts}); no retries remaining",
   job_leases_recovered: "Recovered {count} expired job leases",
+  job_lease_lost: "{operation} outcome discarded; its lease expired and the job was reassigned",
+  scan_runs_reconciled: "Finished {count} library scans that had no jobs left to run",
   metadata_backfill_queued: "Queued metadata refresh for {count} media sources",
   background_task_failed: "{operation} failed ({failures} consecutive failures)",
   background_task_recovered: "{operation} recovered after {failures} failures",
