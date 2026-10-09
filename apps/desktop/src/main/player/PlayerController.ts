@@ -3,7 +3,6 @@ import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import type {
   AudioOutput,
-  BufferedRange,
   PlayerSession,
   PlayerState,
   IpcPlayerSurfaceBounds,
@@ -21,6 +20,7 @@ import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
 import { sampleMpvPlayback } from "./MpvSynchronization";
+import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
@@ -39,33 +39,6 @@ interface MpvTrack {
   readonly type: "audio" | "sub";
   readonly "ff-index"?: number;
 }
-
-const bufferedRangesFrom = (value: unknown): ReadonlyArray<BufferedRange> => {
-  if (value === null || typeof value !== "object" || !("seekable-ranges" in value)) return [];
-  const ranges = value["seekable-ranges"];
-  if (!Array.isArray(ranges)) return [];
-  return ranges.flatMap((range: unknown) => {
-    if (range === null || typeof range !== "object" || !("start" in range) || !("end" in range))
-      return [];
-    const { start, end } = range;
-    return typeof start === "number" &&
-      Number.isFinite(start) &&
-      start >= 0 &&
-      typeof end === "number" &&
-      Number.isFinite(end) &&
-      end > start
-      ? [{ startSeconds: start, endSeconds: end }]
-      : [];
-  });
-};
-
-/** How far MPV's demuxer has read beyond what is playing; infinite once it has read to the end. */
-const bufferedAheadFrom = (value: unknown): number => {
-  if (value === null || typeof value !== "object") return 0;
-  if ("eof" in value && value.eof === true) return Number.POSITIVE_INFINITY;
-  const duration = "cache-duration" in value ? value["cache-duration"] : null;
-  return typeof duration === "number" && Number.isFinite(duration) && duration > 0 ? duration : 0;
-};
 
 interface ActiveSession {
   readonly session: PlayerSession;
@@ -403,7 +376,7 @@ export class PlayerController extends EventEmitter {
     const cache = await this.command(active, ["get_property", "demuxer-cache-state"]);
     const starved = (await this.command(active, ["get_property", "paused-for-cache"])) === true;
     // MPV is set to read ahead of playback, paused or not, so it never rests short of that.
-    return { aheadSeconds: bufferedAheadFrom(cache), starved, settled: false };
+    return { aheadSeconds: mpvBufferedAhead(cache), starved, settled: false };
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {
@@ -670,7 +643,7 @@ export class PlayerController extends EventEmitter {
         positionSeconds: typeof value === "number" && value >= 0 ? value : state.positionSeconds,
         durationSeconds:
           typeof duration === "number" && duration >= 0 ? duration : state.durationSeconds,
-        bufferedRanges: bufferedRangesFrom(cache),
+        bufferedRanges: mpvBufferedRanges(cache) ?? state.bufferedRanges,
         paused: paused === true,
         ended: ended === true,
       };
@@ -695,8 +668,8 @@ export class PlayerController extends EventEmitter {
               : "buffer_sample",
             {
               sessionId: active.session.sessionId,
-              aheadSeconds: Number.isFinite(bufferedAheadFrom(cache))
-                ? bufferedAheadFrom(cache)
+              aheadSeconds: Number.isFinite(mpvBufferedAhead(cache))
+                ? mpvBufferedAhead(cache)
                 : null,
               pausedForCache: pausedForCache === true,
               seeking: seeking === true,
