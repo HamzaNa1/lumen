@@ -253,6 +253,7 @@ const startConfiguredServer = async (
     const web = makeStaticWebHandler(config, logger);
     const watchGroups = new WatchGroups(httpServices, (request, origin) =>
       isTrustedOrigin(request, origin, config),
+      { logger: logger.child({ component: "watch-groups" }) },
     );
     const listeningServer = Bun.serve<WatchSocketData>({
       hostname: config.host,

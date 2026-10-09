@@ -6,6 +6,27 @@ const Position = Schema.Number.check(
   Schema.isBetween({ minimum: 0, maximum: 604800 }),
 );
 const Password = Schema.String.check(Schema.isMaxLength(128));
+export const WATCH_HEARTBEAT_INTERVAL_MS = 5000;
+/** Application messages, rather than WebSocket control frames, keep a member alive. */
+export const WATCH_MEMBER_TIMEOUT_MS = 30_000;
+/** A superseded connection must not reconnect and evict its successor. */
+export const WATCH_CONNECTION_REPLACED = 4001;
+const WatchAbilities = {
+  readiness: Schema.optional(Schema.Boolean),
+  buffers: Schema.optional(Schema.Boolean),
+  /** Unique to one WatchGroupClient, retained across its reconnects; absent on older clients. */
+  clientId: Schema.optional(Uuid),
+  /** Resume only this membership. An explicit leave clears the client's resume intent. */
+  resumeGroupId: Schema.optional(Uuid),
+};
+export const WatchConnect = Schema.Union([
+  Schema.Struct({
+    token: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(512)),
+    ...WatchAbilities,
+  }),
+  Schema.Struct({ session: Schema.Literal("cookie"), ...WatchAbilities }),
+]);
+
 /** How much media a member must hold beyond the group's position before the group plays on. */
 export const WATCH_READY_BUFFER_SECONDS = 5;
 /** How often a member's player says how it is buffered, while it has the group's media on. */
