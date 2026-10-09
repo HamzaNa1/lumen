@@ -256,6 +256,31 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   await expect.poll(() => page.evaluate(() => document.querySelector("video"))).toBeNull();
 });
 
+test("clicking the video toggles playback without taking focus", async ({
+  page,
+  browserName,
+}, testInfo) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  await playFilm(page);
+  const paused = () => page.evaluate(() => document.querySelector("video")?.paused);
+
+  await page.mouse.move(700, 400);
+  await expect(page.getByRole("button", { name: "Pause playback" })).toBeVisible();
+  await page.mouse.click(700, 400);
+  await expect.poll(paused).toBe(true);
+  await expect(page.getByRole("button", { name: "Resume playback" })).toBeVisible();
+  // A key press is what turns a pointer-given focus into a visible focus ring.
+  await page.keyboard.press("Space");
+  await expect.poll(paused).toBe(false);
+  expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
+  await testInfo.attach("player after click", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+});
+
 test("the player controls hide once the viewer is done with the settings", async ({
   page,
   browserName,
