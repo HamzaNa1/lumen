@@ -16,6 +16,7 @@ import {
   screen,
 } from "electron";
 import { load, out, pointer, struct } from "koffi";
+import { initialWatchStatus } from "../../packages/contracts/src/index";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -132,6 +133,7 @@ async function run(): Promise<void> {
   };
   ipcMain.handle("player:state", () => controller.getState());
   ipcMain.handle("player:display-state", () => display);
+  ipcMain.handle("watch:state", () => initialWatchStatus());
   ipcMain.handle("player:fullscreen-state", () => false);
   ipcMain.handle("player:audio-output", (_event, input) =>
     controller.setAudioOutput(input.sessionId, input.output),
@@ -481,16 +483,16 @@ async function run(): Promise<void> {
   );
   await delay(100);
   await overlay.window.webContents.executeJavaScript(
-    `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Copy audio diagnostics').click()`,
+    `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Export playback diagnostics').click()`,
   );
   let copyStatus = "";
-  for (let attempt = 0; attempt < 40 && copyStatus !== "Audio diagnostics copied."; attempt++) {
+  for (let attempt = 0; attempt < 40 && copyStatus !== "Playback diagnostics exported."; attempt++) {
     await delay(50);
     copyStatus = await overlay.window.webContents.executeJavaScript(
       `document.querySelector('#media-player-settings-panel [role="status"]')?.textContent ?? ''`,
     );
   }
-  assert.equal(copyStatus, "Audio diagnostics copied.");
+  assert.equal(copyStatus, "Playback diagnostics exported.");
   const copiedText = await clipboard.readText();
   const copied = JSON.parse(copiedText);
   assert.equal(copied.audioOutput, "stereo");
