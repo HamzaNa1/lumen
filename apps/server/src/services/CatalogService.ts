@@ -15,8 +15,6 @@ import {
   itemWatchStates,
   mediaSourceAvailability,
   mediaSources,
-  providerRecords,
-  seriesEpisodeOrders,
   Repositories,
   tracks,
 } from "@lumen/database";
@@ -29,7 +27,6 @@ import { decodeMetadataList, decodeMetadataMap } from "../media/MetadataJson";
 import type { AuthPrincipal } from "./AuthService";
 import type {
   FavoriteBody,
-  ItemMatchBody,
   ItemMetadataBody,
   ItemWatchStateBody,
   PaginationQuery,
@@ -42,7 +39,6 @@ type FavoriteInput = Schema.Schema.Type<typeof FavoriteBody>;
 type PaginationInput = Schema.Schema.Type<typeof PaginationQuery>;
 type SearchInput = Schema.Schema.Type<typeof SearchQuery>;
 type ItemMetadataInput = Schema.Schema.Type<typeof ItemMetadataBody>;
-type ItemMatchInput = Schema.Schema.Type<typeof ItemMatchBody>;
 type ItemWatchInput = Schema.Schema.Type<typeof ItemWatchStateBody>;
 
 // Where the viewer left off; finished items have nothing to resume.
@@ -84,7 +80,6 @@ export interface CatalogServiceShape {
     input: ItemMetadataInput,
     nowMs: number,
   ) => Effect.Effect<void, unknown>;
-  readonly matchItem: (itemId: string, input: ItemMatchInput) => Effect.Effect<void, unknown>;
   readonly listItemChildren: (
     principal: AuthPrincipal,
     itemId: string,
@@ -262,65 +257,6 @@ export const makeCatalogService = Effect.gen(function* () {
       }),
     );
   });
-
-  const matchItem: CatalogServiceShape["matchItem"] = Effect.fn("Catalog.matchItem")(
-    function* (itemId, input) {
-      const item = yield* database
-        .select({ kind: catalogItems.kind })
-        .from(catalogItems)
-        .where(eq(catalogItems.id, itemId))
-        .get();
-      if (item == null || (item.kind !== "movie" && item.kind !== "show"))
-        return yield* badRequest("Choose a movie or series");
-      const descendantIds = yield* repositories.catalog.descendantItemIds(itemId);
-      yield* database.transaction((transaction) =>
-        Effect.gen(function* () {
-          const existing = yield* transaction
-            .select({
-              externalIdsJson: catalogItemMetadata.externalIdsJson,
-              fieldSourcesJson: catalogItemMetadata.fieldSourcesJson,
-              lockedFieldsJson: catalogItemMetadata.lockedFieldsJson,
-            })
-            .from(catalogItemMetadata)
-            .where(eq(catalogItemMetadata.itemId, itemId))
-            .get();
-          const previousTmdb = decodeMetadataMap(existing?.externalIdsJson ?? null).tmdb;
-          if (previousTmdb !== input.tmdbId)
-            yield* transaction
-              .delete(seriesEpisodeOrders)
-              .where(eq(seriesEpisodeOrders.itemId, itemId));
-          const externalIds = {
-            ...decodeMetadataMap(existing?.externalIdsJson ?? null),
-            tmdb: input.tmdbId,
-          };
-          const fieldSources = {
-            ...decodeMetadataMap(existing?.fieldSourcesJson ?? null),
-            tmdb: "user",
-          };
-          const locks = new Set(decodeMetadataList(existing?.lockedFieldsJson ?? null));
-          locks.add("tmdb");
-          const metadata = {
-            itemId,
-            externalIdsJson: JSON.stringify(externalIds),
-            fieldSourcesJson: JSON.stringify(fieldSources),
-            lockedFieldsJson: JSON.stringify([...locks]),
-          };
-          yield* transaction.insert(catalogItemMetadata).values(metadata).onConflictDoUpdate({
-            target: catalogItemMetadata.itemId,
-            set: metadata,
-          });
-          yield* transaction
-            .delete(providerRecords)
-            .where(
-              and(
-                inArray(providerRecords.itemId, descendantIds),
-                eq(providerRecords.provider, "tmdb"),
-              ),
-            );
-        }),
-      );
-    },
-  );
 
   const listItemChildren: CatalogServiceShape["listItemChildren"] = Effect.fn(
     "Catalog.listItemChildren",
@@ -793,7 +729,6 @@ export const makeCatalogService = Effect.gen(function* () {
   return {
     listItems,
     updateItemMetadata,
-    matchItem,
     listItemChildren,
     nextUp,
     itemDetails,

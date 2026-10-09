@@ -10,6 +10,10 @@ import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
 
 const groupId = "641eb9d6b234b9007ac67063";
 const nativeFetch = globalThis.fetch;
+const poster = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9t8ncAAAAASUVORK5CYII=",
+  "base64",
+);
 let running: RunningServer | undefined;
 let root: string | undefined;
 afterEach(async () => {
@@ -87,11 +91,32 @@ const fixture = async (episodeCount = 2) => {
   let finalAttempts = 0;
   globalThis.fetch = (async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
+    if (url.hostname === "image.tmdb.org")
+      return url.pathname === "/t/p/w92/poster.png"
+        ? new Response(poster, { headers: { "content-type": "image/png" } })
+        : new Response(null, { status: 404 });
     if (url.hostname !== "api.themoviedb.org") return nativeFetch(input, init);
     if (upstream.unavailable) return new Response(null, { status: 503 });
     const path = url.pathname;
     if (path === "/3/find/tt5607616") return Response.json({ tv_results: [{ id: 65942 }] });
     if (path === "/3/tv/65942" || path === "/3/tv/123") return Response.json({ name: "Re:ZERO" });
+    if (path === "/3/search/tv")
+      return Response.json({
+        results:
+          url.searchParams.get("query") === "Re:ZERO"
+            ? [
+                {
+                  id: 65942,
+                  name: "Re:ZERO",
+                  first_air_date: "2016-04-04",
+                  overview: "Starting life in another world",
+                  poster_path: "/poster.png",
+                },
+                { id: 123, name: "Re:ZERO Break Time", first_air_date: "", poster_path: "/gone.png" },
+                { id: 124, first_air_date: "2020-01-01" },
+              ]
+            : [],
+      });
     if (path.endsWith("/episode_groups"))
       return Response.json({
         results: path.includes("65942")
@@ -297,6 +322,55 @@ test("provider errors do not reset an order, and rematching a show clears its ol
     groupId: null,
     groups: [],
   });
+}, 30_000);
+
+test("admins see possible matches, pick one by search or ID, and the refresh follows it", async () => {
+  const f = await fixture();
+  const matchPath = `items/${f.show}/match`;
+  expect(await (await f.request(matchPath)).json()).toEqual({
+    tmdbId: null,
+    query: "Re:ZERO",
+    candidates: [
+      {
+        tmdbId: "65942",
+        title: "Re:ZERO",
+        year: 2016,
+        overview: "Starting life in another world",
+        posterUrl: `data:image/png;base64,${poster.toString("base64")}`,
+      },
+      { tmdbId: "123", title: "Re:ZERO Break Time", year: null, overview: "", posterUrl: null },
+    ],
+  });
+  expect(await (await f.request(`${matchPath}?query=123`)).json()).toEqual({
+    tmdbId: null,
+    query: "123",
+    candidates: [{ tmdbId: "123", title: "Re:ZERO", year: null, overview: "", posterUrl: null }],
+  });
+  expect((await (await f.request(`${matchPath}?query=999`)).json()).candidates).toEqual([]);
+  expect((await f.request(matchPath, "GET", undefined, f.viewer)).status).toBe(403);
+  expect((await f.request(matchPath, "PUT", { tmdbId: "123" }, f.viewer)).status).toBe(403);
+  expect((await f.request(`items/${f.season}/match`)).status).toBe(400);
+  expect((await f.request(`${matchPath}?query=${"a".repeat(201)}`)).status).toBe(400);
+
+  const unknown = await f.request(matchPath, "PUT", { tmdbId: "999" });
+  expect(unknown.status).toBe(400);
+  expect((await unknown.json()).message).toContain("no series with ID 999");
+  expect((await f.request(matchPath, "PUT", { tmdbId: "12345678901" })).status).toBe(400);
+  expect((await (await f.request(matchPath)).json()).tmdbId).toBeNull();
+
+  expect((await f.waitForRun(await f.request(matchPath, "PUT", { tmdbId: "123" }))).status).toBe(
+    "succeeded",
+  );
+  expect((await (await f.request(matchPath)).json()).tmdbId).toBe("123");
+  expect((await (await f.request(`items/${f.episodes[0]}`)).json()).item.title).toBe(
+    "Default episode 1",
+  );
+
+  f.upstream.unavailable = true;
+  expect((await f.request(matchPath)).status).toBe(503);
+  expect((await f.request(matchPath, "PUT", { tmdbId: "65942" })).status).toBe(503);
+  f.upstream.unavailable = false;
+  expect((await (await f.request(matchPath)).json()).tmdbId).toBe("123");
 }, 30_000);
 
 test("a non-404 season failure still fails the refresh and preserves local episode metadata", async () => {

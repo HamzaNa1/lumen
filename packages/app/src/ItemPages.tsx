@@ -14,7 +14,7 @@ import {
   plural,
   resumeLabel,
 } from "./format";
-import { ShowSettings } from "./ShowSettings";
+import { ItemSettings } from "./ItemSettings";
 import {
   CatalogCard,
   itemDetailsQuery,
@@ -299,6 +299,7 @@ const ListError = ({ onRetry }: { readonly onRetry: () => void }): React.ReactEl
 );
 
 const MovieDetails = ({ itemId }: { readonly itemId: string }): React.ReactElement => {
+  const { account } = useWorkspace();
   const navigate = useNavigate();
   const details = useItemDetails(itemId);
   if (details.data === undefined) return <DetailsPending query={details} />;
@@ -320,6 +321,14 @@ const MovieDetails = ({ itemId }: { readonly itemId: string }): React.ReactEleme
           <>
             {playableKinds.has(item.kind) ? <PlayButton item={current} /> : null}
             {item.kind === "movie" ? <WatchedButton item={current} /> : null}
+            {item.kind === "movie" && account.role === "admin" ? (
+              <ItemSettings
+                itemId={item.id}
+                kind="movie"
+                title={item.title}
+                metadataProviderConfigured={details.data.metadataProviderConfigured}
+              />
+            ) : null}
           </>
         }
       />
@@ -363,8 +372,9 @@ const ShowDetails = ({ itemId }: { readonly itemId: string }): React.ReactElemen
           <>
             {next === null ? null : <PlayButton item={next} />}
             {account.role === "admin" ? (
-              <ShowSettings
+              <ItemSettings
                 itemId={item.id}
+                kind="show"
                 title={item.title}
                 metadataProviderConfigured={details.data.metadataProviderConfigured}
               />

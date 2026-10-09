@@ -182,6 +182,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       search: (query, libraryId) => api.search(query, libraryId),
       episodeOrder: (itemId) => api.episodeOrder(itemId),
       setEpisodeOrder: (itemId, selection) => api.setEpisodeOrder(itemId, selection),
+      matchOptions: (itemId, query) => api.matchOptions(itemId, query),
+      setMatch: (itemId, selection) => api.setMatch(itemId, selection),
     },
     admin: {
       listUsers: () => api.users(),

@@ -40,6 +40,8 @@ const api: DesktopBridge = {
     episodeOrder: (itemId) => invoke("library:episode-order", itemId),
     setEpisodeOrder: (itemId, selection) =>
       invoke("library:set-episode-order", { itemId, selection }),
+    matchOptions: (itemId, query) => invoke("library:match-options", { itemId, query }),
+    setMatch: (itemId, selection) => invoke("library:set-match", { itemId, selection }),
     itemChildren: (itemId, cursor = null) => invoke("library:item-children", { itemId, cursor }),
     setWatched: (itemId, completed) => invoke("library:set-watched", { itemId, completed }),
     nextUp: (itemId) => invoke("library:next-up", itemId),

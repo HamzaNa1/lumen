@@ -59,6 +59,8 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     search: bridge.library.search,
     episodeOrder: bridge.library.episodeOrder,
     setEpisodeOrder: bridge.library.setEpisodeOrder,
+    matchOptions: bridge.library.matchOptions,
+    setMatch: bridge.library.setMatch,
   },
   admin: bridge.admin,
   artwork: { url: bridge.library.artwork },

@@ -12,6 +12,8 @@ import {
   type CatalogItemPage,
   EpisodeOrderOptions,
   type EpisodeOrderSelection,
+  MetadataMatchOptions,
+  type MetadataMatchSelection,
   HomeContent,
   JobLogEntry,
   type LibraryAccess,
@@ -544,6 +546,26 @@ export class ServerApi {
   ): Promise<{ readonly runId: string }> {
     return this.request(
       `/api/v1/items/${encodeURIComponent(itemId)}/episode-order`,
+      jsonBody("PUT", selection),
+      runSchema,
+    );
+  }
+
+  async matchOptions(itemId: string, query: string | null): Promise<MetadataMatchOptions> {
+    const params = query === null ? "" : `?${new URLSearchParams({ query }).toString()}`;
+    return this.request(
+      `/api/v1/items/${encodeURIComponent(itemId)}/match${params}`,
+      {},
+      MetadataMatchOptions,
+    );
+  }
+
+  async setMatch(
+    itemId: string,
+    selection: MetadataMatchSelection,
+  ): Promise<{ readonly runId: string }> {
+    return this.request(
+      `/api/v1/items/${encodeURIComponent(itemId)}/match`,
       jsonBody("PUT", selection),
       runSchema,
     );
