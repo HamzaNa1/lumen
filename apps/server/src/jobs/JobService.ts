@@ -1,4 +1,5 @@
 import { ServerLogger } from "../core/Logger";
+import type { ScanJob } from "@lumen/contracts";
 import { backgroundTask, logJobOutcome } from "./JobLogging";
 import {
   catalogItems,
@@ -10,9 +11,8 @@ import {
   providerRecords,
   Repositories,
   scanJobs,
-  scanRuns,
 } from "@lumen/database";
-import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, notExists, sql } from "drizzle-orm";
 import type { ServerConfig } from "../config/Config";
 import { Cause, Clock, Context, Effect, Exit, Layer, Option } from "effect";
 import { newUuid } from "../core/Security";
@@ -22,16 +22,39 @@ import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner"
 import { MetadataSettings } from "../services/MetadataSettings";
 import { LibraryWatcher } from "./LibraryWatcher";
 import {
+  cleanupParkedAtMs,
+  completeScanJob,
+  failScanJob,
+  insertScanRun,
+  noFollowUp,
+  reconcileScanRuns,
+  recoverScanJobs,
+  type ScanJobFollowUp,
+  type ScanJobSettlement,
+  type ScanRunSettlement,
+} from "./ScanJobs";
+import {
   claimNextServerJob,
   completeServerJob,
   failServerJob,
   LIBRARY_WATCHER_JOB,
   recoverServerJobs,
-  retryDelayMs,
 } from "./ServerJobs";
 
-// Cleanup jobs wait at this availability until settleCleanups releases them.
-const cleanupParkedAtMs = Number.MAX_SAFE_INTEGER;
+// Lease recovery and run reconciliation read every active job and run, so they
+// run on this cadence rather than on every pass of the worker's idle loop.
+const recoveryIntervalMs = 5_000;
+const recoveryBatchSize = 100;
+
+// `nowMs` is the caller's clock when an attempt began. Advancing it by the
+// elapsed clock time keeps claim latency and run time in the lease deadline
+// and in the recorded completion, failure, and retry times.
+const attemptClock = (nowMs: number) =>
+  Effect.map(Clock.Clock, (clock) => {
+    const startedAtNanos = clock.currentTimeNanosUnsafe();
+    return () =>
+      nowMs + Math.ceil(Number(clock.currentTimeNanosUnsafe() - startedAtNanos) / 1_000_000);
+  });
 
 export interface JobServiceShape {
   readonly recover: (nowMs: number) => Effect.Effect<number, unknown>;
@@ -70,27 +93,22 @@ export const makeJobService = (config?: ServerConfig) =>
         if (sources.length === 0) throw new Error("Item has no source");
         const runId = newUuid();
         yield* database.transaction((transaction) =>
-          Effect.gen(function* () {
-            yield* transaction.insert(scanRuns).values({
-              id: runId,
+          insertScanRun(
+            transaction,
+            {
+              runId,
               libraryId: item.libraryId,
               mode: "refresh",
-              status: "running",
-              startedAtMs: nowMs,
-              createdAtMs: nowMs,
-            });
-            for (const source of sources)
-              yield* transaction.insert(scanJobs).values({
-                id: newUuid(),
-                runId,
+              jobs: sources.map((source) => ({
                 sourceId: source.sourceId,
                 dedupeKey: `metadata:refresh:${source.sourceId}:${runId}`,
                 operation: "metadata",
                 priority: 300,
                 maxAttempts: 3,
-                availableAtMs: nowMs,
-              });
-          }),
+              })),
+            },
+            nowMs,
+          ),
         );
         return runId;
       },
@@ -141,99 +159,54 @@ export const makeJobService = (config?: ServerConfig) =>
           ),
         )
         .orderBy(asc(mediaSources.libraryId), asc(mediaSources.id));
-      const runs = new Map<string, string>();
+      const sourcesByLibrary = new Map<string, Array<string>>();
       for (const source of sources) {
-        let runId = runs.get(source.libraryId);
-        if (runId === undefined) {
-          const run = yield* repositories.scanning.startRun({
-            runId: newUuid(),
-            libraryId: source.libraryId,
-            mode: "refresh",
-            startedAtMs: nowMs,
-          });
-          runId = run.id;
-          runs.set(source.libraryId, runId);
-        }
-        yield* repositories.scanning.createJob({
-          id: newUuid(),
-          runId,
-          parentJobId: null,
-          sourceId: source.sourceId,
-          dedupeKey: `metadata:startup:${source.sourceId}`,
-          operation: "metadata",
-          priority: 50,
-          maxAttempts: 3,
-          availableAtMs: nowMs,
-        });
+        const sourceIds = sourcesByLibrary.get(source.libraryId) ?? [];
+        sourceIds.push(source.sourceId);
+        sourcesByLibrary.set(source.libraryId, sourceIds);
+      }
+      for (const [libraryId, sourceIds] of sourcesByLibrary) {
+        yield* database.transaction((transaction) =>
+          insertScanRun(
+            transaction,
+            {
+              runId: newUuid(),
+              libraryId,
+              mode: "refresh",
+              jobs: sourceIds.map((sourceId) => ({
+                sourceId,
+                dedupeKey: `metadata:startup:${sourceId}`,
+                operation: "metadata",
+                priority: 50,
+                maxAttempts: 3,
+              })),
+            },
+            nowMs,
+          ),
+        );
       }
       return sources.length;
     });
 
-    // A source moved between roots is only matched once the destination root is
-    // discovered, so cleanups stay parked until every discovery in the run ends.
-    // If any discovery failed, a moved source may be unmatched: delete nothing.
-    const settleCleanups = Effect.fn("JobService.settleCleanups")(function* (
-      runId: string,
-      nowMs: number,
-    ) {
-      const discoveries = yield* database
-        .select({ status: scanJobs.status })
-        .from(scanJobs)
-        .where(and(eq(scanJobs.runId, runId), eq(scanJobs.operation, "discover")));
-      if (discoveries.some((job) => job.status === "queued" || job.status === "running")) return;
-      const failed = discoveries.some((job) => job.status !== "succeeded");
-      const parked = and(
-        eq(scanJobs.runId, runId),
-        eq(scanJobs.operation, "cleanup"),
-        eq(scanJobs.status, "queued"),
-        eq(scanJobs.availableAtMs, cleanupParkedAtMs),
-      );
-      if (failed) {
-        const cancelled = yield* database
-          .update(scanJobs)
-          .set({
-            status: "cancelled",
-            availableAtMs: nowMs,
-            startedAtMs: nowMs,
-            finishedAtMs: nowMs,
-          })
-          .where(parked)
-          .returning({ id: scanJobs.id });
-        if (cancelled.length > 0)
-          logger.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
-      } else {
-        yield* database.update(scanJobs).set({ availableAtMs: nowMs }).where(parked);
-      }
-    });
+    const logSettlement = (runId: string, settlement: ScanRunSettlement) => {
+      if (settlement.cleanupsCancelled > 0)
+        logger.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
+      if (settlement.run !== null)
+        logger[settlement.run.status === "failed" ? "error" : "info"]("scan_run_finished", {
+          runId,
+          result: settlement.run.status,
+        });
+    };
 
     const recover: JobServiceShape["recover"] = Effect.fn("JobService.recover")(function* (nowMs) {
-      const rows = yield* database
-        .select({ id: scanJobs.id, runId: scanJobs.runId, operation: scanJobs.operation })
-        .from(scanJobs)
-        .where(
-          and(
-            eq(scanJobs.status, "running"),
-            isNotNull(scanJobs.lockedAtMs),
-            lt(scanJobs.lockedAtMs, nowMs - leaseMs),
-          ),
-        );
-      for (const row of rows) {
-        yield* database
-          .update(scanJobs)
-          .set({
-            status: sql`case when ${scanJobs.attempts} < ${scanJobs.maxAttempts} then 'queued' else 'failed' end`,
-            lockedAtMs: null,
-            lockedBy: null,
-            startedAtMs: null,
-            finishedAtMs: null,
-            availableAtMs: nowMs,
-            errorCode: "LEASE_EXPIRED",
-          })
-          .where(and(eq(scanJobs.id, row.id), eq(scanJobs.status, "running")));
-        if (row.operation === "discover") yield* settleCleanups(row.runId, nowMs);
-      }
-      const recovered = rows.length + (yield* recoverServerJobs(database, nowMs));
+      const scans = yield* recoverScanJobs(database, { nowMs, leaseMs, limit: recoveryBatchSize });
+      const recovered = scans.requeued + scans.failed + (yield* recoverServerJobs(database, nowMs));
       if (recovered > 0) logger.warn("job_leases_recovered", { count: recovered });
+      const reconciled = yield* reconcileScanRuns(database, { nowMs, limit: recoveryBatchSize });
+      for (const { runId, ...settlement } of [...scans.settlements, ...reconciled])
+        logSettlement(runId, settlement);
+      const repaired = reconciled.filter((settlement) => settlement.run !== null).length;
+      if (repaired > 0) logger.warn("scan_runs_reconciled", { count: repaired });
       return recovered;
     });
 
@@ -241,14 +214,8 @@ export const makeJobService = (config?: ServerConfig) =>
     const leaseStopMarginMs = Math.min(5_000, Math.floor(leaseMs / 10));
 
     const runServerJob = Effect.fn("JobService.runServerJob")(function* (nowMs: number) {
-      // `nowMs` is the caller's clock when this attempt began. Advancing it by the
-      // elapsed clock time keeps claim latency and run time in the lease deadline
-      // and in the recorded completion, failure, and retry times.
-      const clock = yield* Clock.Clock;
-      const startedAtNanos = clock.currentTimeNanosUnsafe();
+      const currentMs = yield* attemptClock(nowMs);
       const startedAt = performance.now();
-      const currentMs = () =>
-        nowMs + Math.ceil(Number(clock.currentTimeNanosUnsafe() - startedAtNanos) / 1_000_000);
       const job = yield* claimNextServerJob(database, {
         workerId: `server-${newUuid()}`,
         nowMs,
@@ -289,37 +256,85 @@ export const makeJobService = (config?: ServerConfig) =>
       return true;
     });
 
-    const finishRunIfDone = Effect.fn("JobService.finishRunIfDone")(function* (
-      runId: string,
-      nowMs: number,
-    ) {
-      const remaining = yield* database
-        .select({ count: count() })
-        .from(scanJobs)
-        .where(and(eq(scanJobs.runId, runId), inArray(scanJobs.status, ["queued", "running"])))
-        .get();
-      if ((remaining?.count ?? 0) === 0) {
-        const failure = yield* database
-          .select({ errorMessage: scanJobs.errorMessage })
-          .from(scanJobs)
-          .where(and(eq(scanJobs.runId, runId), eq(scanJobs.status, "failed")))
-          .get();
-        yield* repositories.scanning.finishRun({
-          runId: runId,
-          status: failure === undefined ? "succeeded" : "failed",
-          nowMs,
-          errorCode: failure === undefined ? null : "JOB_FAILED",
-          errorMessage: failure?.errorMessage ?? null,
-        });
-        logger[failure === undefined ? "info" : "error"]("scan_run_finished", {
-          runId,
-          result: failure === undefined ? "succeeded" : "failed",
-        });
+    const runScanJob = Effect.fn("JobService.runScanJob")(function* (job: ScanJob) {
+      if (job.operation === "discover") {
+        const rootId = job.dedupeKey.slice("discover:".length);
+        const discovery = yield* scanner.discover(job.runId, rootId);
+        if (!discovery.complete || discovery.generation === null) {
+          logger.warn("scan_cleanup_skipped", {
+            runId: job.runId,
+            rootId,
+            reason: "discovery_incomplete",
+          });
+          return noFollowUp;
+        }
+        return {
+          ...noFollowUp,
+          jobs: [
+            {
+              parentJobId: job.id,
+              sourceId: null,
+              dedupeKey: cleanupJobKey(rootId, discovery.generation),
+              operation: "cleanup",
+              priority: 200,
+              maxAttempts: 3,
+              availableAtMs: cleanupParkedAtMs,
+            },
+          ],
+        } satisfies ScanJobFollowUp;
       }
+      if (job.operation === "probe") {
+        if (job.sourceId === null) throw new Error("Job has no source");
+        if (Option.isSome(ingest)) yield* ingest.value.ingest(job.sourceId);
+        if ((yield* settings.tmdbKey()) === null || Option.isNone(tmdb)) return noFollowUp;
+        const source = yield* database
+          .select({ libraryId: mediaSources.libraryId })
+          .from(mediaSources)
+          .innerJoin(libraryProfiles, eq(libraryProfiles.libraryId, mediaSources.libraryId))
+          .where(
+            and(
+              eq(mediaSources.id, job.sourceId),
+              inArray(libraryProfiles.kind, ["movies", "shows"]),
+            ),
+          )
+          .get();
+        if (source == null) return noFollowUp;
+        return {
+          ...noFollowUp,
+          runs: [
+            {
+              runId: newUuid(),
+              libraryId: source.libraryId,
+              mode: "refresh",
+              jobs: [
+                {
+                  sourceId: job.sourceId,
+                  dedupeKey: `metadata:${job.sourceId}`,
+                  operation: "metadata",
+                  priority: 100,
+                  maxAttempts: 3,
+                },
+              ],
+            },
+          ],
+        } satisfies ScanJobFollowUp;
+      }
+      if (job.operation === "metadata") {
+        if (job.sourceId === null) throw new Error("Job has no source");
+        if (Option.isSome(tmdb)) yield* tmdb.value.enrichSource(job.sourceId);
+      } else if (job.operation === "cleanup") {
+        const { rootId, generation } = parseCleanupJobKey(job.dedupeKey);
+        yield* scanner.cleanup(job.runId, rootId, generation);
+      } else if (job.operation === "artwork" || job.operation === "analyze") {
+        if (job.sourceId !== null && Option.isSome(ingest))
+          yield* ingest.value.ingest(job.sourceId);
+      }
+      return noFollowUp;
     });
 
     const runOne: JobServiceShape["runOne"] = Effect.fn("JobService.runOne")(function* (nowMs) {
       if (yield* runServerJob(nowMs)) return true;
+      const currentMs = yield* attemptClock(nowMs);
       const job = yield* repositories.scanning.claimNextJob({
         workerId: `server-${newUuid()}`,
         nowMs,
@@ -336,129 +351,24 @@ export const makeJobService = (config?: ServerConfig) =>
         maxAttempts: job.maxAttempts,
       };
       logger.debug("job_started", fields);
-      const outcome = yield* Effect.exit(
-        Effect.gen(function* () {
-          if (job.operation === "discover") {
-            const rootId = job.dedupeKey.slice("discover:".length);
-            const discovery = yield* scanner.discover(job.runId, rootId);
-            if (!discovery.complete || discovery.generation === null) {
-              logger.warn("scan_cleanup_skipped", {
-                runId: job.runId,
-                rootId,
-                reason: "discovery_incomplete",
-              });
-              return;
-            }
-            yield* repositories.scanning
-              .createJob({
-                id: newUuid(),
-                runId: job.runId,
-                parentJobId: job.id,
-                sourceId: null,
-                dedupeKey: cleanupJobKey(rootId, discovery.generation),
-                operation: "cleanup",
-                priority: 200,
-                maxAttempts: 3,
-                availableAtMs: cleanupParkedAtMs,
-              })
-              .pipe(Effect.catch(() => Effect.void));
-          } else if (job.operation === "probe") {
-            if (job.sourceId === null) throw new Error("Job has no source");
-            if (Option.isSome(ingest)) yield* ingest.value.ingest(job.sourceId);
-            if ((yield* settings.tmdbKey()) !== null && Option.isSome(tmdb)) {
-              const source = yield* database
-                .select({ libraryId: mediaSources.libraryId })
-                .from(mediaSources)
-                .innerJoin(libraryProfiles, eq(libraryProfiles.libraryId, mediaSources.libraryId))
-                .where(
-                  and(
-                    eq(mediaSources.id, job.sourceId),
-                    inArray(libraryProfiles.kind, ["movies", "shows"]),
-                  ),
-                )
-                .get();
-              if (source != null) {
-                const enrichmentRun = yield* repositories.scanning.startRun({
-                  runId: newUuid(),
-                  libraryId: source.libraryId,
-                  mode: "refresh",
-                  startedAtMs: nowMs,
-                });
-                yield* repositories.scanning.createJob({
-                  id: newUuid(),
-                  runId: enrichmentRun.id,
-                  parentJobId: null,
-                  sourceId: job.sourceId,
-                  dedupeKey: `metadata:${job.sourceId}`,
-                  operation: "metadata",
-                  priority: 100,
-                  maxAttempts: 3,
-                  availableAtMs: nowMs,
-                });
-              }
-            }
-          } else if (job.operation === "metadata") {
-            if (job.sourceId === null) throw new Error("Job has no source");
-            if (Option.isSome(tmdb)) yield* tmdb.value.enrichSource(job.sourceId);
-          } else if (job.operation === "cleanup") {
-            const { rootId, generation } = parseCleanupJobKey(job.dedupeKey);
-            yield* scanner.cleanup(job.runId, rootId, generation);
-          } else if (job.operation === "artwork" || job.operation === "analyze") {
-            if (job.sourceId !== null && Option.isSome(ingest))
-              yield* ingest.value.ingest(job.sourceId);
-          }
-        }),
-      );
-      if (Exit.isSuccess(outcome)) {
-        yield* database
-          .update(scanJobs)
-          .set({
-            status: "succeeded",
-            errorCode: null,
-            errorMessage: null,
-            finishedAtMs: nowMs,
-            lockedAtMs: null,
-            lockedBy: null,
-          })
-          .where(
-            and(
-              eq(scanJobs.id, job.id),
-              eq(scanJobs.status, "running"),
-              eq(scanJobs.lockedBy, job.lockedBy ?? ""),
-            ),
-          );
-        if (job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
-        yield* finishRunIfDone(job.runId, nowMs);
-        logJobOutcome(logger, fields, outcome, startedAt);
-        return true;
-      } else {
+      const outcome = yield* Effect.exit(runScanJob(job));
+      let settlement: ScanJobSettlement;
+      if (Exit.isSuccess(outcome))
+        settlement = yield* completeScanJob(database, job, currentMs(), outcome.value);
+      else {
         const cause = Cause.squash(outcome.cause);
-        const retry = job.attempts < job.maxAttempts;
-        const delay = retryDelayMs(job.attempts);
-        yield* database
-          .update(scanJobs)
-          .set({
-            status: retry ? "queued" : "failed",
-            availableAtMs: retry ? nowMs + delay : job.availableAtMs,
-            startedAtMs: retry ? null : job.startedAtMs,
-            finishedAtMs: retry ? null : nowMs,
-            lockedAtMs: null,
-            lockedBy: null,
-            errorCode: "JOB_FAILED",
-            errorMessage: cause instanceof Error ? cause.message : "Job failed",
-          })
-          .where(
-            and(
-              eq(scanJobs.id, job.id),
-              eq(scanJobs.status, "running"),
-              eq(scanJobs.lockedBy, job.lockedBy ?? ""),
-            ),
-          );
-        if (!retry && job.operation === "discover") yield* settleCleanups(job.runId, nowMs);
-        if (!retry) yield* finishRunIfDone(job.runId, nowMs);
-        logJobOutcome(logger, fields, outcome, startedAt);
-        return true;
+        settlement = yield* failScanJob(
+          database,
+          job,
+          currentMs(),
+          cause instanceof Error ? cause.message : "Job failed",
+        );
       }
+      // Recovery handed the job to another worker, whose outcome is the one recorded.
+      if (!settlement.owned) logger.warn("job_lease_lost", fields);
+      logJobOutcome(logger, fields, outcome, startedAt);
+      logSettlement(job.runId, settlement);
+      return true;
     });
 
     const start = async (signal: AbortSignal): Promise<void> => {
@@ -472,9 +382,13 @@ export const makeJobService = (config?: ServerConfig) =>
       if (queued > 0) logger.info("metadata_backfill_queued", { count: queued });
       const recoverJobs = backgroundTask(logger, "job_recovery", () => recover(Date.now()), 0);
       const runJob = backgroundTask(logger, "job_dispatch", () => runOne(Date.now()), false);
+      let recoveryDueAt = 0;
       try {
         while (!signal.aborted) {
-          await recoverJobs();
+          if (performance.now() >= recoveryDueAt) {
+            await recoverJobs();
+            recoveryDueAt = performance.now() + recoveryIntervalMs;
+          }
           const didWork = await runJob();
           if (!didWork && !signal.aborted) await Bun.sleep(100);
         }
