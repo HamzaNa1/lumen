@@ -248,6 +248,57 @@ test("MPV reports how far it has read ahead, and when it has run out", async () 
 });
 
 describe("playback progress updates", () => {
+  test("publishes read-ahead even when MPV cannot seek within its cache", async () => {
+    await withPlayback(async ({ controller, properties, states }) => {
+      properties.set("demuxer-cache-state", {
+        "reader-pts": 12.5,
+        "cache-end": 45,
+        "seekable-ranges": [],
+      });
+      await controller.refreshState();
+      expect(states.at(-1)?.bufferedRanges).toEqual([{ startSeconds: 12.5, endSeconds: 45 }]);
+    });
+  });
+
+  test("a cache timeout preserves the last ranges while playback keeps updating", async () => {
+    await withPlayback(async ({ controller, properties, states, restart }) => {
+      properties.set("demuxer-cache-state", { "seekable-ranges": [{ start: 0, end: 30 }] });
+      await controller.refreshState();
+      const pending = Promise.withResolvers<unknown>();
+      properties.set("demuxer-cache-state", pending.promise);
+      properties.set("time-pos", 15);
+      await controller.refreshState();
+      expect(states.at(-1)).toMatchObject({
+        positionSeconds: 15,
+        bufferedRanges: [{ startSeconds: 0, endSeconds: 30 }],
+      });
+      // A reply arriving after its deadline cannot overwrite a newer successful sample.
+      properties.set("demuxer-cache-state", { "seekable-ranges": [{ start: 10, end: 45 }] });
+      await controller.refreshState();
+      pending.resolve({ "seekable-ranges": [] });
+      await Promise.resolve();
+      expect(controller.getState()?.bufferedRanges).toEqual([{ startSeconds: 10, endSeconds: 45 }]);
+      properties.set("demuxer-cache-state", null);
+      await controller.refreshState();
+      expect(controller.getState()?.bufferedRanges).toEqual([{ startSeconds: 10, endSeconds: 45 }]);
+      // Retained data belongs only to this session.
+      await restart();
+      await controller.refreshState();
+      expect(controller.getState()?.bufferedRanges).toEqual([]);
+    });
+  });
+
+  test("a successful empty cache sample clears ranges after a seek", async () => {
+    await withPlayback(async ({ controller, properties }) => {
+      properties.set("demuxer-cache-state", { "seekable-ranges": [{ start: 0, end: 30 }] });
+      await controller.refreshState();
+      await controller.seek("session-1", 50);
+      properties.set("demuxer-cache-state", { "seekable-ranges": [] });
+      await controller.refreshState();
+      expect(controller.getState()).toMatchObject({ positionSeconds: 50, bufferedRanges: [] });
+    });
+  });
+
   test("pausing saves the current MPV position without waiting for the reporting timer", async () => {
     await withPlayback(async ({ controller, properties, progress }) => {
       properties.set("time-pos", 27.5);
