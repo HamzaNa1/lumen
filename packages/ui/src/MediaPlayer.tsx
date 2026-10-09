@@ -178,20 +178,13 @@ export const MediaPlayer = ({
 
       <div className="media-player-frame">
         <div className="media-player-surface" ref={surfaceRef}>
-          <button
+          {/* Pointer-only: the console's play button and the Space shortcut cover the keyboard. */}
+          <div
             className="media-player-video-hit-target"
-            type="button"
-            aria-label={
-              settingsOpen
-                ? "Close playback settings"
-                : paused
-                  ? "Resume playback"
-                  : "Pause playback"
-            }
-            disabled={!settingsOpen && inactive}
+            aria-hidden="true"
             onClick={() => {
               if (settingsOpen) setSettingsOpen(false);
-              else onPause();
+              else if (!inactive) onPause();
             }}
           />
           <div className="media-player-placeholder">
