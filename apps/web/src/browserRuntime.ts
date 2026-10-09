@@ -11,6 +11,7 @@ import type { LumenRuntime, PlayerSurface } from "@lumen/client/runtime";
 import type { PlayerState, WatchStatus } from "@lumen/contracts";
 import { BrowserAccounts } from "./BrowserAccounts";
 import { HtmlMediaPlayer } from "./HtmlMediaPlayer";
+import { storedVolumeSettings } from "./volumeSettings";
 
 export interface BrowserRuntime extends LumenRuntime {
   readonly api: ServerApi;
@@ -64,6 +65,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     element: video,
     api,
     onState: playerStates.emit,
+    volumeSettings: storedVolumeSettings,
     onFailure: (cause) => {
       // The group must learn that this viewer's player failed, or leaving the player afterwards
       // would be taken as a request to stop playback for everyone.

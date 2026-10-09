@@ -1,5 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import { HtmlMediaPlayer, type MediaElementLike } from "../../apps/web/src/HtmlMediaPlayer";
+import {
+  HtmlMediaPlayer,
+  type MediaElementLike,
+  type VolumeSettingsStorage,
+} from "../../apps/web/src/HtmlMediaPlayer";
 import {
   PlaybackUnsupportedError,
   ServerHttpError,
@@ -7,7 +11,7 @@ import {
 } from "../../packages/client/src/index.ts";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
-import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState } from "../../packages/contracts/src/index.ts";
+import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState, type VolumeSettings } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
 
@@ -105,7 +109,10 @@ class FakeMedia implements MediaElementLike {
   }
 }
 
-const setup = (streams: PlayerSession["streams"] = []) => {
+const setup = (
+  streams: PlayerSession["streams"] = [],
+  volumeSettings?: VolumeSettingsStorage,
+) => {
   const element = new FakeMedia();
   const calls: string[] = [];
   const states: (PlayerState | null)[] = [];
@@ -171,11 +178,34 @@ const setup = (streams: PlayerSession["streams"] = []) => {
     api,
     onState: (state) => states.push(state),
     onFailure: (cause) => failures.push(cause.message),
+    ...(volumeSettings === undefined ? {} : { volumeSettings }),
     loadTimeoutMs: 80,
     playAnswerTimeoutMs: 80,
   });
   return { element, api, player, calls, states, failures };
 };
+
+describe("browser volume", () => {
+  test("the volume a viewer sets is kept and applied to whatever plays next", async () => {
+    let kept: VolumeSettings | null = null;
+    const storage: VolumeSettingsStorage = {
+      read: () => kept,
+      write: (settings) => {
+        kept = settings;
+      },
+    };
+    const first = setup([], storage);
+    await first.player.start({ itemId: "item-1" });
+    expect(first.player.getState()).toMatchObject({ volume: 100, muted: false });
+    await first.player.volume("session-1", 35.4, true);
+    expect(kept).toEqual({ volume: 35, muted: true });
+
+    const second = setup([], storage);
+    expect(second.element.volume).toBe(0.35);
+    await second.player.start({ itemId: "item-2" });
+    expect(second.player.getState()).toMatchObject({ volume: 35, muted: true });
+  });
+});
 
 describe("browser playback lifecycle", () => {
   test("plays with a grant in the element's source only, and reports the session's end", async () => {

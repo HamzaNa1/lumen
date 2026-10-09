@@ -19,6 +19,7 @@ import {
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
+import { AudioSettingsStore } from "./AudioSettingsStore";
 import { sampleMpvPlayback } from "./MpvSynchronization";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
@@ -29,6 +30,8 @@ export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
   readonly surface: MpvSurface;
   readonly onState: (state: PlayerState) => void;
+  /** Where the viewer's volume and audio output are kept; forgotten on exit when omitted. */
+  readonly audioSettings?: AudioSettingsStore;
 }
 
 interface MpvTrack {
@@ -131,24 +134,23 @@ export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
   private readonly surface: MpvSurface;
   private readonly onState: (state: PlayerState) => void;
+  private readonly audioSettings: AudioSettingsStore;
   private active: ActiveSession | null = null;
   private state: PlayerState | null = null;
   private refreshing: ActiveSession | null = null;
   private startGeneration = 0;
   private stopping: Promise<void> | null = null;
-  // Avoid relying on a Windows driver to downmix center/surround channels.
-  // Automatic output remains available for a correctly configured surround system.
   private diagnostics = new PlaybackDiagnostics();
   private starved = false;
   private intentionalPause = false;
   private lastBufferSampleMs = 0;
-  private audioOutput: AudioOutput = process.platform === "win32" ? "stereo" : "auto-safe";
 
   constructor(options: PlayerControllerOptions) {
     super();
     this.bridge = options.bridge;
     this.surface = options.surface;
     this.onState = options.onState;
+    this.audioSettings = options.audioSettings ?? AudioSettingsStore.inMemory();
   }
 
   async start(input: {
@@ -256,8 +258,11 @@ export class PlayerController extends EventEmitter {
         mpv.on("file-loaded", onLoaded);
       });
       void loaded.catch(() => undefined);
+      const { volume, muted, audioOutput } = this.audioSettings.current;
       try {
-        await ipc.command(["set_property", "audio-channels", this.audioOutput]);
+        await ipc.command(["set_property", "audio-channels", audioOutput]);
+        await ipc.command(["set_property", "volume", volume]);
+        await ipc.command(["set_property", "mute", muted ? "yes" : "no"]);
         await ipc.command(["set_property", "pause", "yes"]);
         await ipc.command(["loadfile", streamUrl, "replace"]);
         await loaded;
@@ -310,13 +315,13 @@ export class PlayerController extends EventEmitter {
         positionSeconds: startAtSeconds,
         durationSeconds: session.durationSeconds,
         bufferedRanges: [],
-        volume: 100,
-        muted: false,
+        volume,
+        muted,
         ended: false,
         streams,
         selectedAudioStreamId: selectedAudioStream?.id ?? null,
         selectedSubtitleStreamId: selectedSubtitleStream?.id ?? null,
-        audioOutput: this.audioOutput,
+        audioOutput,
       };
       active.selection = new TrackSelectionController({
         sourceId: session.sourceId,
@@ -417,6 +422,7 @@ export class PlayerController extends EventEmitter {
     this.command(active, ["set_property", "mute", muted ? "yes" : "no"]).catch((cause: unknown) =>
       this.emitError(cause),
     );
+    this.audioSettings.update({ volume: bounded, muted });
     this.state = { ...this.requireState(), volume: bounded, muted };
     this.publish();
     return this.requireState();
@@ -509,7 +515,7 @@ export class PlayerController extends EventEmitter {
       });
     });
     this.assertActive(sessionId);
-    this.audioOutput = output;
+    this.audioSettings.update({ audioOutput: output });
     this.state = { ...this.requireState(), audioOutput: output };
     this.publish();
     return this.requireState();

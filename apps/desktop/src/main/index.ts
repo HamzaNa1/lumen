@@ -6,6 +6,7 @@ import type { ServerClient } from "./api/ServerClient";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
 import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
+import { AudioSettingsStore } from "./player/AudioSettingsStore";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
 import { AppUpdates, supportsAutoUpdates } from "./updates/AppUpdates";
@@ -50,6 +51,9 @@ const bootstrap = async (): Promise<void> => {
   const installationId = await getOrCreateInstallationId(
     join(app.getPath("userData"), "installation.json"),
   );
+  const audioSettings = await AudioSettingsStore.open(
+    join(app.getPath("userData"), "audio-settings.json"),
+  );
   bridge = new PlaybackBridge();
   await bridge.listen();
   mainWindow = createMainWindow({ preloadPath });
@@ -57,6 +61,7 @@ const bootstrap = async (): Promise<void> => {
   player = new PlayerController({
     bridge,
     surface: new MpvSurface(mainWindow, overlay),
+    audioSettings,
     onState: (state) => {
       mainWindow?.webContents.send("player:state", state);
       if (!overlay.window.isDestroyed()) overlay.window.webContents.send("player:state", state);

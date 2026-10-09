@@ -15,7 +15,12 @@ import {
   PlaybackUnsupportedError,
   ServerHttpError,
 } from "@lumen/client";
-import type { PlayableStream, PlayerSession, PlayerState } from "@lumen/contracts";
+import type {
+  PlayableStream,
+  PlayerSession,
+  PlayerState,
+  VolumeSettings,
+} from "@lumen/contracts";
 
 /** The parts of an HTML media element the player drives. */
 export interface MediaElementLike {
@@ -64,12 +69,20 @@ export interface BrowserPlaybackApi {
   ) => Promise<void>;
 }
 
+export interface VolumeSettingsStorage {
+  /** Null when the viewer has not set a volume here, or it cannot be read. */
+  readonly read: () => VolumeSettings | null;
+  readonly write: (settings: VolumeSettings) => void;
+}
+
 export interface HtmlMediaPlayerOptions {
   readonly element: MediaElementLike;
   readonly api: BrowserPlaybackApi;
   readonly onState: (state: PlayerState | null) => void;
   /** Playback that had started can no longer continue. */
   readonly onFailure: (cause: Error) => void;
+  /** Where the viewer's volume is kept; forgotten with the page when omitted. */
+  readonly volumeSettings?: VolumeSettingsStorage;
   readonly loadTimeoutMs?: number;
   /** How long a command waits for the browser to answer a request to play. */
   readonly playAnswerTimeoutMs?: number;
@@ -151,6 +164,7 @@ export class HtmlMediaPlayer {
   private readonly api: BrowserPlaybackApi;
   private readonly onState: (state: PlayerState | null) => void;
   private readonly onFailure: (cause: Error) => void;
+  private readonly volumeSettings: VolumeSettingsStorage | null;
   private readonly loadTimeoutMs: number;
   private readonly playAnswerTimeoutMs: number;
   private active: ActiveSession | null = null;
@@ -173,6 +187,12 @@ export class HtmlMediaPlayer {
     this.api = options.api;
     this.onState = options.onState;
     this.onFailure = options.onFailure;
+    this.volumeSettings = options.volumeSettings ?? null;
+    const remembered = this.volumeSettings?.read() ?? null;
+    if (remembered !== null) {
+      this.element.volume = remembered.volume / 100;
+      this.element.muted = remembered.muted;
+    }
     this.loadTimeoutMs = options.loadTimeoutMs ?? LOAD_TIMEOUT_MS;
     this.playAnswerTimeoutMs = options.playAnswerTimeoutMs ?? PLAY_ANSWER_TIMEOUT_MS;
   }
@@ -260,8 +280,10 @@ export class HtmlMediaPlayer {
 
   async volume(sessionId: string, volume: number, muted: boolean): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
-    this.element.volume = Math.max(0, Math.min(100, Math.round(volume))) / 100;
+    const bounded = Math.max(0, Math.min(100, Math.round(volume)));
+    this.element.volume = bounded / 100;
     this.element.muted = muted;
+    this.volumeSettings?.write({ volume: bounded, muted });
     return this.publish(active);
   }
 

@@ -143,6 +143,13 @@ export type PlayerSession = Schema.Schema.Type<typeof PlayerSession>;
 export const AudioOutput = Schema.Literals(["stereo", "auto-safe"]);
 export type AudioOutput = Schema.Schema.Type<typeof AudioOutput>;
 
+/** How loud a viewer left the player, which a client keeps for whatever it plays next. */
+export const VolumeSettings = Schema.Struct({
+  volume: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
+  muted: Schema.Boolean,
+});
+export type VolumeSettings = Schema.Schema.Type<typeof VolumeSettings>;
+
 export const BufferedRange = Schema.Struct({
   startSeconds: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
   endSeconds: Schema.Number.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -156,8 +163,7 @@ export const PlayerState = Schema.Struct({
   positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   bufferedRanges: Schema.Array(BufferedRange),
-  volume: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
-  muted: Schema.Boolean,
+  ...VolumeSettings.fields,
   ended: Schema.Boolean,
   streams: Schema.Array(PlayableStream),
   selectedAudioStreamId: Schema.NullOr(Uuid),
