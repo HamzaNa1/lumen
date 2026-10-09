@@ -2,6 +2,7 @@ import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { BaseWindow, type BrowserWindow } from "electron";
 import { MacMpvWindow } from "./MacMpvWindow";
 import type { PlayerOverlayWindow } from "./PlayerOverlayWindow";
+import { observePlayerFocus, playerContentBounds } from "./PlayerWindowState";
 import { WindowsMpvHost } from "./WindowsMpvHost";
 
 type NativeVideoWindow = Pick<MacMpvWindow, "sync" | "show" | "dispose">;
@@ -26,30 +27,11 @@ export class MpvSurface {
   private readonly overlay?: PlayerOverlayWindow;
   private readonly createNativeVideoWindow: CreateNativeVideoWindow;
   private disposed = false;
-  private focusTimer: ReturnType<typeof setTimeout> | null = null;
+  private readonly stopObservingFocus: () => void;
   private readonly onBoundsChanged = (): void => this.syncHostBounds();
   private readonly onShow = (): void => this.show();
   private readonly onHide = (): void => this.hideHost();
   private readonly onClosed = (): void => this.dispose();
-  private readonly onFocusChanged = (): void => {
-    if (this.disposed) return;
-    if (this.focusTimer !== null) clearTimeout(this.focusTimer);
-    this.focusTimer = setTimeout(() => {
-      this.focusTimer = null;
-      // A blur event can be the last event before either window is destroyed.
-      // Even a callback already queued by the event loop must be harmless.
-      if (this.disposed || this.parent.isDestroyed()) return;
-      const overlay = this.overlay?.window;
-      if (
-        this.parent.isFocused() ||
-        (overlay !== undefined && !overlay.isDestroyed() && overlay.isFocused())
-      )
-        this.show();
-      // Windows owns the video HWND and keeps it stacked with the app. Losing
-      // focus must leave its video visible when another app is used alongside it.
-      else if (process.platform !== "win32") this.hideHost();
-    }, 0);
-  };
 
   constructor(
     parent: BrowserWindow,
@@ -63,12 +45,13 @@ export class MpvSurface {
     parent.on("move", this.onBoundsChanged);
     parent.on("resize", this.onBoundsChanged);
     parent.on("restore", this.onShow);
-    parent.on("focus", this.onShow);
     parent.on("minimize", this.onHide);
     parent.on("hide", this.onHide);
-    parent.on("blur", this.onFocusChanged);
-    overlay?.window.on("focus", this.onFocusChanged);
-    overlay?.window.on("blur", this.onFocusChanged);
+    this.stopObservingFocus = observePlayerFocus(parent, overlay?.window, (focused) => {
+      if (focused) this.show();
+      // Keep Windows video visible without raising it over the foreground app.
+      else if (process.platform !== "win32") this.hideHost();
+    });
     parent.on("show", this.onShow);
     parent.once("closed", this.onClosed);
   }
@@ -136,19 +119,14 @@ export class MpvSurface {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
-    if (this.focusTimer !== null) clearTimeout(this.focusTimer);
-    this.focusTimer = null;
+    this.stopObservingFocus();
     this.parent.off("move", this.onBoundsChanged);
     this.parent.off("resize", this.onBoundsChanged);
     this.parent.off("restore", this.onShow);
-    this.parent.off("focus", this.onShow);
     this.parent.off("minimize", this.onHide);
     this.parent.off("hide", this.onHide);
-    this.parent.off("blur", this.onFocusChanged);
     this.parent.off("show", this.onShow);
     this.parent.off("closed", this.onClosed);
-    this.overlay?.window.off("focus", this.onFocusChanged);
-    this.overlay?.window.off("blur", this.onFocusChanged);
     this.hide();
     if (this.host !== null && !this.host.isDestroyed()) this.host.destroy();
     this.host = null;
@@ -201,7 +179,7 @@ export class MpvSurface {
       this.host.isDestroyed()
     )
       return;
-    const parentBounds = this.parent.getContentBounds();
+    const parentBounds = playerContentBounds(this.parent);
     this.host.setBounds({
       x: parentBounds.x + this.bounds.x,
       y: parentBounds.y + this.bounds.y,
@@ -209,6 +187,7 @@ export class MpvSurface {
       height: this.bounds.height,
     });
     this.macWindow?.sync();
+    this.overlay?.syncBounds();
     this.overlay?.moveAboveVideo();
   }
 }

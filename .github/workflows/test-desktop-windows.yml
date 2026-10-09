@@ -1,0 +1,74 @@
+name: test-desktop-windows
+on:
+  workflow_dispatch:
+  push:
+    branches: ["fix/windows-fullscreen-overlay-seam", "test/desktop/**"]
+permissions:
+  contents: read
+concurrency:
+  group: test-desktop-windows-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - run: bun install --frozen-lockfile
+      - name: Install Electron runtime for native tests
+        run: bun apps/desktop/node_modules/electron/install.js
+      - run: bun run check:desktop typecheck
+      - run: bun test tests/compatibility/desktop-mpv-window-lifecycle.test.ts
+      - name: Bundle MPV
+        shell: pwsh
+        run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
+      - name: Seal and verify native MPV files
+        run: |
+          bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
+          bun apps/desktop/scripts/verify-native-binaries.ts
+      - run: bun run --cwd apps/desktop build
+      - name: Native Windows fullscreen regression
+        shell: pwsh
+        run: |
+          bun build tests/native/windows-playback.ts --target=node --format=esm --external electron --external koffi --outfile apps/desktop/out/windows-playback.mjs
+          if ($LASTEXITCODE -ne 0) { throw "Smoke harness compilation failed" }
+          $electron = Resolve-Path apps/desktop/node_modules/electron/dist/electron.exe
+          $env:LUMEN_SMOKE_SCALE = "1"
+          $process = Start-Process $electron -ArgumentList "apps/desktop/out/windows-playback.mjs" -Wait -PassThru -NoNewWindow -RedirectStandardOutput smoke.stdout.log -RedirectStandardError smoke.stderr.log
+          Get-Content smoke.stdout.log
+          Get-Content smoke.stderr.log
+          if ($process.ExitCode -ne 0) { throw "Native Windows regression failed: $($process.ExitCode)" }
+          Remove-Item apps/desktop/out/windows-playback.mjs
+          Move-Item apps/desktop/out/playback-evidence windows-native-evidence
+      - name: Package test installers
+        shell: pwsh
+        run: |
+          $baseVersion = (Get-Content apps/desktop/package.json | ConvertFrom-Json).version.Split('-')[0].Split('.')
+          $patch = [int]$baseVersion[2] + 1
+          $version = "$($baseVersion[0]).$($baseVersion[1]).$patch-fullscreen.${{ github.run_id }}"
+          bun run --cwd apps/desktop package --win --x64 "--config.extraMetadata.version=$version"
+          if ($LASTEXITCODE -ne 0) { throw "Installer packaging failed" }
+          "Version: $version`nCommit: ${{ github.sha }}`nBranch: ${{ github.ref_name }}" | Set-Content apps/desktop/release/build-info.txt
+          Get-ChildItem apps/desktop/release/*.exe | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content apps/desktop/release/SHA256SUMS.txt
+          Get-Content apps/desktop/release/build-info.txt >> $env:GITHUB_STEP_SUMMARY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lumen-windows-test-${{ github.sha }}
+          path: |
+            apps/desktop/release/*.exe
+            apps/desktop/release/build-info.txt
+            apps/desktop/release/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-native-regression-${{ github.sha }}
+          path: |
+            windows-native-evidence/
+            apps/desktop/out/playback-evidence/
+            smoke.*.log
+          if-no-files-found: ignore
