@@ -5,6 +5,8 @@ import {
   BrowserSession,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
+  MetadataMatchOptions,
+  MetadataMatchSelection,
   HomeContent,
   ServerInfo,
   User,
@@ -706,22 +708,29 @@ export const makeHttpHandler = (
       return ack();
     }
     if (
-      method === "PUT" &&
+      (method === "GET" || method === "PUT") &&
       parts[0] === "api" &&
       parts[1] === "v1" &&
       parts[2] === "items" &&
       parts[3] !== undefined &&
-      parts[4] === "match"
+      parts[4] === "match" &&
+      parts.length === 5
     ) {
       await call(services.access.requireAdmin(principal));
+      if (services.tmdb === undefined) throw badRequest("Matching is unavailable");
+      if (method === "GET")
+        return json(
+          MetadataMatchOptions,
+          await call(services.tmdb.matchOptions(parts[3], url.searchParams.get("query"))),
+        );
+      if (services.jobs === undefined) throw badRequest("Metadata refresh is unavailable");
       await call(
-        services.catalog.matchItem(
+        services.tmdb.setMatch(
           parts[3],
-          decode(S.ItemMatchBody, await body(request, config.maxRequestBodyBytes)),
+          decode(MetadataMatchSelection, await body(request, config.maxRequestBodyBytes)),
         ),
       );
-      if (services.jobs !== undefined) await call(services.jobs.refresh(parts[3], Date.now()));
-      return ack();
+      return unknownJson({ runId: await call(services.jobs.refresh(parts[3], Date.now())) });
     }
     if (
       method === "GET" &&

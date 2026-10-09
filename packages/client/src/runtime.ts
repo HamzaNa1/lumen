@@ -10,6 +10,8 @@ import type {
   ConnectionInput,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
+  MetadataMatchOptions,
+  MetadataMatchSelection,
   HomeContent,
   JobLogEntry,
   LibrarySummary,
@@ -72,6 +74,12 @@ export interface CatalogRuntime {
   readonly setEpisodeOrder: (
     itemId: string,
     selection: EpisodeOrderSelection,
+  ) => Promise<{ readonly runId: string }>;
+  /** TMDb titles this movie or show could be; a null query searches for its own title. */
+  readonly matchOptions: (itemId: string, query: string | null) => Promise<MetadataMatchOptions>;
+  readonly setMatch: (
+    itemId: string,
+    selection: MetadataMatchSelection,
   ) => Promise<{ readonly runId: string }>;
 }
 

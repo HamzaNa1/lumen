@@ -5,6 +5,7 @@ import {
   TrackKind,
   ConnectionInput,
   EpisodeOrderSelection,
+  MetadataMatchSelection,
   IpcPlayerSurfaceBounds,
   LibraryAccess,
   PlayerDisplay,
@@ -268,6 +269,20 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       raw,
     );
     return activeClient(dependencies).setEpisodeOrder(input.itemId, input.selection);
+  });
+  handle("library:match-options", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({ itemId: Schema.String, query: Schema.NullOr(Schema.String) }),
+      raw,
+    );
+    return activeClient(dependencies).matchOptions(input.itemId, input.query);
+  });
+  handle("library:set-match", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({ itemId: Schema.String, selection: MetadataMatchSelection }),
+      raw,
+    );
+    return activeClient(dependencies).setMatch(input.itemId, input.selection);
   });
   handle("library:item-children", async (_event, raw) => {
     const input = decode(

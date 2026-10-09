@@ -10,7 +10,12 @@ import {
   Repositories,
   seriesEpisodeOrders,
 } from "@lumen/database";
-import type { EpisodeOrderOptions, EpisodeOrderSelection } from "@lumen/contracts";
+import type {
+  EpisodeOrderOptions,
+  EpisodeOrderSelection,
+  MetadataMatchOptions,
+  MetadataMatchSelection,
+} from "@lumen/contracts";
 import { badRequest, ServerError } from "../core/Errors";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -24,8 +29,17 @@ import { generatedArtworkDir } from "./GeneratedArtwork";
 import { imageInfo } from "./ImageInfo";
 import { MetadataSettings } from "../services/MetadataSettings";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
-import { fetchTmdb, TmdbHttpError, type TmdbObject } from "./TmdbClient";
+import {
+  fetchTmdb,
+  num,
+  object,
+  str,
+  TmdbHttpError,
+  tmdbImageUrl,
+  type TmdbObject,
+} from "./TmdbClient";
 import { tmdbEpisodeCoordinates, tmdbEpisodeOrders } from "./TmdbEpisodeOrder";
+import { tmdbMatchCandidates, tmdbTitleExists } from "./TmdbMatch";
 
 type Item = {
   id: string;
@@ -39,6 +53,14 @@ type Item = {
 };
 
 export interface MetadataProvider {
+  readonly matchOptions: (
+    itemId: string,
+    query: string | null,
+  ) => Effect.Effect<MetadataMatchOptions, unknown>;
+  readonly setMatch: (
+    itemId: string,
+    selection: MetadataMatchSelection,
+  ) => Effect.Effect<void, unknown>;
   readonly episodeOrder: (itemId: string) => Effect.Effect<EpisodeOrderOptions, unknown>;
   readonly setEpisodeOrder: (
     itemId: string,
@@ -54,10 +76,6 @@ const titleKey = (value: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/gu, " ")
     .trim();
-const str = (value: unknown): string | null =>
-  typeof value === "string" && value.trim() ? value.trim() : null;
-const num = (value: unknown): number | null =>
-  typeof value === "number" && Number.isFinite(value) ? value : null;
 const names = (value: unknown): string[] =>
   Array.isArray(value)
     ? value
@@ -66,8 +84,6 @@ const names = (value: unknown): string[] =>
         )
         .filter((entry): entry is string => entry !== null)
     : [];
-const object = (value: unknown): TmdbObject =>
-  value !== null && typeof value === "object" && !Array.isArray(value) ? (value as TmdbObject) : {};
 const remoteContentRating = (payload: TmdbObject): string | null => {
   const movie = object(payload.release_dates).results;
   if (Array.isArray(movie)) {
@@ -89,6 +105,17 @@ const providerIds = (externalIds: Record<string, string>, origin: string | null)
   tmdbId: externalIds.tmdb ?? /\[(?:tmdbid|tmdb)-(\d+)\]/iu.exec(origin ?? "")?.[1] ?? null,
   imdbId: externalIds.imdb ?? /\[(?:imdbid|imdb)-(tt\d+)\]/iu.exec(origin ?? "")?.[1] ?? null,
 });
+const titleKind = (kind: string): "movie" | "tv" | null =>
+  kind === "movie" ? "movie" : kind === "show" ? "tv" : null;
+/** Runs a TMDb request the user is waiting on, so an outage reads as one they can retry. */
+const tmdbRequest = <A>(message: string, request: () => Promise<A>) =>
+  Effect.tryPromise({
+    try: request,
+    catch: (cause) =>
+      cause instanceof ServerError
+        ? cause
+        : new ServerError({ status: 503, code: "service_unavailable", message, cause }),
+  });
 const lookup = async (
   item: Item,
   parentProviderId: string | null,
@@ -180,25 +207,105 @@ export const makeTmdbProvider = (config: ServerConfig) =>
     const database = yield* Database;
     const settings = yield* MetadataSettings;
     const repositories = yield* Repositories;
+    const identifiedItem = (itemId: string) =>
+      database
+        .select({
+          id: catalogItems.id,
+          libraryId: catalogItems.libraryId,
+          kind: catalogItems.kind,
+          parentId: catalogItems.parentId,
+          title: catalogItems.title,
+          year: catalogItems.year,
+          indexNumber: catalogItems.indexNumber,
+          origin: catalogItemOrigins.relativePath,
+          externalIdsJson: catalogItemMetadata.externalIdsJson,
+        })
+        .from(catalogItems)
+        .leftJoin(catalogItemOrigins, eq(catalogItemOrigins.itemId, catalogItems.id))
+        .leftJoin(catalogItemMetadata, eq(catalogItemMetadata.itemId, catalogItems.id))
+        .where(eq(catalogItems.id, itemId))
+        .get();
+    const matchOptions: MetadataProvider["matchOptions"] = Effect.fn("Tmdb.matchOptions")(
+      function* (itemId, query) {
+        const item = yield* identifiedItem(itemId);
+        const kind = titleKind(item?.kind ?? "");
+        if (item === undefined || kind === null)
+          return yield* badRequest("Choose a movie or series");
+        const key = yield* settings.tmdbKey();
+        if (key === null) return yield* badRequest("Configure TMDb before choosing a match");
+        const search = query?.trim() || item.title;
+        if (search.length > 200) return yield* badRequest("Search for a shorter title");
+        return {
+          tmdbId: providerIds(decodeMetadataMap(item.externalIdsJson), item.origin).tmdbId,
+          query: search,
+          candidates: yield* tmdbRequest("Could not search TMDb. Try again.", () =>
+            tmdbMatchCandidates(kind, search, key),
+          ),
+        };
+      },
+    );
+    const setMatch: MetadataProvider["setMatch"] = Effect.fn("Tmdb.setMatch")(
+      function* (itemId, selection) {
+        const item = yield* identifiedItem(itemId);
+        const kind = titleKind(item?.kind ?? "");
+        if (item === undefined || kind === null)
+          return yield* badRequest("Choose a movie or series");
+        const key = yield* settings.tmdbKey();
+        if (key === null) return yield* badRequest("Configure TMDb before choosing a match");
+        const exists = yield* tmdbRequest("Could not check the match with TMDb. Try again.", () =>
+          tmdbTitleExists(kind, selection.tmdbId, key),
+        );
+        if (!exists)
+          return yield* badRequest(
+            `TMDb has no ${kind === "movie" ? "movie" : "series"} with ID ${selection.tmdbId}`,
+          );
+        const descendantIds = yield* repositories.catalog.descendantItemIds(itemId);
+        yield* database.transaction((transaction) =>
+          Effect.gen(function* () {
+            const existing = yield* transaction
+              .select({
+                externalIdsJson: catalogItemMetadata.externalIdsJson,
+                fieldSourcesJson: catalogItemMetadata.fieldSourcesJson,
+                lockedFieldsJson: catalogItemMetadata.lockedFieldsJson,
+              })
+              .from(catalogItemMetadata)
+              .where(eq(catalogItemMetadata.itemId, itemId))
+              .get();
+            const previousIds = decodeMetadataMap(existing?.externalIdsJson ?? null);
+            if (previousIds.tmdb !== selection.tmdbId)
+              yield* transaction
+                .delete(seriesEpisodeOrders)
+                .where(eq(seriesEpisodeOrders.itemId, itemId));
+            const locks = new Set(decodeMetadataList(existing?.lockedFieldsJson ?? null));
+            locks.add("tmdb");
+            const metadata = {
+              itemId,
+              externalIdsJson: JSON.stringify({ ...previousIds, tmdb: selection.tmdbId }),
+              fieldSourcesJson: JSON.stringify({
+                ...decodeMetadataMap(existing?.fieldSourcesJson ?? null),
+                tmdb: "user",
+              }),
+              lockedFieldsJson: JSON.stringify([...locks]),
+            };
+            yield* transaction.insert(catalogItemMetadata).values(metadata).onConflictDoUpdate({
+              target: catalogItemMetadata.itemId,
+              set: metadata,
+            });
+            yield* transaction
+              .delete(providerRecords)
+              .where(
+                and(
+                  inArray(providerRecords.itemId, descendantIds),
+                  eq(providerRecords.provider, "tmdb"),
+                ),
+              );
+          }),
+        );
+      },
+    );
     const episodeOrder: MetadataProvider["episodeOrder"] = Effect.fn("Tmdb.episodeOrder")(
       function* (itemId) {
-        const item = yield* database
-          .select({
-            id: catalogItems.id,
-            libraryId: catalogItems.libraryId,
-            kind: catalogItems.kind,
-            parentId: catalogItems.parentId,
-            title: catalogItems.title,
-            year: catalogItems.year,
-            indexNumber: catalogItems.indexNumber,
-            origin: catalogItemOrigins.relativePath,
-            externalIdsJson: catalogItemMetadata.externalIdsJson,
-          })
-          .from(catalogItems)
-          .leftJoin(catalogItemOrigins, eq(catalogItemOrigins.itemId, catalogItems.id))
-          .leftJoin(catalogItemMetadata, eq(catalogItemMetadata.itemId, catalogItems.id))
-          .where(eq(catalogItems.id, itemId))
-          .get();
+        const item = yield* identifiedItem(itemId);
         if (item === undefined || item.kind !== "show") return yield* badRequest("Choose a series");
         const key = yield* settings.tmdbKey();
         if (key === null)
@@ -212,8 +319,9 @@ export const makeTmdbProvider = (config: ServerConfig) =>
           .from(seriesEpisodeOrders)
           .where(eq(seriesEpisodeOrders.itemId, itemId))
           .get();
-        return yield* Effect.tryPromise({
-          try: async () => {
+        return yield* tmdbRequest(
+          "Could not load episode orders from TMDb. Try again.",
+          async () => {
             const result = await lookup(item, null, key, tmdbId, imdbId);
             if (result === null)
               throw badRequest("Match this series before choosing an episode order");
@@ -223,16 +331,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
               key,
             );
           },
-          catch: (cause) =>
-            cause instanceof ServerError
-              ? cause
-              : new ServerError({
-                  status: 503,
-                  code: "service_unavailable",
-                  message: "Could not load episode orders from TMDb. Try again.",
-                  cause,
-                }),
-        });
+        );
       },
     );
     const setEpisodeOrder: MetadataProvider["setEpisodeOrder"] = Effect.fn("Tmdb.setEpisodeOrder")(
@@ -488,7 +587,8 @@ export const makeTmdbProvider = (config: ServerConfig) =>
           ] as const) {
             if (item.kind === "episode" && role !== "still") continue;
             if (item.kind !== "episode" && role === "still") continue;
-            if (typeof imagePath !== "string" || !/^\/[a-zA-Z0-9._-]+$/u.test(imagePath)) continue;
+            const imageUrl = tmdbImageUrl("w780", imagePath);
+            if (imageUrl === null) continue;
             const assigned = yield* database
               .select({ source: catalogItemArtwork.source })
               .from(catalogItemArtwork)
@@ -496,10 +596,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
               .get();
             if (assigned != null && assigned.source !== "tmdb") continue;
             const response = yield* Effect.tryPromise({
-              try: () =>
-                fetch(`https://image.tmdb.org/t/p/w780${imagePath}`, {
-                  signal: AbortSignal.timeout(10_000),
-                }),
+              try: () => fetch(imageUrl, { signal: AbortSignal.timeout(10_000) }),
               catch: (cause) => cause,
             });
             if (!response.ok || Number(response.headers.get("content-length") ?? 0) > 20_000_000)
@@ -581,7 +678,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
         }
       },
     );
-    return { enrichSource, episodeOrder, setEpisodeOrder };
+    return { enrichSource, episodeOrder, matchOptions, setEpisodeOrder, setMatch };
   });
 
 export class TmdbProvider extends Context.Service<TmdbProvider, MetadataProvider>()(

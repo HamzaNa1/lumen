@@ -184,10 +184,6 @@ export const ItemMetadataBody = Schema.Struct({
   tags: Schema.optional(Schema.Array(Schema.String)),
 });
 
-export const ItemMatchBody = Schema.Struct({
-  tmdbId: Schema.String.check(Schema.isPattern(/^\d+$/u)),
-});
-
 export const EventsQuery = Schema.Struct({
   after: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
 });

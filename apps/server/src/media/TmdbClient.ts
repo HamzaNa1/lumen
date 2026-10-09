@@ -2,6 +2,19 @@ import { readResponseBytes } from "./BoundedInput";
 
 export type TmdbObject = Record<string, unknown>;
 
+export const str = (value: unknown): string | null =>
+  typeof value === "string" && value.trim() ? value.trim() : null;
+export const num = (value: unknown): number | null =>
+  typeof value === "number" && Number.isFinite(value) ? value : null;
+export const object = (value: unknown): TmdbObject =>
+  value !== null && typeof value === "object" && !Array.isArray(value) ? (value as TmdbObject) : {};
+
+/** Where TMDb serves an image, or null when the path is not one of its image paths. */
+export const tmdbImageUrl = (size: "w92" | "w780", path: unknown): string | null =>
+  typeof path === "string" && /^\/[a-zA-Z0-9._-]+$/u.test(path)
+    ? `https://image.tmdb.org/t/p/${size}${path}`
+    : null;
+
 export class TmdbHttpError extends Error {
   constructor(readonly status: number) {
     super(`TMDb returned ${status}`);
