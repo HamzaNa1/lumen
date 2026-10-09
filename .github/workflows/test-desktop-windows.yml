@@ -18,6 +18,8 @@ jobs:
         with:
           bun-version: 1.4.2
       - run: bun install --frozen-lockfile
+      - name: Install Electron runtime for native tests
+        run: bun apps/desktop/node_modules/electron/install.js
       - run: bun run check:desktop typecheck
       - run: bun test tests/compatibility/desktop-mpv-window-lifecycle.test.ts
       - name: Bundle MPV
