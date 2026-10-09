@@ -476,7 +476,8 @@ async function run(): Promise<void> {
   await controller.pause(state.sessionId, false);
   visible.push(await inspect("audio-output-changed"));
   await overlay.window.webContents.executeJavaScript(
-    `document.querySelector('[aria-label="Playback settings"]').click()`,
+    `window.dispatchEvent(new MouseEvent('mousemove'));
+     document.querySelector('[aria-label="Playback settings"]').click()`,
   );
   await delay(100);
   await overlay.window.webContents.executeJavaScript(
