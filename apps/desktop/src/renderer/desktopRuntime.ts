@@ -66,8 +66,8 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
   admin: bridge.admin,
   artwork: { url: bridge.library.artwork },
   playback: {
-    start: async (itemId, startAtSeconds, title) => {
-      await bridge.player.start(itemId, startAtSeconds, title);
+    start: async (itemId, startAtSeconds, title, replaces) => {
+      await bridge.player.start(itemId, startAtSeconds, title, replaces);
     },
     pause: bridge.player.pause,
     seek: bridge.player.seek,

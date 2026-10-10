@@ -190,6 +190,43 @@ test("a rejected group switch preserves membership and stale media commands do n
   }
 });
 
+test("a group asked by each member to play what follows moves on once", async () => {
+  const fixture = await watchFixture();
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    const viewer = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Series night", password: "" });
+    await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
+    const finished = crypto.randomUUID();
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
+    await viewer.action({ type: "ping", sentAtMs: Date.now() });
+    const revision = viewer.status.group?.revision;
+
+    // The group has already left what this member's player just finished.
+    await viewer.action({
+      type: "play",
+      itemId: fixture.itemId,
+      positionSeconds: 0,
+      replaces: finished,
+    });
+    await owner.action({ type: "ping", sentAtMs: Date.now() });
+    expect(owner.status.group).toMatchObject({ revision, playback: { positionSeconds: 2 } });
+
+    // While it still has that on, the request is carried out.
+    await viewer.action({
+      type: "play",
+      itemId: fixture.itemId,
+      positionSeconds: 0,
+      replaces: fixture.itemId,
+    });
+    await owner.action({ type: "ping", sentAtMs: Date.now() });
+    expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 0, paused: false });
+    expect(owner.status.group?.revision).toBeGreaterThan(revision ?? 0);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("revoked sessions are disconnected instead of remaining subscribed", async () => {
   const fixture = await watchFixture();
   try {

@@ -748,16 +748,20 @@ export class WatchGroups {
           ),
         );
         if (socket.data.closed || socket.data.groupId !== group.state.id) return;
-        if (group.state.revision !== previous.revision)
+        // A request to play in place of something says itself what it expects of the group.
+        const replaces = action.type === "play" ? action.replaces : undefined;
+        if (replaces === undefined && group.state.revision !== previous.revision)
           throw new Error("Group changed. Try again.");
         if (action.type === "play") {
           if (details.item.kind === "show" || details.item.kind === "season")
             throw new Error("Choose a movie or episode");
-          this.playFrom(group, {
-            itemId: action.itemId,
-            title: details.item.title,
-            positionSeconds: action.positionSeconds,
-          });
+          // Another member already moved the group on; asking again must not start that over.
+          if (replaces === undefined || group.state.playback?.itemId === replaces)
+            this.playFrom(group, {
+              itemId: action.itemId,
+              title: details.item.title,
+              positionSeconds: action.positionSeconds,
+            });
         } else {
           const playback = previous.playback;
           if (playback === null || playback.itemId !== action.itemId)

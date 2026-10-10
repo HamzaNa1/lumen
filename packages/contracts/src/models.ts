@@ -193,7 +193,15 @@ export const PlayerDisplay = Schema.Struct({
   loading: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
   hasPreviousEpisode: Schema.Boolean,
-  hasNextEpisode: Schema.Boolean,
+  /** The episode after the one playing, where there is one. */
+  nextEpisode: Schema.NullOr(
+    Schema.Struct({
+      title: Schema.String,
+      /** Its place in the show, such as "S01E03"; empty where that is not known. */
+      context: Schema.String,
+      artworkId: Schema.NullOr(Uuid),
+    }),
+  ),
 });
 export type PlayerDisplay = Schema.Schema.Type<typeof PlayerDisplay>;
 

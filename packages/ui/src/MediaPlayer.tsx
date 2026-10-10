@@ -27,6 +27,8 @@ import { useThrottledCallback } from "./useThrottledCallback";
 
 /** How often a drag of the volume slider reaches the player. */
 const volumeDragIntervalMs = 50;
+/** How long before the end the viewer is told that what follows is about to play. */
+const upNextNoticeSeconds = 30;
 
 /** How long a click on the video waits for the second click that makes it a fullscreen toggle. */
 const videoDoubleClickMs = 250;
@@ -74,8 +76,19 @@ interface MediaPlayerProps {
   readonly onRetry: () => void;
   /** Goes back to the start of what is playing, or to whatever comes before it. */
   readonly onPrevious: () => void;
-  /** Omitted where nothing follows what is playing. */
-  readonly onNext?: (() => void) | undefined;
+  /**
+   * What follows, omitted where nothing does. It plays by itself at the end, which the viewer is
+   * told as that nears.
+   */
+  readonly next?:
+    | {
+        readonly title: string;
+        /** Where it sits in what is playing, such as "S01E03"; empty where that is not known. */
+        readonly context: string;
+        readonly imageUrl: string | null;
+        readonly onStart: () => void;
+      }
+    | undefined;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
   readonly onVolume: (volume: number, muted: boolean) => void;
@@ -118,7 +131,7 @@ export const MediaPlayer = ({
   onFullscreen,
   onRetry,
   onPrevious,
-  onNext,
+  next,
   onPause,
   onSeek,
   onVolume,
@@ -146,6 +159,12 @@ export const MediaPlayer = ({
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
   const seekable = !inactive && duration !== null && duration > 0;
+  // What is left to play, while that is little enough for what follows to be announced.
+  const upNextIn =
+    inactive || next === undefined || duration === null || duration - position > upNextNoticeSeconds
+      ? null
+      : Math.max(0, duration - position);
+  const upNextSeconds = upNextIn === null ? null : Math.max(1, Math.ceil(upNextIn));
   const status =
     error !== null
       ? "error"
@@ -240,6 +259,32 @@ export const MediaPlayer = ({
             ) : null}
           </div>
         </div>
+
+        {next === undefined || upNextIn === null || upNextSeconds === null ? null : (
+          <aside className="media-player-up-next" aria-label="Up next">
+            {next.imageUrl === null ? null : <img src={next.imageUrl} alt="" />}
+            <div className="media-player-up-next-body">
+              <span className="media-player-up-next-label">
+                Up next{next.context === "" ? "" : ` · ${next.context}`}
+              </span>
+              <strong>{next.title}</strong>
+              <div className="media-player-up-next-actions">
+                <Button variant="primary" size="sm" onClick={next.onStart}>
+                  <Play aria-hidden="true" size={12} fill="currentColor" strokeWidth={0} />
+                  Start now
+                </Button>
+                <span>
+                  Plays in {upNextSeconds} {upNextSeconds === 1 ? "second" : "seconds"}
+                </span>
+              </div>
+            </div>
+            <span
+              className="media-player-up-next-progress"
+              style={{ width: `${(1 - upNextIn / upNextNoticeSeconds) * 100}%` }}
+              aria-hidden="true"
+            />
+          </aside>
+        )}
 
         <div className="media-player-console">
           <div className="media-player-progress">
@@ -344,11 +389,11 @@ export const MediaPlayer = ({
                   10
                 </span>
               </Button>
-              {onNext === undefined ? null : (
+              {next === undefined ? null : (
                 <Button
                   variant="icon"
                   disabled={inactive}
-                  onClick={onNext}
+                  onClick={next.onStart}
                   aria-label="Next episode"
                 >
                   <SkipForward aria-hidden="true" size={19} fill="currentColor" />

@@ -201,6 +201,11 @@ export class PlayerController extends EventEmitter {
             active,
             new Error(`Playback failed: ${event.file_error ?? "media error"}`),
           );
+        // MPV lets go of a file it has played through, and has nothing more to say about it.
+        else if (event.reason === "eof" && this.active === active && this.state !== null) {
+          this.state = { ...this.state, ended: true };
+          this.publish();
+        }
       });
       // The loadfile ack only means mpv accepted the command, not that the
       // file demuxed. Wait for file-loaded and fail fast on end-file/error

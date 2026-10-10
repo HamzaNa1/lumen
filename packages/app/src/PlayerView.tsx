@@ -5,6 +5,7 @@ import { useRuntime } from "./Runtime";
 import { ShowDrawer, ShowDrawerButton, usePlayingShow } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
+import { useArtwork } from "./Workspace";
 import "./player.css";
 
 /** How far into an episode Previous still leads to the episode before it instead of restarting. */
@@ -35,6 +36,9 @@ export const PlayerView = ({
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const nextEpisode = display?.nextEpisode ?? null;
+  // The controls can be drawn where no account's caches are, so the still keeps to its own.
+  const nextStill = useArtwork(nextEpisode?.artworkId, ["player"]).data ?? null;
   const playingItemId = display?.itemId ?? null;
   const show = usePlayingShow(playingItemId);
   const [showDrawerOpen, setShowDrawerOpen] = useState(false);
@@ -205,7 +209,16 @@ export const PlayerView = ({
             onAction("previous-episode");
           else seek(0);
         }}
-        onNext={display.hasNextEpisode ? () => onAction("next-episode") : undefined}
+        next={
+          nextEpisode === null
+            ? undefined
+            : {
+                title: nextEpisode.title,
+                context: nextEpisode.context,
+                imageUrl: nextStill,
+                onStart: () => onAction("next-episode"),
+              }
+        }
         onVolume={(volume, muted) => {
           if (player !== null)
             void runtime.playback

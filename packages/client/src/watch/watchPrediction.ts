@@ -37,6 +37,13 @@ const playbackPrediction = (
   viewer: WatchViewer,
   nowMs: number,
 ): WatchPrediction | null => {
+  // A group that has moved on from what the viewer was watching ignores the request.
+  if (
+    action.type === "play" &&
+    action.replaces !== undefined &&
+    base.playback?.itemId !== action.replaces
+  )
+    return null;
   const playback =
     action.type === "play"
       ? {

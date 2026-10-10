@@ -20,14 +20,23 @@ export interface GroupPlayback {
  * follows the group's shared state like every other member's, so it is not touched here.
  */
 export const viewerPlayback = <Started>(watch: GroupPlayback, local: LocalPlayback<Started>) => ({
-  /** Resolves to null when the group, rather than this player, was asked to play. */
-  start: async (itemId: string, startAtSeconds?: number, title?: string): Promise<Started | null> => {
+  /**
+   * Resolves to null when the group, rather than this player, was asked to play. `replaces` is
+   * what the viewer was watching when they asked; a group that has moved on from it plays nothing.
+   */
+  start: async (
+    itemId: string,
+    startAtSeconds?: number,
+    title?: string,
+    replaces?: string,
+  ): Promise<Started | null> => {
     if (!watch.grouped) return local.start(itemId, startAtSeconds);
     await watch.action({
       type: "play",
       itemId,
       positionSeconds: startAtSeconds ?? 0,
       ...(title === undefined ? {} : { title }),
+      ...(replaces === undefined ? {} : { replaces }),
     });
     return null;
   },

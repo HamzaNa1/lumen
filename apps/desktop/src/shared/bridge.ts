@@ -36,7 +36,12 @@ export interface DesktopBridge {
   readonly player: {
     readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
     readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
-    readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<unknown>;
+    readonly start: (
+      itemId: string,
+      startAtSeconds?: number,
+      title?: string,
+      replaces?: string,
+    ) => Promise<unknown>;
     readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
     readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;

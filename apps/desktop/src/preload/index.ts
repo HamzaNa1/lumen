@@ -70,8 +70,8 @@ const api: DesktopBridge = {
   player: {
     resetTrack: (sessionId, kind) => invoke("player:reset-track", { sessionId, kind }),
     retryTrackMemory: (sessionId) => invoke("player:retry-track-memory", sessionId),
-    start: (itemId, startAtSeconds, title) =>
-      invoke("player:start", { itemId, startAtSeconds, title }),
+    start: (itemId, startAtSeconds, title, replaces) =>
+      invoke("player:start", { itemId, startAtSeconds, title, replaces }),
     pause: (sessionId, paused) => invoke("player:pause", { sessionId, paused }),
     seek: (sessionId, positionSeconds) => invoke("player:seek", { sessionId, positionSeconds }),
     volume: (sessionId, volume, muted) => invoke("player:volume", { sessionId, volume, muted }),

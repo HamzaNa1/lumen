@@ -327,6 +327,122 @@ test("the player moves between a show's episodes", async ({ page, browserName },
   });
 });
 
+test("an episode that plays through is followed by the next", async ({
+  page,
+  browserName,
+}, testInfo) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  test.setTimeout(60_000);
+  await signIn(page);
+  await page.goto("/web/library");
+  await page.getByRole("button", { name: "Play Serial" }).first().click({ force: true });
+  await page.getByRole("button", { name: "Play Season 1" }).first().click({ force: true });
+  await play(page, "Pilot");
+  const player = page.getByRole("region", { name: "Media player" });
+  const upNext = page.getByRole("complementary", { name: "Up next" });
+  const currentTime = () => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0);
+
+  // The fixture is shorter than the notice, so what follows is announced from the start.
+  await page.mouse.move(300, 300);
+  await expect(upNext).toContainText("Up next · S01E02");
+  await expect(upNext).toContainText("Second");
+  await expect(upNext).toContainText(/Plays in \d+ seconds?/u);
+  await expect
+    .poll(() => upNext.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
+  await testInfo.attach("up next above the controls", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  // The notice outlasts the controls, which hide while the pointer rests.
+  await expect(page.locator(".media-player-console")).toBeHidden({ timeout: 10_000 });
+  await expect(upNext).toBeVisible();
+  await testInfo.attach("up next with the controls hidden", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+
+  await page.keyboard.press("ArrowRight");
+  await expect(player.getByRole("heading", { name: "Second" })).toBeVisible({ timeout: 20_000 });
+  await expect(player.getByText("Serial · S01E02")).toBeVisible();
+  await expect.poll(currentTime).toBeGreaterThan(0.2);
+  expect(await currentTime()).toBeLessThan(8);
+
+  // The viewer need not wait for the end.
+  await upNext.getByRole("button", { name: "Start now" }).click();
+  await expect(player.getByRole("heading", { name: "Return" })).toBeVisible();
+  await expect.poll(currentTime).toBeGreaterThan(0.2);
+  // Nothing follows the last episode.
+  await expect(upNext).toHaveCount(0);
+});
+
+test("a watch group moves on to the next episode together", async ({
+  page,
+  browser,
+  browserName,
+}, testInfo) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  test.setTimeout(90_000);
+  await signIn(page);
+  await page.locator(".watch-group-trigger").click();
+  await page.getByRole("button", { name: "New group" }).click();
+  await page.getByLabel("Name").fill("Series night");
+  await page.getByRole("button", { name: "Create group" }).click();
+  await expect(page.locator(".watch-group-trigger.is-active")).toBeVisible();
+  await page.keyboard.press("Escape");
+
+  const guestContext = await browser.newContext();
+  const guest = await guestContext.newPage();
+  await signIn(guest);
+  await guest.locator(".watch-group-trigger").click();
+  await guest.getByRole("button", { name: /Series night/u }).click();
+  await expect(guest.locator(".watch-group-trigger.is-active")).toBeVisible();
+  await guest.keyboard.press("Escape");
+
+  // Membership lives in this page, so reach the show without loading another.
+  await page.getByRole("link", { name: "Movies", exact: true }).click();
+  await page.getByRole("button", { name: "Play Serial" }).first().click({ force: true });
+  await page.getByRole("button", { name: "Play Season 1" }).first().click({ force: true });
+  await play(page, "Pilot");
+  // The group brings its other member to the player, where the browser wants a click.
+  const guestPlayer = guest.getByRole("region", { name: "Media player" });
+  await expect(guestPlayer).toBeVisible();
+  const start = guest.getByRole("button", { name: "Play", exact: true });
+  await expect(start.or(guest.locator('.media-player[data-status="ready"]')).first()).toBeVisible();
+  if (await start.isVisible()) await start.click();
+  const members = [page, guest];
+  const currentTime = (member: Page) =>
+    member.evaluate(() => document.querySelector("video")?.currentTime ?? 0);
+  const expectPlaying = async (title: string): Promise<void> => {
+    for (const member of members) {
+      await expect(
+        member.getByRole("region", { name: "Media player" }).getByRole("heading", { name: title }),
+      ).toBeVisible({ timeout: 25_000 });
+      await expect.poll(() => currentTime(member), { timeout: 15_000 }).toBeGreaterThan(0.2);
+    }
+  };
+  await expectPlaying("Pilot");
+  await page.mouse.move(300, 300);
+  await page.keyboard.press("ArrowRight");
+
+  // Both players reach the end and both ask for what follows; the group starts it once.
+  await expectPlaying("Second");
+  for (const member of members)
+    await expect.poll(() => currentTime(member), { timeout: 15_000 }).toBeGreaterThan(4);
+  const positions = await Promise.all(members.map(currentTime));
+  expect(Math.abs((positions[0] ?? 0) - (positions[1] ?? 0))).toBeLessThan(2);
+  await guest.mouse.move(300, 300);
+  await testInfo.attach("up next in a watch group", {
+    body: await guest.screenshot(),
+    contentType: "image/png",
+  });
+
+  // One member starting the next episode early starts it for everyone.
+  await guest.getByRole("button", { name: "Start now" }).click();
+  await expectPlaying("Return");
+  await guestContext.close();
+});
+
 test("clicking the video toggles playback without taking focus", async ({
   page,
   browserName,

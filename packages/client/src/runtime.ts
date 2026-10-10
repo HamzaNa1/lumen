@@ -154,8 +154,16 @@ export interface TrackSettingsRuntime {
 export interface PlaybackRuntime {
   readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
   readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
-  /** Starts an item, or asks the watch group to when the viewer is in one. */
-  readonly start: (itemId: string, startAtSeconds?: number, title?: string) => Promise<void>;
+  /**
+   * Starts an item, or asks the watch group to when the viewer is in one. `replaces` is what the
+   * viewer was watching when they asked; a group that has moved on from it plays nothing.
+   */
+  readonly start: (
+    itemId: string,
+    startAtSeconds?: number,
+    title?: string,
+    replaces?: string,
+  ) => Promise<void>;
   readonly pause: (sessionId: string, paused: boolean) => Promise<PlayerState>;
   readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;
   readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;

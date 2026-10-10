@@ -51,6 +51,15 @@ test("a viewer in a watch group commands the group and leaves this device's play
     { type: "seek", itemId: "item", positionSeconds: 45 },
   ]);
   expect(local).toEqual([]);
+  // What the viewer was watching goes with a request to play something in its place.
+  await commands.start("next", undefined, "Next", "item");
+  expect(group.pop()).toEqual({
+    type: "play",
+    itemId: "next",
+    positionSeconds: 0,
+    title: "Next",
+    replaces: "item",
+  });
   // A session that is no longer playing cannot command the group.
   await expect(commands.pause("replaced", true)).rejects.toThrow("not active");
   expect(group).toHaveLength(3);

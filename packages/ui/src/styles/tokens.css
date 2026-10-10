@@ -2343,6 +2343,81 @@ body:has(.app-shell) {
 .media-player-placeholder .button {
   margin-top: 6px;
 }
+.media-player-up-next {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3;
+  display: flex;
+  width: min(460px, calc(100% - 32px));
+  overflow: hidden;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  background: rgba(20, 20, 23, 0.94);
+  box-shadow: var(--shadow-popover);
+  cursor: default;
+}
+/* Clear of the console while that is showing. */
+.media-player.controls-visible .media-player-up-next {
+  bottom: 124px;
+}
+.media-player-up-next img {
+  flex: none;
+  width: 168px;
+  aspect-ratio: 16 / 9;
+  background: rgba(255, 255, 255, 0.08);
+  object-fit: cover;
+}
+.media-player-up-next-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
+  min-width: 0;
+  padding: 12px 14px 14px;
+}
+.media-player-up-next-label {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.media-player-up-next strong {
+  margin-top: 2px;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-player-up-next-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.media-player-up-next-actions .button {
+  flex: none;
+  gap: 6px;
+}
+.media-player-up-next-actions span {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* How much of the wait for what follows is over. */
+.media-player-up-next-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 300ms linear;
+}
 .media-player-console {
   display: grid;
   gap: 4px;
