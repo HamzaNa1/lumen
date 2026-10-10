@@ -15,36 +15,47 @@ const databasePath = join(root, "server.sqlite");
 const seeded = await seedPlaybackFixture(root, databasePath);
 
 // "Clip" keeps the fixture's placeholder bytes, which no browser can play. Add a real film, and a
-// show whose episodes are copies of it.
-const playable = join(repository, "tests/fixtures/playback.mp4");
-const playableSize = (await stat(playable)).size;
+// show whose episodes play the same footage.
 const database = new Database(databasePath);
 const now = Date.now();
-let sources = 1;
-
-const addContainer = (kind: "show" | "season", title: string, parent?: { id: string; index: number }): string => {
+let files = 0;
+const addItem = (
+  kind: string,
+  title: string,
+  parent: { readonly id: string; readonly indexNumber: number } | null = null,
+): string => {
   const id = newUuid();
   database.run(
-    `INSERT INTO catalog_items(id, library_id, kind, parent_id, title, sort_title, index_number, metadata_state, added_at_ms, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 'local', ?, ?)`,
-    [id, seeded.libraryId, kind, parent?.id ?? null, title, title.toLowerCase(), parent?.index ?? null, now, now],
+    `INSERT INTO catalog_items(id, library_id, parent_id, index_number, kind, title, sort_title, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'local', ?, ?)`,
+    [
+      id,
+      seeded.libraryId,
+      parent?.id ?? null,
+      parent?.indexNumber ?? null,
+      kind,
+      title,
+      title.toLowerCase(),
+      kind === "movie" || kind === "episode" ? 20 : null,
+      now,
+      now,
+    ],
   );
   return id;
 };
-
 const addPlayable = async (
   kind: "movie" | "episode",
   title: string,
-  parent?: { id: string; index: number },
+  parent: { readonly id: string; readonly indexNumber: number } | null = null,
 ): Promise<void> => {
-  const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid(), item: newUuid() };
-  const inode = String(++sources);
-  const relativePath = `film-${inode}.mp4`;
-  await copyFile(playable, join(root, relativePath));
+  const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid() };
+  const name = `playable-${++files}.mp4`;
+  const path = join(root, name);
+  await copyFile(join(repository, "tests/fixtures/playback.mp4"), path);
   database.run(
     `INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, inode, scanned_at_ms)
      SELECT ?, library_id, root_id, ?, ?, 'local', ?, ?, ?, ? FROM media_sources LIMIT 1`,
-    [ids.source, relativePath, join(root, relativePath), playableSize, now, inode, now],
+    [ids.source, name, path, (await stat(path)).size, now, `playable-${files}`, now],
   );
   database.run(
     "INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (?, ?, 'video', 'mp4', 'h264', 0, 1)",
@@ -56,30 +67,34 @@ const addPlayable = async (
   );
   database.run(
     `INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, 5000, 0, ?, ?)`,
+     VALUES (?, ?, ?, ?, ?, ?, 20000, 0, ?, ?)`,
     [ids.track, seeded.libraryId, ids.source, ids.video, title, title.toLowerCase(), now, now],
   );
   database.run(
-    `INSERT INTO catalog_items(id, library_id, kind, parent_id, title, sort_title, index_number, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, 5, 'local', ?, ?)`,
-    [ids.item, seeded.libraryId, kind, parent?.id ?? null, title, title.toLowerCase(), parent?.index ?? null, now, now],
-  );
-  database.run(
     "INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (?, ?, 1, 1)",
-    [ids.item, ids.source],
+    [addItem(kind, title, parent), ids.source],
   );
 };
-
 await addPlayable("movie", "Film");
-const show = addContainer("show", "Harbor Lights");
-const seasons = [
+const show = addItem("show", "Serial");
+const firstSeason = addItem("season", "Season 1", { id: show, indexNumber: 1 });
+const secondSeason = addItem("season", "Season 2", { id: show, indexNumber: 2 });
+await addPlayable("episode", "Pilot", { id: firstSeason, indexNumber: 1 });
+await addPlayable("episode", "Second", { id: firstSeason, indexNumber: 2 });
+await addPlayable("episode", "Return", { id: secondSeason, indexNumber: 1 });
+// Long enough that a drawer listing it has to scroll to reach an episode in the middle.
+const longShow = addItem("show", "Harbor Lights");
+const longSeasons = [
   ["Arrival", "The Ferry", "Low Tide", "Night Watch", "Signal Fire", "Breakwater"],
   ["Landfall", "The Lighthouse Keeper", "Storm Glass", "Open Water"],
 ];
-for (const [seasonIndex, titles] of seasons.entries()) {
-  const season = addContainer("season", `Season ${seasonIndex + 1}`, { id: show, index: seasonIndex + 1 });
+for (const [seasonIndex, titles] of longSeasons.entries()) {
+  const season = addItem("season", `Season ${seasonIndex + 1}`, {
+    id: longShow,
+    indexNumber: seasonIndex + 1,
+  });
   for (const [episodeIndex, title] of titles.entries())
-    await addPlayable("episode", title, { id: season, index: episodeIndex + 1 });
+    await addPlayable("episode", title, { id: season, indexNumber: episodeIndex + 1 });
 }
 database.close();
 

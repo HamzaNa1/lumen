@@ -1,5 +1,6 @@
 import type {
   AccountList,
+  AdjacentEpisodes,
   TrackKind,
   TrackPreferences,
   TrackPreferencesPatch,
@@ -69,6 +70,7 @@ export interface CatalogRuntime {
   readonly itemDetails: (itemId: string) => Promise<CatalogItemDetails>;
   readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<CatalogItemPage>;
   readonly nextUp: (itemId: string) => Promise<CatalogItem | null>;
+  readonly adjacentEpisodes: (itemId: string) => Promise<AdjacentEpisodes>;
   readonly setWatched: (itemId: string, completed: boolean) => Promise<void>;
   readonly search: (query: string, libraryId?: string | null) => Promise<unknown>;
   readonly episodeOrder: (itemId: string) => Promise<EpisodeOrderOptions>;

@@ -5,6 +5,7 @@ import {
   type TrackChoiceInput,
 } from "@lumen/contracts";
 import {
+  AdjacentEpisodes,
   BROWSER_CSRF_HEADER,
   BrowserSession,
   type CatalogItem,
@@ -302,6 +303,10 @@ export class ServerApi {
     return this.serverIdentity?.capabilities?.trackMemory === true;
   }
 
+  get supportsAdjacentEpisodes(): boolean {
+    return this.serverIdentity?.capabilities?.adjacentEpisodes === true;
+  }
+
   /**
    * Ends the current session's request scope: outstanding requests are aborted, and a response
    * that still arrives is rejected instead of reaching the next session's caches.
@@ -517,6 +522,16 @@ export class ServerApi {
       `/api/v1/items/${encodeURIComponent(itemId)}/next-up`,
     );
     return response.item;
+  }
+
+  /** A server that cannot say which episodes surround one is treated as having none. */
+  async adjacentEpisodes(itemId: string): Promise<AdjacentEpisodes> {
+    if (!this.supportsAdjacentEpisodes) return { previous: null, next: null };
+    return this.request(
+      `/api/v1/items/${encodeURIComponent(itemId)}/adjacent-episodes`,
+      {},
+      AdjacentEpisodes,
+    );
   }
 
   async setWatched(itemId: string, completed: boolean): Promise<void> {

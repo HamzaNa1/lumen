@@ -9,6 +9,7 @@ import { PlaybackBridge } from "./player/PlaybackBridge";
 import { AudioSettingsStore } from "./player/AudioSettingsStore";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
+import { broadcastPlayerFullscreen } from "./player/PlayerWindowState";
 import { AppUpdates, supportsAutoUpdates } from "./updates/AppUpdates";
 import { createMainWindow } from "./windows";
 
@@ -95,11 +96,7 @@ const bootstrap = async (): Promise<void> => {
     overlay,
     updates,
   });
-  const sendFullscreenState = (): void => {
-    mainWindow?.webContents.send("player:fullscreen-state", mainWindow.isFullScreen());
-  };
-  mainWindow.on("enter-full-screen", sendFullscreenState);
-  mainWindow.on("leave-full-screen", sendFullscreenState);
+  broadcastPlayerFullscreen(mainWindow, overlay.window);
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
   else await mainWindow.loadFile(rendererPath);

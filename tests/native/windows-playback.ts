@@ -24,6 +24,7 @@ import { MpvSurface } from "../../apps/desktop/src/main/player/MpvSurface";
 import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
 import { PlayerController } from "../../apps/desktop/src/main/player/PlayerController";
 import { PlayerOverlayWindow } from "../../apps/desktop/src/main/player/PlayerOverlayWindow";
+import { broadcastPlayerFullscreen } from "../../apps/desktop/src/main/player/PlayerWindowState";
 import { createMainWindow } from "../../apps/desktop/src/main/windows";
 
 const root = resolve("apps/desktop");
@@ -116,6 +117,7 @@ async function run(): Promise<void> {
   });
   await parent.loadURL('data:text/html,<body style="background:black">');
   const overlay = new PlayerOverlayWindow(parent, join(root, "out/preload/index.cjs"));
+  broadcastPlayerFullscreen(parent, overlay.window);
   const surface = new MpvSurface(parent, overlay);
   player = new PlayerController({
     bridge,
@@ -135,7 +137,11 @@ async function run(): Promise<void> {
   ipcMain.handle("player:state", () => controller.getState());
   ipcMain.handle("player:display-state", () => display);
   ipcMain.handle("watch:state", () => initialWatchStatus());
-  ipcMain.handle("player:fullscreen-state", () => false);
+  ipcMain.handle("player:fullscreen-state", () => parent.isFullScreen());
+  ipcMain.handle("player:fullscreen", (_event, enabled: boolean) => {
+    parent.setFullScreen(enabled);
+    return parent.isFullScreen();
+  });
   ipcMain.handle("player:audio-output", (_event, input) =>
     controller.setAudioOutput(input.sessionId, input.output),
   );
@@ -312,6 +318,17 @@ async function run(): Promise<void> {
   }
 
   const visible: boolean[] = [];
+  async function inspectFullscreenControl(fullscreen: boolean): Promise<void> {
+    const expected = fullscreen ? "Exit fullscreen" : "Enter fullscreen";
+    for (let attempt = 0; attempt < 50; attempt += 1) {
+      const label = await overlay.window.webContents.executeJavaScript(
+        `document.querySelector('button[aria-label$=" fullscreen"]')?.getAttribute('aria-label')`,
+      );
+      if (parent.isFullScreen() === fullscreen && label === expected) return;
+      await delay(20);
+    }
+    assert.fail(`The player controls did not update to ${expected}`);
+  }
   async function inspectUnfocused(label: string): Promise<void> {
     const bounds = parent.getContentBounds();
     // An independent foreground window exercises real focus events while
@@ -364,6 +381,7 @@ async function run(): Promise<void> {
 
   for (let iteration = 0; iteration < 3; iteration++) {
     await controller.start({ client, connectionId: "test", itemId: "test-item" });
+    await inspectFullscreenControl(false);
     visible.push(await inspect(`play-${iteration}`));
     await controller.refreshState();
     const state = controller.getState();
@@ -380,13 +398,20 @@ async function run(): Promise<void> {
       parent.restore();
       parent.focus();
       visible.push(await inspect("restored"));
-      parent.setFullScreen(true);
+      await overlay.window.webContents.executeJavaScript(
+        `document.querySelector('button[aria-label="Enter fullscreen"]').click()`,
+      );
       await delay(250);
+      await inspectFullscreenControl(true);
       syncSurface();
       visible.push(await inspect("fullscreen"));
       if (scale === "1") await inspectFullscreenFocusCycles();
+      // Leaving playback hides the existing controls and exits fullscreen from the main window.
+      overlay.setVisible(false);
       parent.setFullScreen(false);
       await delay(250);
+      overlay.setVisible(true);
+      await inspectFullscreenControl(false);
       syncSurface();
       visible.push(await inspect("windowed"));
     }

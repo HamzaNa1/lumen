@@ -299,6 +299,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("library:next-up", async (_event, raw) =>
     activeClient(dependencies).nextUp(decode(Schema.String, raw)),
   );
+  handle("library:adjacent-episodes", async (_event, raw) =>
+    activeClient(dependencies).adjacentEpisodes(decode(Schema.String, raw)),
+  );
   handle("library:artwork", async (_event, raw) =>
     activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)),
   );

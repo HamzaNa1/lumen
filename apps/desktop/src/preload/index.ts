@@ -45,6 +45,7 @@ const api: DesktopBridge = {
     itemChildren: (itemId, cursor = null) => invoke("library:item-children", { itemId, cursor }),
     setWatched: (itemId, completed) => invoke("library:set-watched", { itemId, completed }),
     nextUp: (itemId) => invoke("library:next-up", itemId),
+    adjacentEpisodes: (itemId) => invoke("library:adjacent-episodes", itemId),
     artwork: (artworkId) => invoke("library:artwork", artworkId),
     search: (query, libraryId = null) => invoke("library:search", { query, libraryId }),
   },

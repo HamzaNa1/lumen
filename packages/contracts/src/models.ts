@@ -69,6 +69,13 @@ export const CatalogItem = Schema.Struct({
 });
 export type CatalogItem = Schema.Schema.Type<typeof CatalogItem>;
 
+/** The episodes before and after one in its show. */
+export const AdjacentEpisodes = Schema.Struct({
+  previous: Schema.NullOr(CatalogItem),
+  next: Schema.NullOr(CatalogItem),
+});
+export type AdjacentEpisodes = Schema.Schema.Type<typeof AdjacentEpisodes>;
+
 export const CatalogItemDetails = Schema.Struct({
   item: Schema.Struct({
     id: Uuid,
@@ -185,12 +192,14 @@ export const PlayerDisplay = Schema.Struct({
   duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   loading: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
+  hasPreviousEpisode: Schema.Boolean,
+  hasNextEpisode: Schema.Boolean,
 });
 export type PlayerDisplay = Schema.Schema.Type<typeof PlayerDisplay>;
 
-/** What the viewer asked of the player through its controls. */
+/** What the viewer asked of the player controls that the application has to carry out. */
 export const PlayerAction = Schema.Union([
-  Schema.Literals(["back", "retry", "stop"]),
+  Schema.Literals(["back", "retry", "stop", "previous-episode", "next-episode"]),
   Schema.Struct({ play: CatalogItem }),
 ]);
 export type PlayerAction = Schema.Schema.Type<typeof PlayerAction>;
