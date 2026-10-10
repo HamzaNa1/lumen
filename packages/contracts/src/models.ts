@@ -106,6 +106,8 @@ export const CatalogItemDetails = Schema.Struct({
     indexNumber: Schema.NullOr(Schema.Number),
     seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
     seasonNumber: Schema.optional(Schema.NullOr(Schema.Number)),
+    /** The year an episode's season came out, or its show's where the season's is not known. */
+    seasonYear: Schema.optional(Schema.NullOr(Schema.Number)),
     title: Schema.String,
     kind: Schema.String,
     year: Schema.NullOr(Schema.Number),

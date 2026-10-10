@@ -23,11 +23,12 @@ const addItem = (
   kind: string,
   title: string,
   parent: { readonly id: string; readonly indexNumber: number } | null = null,
+  year: number | null = null,
 ): string => {
   const id = newUuid();
   database.run(
-    `INSERT INTO catalog_items(id, library_id, parent_id, index_number, kind, title, sort_title, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'local', ?, ?)`,
+    `INSERT INTO catalog_items(id, library_id, parent_id, index_number, kind, title, sort_title, duration_seconds, year, metadata_state, added_at_ms, updated_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'local', ?, ?)`,
     [
       id,
       seeded.libraryId,
@@ -37,6 +38,7 @@ const addItem = (
       title,
       title.toLowerCase(),
       kind === "movie" || kind === "episode" ? 20 : null,
+      year,
       now,
       now,
     ],
@@ -62,6 +64,7 @@ const addPlayable = async (
   kind: "movie" | "episode",
   title: string,
   parent: { readonly id: string; readonly indexNumber: number } | null = null,
+  year: number | null = null,
 ): Promise<void> => {
   const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid() };
   const name = `playable-${++files}.mp4`;
@@ -85,7 +88,7 @@ const addPlayable = async (
      VALUES (?, ?, ?, ?, ?, ?, 20000, 0, ?, ?)`,
     [ids.track, seeded.libraryId, ids.source, ids.video, title, title.toLowerCase(), now, now],
   );
-  const item = addItem(kind, title, parent);
+  const item = addItem(kind, title, parent, year);
   database.run(
     "INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (?, ?, 1, 1)",
     [item, ids.source],
@@ -96,10 +99,11 @@ const addPlayable = async (
       [item, still],
     );
 };
-await addPlayable("movie", "Film");
-const show = addItem("show", "Serial");
+await addPlayable("movie", "Film", null, 2019);
+// The second season came out a year after the show did; the first has no year of its own.
+const show = addItem("show", "Serial", null, 2021);
 const firstSeason = addItem("season", "Season 1", { id: show, indexNumber: 1 });
-const secondSeason = addItem("season", "Season 2", { id: show, indexNumber: 2 });
+const secondSeason = addItem("season", "Season 2", { id: show, indexNumber: 2 }, 2022);
 await addPlayable("episode", "Pilot", { id: firstSeason, indexNumber: 1 });
 await addPlayable("episode", "Second", { id: firstSeason, indexNumber: 2 });
 await addPlayable("episode", "Return", { id: secondSeason, indexNumber: 1 });
