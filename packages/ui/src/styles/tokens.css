@@ -2349,13 +2349,11 @@ body:has(.app-shell) {
   bottom: 16px;
   z-index: 3;
   display: flex;
-  align-items: center;
-  gap: 14px;
-  max-width: min(520px, calc(100% - 32px));
-  padding: 10px;
+  width: min(460px, calc(100% - 32px));
+  overflow: hidden;
   border: 1px solid var(--border-strong);
-  border-radius: 10px;
-  background: rgba(20, 20, 23, 0.9);
+  border-radius: var(--radius-lg);
+  background: rgba(20, 20, 23, 0.94);
   box-shadow: var(--shadow-popover);
   cursor: default;
 }
@@ -2365,33 +2363,60 @@ body:has(.app-shell) {
 }
 .media-player-up-next img {
   flex: none;
-  width: 124px;
+  width: 168px;
   aspect-ratio: 16 / 9;
-  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.08);
   object-fit: cover;
 }
-.media-player-up-next p {
-  display: grid;
-  gap: 2px;
+.media-player-up-next-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  justify-content: center;
   min-width: 0;
-  margin: 0;
+  padding: 12px 14px 14px;
 }
-.media-player-up-next span {
-  color: rgba(255, 255, 255, 0.7);
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
+.media-player-up-next-label {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 .media-player-up-next strong {
+  margin-top: 2px;
   overflow: hidden;
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.media-player-up-next .button {
+.media-player-up-next-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+.media-player-up-next-actions .button {
   flex: none;
+  gap: 6px;
+}
+.media-player-up-next-actions span {
+  overflow: hidden;
+  color: rgba(255, 255, 255, 0.62);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* How much of the wait for what follows is over. */
+.media-player-up-next-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  background: var(--accent);
+  transition: width 300ms linear;
 }
 .media-player-console {
   display: grid;

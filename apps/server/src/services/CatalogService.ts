@@ -324,6 +324,7 @@ export const makeCatalogService = Effect.gen(function* () {
         title: catalogItems.title,
         kind: catalogItems.kind,
         indexNumber: catalogItems.indexNumber,
+        seasonNumber: season.indexNumber,
         durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
         year: catalogItems.year,
         artworkId: sql<string | null>`(

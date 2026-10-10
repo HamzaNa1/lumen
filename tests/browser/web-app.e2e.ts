@@ -337,8 +337,9 @@ test("an episode that plays through is followed by the next", async ({
 
   // The fixture is shorter than the notice, so what follows is announced from the start.
   await page.mouse.move(300, 300);
-  await expect(upNext).toContainText(/Next episode in \d+ seconds?/u);
+  await expect(upNext).toContainText("Up next · S01E02");
   await expect(upNext).toContainText("Second");
+  await expect(upNext).toContainText(/Plays in \d+ seconds?/u);
   await expect
     .poll(() => upNext.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth))
     .toBeGreaterThan(0);

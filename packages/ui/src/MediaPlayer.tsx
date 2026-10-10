@@ -77,7 +77,13 @@ interface MediaPlayerProps {
    * told as that nears.
    */
   readonly next?:
-    | { readonly title: string; readonly imageUrl: string | null; readonly onStart: () => void }
+    | {
+        readonly title: string;
+        /** Where it sits in what is playing, such as "S01E03"; empty where that is not known. */
+        readonly context: string;
+        readonly imageUrl: string | null;
+        readonly onStart: () => void;
+      }
     | undefined;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
@@ -149,10 +155,12 @@ export const MediaPlayer = ({
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
   const seekable = !inactive && duration !== null && duration > 0;
+  // What is left to play, while that is little enough for what follows to be announced.
   const upNextIn =
     inactive || next === undefined || duration === null || duration - position > upNextNoticeSeconds
       ? null
-      : Math.max(1, Math.ceil(duration - position));
+      : Math.max(0, duration - position);
+  const upNextSeconds = upNextIn === null ? null : Math.max(1, Math.ceil(upNextIn));
   const status =
     error !== null
       ? "error"
@@ -243,18 +251,29 @@ export const MediaPlayer = ({
           </div>
         </div>
 
-        {next === undefined || upNextIn === null ? null : (
+        {next === undefined || upNextIn === null || upNextSeconds === null ? null : (
           <aside className="media-player-up-next" aria-label="Up next">
             {next.imageUrl === null ? null : <img src={next.imageUrl} alt="" />}
-            <p>
-              <span>
-                Next episode in {upNextIn} {upNextIn === 1 ? "second" : "seconds"}
+            <div className="media-player-up-next-body">
+              <span className="media-player-up-next-label">
+                Up next{next.context === "" ? "" : ` · ${next.context}`}
               </span>
               <strong>{next.title}</strong>
-            </p>
-            <Button variant="primary" size="sm" onClick={next.onStart}>
-              Start now
-            </Button>
+              <div className="media-player-up-next-actions">
+                <Button variant="primary" size="sm" onClick={next.onStart}>
+                  <Play aria-hidden="true" size={12} fill="currentColor" strokeWidth={0} />
+                  Start now
+                </Button>
+                <span>
+                  Plays in {upNextSeconds} {upNextSeconds === 1 ? "second" : "seconds"}
+                </span>
+              </div>
+            </div>
+            <span
+              className="media-player-up-next-progress"
+              style={{ width: `${(1 - upNextIn / upNextNoticeSeconds) * 100}%` }}
+              aria-hidden="true"
+            />
           </aside>
         )}
 

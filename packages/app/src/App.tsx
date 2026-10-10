@@ -272,7 +272,12 @@ export const App = (): React.ReactElement => {
       nextEpisode:
         adjacentEpisodes?.next == null
           ? null
-          : { title: adjacentEpisodes.next.title, artworkId: adjacentEpisodes.next.artworkId },
+          : {
+              title: adjacentEpisodes.next.title,
+              // The show is the one already playing, so only the episode's place in it is said.
+              context: episodeContext({ ...adjacentEpisodes.next, seriesTitle: null }),
+              artworkId: adjacentEpisodes.next.artworkId,
+            },
     }),
     [
       adjacentEpisodes,

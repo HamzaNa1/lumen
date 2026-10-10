@@ -191,6 +191,7 @@ export const PlayerView = ({
             ? undefined
             : {
                 title: nextEpisode.title,
+                context: nextEpisode.context,
                 imageUrl: nextStill,
                 onStart: () => onAction("next-episode"),
               }
