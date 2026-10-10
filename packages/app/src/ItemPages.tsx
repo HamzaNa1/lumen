@@ -6,13 +6,14 @@ import { ChevronLeft, ChevronRight, Play, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { LoadMore } from "./BrowsePages";
 import {
+  episodeCode,
+  episodeSubtitle,
   formatClock,
   formatReleaseDate,
-  formatRuntime,
   kindLabel,
   metadataList,
   plural,
-  resumeLabel,
+  runtimeOf,
 } from "./format";
 import { ItemSettings } from "./ItemSettings";
 import {
@@ -62,31 +63,6 @@ const catalogItem = ({ item, watchState }: CatalogItemDetails): CatalogItem => (
 });
 
 const yearOf = (year: number | null): string | null => (year === null ? null : String(year));
-
-const runtimeOf = (seconds: number | null): string | null =>
-  seconds === null || seconds <= 0 ? null : formatRuntime(seconds);
-
-/** "S1 E3", or whichever part is known. */
-const episodeCode = (
-  seasonNumber: number | null | undefined,
-  episodeNumber: number | null | undefined,
-): string | null =>
-  [
-    seasonNumber == null ? null : `S${seasonNumber}`,
-    episodeNumber == null ? null : `E${episodeNumber}`,
-  ]
-    .filter(Boolean)
-    .join(" ") || null;
-
-const episodeSubtitle = (episode: CatalogItem, seasonNumber: number | null | undefined): string =>
-  [
-    episodeCode(seasonNumber, episode.indexNumber),
-    (episode.resumePositionSeconds ?? 0) > 0
-      ? resumeLabel(episode.resumePositionSeconds ?? 0)
-      : runtimeOf(episode.durationMs === null ? null : episode.durationMs / 1_000),
-  ]
-    .filter(Boolean)
-    .join(" · ");
 
 const PlayButton = ({ item }: { readonly item: CatalogItem }): React.ReactElement => {
   const { playItem } = useWorkspace();

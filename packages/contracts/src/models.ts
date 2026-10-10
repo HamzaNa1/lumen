@@ -185,6 +185,8 @@ export const PlayerState = Schema.Struct({
 export type PlayerState = Schema.Schema.Type<typeof PlayerState>;
 
 export const PlayerDisplay = Schema.Struct({
+  /** What is playing, once known. */
+  itemId: Schema.NullOr(Uuid),
   title: Schema.String,
   context: Schema.String,
   duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
@@ -196,11 +198,8 @@ export const PlayerDisplay = Schema.Struct({
 export type PlayerDisplay = Schema.Schema.Type<typeof PlayerDisplay>;
 
 /** What the viewer asked of the player controls that the application has to carry out. */
-export const PlayerAction = Schema.Literals([
-  "back",
-  "retry",
-  "stop",
-  "previous-episode",
-  "next-episode",
+export const PlayerAction = Schema.Union([
+  Schema.Literals(["back", "retry", "stop", "previous-episode", "next-episode"]),
+  Schema.Struct({ play: CatalogItem }),
 ]);
 export type PlayerAction = Schema.Schema.Type<typeof PlayerAction>;

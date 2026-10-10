@@ -331,14 +331,15 @@ test("the desktop and web builds draw the shared pages identically", async ({
     await expectAlike(testInfo, name, ".nav", [web, desktop]);
     // The users page has listed each account's libraries only since the baseline was taken, and
     // settings has traded the rows that only reported things for playback preferences since then.
-    // Movies have had a settings button only since the baseline was taken.
+    // Movies have had a settings button only since the baseline was taken, and the baseline
+    // still gives the fixture film, too short to have a runtime, one of "0m".
     if (name !== "users" && name !== "settings")
       await expectDesktopUnchanged(
         testInfo,
         name,
         builds,
         name === "movie details"
-          ? { style: ".details-icon-button { display: none !important; }" }
+          ? { style: ".details-icon-button, .details-meta { display: none !important; }" }
           : undefined,
       );
     if (name !== "settings") {

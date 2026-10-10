@@ -127,6 +127,7 @@ async function run(): Promise<void> {
   const controller = player;
   controller.on("error", (error) => observations.push({ error: String(error) }));
   const display = {
+    itemId: null,
     title: "Windows playback test",
     context: "",
     duration: 20,
