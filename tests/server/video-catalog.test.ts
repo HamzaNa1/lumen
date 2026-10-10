@@ -8,7 +8,7 @@ import { createHash } from "node:crypto";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
 import { makeMediaIngest } from "../../apps/server/src/media/MediaIngest";
-import { readLocalFile, readResponseBytes } from "../../apps/server/src/media/BoundedInput";
+import { readLocalFile, readResponseBytes } from "../../apps/server/src/core/BoundedInput";
 import { Ffprobe } from "../../apps/server/src/media/Ffprobe";
 import { makeScanner } from "../../apps/server/src/services/Scanner";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";

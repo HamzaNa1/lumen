@@ -26,7 +26,7 @@ import { Ffprobe, type FfprobeResult } from "../media/Ffprobe";
 import { parseVideoPath } from "./VideoPaths";
 import { readLocalNfo } from "./LocalMetadata";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
-import { readLocalFile } from "./BoundedInput";
+import { readLocalFile } from "../core/BoundedInput";
 import { imageInfo } from "./ImageInfo";
 
 const probedStreamValues = (stream: FfprobeResult["streams"][number], isDefault: boolean) => ({

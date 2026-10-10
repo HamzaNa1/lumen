@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readLocalFile } from "../core/BoundedInput";
+import { notFound } from "../core/Errors";
 import type { AssetFile } from "../services/AssetService";
 import { serveFile } from "./ServeFile";
 
@@ -21,12 +22,16 @@ export const serveArtwork = async (options: {
   readonly revision: string | null;
 }): Promise<Response> => {
   const { request, asset, revision } = options;
+  // A browser profile can host different accounts; a private cache is not an account boundary.
+  const headers = { vary: "Cookie, Authorization" };
   if (revision !== null && REVISION.test(revision) && asset.size <= MAX_REVISIONED_BYTES) {
-    const bytes = await readFile(asset.path).catch(() => null);
-    if (bytes !== null && createHash("sha256").update(bytes).digest("hex") === revision)
+    const bytes = await readLocalFile(asset.path, MAX_REVISIONED_BYTES);
+    if (bytes === null) throw notFound("Artwork is unavailable");
+    if (createHash("sha256").update(bytes).digest("hex") === revision)
       // The hashed bytes are the ones sent, so a file replaced meanwhile cannot slip through.
       return new Response(bytes, {
         headers: {
+          ...headers,
           "cache-control": IMMUTABLE_ARTWORK_CACHE_CONTROL,
           etag: `"${revision}"`,
           "content-type": asset.mimeType,
@@ -36,6 +41,7 @@ export const serveArtwork = async (options: {
       });
   }
   return serveFile({
+    headers,
     request,
     path: asset.path,
     size: asset.size,
