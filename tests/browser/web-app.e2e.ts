@@ -242,8 +242,10 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   const isFullscreen = () => page.evaluate(() => document.fullscreenElement !== null);
   await page.keyboard.press("f");
   await expect.poll(isFullscreen).toBe(true);
+  await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toBeVisible();
   await page.keyboard.press("f");
   await expect.poll(isFullscreen).toBe(false);
+  await expect(page.getByRole("button", { name: "Enter fullscreen", exact: true })).toBeVisible();
 
   await page.mouse.move(300, 300);
   await page.getByRole("button", { name: "Pause playback" }).last().click();
