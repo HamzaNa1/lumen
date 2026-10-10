@@ -8,6 +8,7 @@ import {
   MetadataMatchSelection,
   IpcPlayerSurfaceBounds,
   LibraryAccess,
+  PlayerAction,
   PlayerDisplay,
   type ServerDiscovery,
   UserRole,
@@ -298,6 +299,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("library:next-up", async (_event, raw) =>
     activeClient(dependencies).nextUp(decode(Schema.String, raw)),
   );
+  handle("library:adjacent-episodes", async (_event, raw) =>
+    activeClient(dependencies).adjacentEpisodes(decode(Schema.String, raw)),
+  );
   handle("library:artwork", async (_event, raw) =>
     activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)),
   );
@@ -487,7 +491,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:display-state", async () => playerDisplay);
   handle("player:overlay-action", async (_event, raw) => {
-    const action = decode(Schema.Literals(["back", "retry", "stop"]), raw);
+    const action = decode(PlayerAction, raw);
     dependencies.window.webContents.send("player:overlay-action", action);
   });
   handle("player:fullscreen", async (_event, raw) => {

@@ -3,7 +3,6 @@ import type {
   TrackSettingsRuntime,
   AdminRuntime,
   CatalogRuntime,
-  PlayerAction,
   Unsubscribe,
   WatchRuntime,
 } from "@lumen/client/runtime";
@@ -11,6 +10,7 @@ import type {
   AudioOutput,
   TrackKind,
   IpcPlayerSurfaceBounds,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
 } from "@lumen/contracts";

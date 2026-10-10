@@ -178,6 +178,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       itemDetails: (itemId) => api.itemDetails(itemId),
       itemChildren: (itemId, cursor) => api.itemChildren(itemId, cursor),
       nextUp: (itemId) => api.nextUp(itemId),
+      adjacentEpisodes: (itemId) => api.adjacentEpisodes(itemId),
       setWatched: (itemId, completed) => api.setWatched(itemId, completed),
       search: (query, libraryId) => api.search(query, libraryId),
       episodeOrder: (itemId) => api.episodeOrder(itemId),

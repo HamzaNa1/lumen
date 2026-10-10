@@ -1,11 +1,13 @@
-import type { PlayerAction } from "@lumen/client/runtime";
-import type { PlayerDisplay, PlayerState } from "@lumen/contracts";
+import type { PlayerAction, PlayerDisplay, PlayerState } from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
 import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
 import "./player.css";
+
+/** How far into an episode Previous still leads to the episode before it instead of restarting. */
+const previousEpisodeWindowSeconds = 10;
 
 /**
  * The player controls and their state, drawn over whatever surface the platform plays video on.
@@ -88,6 +90,14 @@ export const PlayerView = ({
     );
   };
 
+  const seek = (positionSeconds: number): void => {
+    if (player !== null)
+      void runtime.playback
+        .seek(player.sessionId, positionSeconds)
+        .then(setPlayer)
+        .catch(() => undefined);
+  };
+
   if (display === null) return <div className="player-overlay" />;
 
   return (
@@ -163,13 +173,16 @@ export const PlayerView = ({
               .then(setPlayer)
               .catch(() => undefined);
         }}
-        onSeek={(positionSeconds) => {
-          if (player !== null)
-            void runtime.playback
-              .seek(player.sessionId, positionSeconds)
-              .then(setPlayer)
-              .catch(() => undefined);
+        onSeek={seek}
+        onPrevious={() => {
+          if (
+            display.hasPreviousEpisode &&
+            (player?.positionSeconds ?? 0) < previousEpisodeWindowSeconds
+          )
+            onAction("previous-episode");
+          else seek(0);
         }}
+        onNext={display.hasNextEpisode ? () => onAction("next-episode") : undefined}
         onVolume={(volume, muted) => {
           if (player !== null)
             void runtime.playback

@@ -18,7 +18,7 @@ import {
   Repositories,
   tracks,
 } from "@lumen/database";
-import { and, asc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer, type Schema } from "effect";
 import { badRequest, forbidden, notFound } from "../core/Errors";
@@ -91,6 +91,12 @@ export interface CatalogServiceShape {
     itemId: string,
     nowMs: number,
   ) => Effect.Effect<{ item: unknown }, unknown>;
+  /** The episodes before and after one in its show; neither for anything that is not an episode. */
+  readonly adjacentEpisodes: (
+    principal: AuthPrincipal,
+    itemId: string,
+    nowMs: number,
+  ) => Effect.Effect<{ previous: unknown; next: unknown }, unknown>;
   readonly itemDetails: (
     principal: AuthPrincipal,
     itemId: string,
@@ -307,6 +313,47 @@ export const makeCatalogService = Effect.gen(function* () {
     };
   });
 
+  const season = alias(catalogItems, "season");
+  /** A show's episodes in watching order, whether they sit in seasons or directly in the show. */
+  const showEpisodes = (showId: string, userId: string, condition?: SQL) =>
+    database
+      .select({
+        id: catalogItems.id,
+        libraryId: catalogItems.libraryId,
+        parentId: catalogItems.parentId,
+        title: catalogItems.title,
+        kind: catalogItems.kind,
+        indexNumber: catalogItems.indexNumber,
+        durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
+        year: catalogItems.year,
+        artworkId: sql<string | null>`(
+          select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
+          where ${catalogItemArtwork.itemId} = ${catalogItems.id}
+            and ${catalogItemArtwork.role} = 'still'
+        )`,
+        completed: completedFor(userId),
+        resumePositionSeconds,
+      })
+      .from(catalogItems)
+      .leftJoin(season, eq(season.id, catalogItems.parentId))
+      .leftJoin(
+        itemWatchStates,
+        and(eq(itemWatchStates.itemId, catalogItems.id), eq(itemWatchStates.userId, userId)),
+      )
+      .where(
+        and(
+          or(eq(season.parentId, showId), eq(catalogItems.parentId, showId)),
+          eq(catalogItems.kind, "episode"),
+          condition,
+        ),
+      )
+      .orderBy(
+        asc(sql`coalesce(${season.indexNumber}, 0)`),
+        asc(catalogItems.indexNumber),
+        asc(catalogItems.sortTitle),
+        asc(catalogItems.id),
+      );
+
   const nextUp: CatalogServiceShape["nextUp"] = Effect.fn("Catalog.nextUp")(
     function* (principal, itemId, nowMs) {
       const show = yield* database
@@ -316,52 +363,49 @@ export const makeCatalogService = Effect.gen(function* () {
         .get();
       if (show == null || show.kind !== "show") return yield* notFound("Series not found");
       yield* access.requireLibrary(principal, show.libraryId, "library:read", nowMs);
-      const season = alias(catalogItems, "season");
-      const episode = yield* database
-        .select({
-          id: catalogItems.id,
-          libraryId: catalogItems.libraryId,
-          parentId: catalogItems.parentId,
-          title: catalogItems.title,
-          kind: catalogItems.kind,
-          indexNumber: catalogItems.indexNumber,
-          durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
-          year: catalogItems.year,
-          artworkId: sql<string | null>`(
-            select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-            where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-              and ${catalogItemArtwork.role} = 'still'
-          )`,
-          completed: completedFor(principal.user.id),
-          resumePositionSeconds,
-        })
-        .from(catalogItems)
-        .leftJoin(season, eq(season.id, catalogItems.parentId))
-        .leftJoin(
-          itemWatchStates,
-          and(
-            eq(itemWatchStates.itemId, catalogItems.id),
-            eq(itemWatchStates.userId, principal.user.id),
-          ),
-        )
-        .where(
-          and(
-            or(eq(season.parentId, itemId), eq(catalogItems.parentId, itemId)),
-            eq(catalogItems.kind, "episode"),
-            sql`coalesce(${itemWatchStates.completed}, 0) = 0`,
-          ),
-        )
-        .orderBy(
-          asc(sql`coalesce(${season.indexNumber}, 0)`),
-          asc(catalogItems.indexNumber),
-          asc(catalogItems.sortTitle),
-          asc(catalogItems.id),
-        )
+      const episode = yield* showEpisodes(
+        itemId,
+        principal.user.id,
+        sql`coalesce(${itemWatchStates.completed}, 0) = 0`,
+      )
         .limit(1)
         .get();
       return { item: episode };
     },
   );
+
+  const adjacentEpisodes: CatalogServiceShape["adjacentEpisodes"] = Effect.fn(
+    "Catalog.adjacentEpisodes",
+  )(function* (principal, itemId, nowMs) {
+    const parent = alias(catalogItems, "parent");
+    const item = yield* database
+      .select({
+        libraryId: catalogItems.libraryId,
+        kind: catalogItems.kind,
+        parentId: catalogItems.parentId,
+        parentKind: parent.kind,
+        grandparentId: parent.parentId,
+      })
+      .from(catalogItems)
+      .leftJoin(parent, eq(parent.id, catalogItems.parentId))
+      .where(eq(catalogItems.id, itemId))
+      .get();
+    if (item == null) return yield* notFound("Item not found");
+    yield* access.requireLibrary(principal, item.libraryId, "library:read", nowMs);
+    const showId =
+      item.kind !== "episode"
+        ? null
+        : item.parentKind === "season"
+          ? item.grandparentId
+          : item.parentId;
+    if (showId === null) return { previous: null, next: null };
+    const episodes = yield* showEpisodes(showId, principal.user.id);
+    const index = episodes.findIndex((episode) => episode.id === itemId);
+    return {
+      previous: episodes[index - 1] ?? null,
+      next: index === -1 ? null : (episodes[index + 1] ?? null),
+    };
+  });
 
   const itemDetails: CatalogServiceShape["itemDetails"] = Effect.fn("Catalog.itemDetails")(
     function* (principal, itemId, metadataProviderConfigured, nowMs) {
@@ -731,6 +775,7 @@ export const makeCatalogService = Effect.gen(function* () {
     updateItemMetadata,
     listItemChildren,
     nextUp,
+    adjacentEpisodes,
     itemDetails,
     setItemFavorite,
     setItemWatchState,

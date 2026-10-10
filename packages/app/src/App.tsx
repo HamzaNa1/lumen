@@ -1,7 +1,7 @@
-import type { PlayerAction } from "@lumen/client/runtime";
 import type {
   AccountSummary,
   CatalogItem,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
   WatchStatus,
@@ -241,12 +241,18 @@ export const App = (): React.ReactElement => {
   }, [active, onPlayerRoute, queryClient, updatePlayer, runtime]);
   const watchPlayback = watchStatus?.group?.playback;
   const watchTitle = watchPlayback?.title;
+  const playingId = playingItem?.id ?? watchPlayback?.itemId;
   // Every way into the player names the item, but only some know the show it belongs to.
   const playingDetails = useQuery(
-    itemDetailsQuery(runtime, scope ?? [], scope === null ? null : (playingItem?.id ?? watchPlayback?.itemId)),
+    itemDetailsQuery(runtime, scope ?? [], scope === null ? null : playingId),
   );
   const playingContext =
     playingDetails.data?.item.kind === "episode" ? episodeContext(playingDetails.data.item) : "";
+  const adjacentEpisodes = useQuery({
+    queryKey: [...(scope ?? []), "adjacent-episodes", playingId],
+    queryFn: () => runtime.catalog.adjacentEpisodes(playingId ?? ""),
+    enabled: scope !== null && playingId != null,
+  }).data;
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
       title: playingItem?.title ?? watchTitle ?? "Now playing",
@@ -254,8 +260,18 @@ export const App = (): React.ReactElement => {
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
+      hasPreviousEpisode: adjacentEpisodes?.previous != null,
+      hasNextEpisode: adjacentEpisodes?.next != null,
     }),
-    [playingContext, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
+    [
+      adjacentEpisodes,
+      playingContext,
+      playingItem,
+      playerUnavailable,
+      playbackLoading,
+      playbackError,
+      watchTitle,
+    ],
   );
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
@@ -266,6 +282,13 @@ export const App = (): React.ReactElement => {
       if (action === "back" || action === "stop") {
         leavingWatch.current = true;
         void router.navigate({ href: returnTo.current, replace: true });
+      } else if (action === "previous-episode" || action === "next-episode") {
+        const episode =
+          action === "next-episode" ? adjacentEpisodes?.next : adjacentEpisodes?.previous;
+        if (episode == null) return;
+        setPlaybackError(null);
+        // Asking for an episode by its place in the show starts it over, wherever it was left.
+        setPlayingItem({ ...episode, resumePositionSeconds: null });
       } else if (playingItem !== null) void beginPlayback(playingItem);
       else if (watchRef.current?.group?.playback != null) {
         setPlaybackLoading(true);
@@ -273,7 +296,7 @@ export const App = (): React.ReactElement => {
         void runtime.watch.retry().catch(reportPlaybackError);
       }
     },
-    [beginPlayback, playingItem, reportPlaybackError, router, runtime],
+    [adjacentEpisodes, beginPlayback, playingItem, reportPlaybackError, router, runtime],
   );
   useEffect(
     () => (presentation.kind === "external" ? presentation.onAction(onPlayerAction) : undefined),
