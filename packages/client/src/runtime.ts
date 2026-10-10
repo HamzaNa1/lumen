@@ -1,5 +1,6 @@
 import type {
   AccountList,
+  AdjacentEpisodes,
   TrackKind,
   TrackPreferences,
   TrackPreferencesPatch,
@@ -16,6 +17,7 @@ import type {
   JobLogEntry,
   LibrarySummary,
   ManagedUser,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
   ScanRun,
@@ -68,6 +70,7 @@ export interface CatalogRuntime {
   readonly itemDetails: (itemId: string) => Promise<CatalogItemDetails>;
   readonly itemChildren: (itemId: string, cursor?: string | null) => Promise<CatalogItemPage>;
   readonly nextUp: (itemId: string) => Promise<CatalogItem | null>;
+  readonly adjacentEpisodes: (itemId: string) => Promise<AdjacentEpisodes>;
   readonly setWatched: (itemId: string, completed: boolean) => Promise<void>;
   readonly search: (query: string, libraryId?: string | null) => Promise<unknown>;
   readonly episodeOrder: (itemId: string) => Promise<EpisodeOrderOptions>;
@@ -116,8 +119,6 @@ export interface AdminRuntime {
   readonly scanStatus: (runId: string) => Promise<ScanRun>;
   readonly jobLog: () => Promise<ReadonlyArray<JobLogEntry>>;
 }
-
-export type PlayerAction = "back" | "retry" | "stop";
 
 /**
  * Where the player controls are drawn. A browser draws them over its own video. The desktop's

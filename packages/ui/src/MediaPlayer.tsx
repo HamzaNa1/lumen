@@ -10,6 +10,8 @@ import {
   RotateCcw,
   RotateCw,
   Settings2,
+  SkipBack,
+  SkipForward,
   TriangleAlert,
   Volume2,
   VolumeX,
@@ -70,6 +72,10 @@ interface MediaPlayerProps {
   /** Omitted where fullscreen is unavailable. */
   readonly onFullscreen?: (() => void) | undefined;
   readonly onRetry: () => void;
+  /** Goes back to the start of what is playing, or to whatever comes before it. */
+  readonly onPrevious: () => void;
+  /** Omitted where nothing follows what is playing. */
+  readonly onNext?: (() => void) | undefined;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
   readonly onVolume: (volume: number, muted: boolean) => void;
@@ -111,6 +117,8 @@ export const MediaPlayer = ({
   onBack,
   onFullscreen,
   onRetry,
+  onPrevious,
+  onNext,
   onPause,
   onSeek,
   onVolume,
@@ -184,22 +192,16 @@ export const MediaPlayer = ({
 
       <div className="media-player-frame">
         <div className="media-player-surface" ref={surfaceRef}>
-          <button
+          {/* Pointer-only: the console's play button and the Space shortcut cover the keyboard. */}
+          <div
             className="media-player-video-hit-target"
-            type="button"
-            aria-label={
-              settingsOpen
-                ? "Close playback settings"
-                : paused
-                  ? "Resume playback"
-                  : "Pause playback"
-            }
-            disabled={!settingsOpen && inactive}
-            onClick={(event) => {
+            aria-hidden="true"
+            onClick={() => {
               if (settingsOpen) setSettingsOpen(false);
-              // Only a pointer can double click, and only where there is a fullscreen to toggle.
-              else if (onFullscreen === undefined || event.detail === 0) onPause();
-              else onVideoClick();
+              else if (!inactive) {
+                if (onFullscreen === undefined) onPause();
+                else onVideoClick();
+              }
             }}
           />
           <div className="media-player-placeholder">
@@ -302,6 +304,9 @@ export const MediaPlayer = ({
 
           <div className="media-player-toolbar">
             <div className="media-player-transport">
+              <Button variant="icon" disabled={inactive} onClick={onPrevious} aria-label="Previous">
+                <SkipBack aria-hidden="true" size={19} fill="currentColor" />
+              </Button>
               <Button
                 className="media-player-skip"
                 variant="icon"
@@ -339,6 +344,16 @@ export const MediaPlayer = ({
                   10
                 </span>
               </Button>
+              {onNext === undefined ? null : (
+                <Button
+                  variant="icon"
+                  disabled={inactive}
+                  onClick={onNext}
+                  aria-label="Next episode"
+                >
+                  <SkipForward aria-hidden="true" size={19} fill="currentColor" />
+                </Button>
+              )}
             </div>
             {inactive || remaining === null ? null : (
               <span className="media-player-ends-at">{formatEndsAt(remaining, now)}</span>

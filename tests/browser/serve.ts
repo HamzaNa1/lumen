@@ -1,5 +1,5 @@
-// Starts a server with deterministic data for the browser tests: an admin account, one movie the
-// browser can play, and one whose file is not media at all.
+// Starts a server with deterministic data for the browser tests: an admin account, a movie and a
+// show the browser can play, and one movie whose file is not media at all.
 import { Database } from "bun:sqlite";
 import { copyFile, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -14,39 +14,74 @@ const root = await mkdtemp(join(tmpdir(), "lumen-browser-test-"));
 const databasePath = join(root, "server.sqlite");
 const seeded = await seedPlaybackFixture(root, databasePath);
 
-// "Clip" keeps the fixture's placeholder bytes, which no browser can play. Add a real film.
-const moviePath = join(root, "film.mp4");
-await copyFile(join(repository, "tests/fixtures/playback.mp4"), moviePath);
+// "Clip" keeps the fixture's placeholder bytes, which no browser can play. Add a real film, and a
+// show whose episodes play the same footage.
 const database = new Database(databasePath);
-const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid(), item: newUuid() };
 const now = Date.now();
-database.run(
-  `INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, inode, scanned_at_ms)
-   SELECT ?, library_id, root_id, 'film.mp4', ?, 'local', ?, ?, '2', ? FROM media_sources LIMIT 1`,
-  [ids.source, moviePath, (await stat(moviePath)).size, now, now],
-);
-database.run(
-  "INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (?, ?, 'video', 'mp4', 'h264', 0, 1)",
-  [ids.video, ids.source],
-);
-database.run(
-  "INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (?, ?, 'audio', 'mp4', 'aac', 'eng', 'English', 1, 1)",
-  [ids.audio, ids.source],
-);
-database.run(
-  `INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
-   VALUES (?, ?, ?, ?, 'Film', 'film', 5000, 0, ?, ?)`,
-  [ids.track, seeded.libraryId, ids.source, ids.video, now, now],
-);
-database.run(
-  `INSERT INTO catalog_items(id, library_id, kind, title, sort_title, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
-   VALUES (?, ?, 'movie', 'Film', 'film', 5, 'local', ?, ?)`,
-  [ids.item, seeded.libraryId, now, now],
-);
-database.run(
-  "INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (?, ?, 1, 1)",
-  [ids.item, ids.source],
-);
+let files = 0;
+const addItem = (
+  kind: string,
+  title: string,
+  parent: { readonly id: string; readonly indexNumber: number } | null = null,
+): string => {
+  const id = newUuid();
+  database.run(
+    `INSERT INTO catalog_items(id, library_id, parent_id, index_number, kind, title, sort_title, duration_seconds, metadata_state, added_at_ms, updated_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'local', ?, ?)`,
+    [
+      id,
+      seeded.libraryId,
+      parent?.id ?? null,
+      parent?.indexNumber ?? null,
+      kind,
+      title,
+      title.toLowerCase(),
+      kind === "movie" || kind === "episode" ? 20 : null,
+      now,
+      now,
+    ],
+  );
+  return id;
+};
+const addPlayable = async (
+  kind: "movie" | "episode",
+  title: string,
+  parent: { readonly id: string; readonly indexNumber: number } | null = null,
+): Promise<void> => {
+  const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid() };
+  const name = `playable-${++files}.mp4`;
+  const path = join(root, name);
+  await copyFile(join(repository, "tests/fixtures/playback.mp4"), path);
+  database.run(
+    `INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, inode, scanned_at_ms)
+     SELECT ?, library_id, root_id, ?, ?, 'local', ?, ?, ?, ? FROM media_sources LIMIT 1`,
+    [ids.source, name, path, (await stat(path)).size, now, `playable-${files}`, now],
+  );
+  database.run(
+    "INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (?, ?, 'video', 'mp4', 'h264', 0, 1)",
+    [ids.video, ids.source],
+  );
+  database.run(
+    "INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (?, ?, 'audio', 'mp4', 'aac', 'eng', 'English', 1, 1)",
+    [ids.audio, ids.source],
+  );
+  database.run(
+    `INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
+     VALUES (?, ?, ?, ?, ?, ?, 20000, 0, ?, ?)`,
+    [ids.track, seeded.libraryId, ids.source, ids.video, title, title.toLowerCase(), now, now],
+  );
+  database.run(
+    "INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (?, ?, 1, 1)",
+    [addItem(kind, title, parent), ids.source],
+  );
+};
+await addPlayable("movie", "Film");
+const show = addItem("show", "Serial");
+const firstSeason = addItem("season", "Season 1", { id: show, indexNumber: 1 });
+const secondSeason = addItem("season", "Season 2", { id: show, indexNumber: 2 });
+await addPlayable("episode", "Pilot", { id: firstSeason, indexNumber: 1 });
+await addPlayable("episode", "Second", { id: firstSeason, indexNumber: 2 });
+await addPlayable("episode", "Return", { id: secondSeason, indexNumber: 1 });
 database.close();
 
 const server = await startServer({

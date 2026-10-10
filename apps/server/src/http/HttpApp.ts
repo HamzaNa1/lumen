@@ -224,7 +224,13 @@ export const makeHttpHandler = (
           apiVersion: API_VERSION,
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
-          capabilities: { directPlayOnly: true, watchGroups: true, browserSessions: true, trackMemory: true },
+          capabilities: {
+            directPlayOnly: true,
+            watchGroups: true,
+            browserSessions: true,
+            trackMemory: true,
+            adjacentEpisodes: true,
+          },
         },
         200,
         { "cache-control": "no-store" },
@@ -753,6 +759,18 @@ export const makeHttpHandler = (
       parts[4] === "next-up"
     ) {
       return unknownJson(await call(services.catalog.nextUp(principal, parts[3], Date.now())));
+    }
+    if (
+      method === "GET" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "items" &&
+      parts[3] !== undefined &&
+      parts[4] === "adjacent-episodes"
+    ) {
+      return unknownJson(
+        await call(services.catalog.adjacentEpisodes(principal, parts[3], Date.now())),
+      );
     }
     if (
       method === "GET" &&

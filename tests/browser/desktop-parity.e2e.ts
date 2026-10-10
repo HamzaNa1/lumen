@@ -585,7 +585,13 @@ test("watch groups are drawn identically", async ({ context, baseURL }, testInfo
   await compare("left watch group");
 });
 
-const filmDisplay = { title: "Film", context: "", duration: 100 } as const;
+const filmDisplay = {
+  title: "Film",
+  context: "",
+  duration: 100,
+  hasPreviousEpisode: false,
+  hasNextEpisode: false,
+} as const;
 const playing: NonNullable<ParityScenario["player"]> = {
   sessionId: "session",
   itemId: "item",
@@ -636,8 +642,11 @@ test("the desktop player controls are what they were before the extraction", asy
 }, testInfo) => {
   test.skip(!hasBaseline, "Build the pre-extraction renderer with `bun run test:browser:baseline`");
   const builds = await signedInBuilds(context, baseURL ?? "");
-  // The baseline predates the time playback ends at, which is left out.
-  const withoutEndsAt = { style: ".media-player-ends-at { visibility: hidden !important; }" };
+  // The baseline predates the time playback ends at and the Previous button, which are left out.
+  const withoutLaterControls = {
+    style:
+      ".media-player-ends-at { visibility: hidden !important; } .media-player-transport > [aria-label='Previous'] { display: none !important; }",
+  };
   const states: ReadonlyArray<readonly [string, ParityScenario]> = [
     ["starting", { display: { ...filmDisplay, loading: true, error: null } }],
     [
@@ -661,7 +670,7 @@ test("the desktop player controls are what they were before the extraction", asy
       await page.addStyleTag({ content: STILL });
     }
     // The loading state keeps its spinner; every other state has to have stopped moving.
-    await expectDesktopUnchanged(testInfo, `player ${name}`, builds, withoutEndsAt);
+    await expectDesktopUnchanged(testInfo, `player ${name}`, builds, withoutLaterControls);
   }
 
   // The last state is still showing: open its menus.
@@ -687,13 +696,13 @@ test("the desktop player controls are what they were before the extraction", asy
       content: ".media-player-settings-panel { z-index: 3; }",
     });
   }
-  await expectDesktopUnchanged(testInfo, "playback settings", builds, withoutEndsAt);
+  await expectDesktopUnchanged(testInfo, "playback settings", builds, withoutLaterControls);
   for (const { page } of builds.desktops) {
     await page.getByRole("button", { name: "Playback settings", exact: true }).click();
     await page.locator(".watch-group-chip").click();
     await expect(page.getByText("No groups yet")).toBeVisible();
   }
-  await expectDesktopUnchanged(testInfo, "watch groups in the player", builds, withoutEndsAt);
+  await expectDesktopUnchanged(testInfo, "watch groups in the player", builds, withoutLaterControls);
 });
 
 test("the playback settings open over the timeline", async ({ context, baseURL }, testInfo) => {
@@ -822,6 +831,8 @@ test("the player controls are drawn identically over playing media", async ({
       duration: Math.round(element.durationSeconds),
       loading: false,
       error: null,
+      hasPreviousEpisode: false,
+      hasNextEpisode: false,
     },
     player: { ...playing, ...element, streams: [], selectedAudioStreamId: null },
   });
