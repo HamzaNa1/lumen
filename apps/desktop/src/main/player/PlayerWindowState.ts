@@ -4,20 +4,22 @@ export const broadcastPlayerFullscreen = (
   parent: BrowserWindow,
   overlay: BrowserWindow,
 ): (() => void) => {
-  const changed = (): void => {
+  const changed = (fullscreen: boolean): void => {
     if (parent.isDestroyed()) return;
-    const fullscreen = parent.isFullScreen();
     for (const window of [parent, overlay]) {
       if (!window.isDestroyed()) window.webContents.send("player:fullscreen-state", fullscreen);
     }
   };
+  // Windows emits these events before isFullScreen() reflects the new state.
+  const entered = (): void => changed(true);
+  const left = (): void => changed(false);
   const dispose = (): void => {
-    parent.off("enter-full-screen", changed);
-    parent.off("leave-full-screen", changed);
+    parent.off("enter-full-screen", entered);
+    parent.off("leave-full-screen", left);
     parent.off("closed", dispose);
   };
-  parent.on("enter-full-screen", changed);
-  parent.on("leave-full-screen", changed);
+  parent.on("enter-full-screen", entered);
+  parent.on("leave-full-screen", left);
   parent.once("closed", dispose);
   return dispose;
 };

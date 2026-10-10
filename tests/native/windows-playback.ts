@@ -329,6 +329,14 @@ async function run(): Promise<void> {
     }
     assert.fail(`The player controls did not update to ${expected}`);
   }
+  async function toggleFullscreen(fullscreen: boolean): Promise<void> {
+    await inspectFullscreenControl(!fullscreen);
+    const label = fullscreen ? "Enter fullscreen" : "Exit fullscreen";
+    await overlay.window.webContents.executeJavaScript(
+      `document.querySelector('button[aria-label="${label}"]').click()`,
+    );
+    await inspectFullscreenControl(fullscreen);
+  }
   async function inspectUnfocused(label: string): Promise<void> {
     const bounds = parent.getContentBounds();
     // An independent foreground window exercises real focus events while
@@ -398,11 +406,11 @@ async function run(): Promise<void> {
       parent.restore();
       parent.focus();
       visible.push(await inspect("restored"));
-      await overlay.window.webContents.executeJavaScript(
-        `document.querySelector('button[aria-label="Enter fullscreen"]').click()`,
-      );
+      // Every click must update both the native window and the controls, in both directions.
+      for (const fullscreen of [true, false, true, false, true]) {
+        await toggleFullscreen(fullscreen);
+      }
       await delay(250);
-      await inspectFullscreenControl(true);
       syncSurface();
       visible.push(await inspect("fullscreen"));
       if (scale === "1") await inspectFullscreenFocusCycles();
