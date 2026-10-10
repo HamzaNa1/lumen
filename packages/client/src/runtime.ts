@@ -1,6 +1,7 @@
 import type {
   AccountList,
   AdjacentEpisodes,
+  ArtworkRef,
   TrackKind,
   TrackPreferences,
   TrackPreferencesPatch,
@@ -88,7 +89,7 @@ export interface CatalogRuntime {
 
 export interface ArtworkRuntime {
   /** Something an image element can load, or null when the artwork is unavailable. */
-  readonly url: (artworkId: string) => Promise<string | null>;
+  readonly url: (artwork: ArtworkRef) => Promise<string | null>;
 }
 
 export interface AdminRuntime {

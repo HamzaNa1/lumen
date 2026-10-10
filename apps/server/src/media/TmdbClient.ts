@@ -1,4 +1,4 @@
-import { readResponseBytes } from "./BoundedInput";
+import { readResponseBytes } from "../core/BoundedInput";
 
 export type TmdbObject = Record<string, unknown>;
 

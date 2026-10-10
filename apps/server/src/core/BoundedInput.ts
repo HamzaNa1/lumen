@@ -7,14 +7,17 @@ export const readLocalFile = async (path: string, maxBytes: number): Promise<Uin
     try {
       const details = await file.stat();
       if (!details.isFile() || details.size > maxBytes) return null;
-      const bytes = Buffer.alloc(maxBytes + 1);
+      const chunks: Uint8Array[] = [];
       let length = 0;
-      while (length < bytes.length) {
-        const read = await file.read(bytes, length, Math.min(64 * 1024, bytes.length - length), length);
+      while (length <= maxBytes) {
+        const bytes = Buffer.alloc(Math.min(64 * 1024, maxBytes + 1 - length));
+        const read = await file.read(bytes, 0, bytes.length, length);
         if (read.bytesRead === 0) break;
         length += read.bytesRead;
+        if (length > maxBytes) return null;
+        chunks.push(bytes.subarray(0, read.bytesRead));
       }
-      return length > maxBytes ? null : bytes.subarray(0, length);
+      return Buffer.concat(chunks, length);
     } finally {
       await file.close();
     }

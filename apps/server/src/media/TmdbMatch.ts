@@ -1,5 +1,5 @@
 import type { MetadataMatchCandidate } from "@lumen/contracts";
-import { readResponseBytes } from "./BoundedInput";
+import { readResponseBytes } from "../core/BoundedInput";
 import { imageInfo } from "./ImageInfo";
 import {
   fetchTmdb,

@@ -14,6 +14,9 @@ export const homeItems = (userId: string, libraryIds: ReadonlyArray<string>) => 
     (SELECT a.artwork_id FROM catalog_item_artwork a
       WHERE a.item_id = i.id AND a.role IN ('poster', 'still')
       ORDER BY a.role LIMIT 1) AS artworkId,
+    (SELECT art.content_hash FROM catalog_item_artwork a JOIN artwork art ON art.id = a.artwork_id
+      WHERE a.item_id = i.id AND a.role IN ('poster', 'still')
+      ORDER BY a.role LIMIT 1) AS artworkRevision,
     EXISTS (SELECT 1 FROM catalog_item_sources cs
       JOIN media_sources ms ON ms.id = cs.source_id AND ms.library_id = i.library_id
       JOIN tracks t ON t.source_id = ms.id AND t.library_id = i.library_id
@@ -33,7 +36,7 @@ export const homeItems = (userId: string, libraryIds: ReadonlyArray<string>) => 
 `;
 
 export const homeCardColumns = sql`id, libraryId, parentId, title, kind, durationMs, year,
-  indexNumber, resumePositionSeconds, artworkId, seriesTitle, seasonNumber`;
+  indexNumber, resumePositionSeconds, artworkId, artworkRevision, seriesTitle, seasonNumber`;
 
 export const nextUpQuery = (
   userId: string,

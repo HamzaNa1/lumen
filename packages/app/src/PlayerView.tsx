@@ -38,7 +38,7 @@ export const PlayerView = ({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const nextEpisode = display?.nextEpisode ?? null;
   // The controls can be drawn where no account's caches are, so the still keeps to its own.
-  const nextStill = useArtwork(nextEpisode?.artworkId, ["player"]).data ?? null;
+  const nextStill = useArtwork(nextEpisode?.artwork, ["player"]).data ?? null;
   const playingItemId = display?.itemId ?? null;
   const show = usePlayingShow(playingItemId);
   // Loaded with the player rather than with the drawer, which then has nothing to wait for.

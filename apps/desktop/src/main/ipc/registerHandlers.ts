@@ -1,5 +1,6 @@
 import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
+  ArtworkRef,
   AudioOutput,
   TrackPreferencesPatch,
   TrackKind,
@@ -19,6 +20,7 @@ import { type BrowserWindow, type IpcMainInvokeEvent, clipboard, ipcMain } from 
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
 import { ServerClient, ServerHttpError, type AccountSession } from "../api/ServerClient";
+import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
@@ -57,6 +59,7 @@ const registeredHandlers: string[] = [];
 export interface IpcDependencies {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
+  readonly artwork: ArtworkCache;
   readonly player: PlayerController;
   readonly bridge: PlaybackBridge;
   readonly installationId: string;
@@ -247,6 +250,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     else dependencies.clients.get(connectionId)?.cancelPending();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
+    // The connection is already gone; images left behind cost disk space, not correctness.
+    await dependencies.artwork.forget(connectionId).catch((cause: unknown) => {
+      console.error("Failed to clear a removed connection's artwork", cause);
+    });
     return dependencies.registry.list();
   });
   handle("library:list", async () => activeClient(dependencies).libraries());
@@ -303,7 +310,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     activeClient(dependencies).adjacentEpisodes(decode(Schema.String, raw)),
   );
   handle("library:artwork", async (_event, raw) =>
-    activeClient(dependencies).artworkDataUrl(decode(Schema.String, raw)),
+    activeClient(dependencies).artworkDataUrl(
+      decode(ArtworkRef, raw),
+      dependencies.artwork.transportFor(activeConnectionId(dependencies)),
+    ),
   );
   handle("library:search", async (_event, raw) => {
     const input = decode(

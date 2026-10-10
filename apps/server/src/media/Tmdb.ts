@@ -24,7 +24,7 @@ import { mkdir, utimes, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServerConfig } from "../config/Config";
 import { newUuid } from "../core/Security";
-import { readResponseBytes } from "./BoundedInput";
+import { readResponseBytes } from "../core/BoundedInput";
 import { generatedArtworkDir } from "./GeneratedArtwork";
 import { imageInfo } from "./ImageInfo";
 import { MetadataSettings } from "../services/MetadataSettings";

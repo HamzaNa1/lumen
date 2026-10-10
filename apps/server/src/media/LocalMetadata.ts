@@ -1,4 +1,4 @@
-import { readLocalFile } from "./BoundedInput";
+import { readLocalFile } from "../core/BoundedInput";
 
 export interface LocalMetadata {
   readonly title?: string;

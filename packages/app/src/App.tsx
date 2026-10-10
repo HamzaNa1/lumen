@@ -1,10 +1,11 @@
-import type {
-  AccountSummary,
-  CatalogItem,
-  PlayerAction,
-  PlayerDisplay,
-  PlayerState,
-  WatchStatus,
+import {
+  type AccountSummary,
+  type CatalogItem,
+  type PlayerAction,
+  type PlayerDisplay,
+  type PlayerState,
+  posterOf,
+  type WatchStatus,
 } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -283,7 +284,7 @@ export const App = (): React.ReactElement => {
               title: adjacentEpisodes.next.title,
               // The show is the one already playing, so only the episode's place in it is said.
               context: episodeContext({ ...adjacentEpisodes.next, seriesTitle: null }),
-              artworkId: adjacentEpisodes.next.artworkId,
+              artwork: posterOf(adjacentEpisodes.next),
             },
     }),
     [

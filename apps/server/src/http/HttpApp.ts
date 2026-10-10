@@ -47,6 +47,7 @@ import {
   sessionCookie,
   sessionCookieToken,
 } from "./BrowserSession";
+import { serveArtwork } from "./ServeArtwork";
 import { serveFile } from "./ServeFile";
 import * as S from "../http/Schemas";
 
@@ -1022,13 +1023,7 @@ export const makeHttpHandler = (
       parts[3] !== undefined
     ) {
       const asset = await call(services.assets.artwork(principal, parts[3], Date.now()));
-      return serveFile({
-        request,
-        path: asset.path,
-        size: asset.size,
-        modifiedAtMs: asset.modifiedAtMs,
-        mimeType: asset.mimeType,
-      });
+      return serveArtwork({ request, asset, revision: url.searchParams.get("revision") });
     }
     if (
       method === "GET" &&
