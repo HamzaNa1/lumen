@@ -41,6 +41,25 @@ type SearchInput = Schema.Schema.Type<typeof SearchQuery>;
 type ItemMetadataInput = Schema.Schema.Type<typeof ItemMetadataBody>;
 type ItemWatchInput = Schema.Schema.Type<typeof ItemWatchStateBody>;
 
+type ArtworkRole = "poster" | "still" | "backdrop";
+
+/**
+ * One of an item's images, preferring the earlier role: its artwork ID, or the content hash a
+ * client names to fetch exactly those bytes.
+ */
+const itemArtwork = (column: "id" | "revision", roles: ReadonlyArray<ArtworkRole>) => sql<
+  string | null
+>`(
+  select ${column === "id" ? artwork.id : artwork.contentHash} from ${catalogItemArtwork}
+  join ${artwork} on ${artwork.id} = ${catalogItemArtwork.artworkId}
+  where ${catalogItemArtwork.itemId} = ${catalogItems.id}
+    and ${catalogItemArtwork.role} in (${sql.join(
+      roles.map((role) => sql`${role}`),
+      sql`, `,
+    )})
+  order by ${catalogItemArtwork.role} limit 1
+)`;
+
 // Where the viewer left off; finished items have nothing to resume.
 const resumePositionSeconds = sql<
   number | null
@@ -172,11 +191,8 @@ export const makeCatalogService = Effect.gen(function* () {
           kind: catalogItems.kind,
           durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
           year: catalogItems.year,
-          artworkId: sql<string | null>`(
-            select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-            where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-              and ${catalogItemArtwork.role} = 'poster'
-          )`,
+          artworkId: itemArtwork("id", ["poster"]),
+          artworkRevision: itemArtwork("revision", ["poster"]),
           completed: completedFor(principal.user.id),
           resumePositionSeconds,
         })
@@ -286,12 +302,8 @@ export const makeCatalogService = Effect.gen(function* () {
         indexNumber: catalogItems.indexNumber,
         durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
         year: catalogItems.year,
-        artworkId: sql<string | null>`(
-          select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-          where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-            and ${catalogItemArtwork.role} in ('poster', 'still')
-          order by ${catalogItemArtwork.role} limit 1
-        )`,
+        artworkId: itemArtwork("id", ["poster", "still"]),
+        artworkRevision: itemArtwork("revision", ["poster", "still"]),
         completed: completedFor(principal.user.id),
         resumePositionSeconds,
       })
@@ -327,11 +339,8 @@ export const makeCatalogService = Effect.gen(function* () {
         seasonNumber: season.indexNumber,
         durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
         year: catalogItems.year,
-        artworkId: sql<string | null>`(
-          select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-          where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-            and ${catalogItemArtwork.role} = 'still'
-        )`,
+        artworkId: itemArtwork("id", ["still"]),
+        artworkRevision: itemArtwork("revision", ["still"]),
         completed: completedFor(userId),
         resumePositionSeconds,
       })
@@ -438,17 +447,10 @@ export const makeCatalogService = Effect.gen(function* () {
           tagsJson: sql<string>`coalesce(${catalogItemMetadata.tagsJson}, '[]')`,
           externalIdsJson: sql<string>`coalesce(${catalogItemMetadata.externalIdsJson}, '{}')`,
           // Episodes have a still instead of a poster.
-          artworkId: sql<string | null>`(
-            select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-            where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-              and ${catalogItemArtwork.role} in ('poster', 'still')
-            order by ${catalogItemArtwork.role} limit 1
-          )`,
-          backdropId: sql<string | null>`(
-            select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-            where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-              and ${catalogItemArtwork.role} = 'backdrop'
-          )`,
+          artworkId: itemArtwork("id", ["poster", "still"]),
+          artworkRevision: itemArtwork("revision", ["poster", "still"]),
+          backdropId: itemArtwork("id", ["backdrop"]),
+          backdropRevision: itemArtwork("revision", ["backdrop"]),
         })
         .from(catalogItems)
         .leftJoin(catalogItemMetadata, eq(catalogItemMetadata.itemId, catalogItems.id))
@@ -688,11 +690,8 @@ export const makeCatalogService = Effect.gen(function* () {
           kind: catalogItems.kind,
           durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
           year: catalogItems.year,
-          artworkId: sql<string | null>`(
-            select ${catalogItemArtwork.artworkId} from ${catalogItemArtwork}
-            where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-              and ${catalogItemArtwork.role} = 'poster'
-          )`,
+          artworkId: itemArtwork("id", ["poster"]),
+          artworkRevision: itemArtwork("revision", ["poster"]),
           completed: completedFor(principal.user.id),
           resumePositionSeconds,
         })

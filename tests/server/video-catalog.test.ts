@@ -210,7 +210,13 @@ test("video folders browse as series, seasons, episodes and movies without requi
     }).pipe(Effect.provide(layer)),
   );
   const showDetails = (await (await get(`/api/v1/items/${showId}`, admin)).json()) as {
-    item: { overview: string; genresJson: string; communityRating: number; artworkId: string };
+    item: {
+      overview: string;
+      genresJson: string;
+      communityRating: number;
+      artworkId: string;
+      artworkRevision: string;
+    };
     metadataProviderConfigured: boolean;
   };
   expect(showDetails.metadataProviderConfigured).toBe(false);
@@ -219,6 +225,38 @@ test("video folders browse as series, seasons, episodes and movies without requi
   expect(showDetails.item.communityRating).toBe(8.5);
   expect((await get(`/api/v1/artwork/${showDetails.item.artworkId}`, admin)).status).toBe(200);
   expect((await get(`/api/v1/artwork/${showDetails.item.artworkId}`, viewer)).status).toBe(403);
+  // Naming the revision the catalog reports gets exactly those bytes, to keep without asking again.
+  const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
+  const revalidated = "private, max-age=0, must-revalidate";
+  const immutable = "private, max-age=31536000, immutable";
+  const poster = (revision: string | null, token = admin) =>
+    get(
+      `/api/v1/artwork/${showDetails.item.artworkId}${revision === null ? "" : `?revision=${revision}`}`,
+      token,
+    );
+  expect(showDetails.item.artworkRevision).toBe(sha256(png));
+  const revisioned = await poster(showDetails.item.artworkRevision);
+  expect(revisioned.status).toBe(200);
+  expect(revisioned.headers.get("cache-control")).toBe(immutable);
+  expect(revisioned.headers.get("content-type")).toBe("image/png");
+  expect(Buffer.from(await revisioned.arrayBuffer())).toEqual(png);
+  // Without a revision, or with one that is not these bytes, the image is checked on every use.
+  for (const revision of [null, "0".repeat(64), "not-a-hash"]) {
+    const response = await poster(revision);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe(revalidated);
+    expect(Buffer.from(await response.arrayBuffer())).toEqual(png);
+  }
+  const unchanged = await fetch(new URL(`/api/v1/artwork/${showDetails.item.artworkId}`, base), {
+    headers: {
+      authorization: `Bearer ${admin}`,
+      "if-none-match": (await poster(null)).headers.get("etag") ?? "",
+    },
+  });
+  expect(unchanged.status).toBe(304);
+  // A revision is not a way around library access.
+  expect((await poster(showDetails.item.artworkRevision, viewer)).status).toBe(403);
+  expect((await poster(showDetails.item.artworkRevision, "")).status).toBe(401);
   // Episodes have a still instead of a poster.
   const episodeDetails = (await (
     await get(`/api/v1/items/${must(firstSeason.items[0]).id}`, admin)
@@ -234,6 +272,10 @@ test("video folders browse as series, seasons, episodes and movies without requi
     "base64",
   );
   await writeFile(join(showsRoot, "House", "poster.png"), replacementPoster);
+  // Before a scan notices, the old revision already stops vouching for the file's new bytes.
+  const outdated = await poster(showDetails.item.artworkRevision);
+  expect(outdated.headers.get("cache-control")).toBe(revalidated);
+  expect(Buffer.from(await outdated.arrayBuffer())).toEqual(replacementPoster);
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* (yield* makeMediaIngest).ingest(must(ids.sourceIds[0]));
@@ -250,6 +292,28 @@ test("video folders browse as series, seasons, episodes and movies without requi
     createHash("sha256").update(replacementPoster).digest("hex"),
   );
   expect(artworkRow?.byteSize).toBe(replacementPoster.length);
+  // The scan keeps the artwork ID and reports the new revision, which names the new bytes.
+  const rescannedShow = (await (await get(`/api/v1/items/${showId}`, admin)).json()) as {
+    item: { artworkId: string; artworkRevision: string };
+  };
+  expect(rescannedShow.item).toMatchObject({
+    artworkId: showDetails.item.artworkId,
+    artworkRevision: sha256(replacementPoster),
+  });
+  const replaced = await poster(rescannedShow.item.artworkRevision);
+  expect(replaced.headers.get("cache-control")).toBe(immutable);
+  expect(Buffer.from(await replaced.arrayBuffer())).toEqual(replacementPoster);
+  expect((await poster(showDetails.item.artworkRevision)).headers.get("cache-control")).toBe(
+    revalidated,
+  );
+  // Listings carry the revision alongside the ID wherever they carry artwork.
+  const listed = (await (await get(`/api/v1/items?libraryId=${ids.showsId}`, admin)).json()) as {
+    items: { artworkId: string | null; artworkRevision: string | null }[];
+  };
+  expect(must(listed.items[0])).toMatchObject({
+    artworkId: showDetails.item.artworkId,
+    artworkRevision: sha256(replacementPoster),
+  });
   const startPlayback = (itemId: string) =>
     fetch(new URL("/api/v1/playback/sessions", base), {
       method: "POST",

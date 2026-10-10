@@ -1,5 +1,5 @@
 import { Schema } from "effect";
-import { UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
+import { Sha256Digest, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 import { TrackMemory } from "./track-memory.ts";
 import { ServerInfo } from "./server.ts";
 
@@ -52,6 +52,27 @@ export const LibrarySummary = Schema.Struct({
 });
 export type LibrarySummary = Schema.Schema.Type<typeof LibrarySummary>;
 
+/** The hash of an image's bytes. Servers from before artwork had revisions leave it out. */
+const ArtworkRevision = Schema.optional(Schema.NullOr(Sha256Digest));
+
+/** One image, and where known the revision that names its exact bytes. */
+export const ArtworkRef = Schema.Struct({ id: Uuid, revision: Schema.NullOr(Sha256Digest) });
+export type ArtworkRef = Schema.Schema.Type<typeof ArtworkRef>;
+
+const artworkRef = (id: string | null, revision: string | null | undefined): ArtworkRef | null =>
+  id === null ? null : { id, revision: revision ?? null };
+
+/** An item's poster, or the still an episode has in its place. */
+export const posterOf = (item: {
+  readonly artworkId: string | null;
+  readonly artworkRevision?: string | null | undefined;
+}): ArtworkRef | null => artworkRef(item.artworkId, item.artworkRevision);
+
+export const backdropOf = (item: {
+  readonly backdropId: string | null;
+  readonly backdropRevision?: string | null | undefined;
+}): ArtworkRef | null => artworkRef(item.backdropId, item.backdropRevision);
+
 export const CatalogItem = Schema.Struct({
   id: Uuid,
   libraryId: Uuid,
@@ -60,6 +81,7 @@ export const CatalogItem = Schema.Struct({
   durationMs: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   year: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   artworkId: Schema.NullOr(Uuid),
+  artworkRevision: ArtworkRevision,
   completed: Schema.optional(Schema.Boolean),
   resumePositionSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   parentId: Schema.optional(Schema.NullOr(Uuid)),
@@ -90,6 +112,7 @@ export const CatalogItemDetails = Schema.Struct({
     completed: Schema.optional(Schema.Boolean),
     durationSeconds: Schema.NullOr(Schema.Number),
     artworkId: Schema.NullOr(Uuid),
+    artworkRevision: ArtworkRevision,
     overview: Schema.NullOr(Schema.String),
     releaseDate: Schema.NullOr(Schema.String),
     contentRating: Schema.NullOr(Schema.String),
@@ -99,6 +122,7 @@ export const CatalogItemDetails = Schema.Struct({
     tagsJson: Schema.String,
     externalIdsJson: Schema.String,
     backdropId: Schema.NullOr(Uuid),
+    backdropRevision: ArtworkRevision,
   }),
   sources: Schema.Array(Schema.Unknown),
   watchState: Schema.NullOr(
@@ -199,7 +223,7 @@ export const PlayerDisplay = Schema.Struct({
       title: Schema.String,
       /** Its place in the show, such as "S01E03"; empty where that is not known. */
       context: Schema.String,
-      artworkId: Schema.NullOr(Uuid),
+      artwork: Schema.NullOr(ArtworkRef),
     }),
   ),
 });

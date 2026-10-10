@@ -205,7 +205,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       jobLog: () => api.jobLog(),
     },
     // The image element sends the session cookie itself, so artwork loads straight from the server.
-    artwork: { url: async (artworkId) => api.artworkPath(artworkId) },
+    artwork: { url: async (artwork) => api.artworkPath(artwork) },
     playback: {
       start: async (itemId, startAtSeconds, title, replaces) => {
         await commands.start(itemId, startAtSeconds, title, replaces);

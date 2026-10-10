@@ -256,6 +256,7 @@ for (const change of [
     registerIpcHandlers({
       registry,
       clients,
+      artwork: { forget: async () => undefined },
       installationId: crypto.randomUUID(),
       window,
       overlay: { window },

@@ -1,11 +1,13 @@
 import type { LumenRuntime } from "@lumen/client/runtime";
-import type {
-  AccountSummary,
-  CatalogItem,
-  PlayerAction,
-  PlayerDisplay,
-  PlayerState,
-  WatchPlayback,
+import {
+  type AccountSummary,
+  type ArtworkRef,
+  type CatalogItem,
+  type PlayerAction,
+  type PlayerDisplay,
+  type PlayerState,
+  posterOf,
+  type WatchPlayback,
 } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import {
@@ -85,12 +87,13 @@ export const watchedFraction = (item: CatalogItem): number | null =>
     ? (item.resumePositionSeconds * 1_000) / item.durationMs
     : null;
 
-export const useArtwork = (artworkId: string | null | undefined, scope: readonly unknown[]) => {
+export const useArtwork = (artwork: ArtworkRef | null | undefined, scope: readonly unknown[]) => {
   const runtime = useRuntime();
   return useQuery({
-    queryKey: [...scope, "artwork", artworkId],
-    queryFn: () => runtime.artwork.url(artworkId ?? ""),
-    enabled: artworkId != null,
+    // Keyed by revision too, so an image replaced under the same ID is loaded again.
+    queryKey: [...scope, "artwork", artwork?.id, artwork?.revision],
+    queryFn: () => (artwork == null ? null : runtime.artwork.url(artwork)),
+    enabled: artwork != null,
     staleTime: Number.POSITIVE_INFINITY,
   });
 };
@@ -163,7 +166,7 @@ export const CatalogCard = ({
   readonly landscape?: boolean;
 }): React.ReactElement => {
   const { scope, openItem, playItem } = useWorkspace();
-  const artwork = useArtwork(item.artworkId, scope);
+  const artwork = useArtwork(posterOf(item), scope);
   return (
     <MediaCard
       title={item.title}

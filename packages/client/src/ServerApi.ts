@@ -1,4 +1,5 @@
 import {
+  type ArtworkRef,
   TrackPreferences,
   TrackMemory,
   type TrackPreferencesPatch,
@@ -195,6 +196,7 @@ const itemPageSchema = Schema.Struct({
       durationMs: Schema.NullOr(Schema.Number),
       year: Schema.NullOr(Schema.Number),
       artworkId: Schema.NullOr(Schema.String),
+      artworkRevision: Schema.optional(Schema.NullOr(Schema.String)),
       completed: Schema.optional(Schema.Boolean),
       resumePositionSeconds: Schema.NullOr(Schema.Number),
       parentId: Schema.optional(Schema.NullOr(Schema.String)),
@@ -586,16 +588,29 @@ export class ServerApi {
     );
   }
 
-  artworkPath(artworkId: string): string {
-    return `/api/v1/artwork/${encodeURIComponent(artworkId)}`;
+  /**
+   * Where an image is served. Naming its revision asks for exactly those bytes, which the server
+   * lets a cache keep without asking again; without one the image is revalidated on every use.
+   */
+  artworkPath(artwork: ArtworkRef): string {
+    const path = `/api/v1/artwork/${encodeURIComponent(artwork.id)}`;
+    return artwork.revision === null
+      ? path
+      : `${path}?${new URLSearchParams({ revision: artwork.revision }).toString()}`;
   }
 
-  /** The image itself, for platforms that cannot load artwork straight from the server. */
-  async artworkImage(artworkId: string): Promise<ArtworkImage | null> {
+  /**
+   * The image itself, for platforms that cannot load artwork straight from the server. A platform
+   * with an HTTP cache of its own passes that cache's fetch as the transport.
+   */
+  async artworkImage(
+    artwork: ArtworkRef,
+    transport: FetchLike = this.fetchImpl,
+  ): Promise<ArtworkImage | null> {
     const headers = new Headers();
     this.credentials.authorize({ method: "GET", headers });
     const scope = this.scope;
-    const response = await this.fetchImpl(new URL(this.artworkPath(artworkId), this.serverOrigin), {
+    const response = await transport(new URL(this.artworkPath(artwork), this.serverOrigin), {
       headers,
       redirect: "manual",
       signal: scope.signal,

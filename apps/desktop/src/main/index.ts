@@ -1,8 +1,9 @@
 import { join } from "node:path";
-import { app, type BrowserWindow, nativeTheme } from "electron";
+import { app, type BrowserWindow, nativeTheme, session } from "electron";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import type { ServerClient } from "./api/ServerClient";
+import { ArtworkCache } from "./artwork/ArtworkCache";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
 import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
@@ -89,6 +90,7 @@ const bootstrap = async (): Promise<void> => {
   registerIpcHandlers({
     registry,
     clients,
+    artwork: new ArtworkCache((partition) => session.fromPartition(partition)),
     player,
     bridge,
     installationId,

@@ -1,4 +1,10 @@
-import type { CatalogItem, CatalogItemDetails } from "@lumen/contracts";
+import {
+  type ArtworkRef,
+  backdropOf,
+  type CatalogItem,
+  type CatalogItemDetails,
+  posterOf,
+} from "@lumen/contracts";
 import { Button, PosterFallback, posterHue, StatusState } from "@lumen/ui";
 import { type UseQueryResult, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack/react-router";
@@ -56,6 +62,7 @@ const catalogItem = ({ item, watchState }: CatalogItemDetails): CatalogItem => (
   year: item.year,
   indexNumber: item.indexNumber,
   artworkId: item.artworkId,
+  artworkRevision: item.artworkRevision,
   durationMs: item.durationSeconds === null ? null : item.durationSeconds * 1_000,
   completed: item.completed ?? watchState?.completed ?? false,
   resumePositionSeconds:
@@ -95,7 +102,7 @@ const BackButton = ({ fallback }: { readonly fallback: () => void }): React.Reac
 const DetailsHeader = ({
   details,
   meta,
-  backdropId,
+  fallbackBackdrop,
   landscape = false,
   eyebrow,
   actions,
@@ -104,7 +111,7 @@ const DetailsHeader = ({
   readonly details: CatalogItemDetails;
   readonly meta: ReadonlyArray<string | null>;
   /** Hero artwork when the item has no backdrop of its own, such as its show's. */
-  readonly backdropId?: string | null;
+  readonly fallbackBackdrop?: ArtworkRef | null;
   /** Show the item's artwork as a 16:9 still instead of a poster. */
   readonly landscape?: boolean;
   /** Links to the item's parents. */
@@ -115,8 +122,8 @@ const DetailsHeader = ({
   const { scope } = useWorkspace();
   const { item } = details;
   const [failedImages, setFailedImages] = useState<ReadonlyArray<string>>([]);
-  const poster = useArtwork(item.artworkId, scope);
-  const backdrop = useArtwork(item.backdropId ?? backdropId, scope);
+  const poster = useArtwork(posterOf(item), scope);
+  const backdrop = useArtwork(backdropOf(item) ?? fallbackBackdrop, scope);
   const usable = (url: string | null | undefined): url is string =>
     url != null && !failedImages.includes(url);
   const markFailed = (url: string): void => setFailedImages((previous) => [...previous, url]);
@@ -430,7 +437,7 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
     <div className="details-page">
       <DetailsHeader
         details={details.data}
-        backdropId={showItem?.backdropId}
+        fallbackBackdrop={showItem == null ? null : backdropOf(showItem)}
         eyebrow={
           showItem === undefined ? null : (
             <Link to="/show/$itemId" params={{ itemId: showItem.id }}>
@@ -497,7 +504,7 @@ const EpisodeDetails = ({ itemId }: { readonly itemId: string }): React.ReactEle
       <DetailsHeader
         details={details.data}
         landscape
-        backdropId={show?.backdropId}
+        fallbackBackdrop={show == null ? null : backdropOf(show)}
         eyebrow={
           show?.kind !== "show" ? null : (
             <>

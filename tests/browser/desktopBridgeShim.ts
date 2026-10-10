@@ -98,7 +98,7 @@ const bridge: DesktopBridge = {
     setEpisodeOrder: (itemId, selection) => api.setEpisodeOrder(itemId, selection),
     matchOptions: (itemId, query) => api.matchOptions(itemId, query),
     setMatch: (itemId, selection) => api.setMatch(itemId, selection),
-    artwork: async (artworkId) => api.artworkPath(artworkId),
+    artwork: async (artwork) => api.artworkPath(artwork),
   },
   admin: {
     listUsers: () => api.users(),

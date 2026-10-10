@@ -1,4 +1,10 @@
-import type { CatalogItem, CatalogItemPage, LibrarySummary } from "@lumen/contracts";
+import {
+  type ArtworkRef,
+  type CatalogItem,
+  type CatalogItemPage,
+  type LibrarySummary,
+  posterOf,
+} from "@lumen/contracts";
 import { Button, EmptyState, Form, PosterFallback, StatusState } from "@lumen/ui";
 import {
   type InfiniteData,
@@ -153,24 +159,26 @@ const homeCardText = (
   return context === null ? { subtitle: resumeAt } : { subtitle: context, detail: resumeAt };
 };
 
+const firstPoster = (items: ReadonlyArray<CatalogItem> | undefined): ArtworkRef | null => {
+  const item = items?.find((candidate) => candidate.artworkId !== null);
+  return item === undefined ? null : posterOf(item);
+};
+
 const LibraryTile = ({
   library,
-  artworkId,
+  artwork: knownArtwork,
 }: {
   readonly library: LibrarySummary;
-  readonly artworkId?: string | null;
+  readonly artwork: ArtworkRef | null;
 }): React.ReactElement => {
   const runtime = useRuntime();
   const { scope } = useWorkspace();
   const items = useQuery({
     queryKey: [...scope, "items", library.id, "thumbnail"],
     queryFn: () => runtime.catalog.items(library.id),
-    enabled: artworkId == null,
+    enabled: knownArtwork === null,
   });
-  const artwork = useArtwork(
-    artworkId ?? items.data?.items.find((item) => item.artworkId != null)?.artworkId,
-    scope,
-  );
+  const artwork = useArtwork(knownArtwork ?? firstPoster(items.data?.items), scope);
   const imageUrl = artwork.data;
   const [failedImage, setFailedImage] = useState<string | null>(null);
   return (
@@ -242,14 +250,12 @@ export const HomePage = (): React.ReactElement => {
         <>
           <Shelf title="My Media">
             {data.libraries.map((library) => {
-              const artworkId = data.latest
-                .find((row) => row.libraryId === library.id)
-                ?.items.find((item) => item.artworkId != null)?.artworkId;
+              const latest = data.latest.find((row) => row.libraryId === library.id);
               return (
                 <LibraryTile
                   key={library.id}
                   library={library}
-                  artworkId={artworkId}
+                  artwork={firstPoster(latest?.items)}
                 />
               );
             })}

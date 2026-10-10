@@ -1,4 +1,4 @@
-import type { CatalogItem } from "@lumen/contracts";
+import { type CatalogItem, posterOf } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, ListVideo, LoaderCircle, X } from "lucide-react";
@@ -72,7 +72,7 @@ const EpisodeCard = ({
   readonly current: boolean;
   readonly onSelect: () => void;
 }): React.ReactElement => {
-  const artwork = useArtwork(episode.artworkId, playerScope);
+  const artwork = useArtwork(posterOf(episode), playerScope);
   return (
     <MediaCard
       title={episode.title}

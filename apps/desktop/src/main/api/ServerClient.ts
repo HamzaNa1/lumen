@@ -1,3 +1,4 @@
+import type { ArtworkRef } from "@lumen/contracts";
 import {
   type AccountSession as TokenSession,
   bearerCredentials,
@@ -68,8 +69,8 @@ export class ServerClient extends ServerApi implements WatchServer {
   }
 
   /** Artwork as a data URL, because the renderer cannot send this connection's token itself. */
-  async artworkDataUrl(artworkId: string): Promise<string | null> {
-    const image = await this.artworkImage(artworkId);
+  async artworkDataUrl(artwork: ArtworkRef, transport: FetchLike): Promise<string | null> {
+    const image = await this.artworkImage(artwork, transport);
     if (image === null) return null;
     return `data:${image.mimeType};base64,${Buffer.from(image.bytes).toString("base64")}`;
   }

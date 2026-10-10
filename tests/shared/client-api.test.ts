@@ -354,3 +354,57 @@ describe("playback session reporting", () => {
     expect(errors).toEqual([]);
   });
 });
+
+describe("ServerApi artwork", () => {
+  const id = "0191f0c1-5b7a-7000-8000-000000000001";
+  const revision = "a".repeat(64);
+  const api = (fetchImpl: ConstructorParameters<typeof ServerApi>[0]["fetchImpl"]) =>
+    new ServerApi({
+      origin: "https://media.example",
+      credentials: bearerCredentials(() => "token"),
+      fetchImpl,
+    });
+
+  test("an image is addressed by its revision when the server gave one", () => {
+    const paths = api(async () => new Response());
+    expect(paths.artworkPath({ id, revision })).toBe(`/api/v1/artwork/${id}?revision=${revision}`);
+    expect(paths.artworkPath({ id, revision: null })).toBe(`/api/v1/artwork/${id}`);
+  });
+
+  test("listings keep the revision, and tolerate a server that sends none", async () => {
+    const item = {
+      id,
+      libraryId: id,
+      title: "Film",
+      kind: "movie",
+      durationMs: null,
+      year: null,
+      artworkId: id,
+      resumePositionSeconds: null,
+    };
+    const page = await api(async () =>
+      Response.json({ items: [{ ...item, artworkRevision: revision }, item], nextCursor: null }),
+    ).items(id, null);
+    expect(page.items.map((listed) => listed.artworkRevision)).toEqual([revision, undefined]);
+  });
+
+  test("a caching transport carries the image request, with this session's token", async () => {
+    const seen: { url: string; authorization: string | null }[] = [];
+    const image = await api(async () => {
+      throw new Error("Artwork must not use the default transport");
+    }).artworkImage({ id, revision }, async (input, init) => {
+      seen.push({
+        url: String(input),
+        authorization: new Headers(init.headers).get("authorization"),
+      });
+      return new Response(new Uint8Array([1, 2]), { headers: { "content-type": "image/webp" } });
+    });
+    expect(image).toEqual({ mimeType: "image/webp", bytes: new Uint8Array([1, 2]) });
+    expect(seen).toEqual([
+      {
+        url: `https://media.example/api/v1/artwork/${id}?revision=${revision}`,
+        authorization: "Bearer token",
+      },
+    ]);
+  });
+});
