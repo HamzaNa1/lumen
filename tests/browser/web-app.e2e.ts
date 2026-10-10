@@ -210,9 +210,8 @@ test("a file the browser cannot play says so instead of loading forever", async 
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
 });
 
-/** Starts a fixture title from a page that lists it, and waits until it is really playing. */
-const play = async (page: Page, title: string): Promise<void> => {
-  await page.getByRole("button", { name: `Play ${title}` }).first().click({ force: true });
+/** Waits until the player is really playing, clicking through a browser's refusal to autoplay. */
+const waitUntilPlaying = async (page: Page): Promise<void> => {
   await expect(page).toHaveURL(/\/web\/player$/u);
   await expect(page.getByRole("region", { name: "Media player" })).toBeVisible();
   // Headless browsers refuse unprompted playback with sound; the player then asks for a click.
@@ -221,6 +220,12 @@ const play = async (page: Page, title: string): Promise<void> => {
   await expect
     .poll(() => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0))
     .toBeGreaterThan(0.2);
+};
+
+/** Starts a fixture title from a page that lists it, and waits until it is really playing. */
+const play = async (page: Page, title: string): Promise<void> => {
+  await page.getByRole("button", { name: `Play ${title}` }).first().click({ force: true });
+  await waitUntilPlaying(page);
 };
 const playFilm = (page: Page): Promise<void> => play(page, "Film");
 
@@ -243,8 +248,10 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   const isFullscreen = () => page.evaluate(() => document.fullscreenElement !== null);
   await page.keyboard.press("f");
   await expect.poll(isFullscreen).toBe(true);
+  await expect(page.getByRole("button", { name: "Exit fullscreen", exact: true })).toBeVisible();
   await page.keyboard.press("f");
   await expect.poll(isFullscreen).toBe(false);
+  await expect(page.getByRole("button", { name: "Enter fullscreen", exact: true })).toBeVisible();
 
   await page.mouse.move(300, 300);
   await page.getByRole("button", { name: "Pause playback" }).last().click();
@@ -459,6 +466,63 @@ test("clicking the video toggles playback without taking focus", async ({
     body: await page.screenshot(),
     contentType: "image/png",
   });
+});
+
+test("the show drawer opens at the playing episode and plays another", async ({
+  page,
+  browserName,
+}, testInfo) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  // A show and its seasons have nothing of their own to play, so their play buttons open them.
+  await page.getByRole("button", { name: "Play Harbor Lights" }).click({ force: true });
+  await page.getByRole("button", { name: "Play Season 1" }).click({ force: true });
+  await play(page, "Signal Fire");
+
+  await page.mouse.move(300, 300);
+  await page.getByRole("button", { name: "Episodes", exact: true }).click();
+  const drawer = page.getByRole("complementary", { name: "Episodes" });
+  await expect(drawer.getByRole("heading", { name: "Harbor Lights" })).toBeVisible();
+  // Both seasons are listed, and the list rests on the episode that is playing.
+  await expect(drawer.getByRole("article")).toHaveCount(10);
+  const current = drawer.locator('[aria-current="true"]');
+  await expect(current).toContainText("Signal Fire");
+  await expect(current).toContainText("S1 E5 · Now playing");
+  await expect(current).toBeInViewport({ ratio: 1 });
+  expect(await drawer.locator(".show-drawer-body").evaluate((body) => body.scrollTop)).toBeGreaterThan(0);
+  await testInfo.attach("show drawer", { body: await page.screenshot(), contentType: "image/png" });
+
+  // The controls stay for as long as the drawer is open.
+  await page.waitForTimeout(3_500);
+  await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
+
+  await drawer.getByRole("button", { name: "Play Storm Glass" }).click({ force: true });
+  await expect(drawer).toBeHidden();
+  await expect(page.getByRole("heading", { name: "Storm Glass" })).toBeVisible();
+  await expect(page.getByText("Harbor Lights · S02E03")).toBeVisible();
+  await waitUntilPlaying(page);
+
+  // Escape closes the drawer, and so does a click on the video beside it.
+  await page.mouse.move(320, 320);
+  await page.getByRole("button", { name: "Episodes", exact: true }).click();
+  await expect(drawer.locator('[aria-current="true"]')).toContainText("Storm Glass");
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await page.getByRole("button", { name: "Episodes", exact: true }).click();
+  await page.mouse.click(400, 400);
+  await expect(drawer).toBeHidden();
+  expect(await page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
+});
+
+test("a film's player has no show drawer", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  await playFilm(page);
+  await page.mouse.move(300, 300);
+  await expect(page.getByRole("button", { name: "Watch together" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Episodes", exact: true })).toHaveCount(0);
 });
 
 test("the player controls hide once the viewer is done with the settings", async ({

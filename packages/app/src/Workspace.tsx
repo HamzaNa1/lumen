@@ -79,6 +79,12 @@ export const useLibraries = (scope: readonly unknown[]) => {
   return useQuery({ queryKey: [...scope, "libraries"], queryFn: () => runtime.catalog.libraries() });
 };
 
+/** How much of an item has been watched, from 0 to 1; null when it has not been started. */
+export const watchedFraction = (item: CatalogItem): number | null =>
+  item.durationMs !== null && item.durationMs > 0 && item.resumePositionSeconds
+    ? (item.resumePositionSeconds * 1_000) / item.durationMs
+    : null;
+
 export const useArtwork = (artworkId: string | null | undefined, scope: readonly unknown[]) => {
   const runtime = useRuntime();
   return useQuery({
@@ -166,11 +172,7 @@ export const CatalogCard = ({
       kind={item.kind}
       landscape={landscape}
       imageUrl={artwork.data ?? null}
-      progress={
-        item.durationMs !== null && item.durationMs > 0 && item.resumePositionSeconds
-          ? (item.resumePositionSeconds * 1_000) / item.durationMs
-          : null
-      }
+      progress={watchedFraction(item)}
       action={
         ["movie", "season", "episode"].includes(item.kind) ? (
           <WatchedButton item={item} compact />

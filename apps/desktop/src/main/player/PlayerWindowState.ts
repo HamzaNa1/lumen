@@ -1,5 +1,27 @@
 import { type BrowserWindow, type Rectangle, screen } from "electron";
 
+export const broadcastPlayerFullscreen = (
+  parent: BrowserWindow,
+  overlay: BrowserWindow,
+): (() => void) => {
+  const changed = (): void => {
+    if (parent.isDestroyed()) return;
+    const fullscreen = parent.isFullScreen();
+    for (const window of [parent, overlay]) {
+      if (!window.isDestroyed()) window.webContents.send("player:fullscreen-state", fullscreen);
+    }
+  };
+  const dispose = (): void => {
+    parent.off("enter-full-screen", changed);
+    parent.off("leave-full-screen", changed);
+    parent.off("closed", dispose);
+  };
+  parent.on("enter-full-screen", changed);
+  parent.on("leave-full-screen", changed);
+  parent.once("closed", dispose);
+  return dispose;
+};
+
 export const playerContentBounds = (parent: BrowserWindow): Rectangle => {
   // Chromium shrinks a background fullscreen HWND by one physical pixel without
   // resizing its renderer. The video and controls must keep the renderer's full
