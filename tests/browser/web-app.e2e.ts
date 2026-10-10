@@ -352,6 +352,38 @@ test("clicking the video toggles playback without taking focus", async ({
   });
 });
 
+test("double-clicking the video toggles fullscreen without pausing", async ({
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  await playFilm(page);
+  await expect(page.getByRole("button", { name: "Pause playback" })).toBeEnabled();
+  await page.evaluate(() => {
+    const video = document.querySelector("video");
+    if (video === null) throw new Error("Playback did not mount a video");
+    video.dataset.pauseCount = "0";
+    video.addEventListener("pause", () => {
+      video.dataset.pauseCount = String(Number(video.dataset.pauseCount) + 1);
+    });
+  });
+  const currentTime = () => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0);
+  const isFullscreen = () => page.evaluate(() => document.fullscreenElement !== null);
+
+  for (const fullscreen of [true, false]) {
+    const before = await currentTime();
+    await page.mouse.dblclick(700, 400);
+    await expect.poll(isFullscreen).toBe(fullscreen);
+    // Playback must keep advancing beyond the single-click delay, without even a transient pause.
+    await expect.poll(currentTime).toBeGreaterThan(before + 0.5);
+    expect(await page.evaluate(() => document.querySelector("video")?.dataset.pauseCount)).toBe(
+      "0",
+    );
+  }
+});
+
 test("the show drawer opens at the playing episode and plays another", async ({
   page,
   browserName,
