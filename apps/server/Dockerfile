@@ -1,6 +1,6 @@
 FROM mwader/static-ffmpeg:9.0@sha256:b90574a4e2ae62b763c39c384526689e7eb435da6398f4fb3f6c3f1c6a14ce33 AS ffprobe
 
-FROM oven/bun:1.4.2 AS dependencies
+FROM oven/bun:1.4.3 AS dependencies
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml tsconfig.base.json biome.json ./
 COPY apps/server/package.json apps/server/package.json
@@ -9,7 +9,7 @@ COPY packages/database/package.json packages/database/package.json
 RUN bun install --frozen-lockfile --production
 
 # Builds the browser app. Only its compiled output reaches the runtime image.
-FROM oven/bun:1.4.2 AS web
+FROM oven/bun:1.4.3 AS web
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml tsconfig.base.json ./
 COPY apps/web/package.json apps/web/package.json
@@ -27,7 +27,7 @@ COPY packages/app packages/app
 COPY apps/server/package.json apps/server/package.json
 RUN bun run --cwd apps/web build
 
-FROM oven/bun:1.4.2-slim
+FROM oven/bun:1.4.3-slim
 WORKDIR /app
 ENV NODE_ENV=production \
     LUMEN_HOST=0.0.0.0 \
