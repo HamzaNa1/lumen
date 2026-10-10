@@ -4,7 +4,7 @@
 // Native playback is not reproduced: the page's address says what the player should report, so
 // the controls can be drawn in a chosen state.
 import { cookieCredentials, ServerApi, WatchGroupClient } from "../../packages/client/src/index.ts";
-import type { PlayerDisplay, PlayerState, WatchStatus } from "../../packages/contracts/src/index.ts";
+import type { ArtworkRef, PlayerDisplay, PlayerState, WatchStatus } from "../../packages/contracts/src/index.ts";
 import type { DesktopBridge } from "../../apps/desktop/src/shared/bridge";
 
 /** What the stand-in reports, given as JSON in the page's `scenario` query parameter. */
@@ -98,7 +98,9 @@ const bridge: DesktopBridge = {
     setEpisodeOrder: (itemId, selection) => api.setEpisodeOrder(itemId, selection),
     matchOptions: (itemId, query) => api.matchOptions(itemId, query),
     setMatch: (itemId, selection) => api.setMatch(itemId, selection),
-    artwork: async (artwork) => api.artworkPath(artwork),
+    // The fixed baseline predates revisioned artwork and passes only its ID.
+    artwork: async (artwork: ArtworkRef | string) =>
+      api.artworkPath(typeof artwork === "string" ? { id: artwork, revision: null } : artwork),
   },
   admin: {
     listUsers: () => api.users(),

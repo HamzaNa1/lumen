@@ -279,13 +279,51 @@ const expectDesktopUnchanged = async (
   { desktop, baseline }: Builds,
   options?: Parameters<typeof expectAlike>[4],
 ): Promise<void> => {
-  if (baseline !== null) await expectAlike(testInfo, name, "body", [desktop, baseline], options);
+  if (baseline !== null)
+    await expectAlike(testInfo, name, "body", [desktop, baseline], {
+      ...options,
+      // Episode resume captions were added after this fixed reference (bea411d). They still
+      // participate in current web/desktop comparisons, but have no counterpart in the baseline.
+      style: [
+        ".shelf .media-card-subtitle + .media-card-subtitle { display: none !important; }",
+        options?.style,
+      ].filter(Boolean).join("\n"),
+    });
 };
 
 const signedInBuilds = async (context: BrowserContext, baseURL: string): Promise<Builds> => {
   await signIn(context, baseURL);
   return openBuilds(context);
 };
+
+test("current and baseline renderers load episode artwork through their bridge contracts", async ({
+  context,
+  baseURL,
+}) => {
+  const builds = await signedInBuilds(context, baseURL ?? "");
+  const libraries = await (await context.request.get("/api/v1/libraries")).json();
+  const items = await (
+    await context.request.get(`/api/v1/items?libraryId=${libraries[0].id}&limit=50`)
+  ).json();
+  const show = items.items.find((item: { title: string }) => item.title === "Serial");
+  const seasons = await (await context.request.get(`/api/v1/items/${show.id}/children`)).json();
+  // A fresh fixture has no continue-watching artwork on Home; these episodes always have stills.
+  for (const { page, files } of builds.desktops) {
+    await gotoDesktop(page, files, `/season/${seasons.items[0].id}`);
+    await settled(page);
+    const posters = page.locator(".media-card img.poster");
+    await expect(posters).toHaveCount(2);
+    await expect
+      .poll(() =>
+        posters.evaluateAll((images) =>
+          images.every(
+            (image) => image instanceof HTMLImageElement && image.complete && image.naturalWidth > 0,
+          ),
+        ),
+      )
+      .toBe(true);
+  }
+});
 
 test("the desktop and web builds draw the shared pages identically", async ({
   context,
