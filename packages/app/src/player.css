@@ -19,3 +19,113 @@
 .player-overlay .media-player[data-status="buffering"] .media-player-placeholder {
   color: #fff;
 }
+
+/* Header actions */
+
+.media-player-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* Show drawer */
+
+.show-drawer-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 4;
+}
+.show-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  width: min(420px, 100vw);
+  display: flex;
+  flex-direction: column;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(24, 24, 27, 0.96);
+  box-shadow: var(--shadow-dialog);
+  color: var(--text);
+  backdrop-filter: blur(20px);
+  animation: show-drawer-in 180ms ease-out;
+}
+@keyframes show-drawer-in {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .show-drawer {
+    animation: none;
+  }
+}
+.show-drawer-header {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+}
+.show-drawer-title {
+  min-width: 0;
+  flex: 1;
+}
+.show-drawer-title h2,
+.show-drawer-title p {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.show-drawer-title h2 {
+  font-size: 14px;
+  font-weight: 600;
+}
+.show-drawer-title p {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.show-drawer-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 16px 20px;
+}
+.show-drawer-season h3 {
+  position: sticky;
+  top: 0;
+  /* Above the cards' own layers, which scroll beneath it. */
+  z-index: 5;
+  margin: 0 -16px;
+  padding: 10px 16px;
+  background: rgb(24, 24, 27);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+}
+.show-drawer-season ul {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 18px 14px;
+  margin: 0;
+  padding: 4px 0 16px;
+  list-style: none;
+}
+.show-drawer .media-card[aria-current="true"] .media-card-art {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.show-drawer .media-card[aria-current="true"] .media-card-subtitle {
+  color: var(--accent);
+}
+.show-drawer-status {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 72px 0;
+  color: var(--text-secondary);
+}

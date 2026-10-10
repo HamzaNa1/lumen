@@ -1,7 +1,8 @@
-import type { LumenRuntime, PlayerAction } from "@lumen/client/runtime";
+import type { LumenRuntime } from "@lumen/client/runtime";
 import type {
   AccountSummary,
   CatalogItem,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
   WatchPlayback,
@@ -77,6 +78,12 @@ export const useLibraries = (scope: readonly unknown[]) => {
   const runtime = useRuntime();
   return useQuery({ queryKey: [...scope, "libraries"], queryFn: () => runtime.catalog.libraries() });
 };
+
+/** How much of an item has been watched, from 0 to 1; null when it has not been started. */
+export const watchedFraction = (item: CatalogItem): number | null =>
+  item.durationMs !== null && item.durationMs > 0 && item.resumePositionSeconds
+    ? (item.resumePositionSeconds * 1_000) / item.durationMs
+    : null;
 
 export const useArtwork = (artworkId: string | null | undefined, scope: readonly unknown[]) => {
   const runtime = useRuntime();
@@ -165,11 +172,7 @@ export const CatalogCard = ({
       kind={item.kind}
       landscape={landscape}
       imageUrl={artwork.data ?? null}
-      progress={
-        item.durationMs !== null && item.durationMs > 0 && item.resumePositionSeconds
-          ? (item.resumePositionSeconds * 1_000) / item.durationMs
-          : null
-      }
+      progress={watchedFraction(item)}
       action={
         ["movie", "season", "episode"].includes(item.kind) ? (
           <WatchedButton item={item} compact />

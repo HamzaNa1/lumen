@@ -1,7 +1,7 @@
-import type { PlayerAction } from "@lumen/client/runtime";
 import type {
   AccountSummary,
   CatalogItem,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
   WatchStatus,
@@ -158,19 +158,25 @@ export const App = (): React.ReactElement => {
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
-  const openItem = (item: CatalogItem): void => {
-    void navigate(itemPage(item));
-  };
-  const queuePlayback = (item: CatalogItem): void => {
-    if (item.kind === "show" || item.kind === "season") {
-      openItem(item);
-      return;
-    }
-    setPlaybackError(null);
-    setPlayingItem(item);
-    if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
-    void navigate({ to: "/player" });
-  };
+  const openItem = useCallback(
+    (item: CatalogItem): void => {
+      void navigate(itemPage(item));
+    },
+    [navigate],
+  );
+  const queuePlayback = useCallback(
+    (item: CatalogItem): void => {
+      if (item.kind === "show" || item.kind === "season") {
+        openItem(item);
+        return;
+      }
+      setPlaybackError(null);
+      setPlayingItem(item);
+      if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
+      void navigate({ to: "/player" });
+    },
+    [navigate, openItem, router],
+  );
   const accounts = accountsQuery.data?.accounts ?? [];
   const active =
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
@@ -242,28 +248,34 @@ export const App = (): React.ReactElement => {
   const watchPlayback = watchStatus?.group?.playback;
   const watchTitle = watchPlayback?.title;
   // Every way into the player names the item, but only some know the show it belongs to.
+  const playingItemId = playingItem?.id ?? watchPlayback?.itemId ?? null;
   const playingDetails = useQuery(
-    itemDetailsQuery(runtime, scope ?? [], scope === null ? null : (playingItem?.id ?? watchPlayback?.itemId)),
+    itemDetailsQuery(runtime, scope ?? [], scope === null ? null : playingItemId),
   );
   const playingContext =
     playingDetails.data?.item.kind === "episode" ? episodeContext(playingDetails.data.item) : "";
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
+      itemId: playingItemId,
       title: playingItem?.title ?? watchTitle ?? "Now playing",
       context: playingContext,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
     }),
-    [playingContext, playingItem, playerUnavailable, playbackLoading, playbackError, watchTitle],
+    [playingContext, playingItem, playingItemId, playerUnavailable, playbackLoading, playbackError, watchTitle],
   );
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
   }, [onPlayerRoute, playerDisplay, presentation]);
   const onPlayerAction = useCallback(
     (action: PlayerAction): void => {
+      if (typeof action === "object") {
+        // Asking for what is already playing must not restart it.
+        if (action.play.id !== playingItemId) queuePlayback(action.play);
+      }
       // Leaving the player route stops playback and clears its state.
-      if (action === "back" || action === "stop") {
+      else if (action === "back" || action === "stop") {
         leavingWatch.current = true;
         void router.navigate({ href: returnTo.current, replace: true });
       } else if (playingItem !== null) void beginPlayback(playingItem);
@@ -273,7 +285,7 @@ export const App = (): React.ReactElement => {
         void runtime.watch.retry().catch(reportPlaybackError);
       }
     },
-    [beginPlayback, playingItem, reportPlaybackError, router, runtime],
+    [beginPlayback, playingItem, playingItemId, queuePlayback, reportPlaybackError, router, runtime],
   );
   useEffect(
     () => (presentation.kind === "external" ? presentation.onAction(onPlayerAction) : undefined),

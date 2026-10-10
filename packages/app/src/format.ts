@@ -1,4 +1,9 @@
-import { type JobLogEntry, type LibrarySummary, MIN_PASSWORD_LENGTH } from "@lumen/contracts";
+import {
+  type CatalogItem,
+  type JobLogEntry,
+  type LibrarySummary,
+  MIN_PASSWORD_LENGTH,
+} from "@lumen/contracts";
 
 export const titleCase = (value: string): string =>
   value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -109,6 +114,35 @@ export const formatRuntime = (seconds: number): string => {
     ? `${Math.floor(minutes / 60)}h`
     : `${Math.floor(minutes / 60)}h ${remainder}m`;
 };
+
+export const runtimeOf = (seconds: number | null): string | null =>
+  seconds === null || seconds <= 0 ? null : formatRuntime(seconds);
+
+/** "S1 E3", or whichever part is known. */
+export const episodeCode = (
+  seasonNumber: number | null | undefined,
+  episodeNumber: number | null | undefined,
+): string | null =>
+  [
+    seasonNumber == null ? null : `S${seasonNumber}`,
+    episodeNumber == null ? null : `E${episodeNumber}`,
+  ]
+    .filter(Boolean)
+    .join(" ") || null;
+
+/** An episode card's second line: its code, then where it resumes or how long it runs. */
+export const episodeSubtitle = (
+  episode: CatalogItem,
+  seasonNumber: number | null | undefined,
+): string =>
+  [
+    episodeCode(seasonNumber, episode.indexNumber),
+    (episode.resumePositionSeconds ?? 0) > 0
+      ? resumeLabel(episode.resumePositionSeconds ?? 0)
+      : runtimeOf(episode.durationMs === null ? null : episode.durationMs / 1_000),
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
 const releaseDateFormatter = new Intl.DateTimeFormat(undefined, { dateStyle: "long" });
 export const formatReleaseDate = (value: string): string => {

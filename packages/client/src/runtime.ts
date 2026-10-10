@@ -16,6 +16,7 @@ import type {
   JobLogEntry,
   LibrarySummary,
   ManagedUser,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
   ScanRun,
@@ -116,8 +117,6 @@ export interface AdminRuntime {
   readonly scanStatus: (runId: string) => Promise<ScanRun>;
   readonly jobLog: () => Promise<ReadonlyArray<JobLogEntry>>;
 }
-
-export type PlayerAction = "back" | "retry" | "stop";
 
 /**
  * Where the player controls are drawn. A browser draws them over its own video. The desktop's
