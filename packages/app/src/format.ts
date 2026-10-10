@@ -115,8 +115,9 @@ export const formatRuntime = (seconds: number): string => {
     : `${Math.floor(minutes / 60)}h ${remainder}m`;
 };
 
+/** How long something runs, when that is long enough to say: under half a minute rounds to nothing. */
 export const runtimeOf = (seconds: number | null): string | null =>
-  seconds === null || seconds <= 0 ? null : formatRuntime(seconds);
+  seconds === null || Math.round(seconds / 60) < 1 ? null : formatRuntime(seconds);
 
 /** "S1 E3", or whichever part is known. */
 export const episodeCode = (
