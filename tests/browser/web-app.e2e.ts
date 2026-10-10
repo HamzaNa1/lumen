@@ -339,6 +339,9 @@ test("an episode that plays through is followed by the next", async ({
   await page.mouse.move(300, 300);
   await expect(upNext).toContainText(/Next episode in \d+ seconds?/u);
   await expect(upNext).toContainText("Second");
+  await expect
+    .poll(() => upNext.locator("img").evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
   await testInfo.attach("up next above the controls", {
     body: await page.screenshot(),
     contentType: "image/png",

@@ -72,10 +72,13 @@ interface MediaPlayerProps {
   readonly onRetry: () => void;
   /** Goes back to the start of what is playing, or to whatever comes before it. */
   readonly onPrevious: () => void;
-  /** Omitted where nothing follows what is playing. */
-  readonly onNext?: (() => void) | undefined;
-  /** What follows; it plays by itself at the end, which the viewer is told as that nears. */
-  readonly nextTitle?: string | undefined;
+  /**
+   * What follows, omitted where nothing does. It plays by itself at the end, which the viewer is
+   * told as that nears.
+   */
+  readonly next?:
+    | { readonly title: string; readonly imageUrl: string | null; readonly onStart: () => void }
+    | undefined;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
   readonly onVolume: (volume: number, muted: boolean) => void;
@@ -118,8 +121,7 @@ export const MediaPlayer = ({
   onFullscreen,
   onRetry,
   onPrevious,
-  onNext,
-  nextTitle,
+  next,
   onPause,
   onSeek,
   onVolume,
@@ -148,7 +150,7 @@ export const MediaPlayer = ({
   const inactive = loading || error !== null;
   const seekable = !inactive && duration !== null && duration > 0;
   const upNextIn =
-    inactive || onNext === undefined || duration === null || duration - position > upNextNoticeSeconds
+    inactive || next === undefined || duration === null || duration - position > upNextNoticeSeconds
       ? null
       : Math.max(1, Math.ceil(duration - position));
   const status =
@@ -241,15 +243,16 @@ export const MediaPlayer = ({
           </div>
         </div>
 
-        {upNextIn === null ? null : (
+        {next === undefined || upNextIn === null ? null : (
           <aside className="media-player-up-next" aria-label="Up next">
+            {next.imageUrl === null ? null : <img src={next.imageUrl} alt="" />}
             <p>
               <span>
                 Next episode in {upNextIn} {upNextIn === 1 ? "second" : "seconds"}
               </span>
-              {nextTitle === undefined ? null : <strong>{nextTitle}</strong>}
+              <strong>{next.title}</strong>
             </p>
-            <Button variant="primary" size="sm" onClick={onNext}>
+            <Button variant="primary" size="sm" onClick={next.onStart}>
               Start now
             </Button>
           </aside>
@@ -358,11 +361,11 @@ export const MediaPlayer = ({
                   10
                 </span>
               </Button>
-              {onNext === undefined ? null : (
+              {next === undefined ? null : (
                 <Button
                   variant="icon"
                   disabled={inactive}
-                  onClick={onNext}
+                  onClick={next.onStart}
                   aria-label="Next episode"
                 >
                   <SkipForward aria-hidden="true" size={19} fill="currentColor" />

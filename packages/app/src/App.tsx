@@ -269,7 +269,10 @@ export const App = (): React.ReactElement => {
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
       hasPreviousEpisode: adjacentEpisodes?.previous != null,
-      nextEpisode: adjacentEpisodes?.next?.title ?? null,
+      nextEpisode:
+        adjacentEpisodes?.next == null
+          ? null
+          : { title: adjacentEpisodes.next.title, artworkId: adjacentEpisodes.next.artworkId },
     }),
     [
       adjacentEpisodes,

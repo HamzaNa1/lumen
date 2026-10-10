@@ -15,7 +15,7 @@ const databasePath = join(root, "server.sqlite");
 const seeded = await seedPlaybackFixture(root, databasePath);
 
 // "Clip" keeps the fixture's placeholder bytes, which no browser can play. Add a real film, and a
-// show whose episodes play the same footage.
+// show whose episodes play the same footage and share one still.
 const database = new Database(databasePath);
 const now = Date.now();
 let files = 0;
@@ -43,6 +43,21 @@ const addItem = (
   );
   return id;
 };
+const stillPath = join(root, "still.png");
+await copyFile(join(repository, "tests/fixtures/still.png"), stillPath);
+const still = newUuid();
+database.run(
+  `INSERT INTO artwork(id, library_id, kind, mime_type, width, height, byte_size, content_hash, relative_path, created_at_ms)
+   VALUES (?, ?, 'other', 'image/png', 480, 270, ?, ?, ?, ?)`,
+  [
+    still,
+    seeded.libraryId,
+    (await stat(stillPath)).size,
+    new Bun.CryptoHasher("sha256").update(await Bun.file(stillPath).bytes()).digest("hex"),
+    stillPath,
+    now,
+  ],
+);
 const addPlayable = async (
   kind: "movie" | "episode",
   title: string,
@@ -70,10 +85,16 @@ const addPlayable = async (
      VALUES (?, ?, ?, ?, ?, ?, 20000, 0, ?, ?)`,
     [ids.track, seeded.libraryId, ids.source, ids.video, title, title.toLowerCase(), now, now],
   );
+  const item = addItem(kind, title, parent);
   database.run(
     "INSERT INTO catalog_item_sources(item_id, source_id, is_primary, source_generation) VALUES (?, ?, 1, 1)",
-    [addItem(kind, title, parent), ids.source],
+    [item, ids.source],
   );
+  if (kind === "episode")
+    database.run(
+      "INSERT INTO catalog_item_artwork(item_id, role, artwork_id, source) VALUES (?, 'still', ?, 'local')",
+      [item, still],
+    );
 };
 await addPlayable("movie", "Film");
 const show = addItem("show", "Serial");

@@ -2350,9 +2350,9 @@ body:has(.app-shell) {
   z-index: 3;
   display: flex;
   align-items: center;
-  gap: 16px;
-  max-width: min(420px, calc(100% - 32px));
-  padding: 10px 10px 10px 14px;
+  gap: 14px;
+  max-width: min(520px, calc(100% - 32px));
+  padding: 10px;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
   background: rgba(20, 20, 23, 0.9);
@@ -2362,6 +2362,14 @@ body:has(.app-shell) {
 /* Clear of the console while that is showing. */
 .media-player.controls-visible .media-player-up-next {
   bottom: 124px;
+}
+.media-player-up-next img {
+  flex: none;
+  width: 124px;
+  aspect-ratio: 16 / 9;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.08);
+  object-fit: cover;
 }
 .media-player-up-next p {
   display: grid;
