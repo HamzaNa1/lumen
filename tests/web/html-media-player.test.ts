@@ -594,6 +594,7 @@ const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefin
   };
 };
 
+// Allow server setup and teardown in addition to the real synchronization waits below.
 test("a browser that holds playback back for a click joins the group's playback once clicked", async () => {
   const group = await groupViewer((element) => {
     element.playOutcome = "blocked";
@@ -617,7 +618,7 @@ test("a browser that holds playback back for a click joins the group's playback 
   } finally {
     await group.close();
   }
-});
+}, 15_000);
 
 test("a browser that leaves play() unanswered still follows what the group does next", async () => {
   const group = await groupViewer((element) => {
