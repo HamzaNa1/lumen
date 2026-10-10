@@ -24,6 +24,22 @@ export const usePlayingShow = (itemId: string | null): ShowSummary | null => {
   return show.data ?? null;
 };
 
+/**
+ * Every episode of a show. The player reads it as soon as it knows the show, so the drawer opens
+ * with its episodes already listed.
+ */
+export const useShowEpisodes = (showId: string | null) => {
+  const runtime = useRuntime();
+  return useQuery({
+    queryKey: [...playerScope, "episodes", showId],
+    queryFn: () => episodesOfShow(runtime.catalog, showId ?? ""),
+    enabled: showId !== null,
+    // Watch progress moves while the viewer watches, so every opening reads it afresh, behind the
+    // episodes it already has.
+    staleTime: 0,
+  });
+};
+
 export const ShowDrawerButton = ({
   open,
   onToggle,
@@ -99,14 +115,7 @@ export const ShowDrawer = ({
   readonly onPlay: (episode: CatalogItem) => void;
   readonly onClose: () => void;
 }): React.ReactElement => {
-  const runtime = useRuntime();
-  const episodes = useQuery({
-    queryKey: [...playerScope, "episodes", show.id],
-    queryFn: () => episodesOfShow(runtime.catalog, show.id),
-    // Watch progress moves while the viewer watches, so every opening reads it afresh.
-    staleTime: 0,
-    gcTime: 0,
-  });
+  const episodes = useShowEpisodes(show.id);
   const panel = useRef<HTMLElement>(null);
   const groups = episodes.data;
   const loaded = groups !== undefined;

@@ -2,7 +2,7 @@ import type { PlayerAction, PlayerDisplay, PlayerState } from "@lumen/contracts"
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
-import { ShowDrawer, ShowDrawerButton, usePlayingShow } from "./ShowDrawer";
+import { ShowDrawer, ShowDrawerButton, usePlayingShow, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
 import { useArtwork } from "./Workspace";
@@ -41,6 +41,8 @@ export const PlayerView = ({
   const nextStill = useArtwork(nextEpisode?.artworkId, ["player"]).data ?? null;
   const playingItemId = display?.itemId ?? null;
   const show = usePlayingShow(playingItemId);
+  // Loaded with the player rather than with the drawer, which then has nothing to wait for.
+  useShowEpisodes(show?.id ?? null);
   const [showDrawerOpen, setShowDrawerOpen] = useState(false);
   const showDrawerButton = useRef<HTMLButtonElement>(null);
   const closeShowDrawer = useCallback((): void => setShowDrawerOpen(false), []);

@@ -547,6 +547,38 @@ test("the show drawer opens at the playing episode and plays another", async ({
   expect(await page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
 });
 
+test("the show drawer's episodes are loaded with the player", async ({ page, browserName }) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  await page.goto("/web/library");
+  await page.getByRole("button", { name: "Play Harbor Lights" }).click({ force: true });
+  await page.getByRole("button", { name: "Play Season 1" }).click({ force: true });
+  // The show and each of its two seasons are read once the player knows what is playing.
+  let episodeLists = 0;
+  page.on("response", (response) => {
+    if (/\/items\/[^/]+\/children/u.test(response.url()) && page.url().endsWith("/web/player"))
+      episodeLists += 1;
+  });
+  await play(page, "Signal Fire");
+  await expect.poll(() => episodeLists).toBe(3);
+
+  // Nothing the drawer asks for is answered from here on, so what it lists was already loaded.
+  await page.route("**/api/v1/items/*/children*", () => undefined);
+  await page.mouse.move(300, 300);
+  await page.getByRole("button", { name: "Episodes", exact: true }).click();
+  const drawer = page.getByRole("complementary", { name: "Episodes" });
+  await expect(drawer.getByRole("article")).toHaveCount(10);
+  await expect(drawer.locator('[aria-current="true"]')).toBeInViewport({ ratio: 1 });
+  await expect(drawer.getByRole("status")).toHaveCount(0);
+
+  // Reopening it is no different.
+  await page.keyboard.press("Escape");
+  await expect(drawer).toBeHidden();
+  await page.getByRole("button", { name: "Episodes", exact: true }).click();
+  await expect(drawer.getByRole("article")).toHaveCount(10);
+  await expect(drawer.getByRole("status")).toHaveCount(0);
+});
+
 test("a film's player has no show drawer", async ({ page, browserName }) => {
   test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
