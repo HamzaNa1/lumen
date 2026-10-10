@@ -16,6 +16,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useState } from "react";
 import { Button } from "./Button";
+import { useClickGesture } from "./useClickGesture";
 import { SelectField } from "./Controls";
 import { formatEndsAt, formatPlayerTime, streamLabels } from "./PlayerFormatting";
 import { useNow } from "./useNow";
@@ -24,6 +25,9 @@ import { useThrottledCallback } from "./useThrottledCallback";
 
 /** How often a drag of the volume slider reaches the player. */
 const volumeDragIntervalMs = 50;
+
+/** How long a click on the video waits for the second click that makes it a fullscreen toggle. */
+const videoDoubleClickMs = 250;
 
 interface MediaPlayerProps {
   readonly headerActions?: ReactNode;
@@ -154,6 +158,8 @@ export const MediaPlayer = ({
     onSeek,
   });
 
+  const onVideoClick = useClickGesture(onPause, () => onFullscreen?.(), videoDoubleClickMs);
+
   useEffect(() => {
     // The settings panel is part of the controls, so it goes away with them.
     if (!controlsVisible) setSettingsOpen(false);
@@ -189,9 +195,11 @@ export const MediaPlayer = ({
                   : "Pause playback"
             }
             disabled={!settingsOpen && inactive}
-            onClick={() => {
+            onClick={(event) => {
               if (settingsOpen) setSettingsOpen(false);
-              else onPause();
+              // Only a pointer can double click, and only where there is a fullscreen to toggle.
+              else if (onFullscreen === undefined || event.detail === 0) onPause();
+              else onVideoClick();
             }}
           />
           <div className="media-player-placeholder">
