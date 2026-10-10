@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { episodeContext, episodeSubtitle, runtimeOf } from "../../packages/app/src/format.ts";
+import { episodeContext, episodeSubtitle, playingContext, runtimeOf } from "../../packages/app/src/format.ts";
 
 test("an episode is placed in its show by a padded season and episode code", () => {
   expect(episodeContext({ seriesTitle: "House", seasonNumber: 1, indexNumber: 3 })).toBe(
@@ -16,6 +16,22 @@ test("an episode context keeps only the parts that are known", () => {
   );
   expect(episodeContext({ seriesTitle: null, seasonNumber: 2, indexNumber: 1 })).toBe("S02E01");
   expect(episodeContext({})).toBe("");
+});
+
+test("the year an episode's season came out follows the name of its show", () => {
+  const episode = { seriesTitle: "House", seasonNumber: 3, indexNumber: 1 };
+  expect(episodeContext({ ...episode, seasonYear: 2006 })).toBe("House (2006) · S03E01");
+  expect(episodeContext({ ...episode, seasonYear: null })).toBe("House · S03E01");
+  expect(episodeContext({ ...episode, seriesTitle: null, seasonYear: 2006 })).toBe("S03E01");
+});
+
+test("the player dates an episode by its season and anything else by its own year", () => {
+  const episode = { kind: "episode", seriesTitle: "House", seasonNumber: 3, indexNumber: 1 };
+  expect(playingContext({ ...episode, year: 2007, seasonYear: 2006 })).toBe(
+    "House (2006) · S03E01",
+  );
+  expect(playingContext({ kind: "movie", year: 2010 })).toBe("(2010)");
+  expect(playingContext({ kind: "movie", year: null })).toBe("");
 });
 
 test("a runtime is given only when it comes to at least a minute", () => {

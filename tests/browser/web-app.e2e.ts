@@ -235,6 +235,12 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
+  // A film has no show to place it in, so only the year it came out sits under its title.
+  await expect(page.getByRole("region", { name: "Media player" }).getByText("(2019)")).toBeVisible();
+  await testInfo.attach("player on a film", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   // The grant that authorises the stream stays in the element, out of the address bar and storage.
   const exposure = await page.evaluate(() => ({
     href: location.href,
@@ -291,7 +297,7 @@ test("the player moves between a show's episodes", async ({ page, browserName },
     pointer += 5;
     await button.click();
   };
-  await expectPlaying("Second", "Serial · S01E02");
+  await expectPlaying("Second", "Serial (2021) · S01E02");
   await page.mouse.move(pointer, pointer);
   await testInfo.attach("player with a previous and a next episode", {
     body: await page.screenshot(),
@@ -304,20 +310,20 @@ test("the player moves between a show's episodes", async ({ page, browserName },
   await expect(page.locator(".media-player-time").first()).toHaveText(/^0:1\d$/u);
   await press(previous);
   await expect.poll(currentTime).toBeLessThan(5);
-  await expectPlaying("Second", "Serial · S01E02");
+  await expectPlaying("Second", "Serial (2021) · S01E02");
 
   // Within them it goes to the episode before.
   await press(previous);
-  await expectPlaying("Pilot", "Serial · S01E01");
+  await expectPlaying("Pilot", "Serial (2021) · S01E01");
   // The first episode has none before it, so Previous can only start it over.
   await press(previous);
-  await expectPlaying("Pilot", "Serial · S01E01");
+  await expectPlaying("Pilot", "Serial (2021) · S01E01");
 
   await press(next);
-  await expectPlaying("Second", "Serial · S01E02");
+  await expectPlaying("Second", "Serial (2021) · S01E02");
   // The next episode can be the first of the next season.
   await press(next);
-  await expectPlaying("Return", "Serial · S02E01");
+  await expectPlaying("Return", "Serial (2022) · S02E01");
   await page.mouse.move(pointer, pointer);
   await expect(previous).toBeVisible();
   await expect(next).toHaveCount(0);
@@ -364,7 +370,7 @@ test("an episode that plays through is followed by the next", async ({
 
   await page.keyboard.press("ArrowRight");
   await expect(player.getByRole("heading", { name: "Second" })).toBeVisible({ timeout: 20_000 });
-  await expect(player.getByText("Serial · S01E02")).toBeVisible();
+  await expect(player.getByText("Serial (2021) · S01E02")).toBeVisible();
   await expect.poll(currentTime).toBeGreaterThan(0.2);
   expect(await currentTime()).toBeLessThan(8);
 
