@@ -76,6 +76,11 @@ export const WatchAction = Schema.Union([
     positionSeconds: Position,
     /** Display hint for local prediction; the server resolves the authoritative catalog title. */
     title: Schema.optional(Schema.String),
+    /**
+     * What the member was watching when they asked. The group plays only while it still has
+     * that on: every member's player reaches the end of an episode, and each asks for the next.
+     */
+    replaces: Schema.optional(Uuid),
   }),
   Schema.Struct({
     type: Schema.Literal("pause"),

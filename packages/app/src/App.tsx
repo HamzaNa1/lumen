@@ -50,6 +50,8 @@ export const App = (): React.ReactElement => {
   const startupAttempted = useRef(false);
   const [signInAccount, setSignInAccount] = useState<AccountSummary | null>(null);
   const startingItemId = useRef<string | null>(null);
+  /** What the viewer was watching when they moved from it to another of its show's episodes. */
+  const replacedItemId = useRef<string | null>(null);
   // Where to go when the viewer leaves the player.
   const returnTo = useRef("/");
   const leavingWatch = useRef(false);
@@ -131,7 +133,12 @@ export const App = (): React.ReactElement => {
       setPlaybackError(null);
       updatePlayer(null);
       try {
-        await runtime.playback.start(item.id, item.resumePositionSeconds ?? undefined, item.title);
+        await runtime.playback.start(
+          item.id,
+          item.resumePositionSeconds ?? undefined,
+          item.title,
+          replacedItemId.current ?? undefined,
+        );
         if (watchRef.current?.group !== null && watchRef.current?.group !== undefined) return;
         if (!onPlayerRouteRef.current) {
           await runtime.playback.stop();
@@ -166,6 +173,7 @@ export const App = (): React.ReactElement => {
       openItem(item);
       return;
     }
+    replacedItemId.current = null;
     setPlaybackError(null);
     setPlayingItem(item);
     if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
@@ -261,7 +269,7 @@ export const App = (): React.ReactElement => {
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
       hasPreviousEpisode: adjacentEpisodes?.previous != null,
-      hasNextEpisode: adjacentEpisodes?.next != null,
+      nextEpisode: adjacentEpisodes?.next?.title ?? null,
     }),
     [
       adjacentEpisodes,
@@ -276,6 +284,19 @@ export const App = (): React.ReactElement => {
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
   }, [onPlayerRoute, playerDisplay, presentation]);
+  const playEpisode = useCallback((episode: CatalogItem, replaces: string): void => {
+    replacedItemId.current = replaces;
+    setPlaybackError(null);
+    // Asking for an episode by its place in the show starts it over, wherever it was left.
+    setPlayingItem({ ...episode, resumePositionSeconds: null });
+  }, []);
+  // An episode that plays through is followed by the next. In a watch group every member's
+  // player gets there and asks; the group moves on for the first and ignores the rest.
+  const nextEpisode = adjacentEpisodes?.next ?? null;
+  useEffect(() => {
+    if (player?.ended === true && player.itemId === playingId && nextEpisode !== null)
+      playEpisode(nextEpisode, player.itemId);
+  }, [nextEpisode, playEpisode, player, playingId]);
   const onPlayerAction = useCallback(
     (action: PlayerAction): void => {
       // Leaving the player route stops playback and clears its state.
@@ -285,10 +306,7 @@ export const App = (): React.ReactElement => {
       } else if (action === "previous-episode" || action === "next-episode") {
         const episode =
           action === "next-episode" ? adjacentEpisodes?.next : adjacentEpisodes?.previous;
-        if (episode == null) return;
-        setPlaybackError(null);
-        // Asking for an episode by its place in the show starts it over, wherever it was left.
-        setPlayingItem({ ...episode, resumePositionSeconds: null });
+        if (episode != null && playingId != null) playEpisode(episode, playingId);
       } else if (playingItem !== null) void beginPlayback(playingItem);
       else if (watchRef.current?.group?.playback != null) {
         setPlaybackLoading(true);
@@ -296,7 +314,16 @@ export const App = (): React.ReactElement => {
         void runtime.watch.retry().catch(reportPlaybackError);
       }
     },
-    [adjacentEpisodes, beginPlayback, playingItem, reportPlaybackError, router, runtime],
+    [
+      adjacentEpisodes,
+      beginPlayback,
+      playEpisode,
+      playingId,
+      playingItem,
+      reportPlaybackError,
+      router,
+      runtime,
+    ],
   );
   useEffect(
     () => (presentation.kind === "external" ? presentation.onAction(onPlayerAction) : undefined),

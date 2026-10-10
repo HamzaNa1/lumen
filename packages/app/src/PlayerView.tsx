@@ -182,7 +182,8 @@ export const PlayerView = ({
             onAction("previous-episode");
           else seek(0);
         }}
-        onNext={display.hasNextEpisode ? () => onAction("next-episode") : undefined}
+        onNext={display.nextEpisode === null ? undefined : () => onAction("next-episode")}
+        nextTitle={display.nextEpisode ?? undefined}
         onVolume={(volume, muted) => {
           if (player !== null)
             void runtime.playback

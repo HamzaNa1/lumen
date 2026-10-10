@@ -432,10 +432,16 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         itemId: Schema.String,
         startAtSeconds: Schema.optional(Schema.Number),
         title: Schema.optional(Schema.String),
+        replaces: Schema.optional(Schema.String),
       }),
       raw,
     );
-    const result = await commands.start(input.itemId, input.startAtSeconds, input.title);
+    const result = await commands.start(
+      input.itemId,
+      input.startAtSeconds,
+      input.title,
+      input.replaces,
+    );
     if (result === null) return null;
     const { grantToken: _grantToken, ...safe } = result;
     return safe;

@@ -590,7 +590,7 @@ const filmDisplay = {
   context: "",
   duration: 100,
   hasPreviousEpisode: false,
-  hasNextEpisode: false,
+  nextEpisode: null,
 } as const;
 const playing: NonNullable<ParityScenario["player"]> = {
   sessionId: "session",
@@ -832,7 +832,7 @@ test("the player controls are drawn identically over playing media", async ({
       loading: false,
       error: null,
       hasPreviousEpisode: false,
-      hasNextEpisode: false,
+      nextEpisode: null,
     },
     player: { ...playing, ...element, streams: [], selectedAudioStreamId: null },
   });

@@ -155,3 +155,13 @@ for (const hasPassword of [false, true]) {
     ).toBeNull();
   });
 }
+
+test("playing in place of what the group has left is expected to change nothing", () => {
+  const current = group();
+  const play = { type: "play", itemId: "next", positionSeconds: 0, title: "Next" } as const;
+  expect(predict({ ...play, replaces: "earlier" }, current)).toBeNull();
+  expect(predict({ ...play, replaces: "item" }, current)?.apply(current)).toMatchObject({
+    revision: 5,
+    playback: { itemId: "next", title: "Next", positionSeconds: 0 },
+  });
+});

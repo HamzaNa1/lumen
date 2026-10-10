@@ -2343,6 +2343,48 @@ body:has(.app-shell) {
 .media-player-placeholder .button {
   margin-top: 6px;
 }
+.media-player-up-next {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(420px, calc(100% - 32px));
+  padding: 10px 10px 10px 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: 10px;
+  background: rgba(20, 20, 23, 0.9);
+  box-shadow: var(--shadow-popover);
+  cursor: default;
+}
+/* Clear of the console while that is showing. */
+.media-player.controls-visible .media-player-up-next {
+  bottom: 124px;
+}
+.media-player-up-next p {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  margin: 0;
+}
+.media-player-up-next span {
+  color: rgba(255, 255, 255, 0.7);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.media-player-up-next strong {
+  overflow: hidden;
+  font-size: 14px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.media-player-up-next .button {
+  flex: none;
+}
 .media-player-console {
   display: grid;
   gap: 4px;

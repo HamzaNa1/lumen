@@ -191,7 +191,8 @@ export const PlayerDisplay = Schema.Struct({
   loading: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
   hasPreviousEpisode: Schema.Boolean,
-  hasNextEpisode: Schema.Boolean,
+  /** The title of the episode after the one playing, where there is one. */
+  nextEpisode: Schema.NullOr(Schema.String),
 });
 export type PlayerDisplay = Schema.Schema.Type<typeof PlayerDisplay>;
 

@@ -26,6 +26,8 @@ import { useThrottledCallback } from "./useThrottledCallback";
 
 /** How often a drag of the volume slider reaches the player. */
 const volumeDragIntervalMs = 50;
+/** How long before the end the viewer is told that what follows is about to play. */
+const upNextNoticeSeconds = 30;
 
 interface MediaPlayerProps {
   readonly headerActions?: ReactNode;
@@ -72,6 +74,8 @@ interface MediaPlayerProps {
   readonly onPrevious: () => void;
   /** Omitted where nothing follows what is playing. */
   readonly onNext?: (() => void) | undefined;
+  /** What follows; it plays by itself at the end, which the viewer is told as that nears. */
+  readonly nextTitle?: string | undefined;
   readonly onPause: () => void;
   readonly onSeek: (positionSeconds: number) => void;
   readonly onVolume: (volume: number, muted: boolean) => void;
@@ -115,6 +119,7 @@ export const MediaPlayer = ({
   onRetry,
   onPrevious,
   onNext,
+  nextTitle,
   onPause,
   onSeek,
   onVolume,
@@ -142,6 +147,10 @@ export const MediaPlayer = ({
   // Nothing is playing yet (or anymore), so the transport controls have nothing to act on.
   const inactive = loading || error !== null;
   const seekable = !inactive && duration !== null && duration > 0;
+  const upNextIn =
+    inactive || onNext === undefined || duration === null || duration - position > upNextNoticeSeconds
+      ? null
+      : Math.max(1, Math.ceil(duration - position));
   const status =
     error !== null
       ? "error"
@@ -231,6 +240,20 @@ export const MediaPlayer = ({
             ) : null}
           </div>
         </div>
+
+        {upNextIn === null ? null : (
+          <aside className="media-player-up-next" aria-label="Up next">
+            <p>
+              <span>
+                Next episode in {upNextIn} {upNextIn === 1 ? "second" : "seconds"}
+              </span>
+              {nextTitle === undefined ? null : <strong>{nextTitle}</strong>}
+            </p>
+            <Button variant="primary" size="sm" onClick={onNext}>
+              Start now
+            </Button>
+          </aside>
+        )}
 
         <div className="media-player-console">
           <div className="media-player-progress">
