@@ -1,7 +1,8 @@
-import type { LumenRuntime, PlayerAction } from "@lumen/client/runtime";
+import type { LumenRuntime } from "@lumen/client/runtime";
 import type {
   AccountSummary,
   CatalogItem,
+  PlayerAction,
   PlayerDisplay,
   PlayerState,
   WatchPlayback,

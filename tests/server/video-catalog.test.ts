@@ -277,6 +277,29 @@ test("video folders browse as series, seasons, episodes and movies without requi
     item: { id: string };
   };
   expect(nextUpAfter.item.id).toBe(must(firstSeason.items[1]).id);
+  // Episodes are neighbours across the whole show, so a season's last leads to the next's first.
+  const secondSeason = (await (
+    await get(`/api/v1/items/${must(seasons.items[1]).id}/children`, admin)
+  ).json()) as { items: { id: string }[] };
+  const episodeIds = [...firstSeason.items, ...secondSeason.items].map((item) => item.id);
+  expect(episodeIds).toHaveLength(3);
+  const adjacent = async (itemId: string, token = admin) => {
+    const response = await get(`/api/v1/items/${itemId}/adjacent-episodes`, token);
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      previous: { id: string } | null;
+      next: { id: string } | null;
+    };
+    return [body.previous?.id ?? null, body.next?.id ?? null];
+  };
+  expect(await adjacent(must(episodeIds[0]))).toEqual([null, must(episodeIds[1])]);
+  expect(await adjacent(must(episodeIds[1]))).toEqual([must(episodeIds[0]), must(episodeIds[2])]);
+  expect(await adjacent(must(episodeIds[2]))).toEqual([must(episodeIds[1]), null]);
+  expect(await adjacent(must(movies.items[0]).id)).toEqual([null, null]);
+  expect(await adjacent(showId)).toEqual([null, null]);
+  expect(
+    (await get(`/api/v1/items/${must(episodeIds[0])}/adjacent-episodes`, viewer)).status,
+  ).toBe(403);
   const denied = await get(`/api/v1/items/${showId}`, viewer);
   expect(denied.status).toBe(403);
   const grant = await fetch(new URL(`/api/v1/libraries/${ids.showsId}/grants`, base), {
