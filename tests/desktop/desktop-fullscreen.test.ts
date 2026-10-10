@@ -21,6 +21,10 @@ class FullscreenWindow extends EventEmitter {
     },
   };
 
+  constructor(private readonly eventBeforeState = false) {
+    super();
+  }
+
   isDestroyed(): boolean {
     return this.destroyed;
   }
@@ -30,8 +34,9 @@ class FullscreenWindow extends EventEmitter {
   }
 
   setFullScreen(enabled: boolean): void {
+    if (this.eventBeforeState) this.emit(enabled ? "enter-full-screen" : "leave-full-screen");
     this.fullscreen = enabled;
-    this.emit(enabled ? "enter-full-screen" : "leave-full-screen");
+    if (!this.eventBeforeState) this.emit(enabled ? "enter-full-screen" : "leave-full-screen");
   }
 
   destroy(): void {
@@ -50,6 +55,38 @@ class FullscreenWindow extends EventEmitter {
     return this as unknown as BrowserWindow;
   }
 }
+
+test("each toggle changes fullscreen once when Windows emits events before updating its state", async () => {
+  const parent = new FullscreenWindow(true);
+  const overlay = new FullscreenWindow();
+  const stopBroadcast = broadcastPlayerFullscreen(parent.asBrowserWindow(), overlay.asBrowserWindow());
+  const states = [[], []] as [boolean[], boolean[]];
+  const unsubscribe = [parent, overlay].map((window, index) =>
+    observeFullscreenState({
+      fullscreenState: async () => parent.isFullScreen(),
+      onFullscreenChange: window.onFullscreenChange,
+    }, (value) => states[index]?.push(value)),
+  );
+  await Promise.resolve();
+
+  try {
+    for (const expected of [true, false, true, false]) {
+      parent.setFullScreen(!states[1].at(-1));
+      expect(parent.isFullScreen()).toBe(expected);
+      expect(states[0].at(-1)).toBe(expected);
+      expect(states[1].at(-1)).toBe(expected);
+    }
+    // Repeated requests also emit events on Windows, even if already in that state.
+    parent.setFullScreen(false);
+    expect(states).toEqual([
+      [false, true, false, true, false, false],
+      [false, true, false, true, false, false],
+    ]);
+  } finally {
+    for (const dispose of unsubscribe) dispose();
+    stopBroadcast();
+  }
+});
 
 test("both renderers follow fullscreen changes, including exiting playback and reusing the controls", async () => {
   const parent = new FullscreenWindow();
