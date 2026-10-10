@@ -2,6 +2,7 @@ import type { PlayerAction, PlayerDisplay, PlayerState } from "@lumen/contracts"
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
+import { ShowDrawer, ShowDrawerButton, usePlayingShow } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
 import "./player.css";
@@ -34,6 +35,12 @@ export const PlayerView = ({
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
+  const playingItemId = display?.itemId ?? null;
+  const show = usePlayingShow(playingItemId);
+  const [showDrawerOpen, setShowDrawerOpen] = useState(false);
+  const showDrawerButton = useRef<HTMLButtonElement>(null);
+  const closeShowDrawer = useCallback((): void => setShowDrawerOpen(false), []);
+  const showDrawerVisible = showDrawerOpen && show !== null && playingItemId !== null;
 
   const revealControls = useCallback((): void => {
     setControlsVisible(true);
@@ -73,6 +80,10 @@ export const PlayerView = ({
     revealControls();
   }, [display, revealControls]);
 
+  // The drawer belongs to what was playing when it was opened.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: closes whenever the item changes
+  useEffect(closeShowDrawer, [closeShowDrawer, playingItemId]);
+
   const trackAction = (action: (sessionId: string) => Promise<PlayerState>): void => {
     if (player === null) return;
     const sessionId = player.sessionId;
@@ -108,7 +119,18 @@ export const PlayerView = ({
         onRetryTrackMemory={() => trackAction((id) => runtime.playback.retryTrackMemory(id))}
         onResetTrack={(kind) => trackAction((id) => runtime.playback.resetTrack(id, kind))}
         subtitleSelection={capabilities.nativeAudioOutput}
-        headerActions={<WatchGroups placement="player" />}
+        headerActions={
+          <div className="media-player-header-actions">
+            <WatchGroups placement="player" />
+            {show === null ? null : (
+              <ShowDrawerButton
+                open={showDrawerVisible}
+                onToggle={() => setShowDrawerOpen((open) => !open)}
+                buttonRef={showDrawerButton}
+              />
+            )}
+          </div>
+        }
         title={display.title}
         subtitle={display.context}
         paused={player?.paused ?? true}
@@ -149,6 +171,7 @@ export const PlayerView = ({
         surfaceRef={surfaceRef}
         controlsVisible={
           controlsVisible ||
+          showDrawerVisible ||
           display.loading ||
           display.error !== null ||
           player?.trackMemoryError != null ||
@@ -197,6 +220,15 @@ export const PlayerView = ({
           trackAction((id) => runtime.playback.selectSubtitle(id, streamId))
         }
       />
+      {showDrawerVisible ? (
+        <ShowDrawer
+          show={show}
+          currentItemId={playingItemId}
+          returnFocus={showDrawerButton}
+          onPlay={(episode) => onAction({ play: episode })}
+          onClose={closeShowDrawer}
+        />
+      ) : null}
     </div>
   );
 };

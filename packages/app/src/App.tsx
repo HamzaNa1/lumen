@@ -158,19 +158,25 @@ export const App = (): React.ReactElement => {
   const reportPlaybackError = useCallback((cause: unknown): void => {
     setPlaybackError(errorMessage(cause, "The in-app player surface could not be prepared"));
   }, []);
-  const openItem = (item: CatalogItem): void => {
-    void navigate(itemPage(item));
-  };
-  const queuePlayback = (item: CatalogItem): void => {
-    if (item.kind === "show" || item.kind === "season") {
-      openItem(item);
-      return;
-    }
-    setPlaybackError(null);
-    setPlayingItem(item);
-    if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
-    void navigate({ to: "/player" });
-  };
+  const openItem = useCallback(
+    (item: CatalogItem): void => {
+      void navigate(itemPage(item));
+    },
+    [navigate],
+  );
+  const queuePlayback = useCallback(
+    (item: CatalogItem): void => {
+      if (item.kind === "show" || item.kind === "season") {
+        openItem(item);
+        return;
+      }
+      setPlaybackError(null);
+      setPlayingItem(item);
+      if (!onPlayerRouteRef.current) returnTo.current = router.state.location.href;
+      void navigate({ to: "/player" });
+    },
+    [navigate, openItem, router],
+  );
   const accounts = accountsQuery.data?.accounts ?? [];
   const active =
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
@@ -255,6 +261,7 @@ export const App = (): React.ReactElement => {
   }).data;
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
+      itemId: playingId ?? null,
       title: playingItem?.title ?? watchTitle ?? "Now playing",
       context: playingContext,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
@@ -266,6 +273,7 @@ export const App = (): React.ReactElement => {
     [
       adjacentEpisodes,
       playingContext,
+      playingId,
       playingItem,
       playerUnavailable,
       playbackLoading,
@@ -278,8 +286,12 @@ export const App = (): React.ReactElement => {
   }, [onPlayerRoute, playerDisplay, presentation]);
   const onPlayerAction = useCallback(
     (action: PlayerAction): void => {
+      if (typeof action === "object") {
+        // Asking for what is already playing must not restart it.
+        if (action.play.id !== playingId) queuePlayback(action.play);
+      }
       // Leaving the player route stops playback and clears its state.
-      if (action === "back" || action === "stop") {
+      else if (action === "back" || action === "stop") {
         leavingWatch.current = true;
         void router.navigate({ href: returnTo.current, replace: true });
       } else if (action === "previous-episode" || action === "next-episode") {
@@ -296,7 +308,7 @@ export const App = (): React.ReactElement => {
         void runtime.watch.retry().catch(reportPlaybackError);
       }
     },
-    [adjacentEpisodes, beginPlayback, playingItem, reportPlaybackError, router, runtime],
+    [adjacentEpisodes, beginPlayback, playingId, playingItem, queuePlayback, reportPlaybackError, router, runtime],
   );
   useEffect(
     () => (presentation.kind === "external" ? presentation.onAction(onPlayerAction) : undefined),

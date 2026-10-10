@@ -68,9 +68,6 @@
 
 /* Player trigger */
 
-.media-player-header .watch-group-chip {
-  margin-left: auto;
-}
 .media-player .watch-group-chip.is-active {
   width: auto;
   gap: 7px;

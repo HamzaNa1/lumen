@@ -46,6 +46,7 @@ export const MediaCard = ({
   kind,
   landscape = false,
   progress,
+  current = false,
   onPlay,
   onOpen,
   action,
@@ -61,13 +62,18 @@ export const MediaCard = ({
   readonly landscape?: boolean;
   /** Watched fraction between 0 and 1. */
   readonly progress?: number | null;
+  /** The one card, among those listed with it, for what the viewer has open. */
+  readonly current?: boolean;
   readonly onPlay: () => void;
   readonly onOpen: () => void;
 }): React.ReactElement => {
   const [failedImage, setFailedImage] = useState<string | null>(null);
   const showImage = imageUrl !== undefined && imageUrl !== null && failedImage !== imageUrl;
   return (
-    <article className={`media-card${landscape ? " is-landscape" : ""}`}>
+    <article
+      className={`media-card${landscape ? " is-landscape" : ""}`}
+      aria-current={current ? "true" : undefined}
+    >
       <button className="media-card-open" type="button" onClick={onOpen}>
         <span className="media-card-art">
           {showImage ? (

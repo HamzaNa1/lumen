@@ -82,6 +82,20 @@ const secondSeason = addItem("season", "Season 2", { id: show, indexNumber: 2 })
 await addPlayable("episode", "Pilot", { id: firstSeason, indexNumber: 1 });
 await addPlayable("episode", "Second", { id: firstSeason, indexNumber: 2 });
 await addPlayable("episode", "Return", { id: secondSeason, indexNumber: 1 });
+// Long enough that a drawer listing it has to scroll to reach an episode in the middle.
+const longShow = addItem("show", "Harbor Lights");
+const longSeasons = [
+  ["Arrival", "The Ferry", "Low Tide", "Night Watch", "Signal Fire", "Breakwater"],
+  ["Landfall", "The Lighthouse Keeper", "Storm Glass", "Open Water"],
+];
+for (const [seasonIndex, titles] of longSeasons.entries()) {
+  const season = addItem("season", `Season ${seasonIndex + 1}`, {
+    id: longShow,
+    indexNumber: seasonIndex + 1,
+  });
+  for (const [episodeIndex, title] of titles.entries())
+    await addPlayable("episode", title, { id: season, indexNumber: episodeIndex + 1 });
+}
 database.close();
 
 const server = await startServer({
