@@ -308,6 +308,7 @@ describe("playback progress updates", () => {
         "session-1",
         expect.objectContaining({ paused: true, positionSeconds: 27.5 }),
         1,
+        expect.anything(),
       );
       await controller.pause("session-1", false);
       expect(progress).toHaveBeenCalledTimes(1);
@@ -319,6 +320,99 @@ describe("playback progress updates", () => {
       progress.mockRejectedValueOnce(new Error("server unavailable"));
       await expect(controller.pause("session-1", true)).resolves.toMatchObject({ paused: true });
       expect(controller.getState()?.paused).toBe(true);
+    });
+  });
+
+  test("a pause holds without the server answering its progress save, and a late failure is still reported", async () => {
+    await withPlayback(async ({ controller, properties, progress }) => {
+      const pending = Promise.withResolvers<void>();
+      const errors: Error[] = [];
+      controller.on("error", (cause: Error) => errors.push(cause));
+      progress.mockImplementationOnce(() => pending.promise);
+      properties.set("time-pos", 27.5);
+      await expect(controller.pause("session-1", true)).resolves.toMatchObject({
+        paused: true,
+        positionSeconds: 27.5,
+      });
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(errors).toEqual([]);
+      pending.reject(new Error("server unavailable"));
+      await eventually(() => errors.length === 1);
+      expect(errors[0]?.message).toBe("server unavailable");
+      expect(controller.getState()?.paused).toBe(true);
+    });
+  });
+
+  test("repeated pauses against a server that has stopped answering leave one save waiting", async () => {
+    await withPlayback(async ({ controller, properties, progress }) => {
+      const saves: { sequence: number; positionSeconds: number; signal: AbortSignal }[] = [];
+      progress.mockImplementation(
+        (_id: string, state: PlayerState, sequence: number, init: { signal: AbortSignal }) => {
+          saves.push({ sequence, positionSeconds: state.positionSeconds, signal: init.signal });
+          return new Promise<void>(() => undefined);
+        },
+      );
+      try {
+        for (let round = 1; round <= 5; round++) {
+          properties.set("time-pos", round * 10);
+          await controller.pause("session-1", true);
+          await controller.pause("session-1", false);
+        }
+        expect(saves.map(({ sequence, positionSeconds }) => [sequence, positionSeconds])).toEqual([
+          [1, 10], [2, 20], [3, 30], [4, 40], [5, 50],
+        ]);
+        expect(saves.map(({ signal }) => signal.aborted)).toEqual([true, true, true, true, false]);
+      } finally {
+        progress.mockImplementation(async () => undefined);
+      }
+    });
+  });
+
+  test("stopping replaces an unanswered pause save with the final position before closing the session", async () => {
+    await withPlayback(async ({ controller, properties, progress, request }) => {
+      const calls: string[] = [];
+      const errors: Error[] = [];
+      const pending = Promise.withResolvers<void>();
+      let pauseSave: AbortSignal | null = null;
+      controller.on("error", (cause: Error) => errors.push(cause));
+      progress.mockImplementationOnce((_id: string, _state: PlayerState, _sequence: number, init: { signal: AbortSignal }) => {
+        pauseSave = init.signal;
+        return pending.promise;
+      });
+      progress.mockImplementation(async (_id: string, state: PlayerState, sequence: number) => {
+        calls.push(`progress @${state.positionSeconds} #${sequence}`);
+      });
+      request.mockImplementation(async () => { calls.push("delete"); });
+      properties.set("time-pos", 27.5);
+      await controller.pause("session-1", true);
+      properties.set("time-pos", 41.75);
+      await controller.stop();
+      expect(calls).toEqual(["progress @41.75 #2", "delete"]);
+      expect((pauseSave as AbortSignal | null)?.aborted).toBe(true);
+      // Whatever becomes of the replaced request, it is no longer this player's failure.
+      pending.reject(new Error("aborted"));
+      await Bun.sleep(0);
+      expect(errors).toEqual([]);
+    });
+  });
+
+  test("a session stopped while its pause position is sampled saves only its final position", async () => {
+    await withPlayback(async ({ controller, properties, progress }) => {
+      await controller.refreshState();
+      properties.set("time-pos", new Promise(() => undefined));
+      const pausing = controller.pause("session-1", true).catch((cause: unknown) => cause);
+      await Bun.sleep(0);
+      expect(controller.getState()?.paused).toBe(true);
+      await controller.stop();
+      expect(await pausing).toBeInstanceOf(Error);
+      await Bun.sleep(200);
+      expect(progress).toHaveBeenCalledTimes(1);
+      expect(progress).toHaveBeenCalledWith(
+        "session-1",
+        expect.objectContaining({ paused: true, positionSeconds: 12.25 }),
+        1,
+        expect.anything(),
+      );
     });
   });
 
@@ -355,6 +449,7 @@ describe("playback progress updates", () => {
         "session-1",
         expect.objectContaining({ paused: true, positionSeconds: 30 }),
         7,
+        expect.anything(),
       );
       expect(progress).toHaveBeenNthCalledWith(2, "session-1", expect.anything(), 6);
     });
@@ -371,6 +466,7 @@ describe("playback progress updates", () => {
         "session-1",
         expect.objectContaining({ positionSeconds: 41.75 }),
         1,
+        expect.anything(),
       );
       expect(calls).toEqual(["progress", "delete"]);
     });
@@ -404,6 +500,7 @@ describe("playback progress updates", () => {
         "session-1",
         expect.objectContaining({ positionSeconds: 12.25 }),
         1,
+        expect.anything(),
       );
     });
   });
@@ -434,6 +531,7 @@ describe("playback progress updates", () => {
         "session-1",
         expect.objectContaining({ positionSeconds: 30 }),
         7,
+        expect.anything(),
       );
       expect(request).toHaveBeenCalledTimes(1);
     });
@@ -1122,6 +1220,59 @@ describe("native playback failure recovery", () => {
           expect(connections).toHaveLength(beforeStop);
           expect(watch.status.group?.playback).toBeNull();
         } finally {
+          watch.close();
+        }
+      });
+    } finally {
+      await fixture.close();
+    }
+  }, 15_000);
+
+  test("a member whose progress save goes unanswered still pauses and releases a group held for another member", async () => {
+    const fixture = await watchFixture();
+    try {
+      await withPlayback(async ({ controller, properties }) => {
+        properties.set("demuxer-cache-state", { "cache-duration": 60, eof: false });
+        const watch = new WatchPlaybackController(watchPlayerFor(controller), () => undefined);
+        const unanswered = Promise.withResolvers<void>();
+        try {
+          const owner = await fixture.connect(await fixture.login());
+          await owner.action({ type: "create", name: "Movie night", password: "" });
+          const groupId = owner.status.group?.id ?? "";
+          const starving = await fixture.connect(await fixture.login(), true);
+          await starving.action({ type: "join", groupId, password: "" });
+          const friend = new ServerClient({ origin: fixture.running.server.url.origin });
+          await friend.identity();
+          friend.setSession((await fixture.login()).currentSession);
+          const progress = spyOn(friend, "progress");
+          watch.connect(friend, "friend");
+          watch.setSurfaceReady(true);
+          await eventually(() => watch.status.connection === "connected");
+          await watch.action({ type: "join", groupId, password: "" });
+          await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 7 });
+          await eventually(() => owner.status.group?.playback?.waitingFor !== undefined);
+          await starving.action({ type: "ready", revision: owner.status.group?.revision ?? 0 });
+          await eventually(
+            () =>
+              owner.status.group?.playback?.waitingFor === undefined &&
+              controller.getState()?.itemId === fixture.itemId &&
+              controller.getState()?.paused === false,
+          );
+
+          // From here the server never answers this member's progress saves.
+          progress.mockClear();
+          progress.mockImplementation(() => unanswered.promise);
+          await starving.action({ type: "buffering", revision: owner.status.group?.revision ?? 0 });
+          await eventually(() => owner.status.group?.playback?.paused === true);
+          await starving.action({ type: "ready", revision: owner.status.group?.revision ?? 0 });
+
+          // The group was only ever waiting for the friend to pause where it holds.
+          await eventually(() => owner.status.group?.playback?.paused === false);
+          expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+          await eventually(() => controller.getState()?.paused === false);
+          expect(progress).toHaveBeenCalledTimes(1);
+        } finally {
+          unanswered.resolve();
           watch.close();
         }
       });

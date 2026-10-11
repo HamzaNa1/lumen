@@ -2,7 +2,13 @@ import type { PlayerState } from "@lumen/contracts";
 
 export interface PlaybackSessionApi {
   readonly heartbeat: (sessionId: string, state: PlayerState) => Promise<void>;
-  readonly progress: (sessionId: string, state: PlayerState, sequence: number) => Promise<void>;
+  readonly progress: (
+    sessionId: string,
+    state: PlayerState,
+    sequence: number,
+    /** Present on a save asked for outright; aborted once a newer one replaces it. */
+    init?: { readonly signal: AbortSignal },
+  ) => Promise<void>;
   readonly stopPlayback: (sessionId: string) => Promise<void>;
 }
 
@@ -18,12 +24,16 @@ const PROGRESS_EVERY_TICKS = 6;
  * Every progress write carries a sequence number that only increases, so the server can discard
  * a slow periodic write that arrives after a newer save. Once retired, a session reports nothing
  * further on its own, which keeps a replaced session from overwriting its successor.
+ *
+ * Nothing here needs waiting on for playback to carry on: no call rejects, and a server that has
+ * stopped answering holds open at most one periodic step and one requested save.
  */
 export class PlaybackSessionReporter {
   private ticks = 0;
   private sequence = 0;
   private reporting = false;
   private retired = false;
+  private saving: AbortController | null = null;
 
   constructor(
     private readonly api: PlaybackSessionApi,
@@ -50,14 +60,31 @@ export class PlaybackSessionReporter {
     }
   }
 
-  /** Saves progress now, ahead of any periodic write still in flight. */
-  async saveProgress(state: PlayerState): Promise<void> {
+  /**
+   * Saves progress now, ahead of any periodic write still in flight. A newer save replaces one
+   * the server has not answered, so the returned promise settles once this position is saved,
+   * has failed, or no longer matters.
+   */
+  saveProgress(state: PlayerState): Promise<void> {
     this.sequence += 1;
-    try {
-      await this.api.progress(this.sessionId, state, this.sequence);
-    } catch (cause) {
-      this.onError(cause);
-    }
+    const sequence = this.sequence;
+    this.saving?.abort();
+    const saving = new AbortController();
+    this.saving = saving;
+    const { signal } = saving;
+    const replaced = new Promise<void>((resolve) =>
+      signal.addEventListener("abort", () => resolve(), { once: true }),
+    );
+    const saved = (async () => {
+      try {
+        await this.api.progress(this.sessionId, state, sequence, { signal });
+      } catch (cause) {
+        if (!signal.aborted) this.onError(cause);
+      } finally {
+        if (this.saving === saving) this.saving = null;
+      }
+    })();
+    return Promise.race([saved, replaced]);
   }
 
   /** Stops periodic reporting. Progress can still be saved explicitly while the session winds down. */

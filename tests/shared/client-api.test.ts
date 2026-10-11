@@ -353,6 +353,43 @@ describe("playback session reporting", () => {
     expect(calls).toEqual(["heartbeat", "progress 6", "stop"]);
     expect(errors).toEqual([]);
   });
+  test("a newer save replaces one the server has not answered, and only its outcome is reported", async () => {
+    const requests: { sequence: number; signal: AbortSignal; answer: PromiseWithResolvers<void> }[] = [];
+    const errors: unknown[] = [];
+    const reporter = new PlaybackSessionReporter(
+      {
+        heartbeat: async () => undefined,
+        stopPlayback: async () => undefined,
+        // Deliberately deaf to its signal: a transport that never answers must not matter.
+        progress: (_session, _state, sequence, init) => {
+          const answer = Promise.withResolvers<void>();
+          if (init === undefined) throw new Error("A requested save carries its signal");
+          requests.push({ sequence, signal: init.signal, answer });
+          return answer.promise;
+        },
+      },
+      "s",
+      (cause) => errors.push(cause),
+    );
+    const first = reporter.saveProgress(state);
+    const second = reporter.saveProgress(state);
+    await first;
+    expect(requests.map((request) => request.sequence)).toEqual([1, 2]);
+    expect(requests.map((request) => request.signal.aborted)).toEqual([true, false]);
+    requests[0]?.answer.reject(new Error("aborted"));
+    await Promise.resolve();
+    expect(errors).toEqual([]);
+    const failure = new Error("server unavailable");
+    requests[1]?.answer.reject(failure);
+    await second;
+    expect(errors).toEqual([failure]);
+    // A save that was answered leaves nothing behind for the next one to replace.
+    const third = reporter.saveProgress(state);
+    requests[2]?.answer.resolve();
+    await third;
+    expect(requests.map((request) => request.signal.aborted)).toEqual([true, false, false]);
+    expect(errors).toEqual([failure]);
+  });
 });
 
 describe("ServerApi artwork", () => {

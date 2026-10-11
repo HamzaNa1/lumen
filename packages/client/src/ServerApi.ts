@@ -759,7 +759,7 @@ export class ServerApi {
     sessionId: string,
     state: PlayerState,
     sequence: number,
-    init: Pick<RequestInit, "keepalive"> = {},
+    init: Pick<RequestInit, "keepalive" | "signal"> = {},
   ): Promise<void> {
     await this.request(`/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/progress`, {
       ...jsonBody("POST", {

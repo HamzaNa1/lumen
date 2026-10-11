@@ -350,22 +350,26 @@ describe("browser playback lifecycle", () => {
     await expect(player.pause("session-1", true)).rejects.toThrow("not active");
   });
 
-  test("a pause answered after its session was replaced neither publishes nor returns state", async () => {
-    const { api, player, states } = setup();
+  test("a pause holds without the server answering its progress save", async () => {
+    const { api, calls, player } = setup();
     await player.start({ itemId: "item-1" });
     let answer: () => void = () => undefined;
     api.progressGate = new Promise<void>((resolve) => {
       answer = resolve;
     });
-    const pausing = player.pause("session-1", true).catch((cause: unknown) => cause);
-    await player.start({ itemId: "item-2" });
-    states.length = 0;
-    answer();
-    const outcome = await pausing;
-    expect(outcome).toBeInstanceOf(Error);
-    expect((outcome as Error).message).toContain("not active");
-    expect(states).toEqual([]);
-    expect(player.getState()).toMatchObject({ sessionId: "session-2", itemId: "item-2" });
+    try {
+      await expect(player.pause("session-1", true)).resolves.toMatchObject({ paused: true });
+      expect(calls.some((call) => call.startsWith("progress"))).toBe(false);
+      // Replacing the session saves its final position without waiting for the unanswered one.
+      await player.start({ itemId: "item-2" });
+      expect(calls.filter((call) => call.startsWith("progress") || call.startsWith("stop"))).toEqual([
+        "progress session-1 @0 #2",
+        "stop session-1",
+      ]);
+      expect(player.getState()).toMatchObject({ sessionId: "session-2", itemId: "item-2" });
+    } finally {
+      answer();
+    }
   });
 
   test("playback allowed after its session was replaced publishes nothing for the old session", async () => {
