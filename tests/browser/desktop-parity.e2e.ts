@@ -812,6 +812,30 @@ test("hovering the timeline shows the time under the pointer", async ({ context,
   await expect(hover).toHaveCount(0);
 });
 
+test("pressing the edge of the timeline's thumb seeks to the pointer", async ({ context, baseURL }) => {
+  const { page } = (await signedInBuilds(context, baseURL ?? "")).desktop;
+  await gotoDesktop(page, desktopBuild, "/", {
+    overlay: true,
+    display: { ...filmDisplay, duration: 5_400, loading: false, error: null },
+    player: { ...playing, positionSeconds: 1_200, durationSeconds: 5_400, bufferedRanges: [] },
+  });
+  const elapsed = page.locator(".media-player-time").first();
+  await expect(elapsed).toHaveText("20:00");
+  const thumb = await page.locator(".media-player-timeline .media-slider-thumb").boundingBox();
+  if (thumb === null) throw new Error("The timeline's thumb is not drawn");
+  const y = thumb.y + thumb.height / 2;
+
+  await page.mouse.move(thumb.x + thumb.width - 1, y);
+  await page.mouse.down();
+  await expect(elapsed).toHaveText(/^20:(0[1-9]|[1-5]\d)$/u);
+  await page.mouse.up();
+
+  await page.mouse.move(thumb.x + 1, y);
+  await page.mouse.down();
+  await expect(elapsed).toHaveText(/^19:\d\d$/u);
+  await page.mouse.up();
+});
+
 test("the player controls are drawn identically over playing media", async ({
   context,
   baseURL,
