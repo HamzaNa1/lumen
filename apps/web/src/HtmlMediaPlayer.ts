@@ -61,7 +61,7 @@ export interface BrowserPlaybackApi {
     sessionId: string,
     state: PlayerState,
     sequence: number,
-    init?: { readonly keepalive?: boolean },
+    init?: { readonly keepalive?: boolean; readonly signal?: AbortSignal },
   ) => Promise<void>;
   readonly stopPlayback: (
     sessionId: string,
@@ -224,7 +224,8 @@ export class HtmlMediaPlayer {
     const active = this.requireActive(sessionId);
     if (paused) {
       this.element.pause();
-      await active.reporter.saveProgress(this.snapshot(active));
+      // The pause already holds; what the server makes of the save is not something to wait on.
+      void active.reporter.saveProgress(this.snapshot(active));
     } else await this.play(active);
     return this.publishIfActive(active);
   }
@@ -751,8 +752,8 @@ export class HtmlMediaPlayer {
   private sessionApi(): PlaybackSessionApi {
     return {
       heartbeat: (sessionId, state) => this.api.heartbeat(sessionId, state),
-      progress: (sessionId, state, sequence) =>
-        this.api.progress(sessionId, state, sequence, { keepalive: this.leaving }),
+      progress: (sessionId, state, sequence, init) =>
+        this.api.progress(sessionId, state, sequence, { ...init, keepalive: this.leaving }),
       stopPlayback: (sessionId) => this.api.stopPlayback(sessionId, { keepalive: this.leaving }),
     };
   }

@@ -357,7 +357,9 @@ export class PlayerController extends EventEmitter {
       const state = sample
         ? await this.samplePosition(active, this.requireState())
         : this.requireState();
-      await active.reporter.saveProgress(state);
+      // The pause already holds; what the server makes of the save is not something to wait on.
+      // A session stopped while its position was sampled saves its own final position instead.
+      if (this.active === active) void active.reporter.saveProgress(state);
     }
     return this.requireState();
   }
