@@ -46,7 +46,14 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   getState() {
     return this.state;
   }
+  /** Models a player whose timing replies arrive too late to measure drift with. */
+  sampleUnavailable = false;
+  samplesSkipped = 0;
   sample() {
+    if (this.sampleUnavailable) {
+      this.samplesSkipped += 1;
+      return null;
+    }
     return this.state === null ? null : {
       ...this.state, sampledAtMs: performance.now(), speed: this.rate,
       advancing: !this.state.paused && !this.starved,
@@ -57,6 +64,7 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
     if (this.state === null) throw new Error("No media");
     this.seeks += 1;
     this.state = { ...this.state, positionSeconds };
+    this.seekingUntil = performance.now() + this.seekMs;
     return this.state;
   }
   async pause(_sessionId: string, paused: boolean) {
@@ -74,9 +82,14 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   settled = false;
   /** Holds back the answer to the next `buffer()` until the test settles it. */
   bufferGate: Promise<PlayerBuffer> | null = null;
+  /** How long a seek takes to land; until it has, nothing is buffered where it is going. */
+  seekMs = 0;
+  private seekingUntil = 0;
   buffer() {
     const gate = this.bufferGate;
     this.bufferGate = null;
+    if (gate === null && performance.now() < this.seekingUntil)
+      return { aheadSeconds: 0, starved: false, settled: false };
     return gate ?? { aheadSeconds: this.aheadSeconds, starved: this.starved, settled: this.settled };
   }
 }
@@ -714,6 +727,57 @@ test("a viewer who runs out of buffered media holds the group until they have bu
     await eventually(
       () => steady.native.state?.paused === false && stalled.native.state?.paused === false,
     );
+    expect(owner.status.group?.playback).toMatchObject({
+      positionSeconds: held?.playback?.positionSeconds,
+      paused: false,
+    });
+    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+  } finally {
+    for (const viewer of viewers) viewer.close();
+    await fixture.close();
+  }
+});
+
+test("a buffered viewer whose drift cannot be measured does not keep a recovered group waiting", async () => {
+  const fixture = await watchFixture();
+  const viewers: WatchPlaybackController[] = [];
+  try {
+    const owner = await fixture.connect(await fixture.login());
+    await owner.action({ type: "create", name: "Movie night", password: "" });
+    const groupId = owner.status.group?.id ?? "";
+    const steady = await groupViewer(fixture, groupId, "steady");
+    const stalled = await groupViewer(fixture, groupId, "stalled");
+    viewers.push(steady.playback, stalled.playback);
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await eventually(
+      () => steady.native.state?.paused === false && stalled.native.state?.paused === false,
+    );
+
+    // The steady player holds a minute of media, but its seek to the held position takes a
+    // moment to land and its timing replies then come too late to use.
+    steady.native.aheadSeconds = 60;
+    steady.native.seekMs = 30;
+    steady.native.sampleUnavailable = true;
+    stalled.native.aheadSeconds = 0;
+    stalled.native.starved = true;
+    await eventually(() => owner.status.group?.playback?.paused === true);
+    const held = owner.status.group;
+    stalled.native.starved = false;
+
+    // It answers for itself while the group is still waiting for the player that ran out.
+    await eventually(
+      () =>
+        owner.status.group?.playback?.waitingFor?.length === 1 &&
+        owner.status.group.playback.waitingFor[0] === stalled.playback.status.memberId,
+    );
+    expect(owner.status.group?.revision).toBe(held?.revision);
+    expect(steady.native.state?.positionSeconds).toBe(held?.playback?.positionSeconds);
+
+    stalled.native.aheadSeconds = 5;
+    await eventually(
+      () => steady.native.state?.paused === false && stalled.native.state?.paused === false,
+    );
+    expect(steady.native.samplesSkipped).toBeGreaterThan(0);
     expect(owner.status.group?.playback).toMatchObject({
       positionSeconds: held?.playback?.positionSeconds,
       paused: false,

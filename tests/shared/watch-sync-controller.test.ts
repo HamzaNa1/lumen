@@ -6,6 +6,7 @@ import {
   type WatchPlayerState,
   type WatchPlaybackSample,
 } from "../../packages/client/src/index.ts";
+import type { PlayerBuffer } from "../../packages/client/src/index.ts";
 import type { WatchAction, WatchGroup } from "../../packages/contracts/src/index.ts";
 
 /** Drive the actual controller without network or wall-clock timers. */
@@ -37,6 +38,8 @@ const fixture = () => {
   let failSpeed = false;
   let speedGate: Promise<void> | null = null;
   let sampleGate: Promise<void> | null = null;
+  let aheadSeconds = 10;
+  let bufferGate: Promise<PlayerBuffer> | null = null;
   const diagnostics = new PlaybackDiagnostics();
   const rates: number[] = [];
   const actions: WatchAction[] = [];
@@ -88,7 +91,9 @@ const fixture = () => {
     },
     buffer: () => {
       advance(bufferDelay);
-      return { aheadSeconds: 10, starved, settled: false };
+      const gate = bufferGate;
+      bufferGate = null;
+      return gate ?? { aheadSeconds, starved, settled: false };
     },
     sample: async () => {
       const gate = sampleGate;
@@ -199,6 +204,33 @@ const fixture = () => {
     },
     set sampleGate(value: Promise<void>) {
       sampleGate = value;
+    },
+    set aheadSeconds(value: number) {
+      aheadSeconds = value;
+    },
+    set bufferGate(value: Promise<PlayerBuffer>) {
+      bufferGate = value;
+    },
+    /** The group holds at a position for this viewer, whose player goes there and starts loading. */
+    async hold(revision: number, positionSeconds: number) {
+      aheadSeconds = 0;
+      controller.status = {
+        ...controller.status,
+        group: {
+          ...group,
+          revision,
+          playback: {
+            itemId: "item",
+            title: "Test",
+            positionSeconds,
+            paused: true,
+            updatedAtMs: now,
+            waitingFor: ["member"],
+          },
+        },
+      };
+      await synchronize();
+      clearTimeout(Reflect.get(controller, "readinessTimer"));
     },
   };
 };
@@ -404,3 +436,88 @@ test("diagnostic history stays bounded and includes sample age, measured rate an
     });
     expect(Math.abs(Number(history.at(-1)?.fields.driftSeconds))).toBeLessThan(0.001);
   }));
+
+const settle = async () => {
+  for (let i = 0; i < 20; i++) await Promise.resolve();
+};
+
+test.each(["missing", "stale", "pending"])(
+  "a held viewer that has buffered is ready whatever becomes of its drift sample (%s)",
+  (sample) =>
+    runController(async (f) => {
+      await f.hold(2, 50);
+      expect(f.seeks).toEqual([50]);
+      expect(f.actions).toEqual([]);
+
+      let release = () => {};
+      if (sample === "missing") f.missingSample = true;
+      if (sample === "stale") f.sampleDelay = 300;
+      if (sample === "pending")
+        f.sampleGate = new Promise<void>((resolve) => {
+          release = resolve;
+        });
+      f.aheadSeconds = 5;
+      const pending = f.tick(100);
+      await settle();
+      expect(f.actions).toEqual([{ type: "ready", revision: 2 }]);
+      release();
+      await pending;
+
+      // Readiness is said once for the hold, and never moves the player off where it waits.
+      for (let i = 0; i < 3; i++) await f.tick();
+      expect(f.actions).toEqual([{ type: "ready", revision: 2 }]);
+      expect(f.seeks).toEqual([50]);
+      expect(f.position).toBe(50);
+    }),
+);
+
+test("a held viewer still loading is not ready because its drift sample is unavailable", () =>
+  runController(async (f) => {
+    await f.hold(2, 50);
+    f.missingSample = true;
+    f.aheadSeconds = 4.9;
+    for (let i = 0; i < 3; i++) {
+      await f.tick(100);
+      clearTimeout(Reflect.get(f.controller, "readinessTimer"));
+    }
+    expect(f.actions).toEqual([]);
+    expect(f.seeks).toEqual([50]);
+  }));
+
+test.each(["hold", "session"])(
+  "a buffer answer that outlives its %s does not make the viewer ready",
+  (replaced) =>
+    runController(async (f) => {
+      await f.hold(2, 50);
+      f.missingSample = true;
+      const answer = Promise.withResolvers<PlayerBuffer>();
+      f.bufferGate = answer.promise;
+      const pending = f.tick(100);
+      await settle();
+
+      if (replaced === "session") f.replace();
+      const group = f.controller.status.group;
+      if (group?.playback == null) throw new Error("Missing group playback");
+      if (replaced === "hold")
+        f.controller.status = {
+          ...f.controller.status,
+          group: {
+            ...group,
+            revision: 3,
+            playback: { ...group.playback, positionSeconds: 80, updatedAtMs: f.now },
+          },
+        };
+      answer.resolve({ aheadSeconds: 60, starved: false, settled: false });
+      await pending;
+      expect(f.actions).toEqual([]);
+
+      // What replaced it is waited for on its own terms: the new position has to buffer.
+      await f.synchronize();
+      clearTimeout(Reflect.get(f.controller, "readinessTimer"));
+      expect(f.actions).toEqual([]);
+      if (replaced === "hold") expect(f.seeks).toEqual([50, 80]);
+      f.aheadSeconds = 5;
+      await f.tick(100);
+      expect(f.actions).toEqual([{ type: "ready", revision: replaced === "hold" ? 3 : 2 }]);
+    }),
+);

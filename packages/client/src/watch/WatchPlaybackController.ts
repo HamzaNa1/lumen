@@ -520,15 +520,20 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         if (!current()) return;
       }
       const awaited = this.awaited(group);
-      if (
-        awaited &&
-        this.appliedRevision === group.revision &&
-        !(await this.buffered(state.sessionId))
-      ) {
-        // Still buffering the position the group holds at; another seek would start that over.
-        await this.resetSpeed(current);
-        this.checkReadinessSoon();
-        return;
+      if (awaited && this.appliedRevision === group.revision) {
+        const buffered = await this.buffered(state.sessionId);
+        // The answer is about this group as it stood; it must not release whatever replaced it.
+        if (!current()) return;
+        if (!buffered) {
+          // Still buffering the position the group holds at; another seek would start that over.
+          await this.resetSpeed(current);
+          this.checkReadinessSoon();
+          return;
+        }
+        // The player was put at the held position when this revision was applied, and holds
+        // enough to play on from it. Measuring drift below is a refinement the group does not
+        // wait for: a player too busy to be measured is still ready.
+        this.reportReady(client, group);
       }
       if (
         !playback.paused &&
@@ -622,7 +627,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         this.status = { ...this.status, error: null };
         this.onStatus(this.status);
       }
-      if (!awaited) return;
+      // Only a player that was just moved has its buffer to look at again.
+      if (!awaited || !(revisionChanged || reposition)) return;
       const buffered = await this.buffered(state.sessionId);
       // The answer is about this group as it stood; it must not release whatever replaced it.
       if (!current()) return;
