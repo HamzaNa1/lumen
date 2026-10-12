@@ -13,7 +13,7 @@ import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-rout
 import { CircleAlert, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
-import { episodeContext, errorMessage } from "./format";
+import { episodeContext, errorMessage, playingContext } from "./format";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
@@ -261,8 +261,8 @@ export const App = (): React.ReactElement => {
   const playingDetails = useQuery(
     itemDetailsQuery(runtime, scope ?? [], scope === null ? null : playingId),
   );
-  const playingContext =
-    playingDetails.data?.item.kind === "episode" ? episodeContext(playingDetails.data.item) : "";
+  const playingItemContext =
+    playingDetails.data === undefined ? "" : playingContext(playingDetails.data.item);
   const adjacentEpisodes = useQuery({
     queryKey: [...(scope ?? []), "adjacent-episodes", playingId],
     queryFn: () => runtime.catalog.adjacentEpisodes(playingId ?? ""),
@@ -272,7 +272,7 @@ export const App = (): React.ReactElement => {
     () => ({
       itemId: playingId ?? null,
       title: playingItem?.title ?? watchTitle ?? "Now playing",
-      context: playingContext,
+      context: playingItemContext,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
@@ -289,7 +289,7 @@ export const App = (): React.ReactElement => {
     }),
     [
       adjacentEpisodes,
-      playingContext,
+      playingItemContext,
       playingId,
       playingItem,
       playerUnavailable,

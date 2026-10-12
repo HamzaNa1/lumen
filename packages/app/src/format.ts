@@ -79,18 +79,35 @@ export const hostOf = (origin: string): string => {
   }
 };
 
-/** Where an episode sits in its show: "House · S01E03", or whichever parts are known. */
+/** Where an episode sits in its show: "House (2004) · S01E03", or whichever parts are known. */
 export const episodeContext = (item: {
   readonly seriesTitle?: string | null | undefined;
+  readonly seasonYear?: number | null | undefined;
   readonly seasonNumber?: number | null | undefined;
   readonly indexNumber?: number | null | undefined;
 }): string => {
   const part = (prefix: string, value: number | null | undefined): string =>
     value == null ? "" : `${prefix}${String(value).padStart(2, "0")}`;
-  return [item.seriesTitle, part("S", item.seasonNumber) + part("E", item.indexNumber)]
+  // The year dates the show's name, so it is left out where the show is not named.
+  const series =
+    item.seriesTitle == null || item.seriesTitle === "" || item.seasonYear == null
+      ? item.seriesTitle
+      : `${item.seriesTitle} (${item.seasonYear})`;
+  return [series, part("S", item.seasonNumber) + part("E", item.indexNumber)]
     .filter(Boolean)
     .join(" · ");
 };
+
+/** What the player says under the title of what is playing: an episode's place in its show, or the year anything else came out. */
+export const playingContext = (item: {
+  readonly kind: string;
+  readonly year: number | null;
+  readonly seriesTitle?: string | null | undefined;
+  readonly seasonYear?: number | null | undefined;
+  readonly seasonNumber?: number | null | undefined;
+  readonly indexNumber?: number | null | undefined;
+}): string =>
+  item.kind === "episode" ? episodeContext(item) : item.year === null ? "" : `(${item.year})`;
 
 /** 83 seconds → "1:23", 5000 seconds → "1:23:20". */
 export const formatClock = (seconds: number): string => {

@@ -263,8 +263,16 @@ test("video folders browse as series, seasons, episodes and movies without requi
   ).json()) as {
     item: { artworkId: string | null; seriesTitle: string | null; seasonNumber: number | null };
   };
-  expect(episodeDetails.item).toMatchObject({ seriesTitle: "House", seasonNumber: 1 });
-  expect(showDetails.item).toMatchObject({ seriesTitle: null, seasonNumber: null });
+  expect(episodeDetails.item).toMatchObject({
+    seriesTitle: "House",
+    seasonNumber: 1,
+    seasonYear: null,
+  });
+  expect(showDetails.item).toMatchObject({
+    seriesTitle: null,
+    seasonNumber: null,
+    seasonYear: null,
+  });
   expect(episodeDetails.item.artworkId).toBeString();
   expect((await get(`/api/v1/artwork/${episodeDetails.item.artworkId}`, admin)).status).toBe(200);
   const replacementPoster = Buffer.from(
@@ -486,7 +494,7 @@ test("video folders browse as series, seasons, episodes and movies without requi
                         id: 1,
                         name: "Season 1",
                         overview: "Remote season",
-                        air_date: "2004-11-16",
+                        air_date: "2005-09-13",
                         poster_path: "/season.png",
                       };
       return Promise.resolve(Response.json(payload));
@@ -560,6 +568,11 @@ test("video folders browse as series, seasons, episodes and movies without requi
       await Bun.sleep(100);
     }
     expect(enrichedEpisodeTitle).toBe("Pilot");
+    // An episode is dated by its season, which need not have come out the year its show did.
+    const enrichedEpisode = (await (
+      await remoteGet(`/api/v1/items/${must(firstSeason.items[0]).id}`)
+    ).json()) as { item: { seasonYear: number | null } };
+    expect(enrichedEpisode.item.seasonYear).toBe(2005);
     const refresh = await fetch(new URL(`/api/v1/items/${showId}/refresh`, remoteBase), {
       method: "POST",
       headers: { authorization: `Bearer ${admin}` },

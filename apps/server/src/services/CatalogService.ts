@@ -436,6 +436,9 @@ export const makeCatalogService = Effect.gen(function* () {
           seasonNumber: sql<
             number | null
           >`case when ${parent.kind} = 'season' then ${parent.indexNumber} end`,
+          // A season without a year of its own is dated by its show.
+          seasonYear: sql<number | null>`case ${parent.kind}
+            when 'show' then ${parent.year} when 'season' then coalesce(${parent.year}, ${show.year}) end`,
           overview: catalogItems.overview,
           completed: completedFor(principal.user.id),
           durationSeconds: catalogItems.durationSeconds,
