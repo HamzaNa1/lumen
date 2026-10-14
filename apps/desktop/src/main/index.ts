@@ -1,10 +1,15 @@
 import { join } from "node:path";
-import { app, type BrowserWindow, nativeTheme, session } from "electron";
+import { app, type BrowserWindow, nativeTheme, screen, session } from "electron";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import type { ServerClient } from "./api/ServerClient";
 import { ArtworkCache } from "./artwork/ArtworkCache";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
+import {
+  openMainWindowState,
+  placeMainWindow,
+  rememberMainWindowState,
+} from "./MainWindowState";
 import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
 import { AudioSettingsStore } from "./player/AudioSettingsStore";
@@ -56,9 +61,20 @@ const bootstrap = async (): Promise<void> => {
   const audioSettings = await AudioSettingsStore.open(
     join(app.getPath("userData"), "audio-settings.json"),
   );
+  const windowState = await openMainWindowState(
+    join(app.getPath("userData"), "main-window-state.json"),
+  );
   bridge = new PlaybackBridge();
   await bridge.listen();
-  mainWindow = createMainWindow({ preloadPath });
+  mainWindow = createMainWindow({
+    preloadPath,
+    bounds: placeMainWindow(windowState.current, {
+      primary: screen.getPrimaryDisplay().workArea,
+      all: screen.getAllDisplays().map((display) => display.workArea),
+    }),
+    maximized: windowState.current.maximized,
+  });
+  rememberMainWindowState(mainWindow, windowState);
   const overlay = new PlayerOverlayWindow(mainWindow, preloadPath);
   player = new PlayerController({
     bridge,
