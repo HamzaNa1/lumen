@@ -1,17 +1,19 @@
-import { BrowserWindow } from "electron";
+import { BrowserWindow, type Rectangle } from "electron";
+import { mainWindowDefaultSize, mainWindowMinimumSize } from "./MainWindowState";
 
 export interface DesktopWindowOptions {
   readonly url?: string;
   readonly parent?: BrowserWindow;
   readonly preloadPath?: string;
+  readonly bounds?: Rectangle;
+  readonly maximized?: boolean;
 }
 
 export const createMainWindow = (options: DesktopWindowOptions = {}): Electron.BrowserWindow => {
   const window = new BrowserWindow({
-    width: 1440,
-    height: 920,
-    minWidth: 1024,
-    minHeight: 680,
+    ...(options.bounds ?? mainWindowDefaultSize),
+    minWidth: mainWindowMinimumSize.width,
+    minHeight: mainWindowMinimumSize.height,
     backgroundColor: "#0c0c0e",
     show: false,
     parent: options.parent,
@@ -24,7 +26,11 @@ export const createMainWindow = (options: DesktopWindowOptions = {}): Electron.B
     },
   });
   if (process.platform === "win32") window.removeMenu();
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    // Maximizing also shows the window, so it waits for the first paint like show() does.
+    if (options.maximized === true) window.maximize();
+    window.show();
+  });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   window.webContents.on("will-navigate", (event, url) => {
     if (url !== window.webContents.getURL()) event.preventDefault();
