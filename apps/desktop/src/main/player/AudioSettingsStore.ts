@@ -45,11 +45,11 @@ export class AudioSettingsStore {
 
   /** The volume a title plays at; see {@link volumeForTitle}. */
   volumeFor(titleId: string | null): VolumeSettings {
-    return volumeForTitle(this.settings, titleId);
+    return volumeForTitle(this.store.current, titleId);
   }
 
   rememberVolume(titleId: string | null, volume: VolumeSettings): void {
-    this.update(rememberTitleVolume(this.settings, titleId, volume));
+    this.update(rememberTitleVolume(this.store.current, titleId, volume));
   }
 
   update(changes: Partial<AudioSettings>): void {
