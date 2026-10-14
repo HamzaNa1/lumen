@@ -162,6 +162,8 @@ export type PlayableStream = Schema.Schema.Type<typeof PlayableStream>;
 export const PlayerSession = Schema.Struct({
   sessionId: Uuid,
   itemId: Uuid,
+  /** The show an episode belongs to, or the movie itself. Older servers leave it out. */
+  titleId: Schema.optional(Schema.NullOr(Uuid)),
   sourceId: Uuid,
   title: Schema.String.check(Schema.isMinLength(1)),
   streamUrl: Schema.String.check(Schema.isMinLength(1)),

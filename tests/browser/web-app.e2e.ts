@@ -273,6 +273,61 @@ test("supported media plays under the shared controls", async ({ page, browserNa
   await expect.poll(() => page.evaluate(() => document.querySelector("video"))).toBeNull();
 });
 
+test("each show and film keeps its own volume, across all of a show's episodes", async ({
+  page,
+  browserName,
+}, testInfo) => {
+  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+  await signIn(page);
+  const volumeSlider = page.getByRole("slider", { name: "Volume" });
+  const elementVolume = () => page.evaluate(() => document.querySelector("video")?.volume);
+  const playEpisode = async (season: string, episode: string): Promise<void> => {
+    await page.goto("/web/library");
+    await page.getByRole("button", { name: "Play Serial" }).first().click({ force: true });
+    await page.getByRole("button", { name: `Play ${season}` }).first().click({ force: true });
+    await play(page, episode);
+  };
+  const playFilmFromLibrary = async (): Promise<void> => {
+    await page.goto("/web/library");
+    await playFilm(page);
+  };
+  /** Sets the volume from the keyboard: all the way up, then down in steps of ten. */
+  const setVolume = async (volume: number): Promise<void> => {
+    await page.mouse.move(300, 300);
+    await volumeSlider.focus();
+    await page.keyboard.press("End");
+    for (let level = 100; level > volume; level -= 10) await page.keyboard.press("PageDown");
+    await expect(volumeSlider).toHaveAttribute("aria-valuenow", String(volume));
+    await expect.poll(elementVolume).toBeCloseTo(volume / 100);
+  };
+  const expectVolume = async (volume: number, shot: string): Promise<void> => {
+    await expect.poll(elementVolume).toBeCloseTo(volume / 100);
+    await page.mouse.move(310, 310);
+    await expect(volumeSlider).toHaveAttribute("aria-valuenow", String(volume));
+    await testInfo.attach(shot, { body: await page.screenshot(), contentType: "image/png" });
+  };
+
+  await playEpisode("Season 1", "Pilot");
+  await expectVolume(100, "S01E01 starts at full volume");
+  await setVolume(30);
+
+  // A film never adjusted starts where the volume was last left.
+  await playFilmFromLibrary();
+  await expectVolume(30, "the film starts where the volume was last left");
+  await setVolume(80);
+
+  // Any episode of the show, in any season, plays as loud as the show was left.
+  await playEpisode("Season 2", "Return");
+  await expectVolume(30, "S02E01 plays at the show's volume");
+  await playFilmFromLibrary();
+  await expectVolume(80, "the film plays at its own volume");
+
+  // Both outlast a reload.
+  await page.reload();
+  await playEpisode("Season 1", "Second");
+  await expectVolume(30, "S01E02 after a reload plays at the show's volume");
+});
+
 test("the player moves between a show's episodes", async ({ page, browserName }, testInfo) => {
   test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);

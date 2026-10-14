@@ -52,7 +52,8 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
       });
     return yield* preferences(principal);
   });
-  const scopeForTrack = Effect.fn("TrackMemory.scope")(function* (trackId: string) {
+  /** The show an episode or season belongs to, or the item itself: what choices are kept for. */
+  const titleOf = Effect.fn("TrackMemory.title")(function* (trackId: string) {
     const item = yield* database
       .select({ item: catalogItems })
       .from(catalogItemSources)
@@ -86,10 +87,9 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
   });
   const memory = Effect.fn("TrackMemory.read")(function* (
     principal: AuthPrincipal,
-    trackId: string,
+    scope: string | null,
   ) {
     const preferred = yield* preferences(principal);
-    const scope = yield* scopeForTrack(trackId);
     const row =
       scope === null
         ? undefined
@@ -136,7 +136,7 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
     )
       return yield* conflict("Playback session is closed");
     yield* access.requireTrack(principal, session.activeTrackId, "playback:control", nowMs);
-    const scope = yield* scopeForTrack(session.activeTrackId);
+    const scope = yield* titleOf(session.activeTrackId);
     if (scope === null) return yield* conflict("Media has no catalog identity");
     const track = yield* database
       .select()
@@ -178,7 +178,7 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
         target: [mediaTrackOverrides.userId, mediaTrackOverrides.itemId],
         set: field,
       });
-    return yield* memory(principal, session.activeTrackId);
+    return yield* memory(principal, scope);
   });
-  return { preferences, updatePreferences, memory, saveChoice };
+  return { preferences, updatePreferences, titleOf, memory, saveChoice };
 });

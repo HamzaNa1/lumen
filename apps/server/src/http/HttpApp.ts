@@ -941,6 +941,7 @@ export const makeHttpHandler = (
         {
           sessionId: result.session.id,
           itemId: result.itemId,
+          titleId: result.titleId,
           sourceId: result.sourceId,
           sourceGeneration: result.sourceGeneration,
           title: result.title,

@@ -567,6 +567,8 @@ describe("account track memory HTTP API", () => {
       const token = await login.json() as { accessToken: string };
       const deviceHeaders = { ...headers, authorization: `Bearer ${token.accessToken}` };
       const otherDevice = await start(base, deviceHeaders, seeded.itemId);
+      // A movie is its own title.
+      expect(otherDevice.titleId).toBe(seeded.itemId);
       expect(otherDevice.trackMemory).toMatchObject({ preferences: { audioLanguage: "ja", subtitleLanguage: "en" }, audio: { streamId: seeded.audioStreamId }, subtitle: "off" });
       expect((await fetch(`${sessionUrl}/track-choice`, { method: "PUT", headers: deviceHeaders, body: JSON.stringify({ kind: "subtitle", choice: null }) })).status).toBe(403);
       await restartServer();
@@ -618,10 +620,13 @@ describe("account track memory HTTP API", () => {
           expect(response.status).toBe(200); await response.arrayBuffer();
         }
         const missing = await start(base, headers, second.itemId);
+        expect(missing.titleId).toBe(show);
         expect(resolveTrackSelection(missing.streams, missing.sourceId, missing.trackMemory)).toMatchObject({ audio: { id: second.regularId }, subtitle: { id: second.subId } });
         expect(missing.trackMemory?.audio?.streamId).toBe(commentaryId);
         await restartServer();
         const available = await start(base, headers, third.itemId);
+        // An episode of another season is still the same title.
+        expect(available.titleId).toBe(show);
         expect(resolveTrackSelection(available.streams, available.sourceId, available.trackMemory)).toMatchObject({ audio: { id: third.commentId }, subtitle: { id: third.subId } });
         const rows = db.query("SELECT item_id FROM media_track_overrides").all();
         expect(rows).toEqual([{ item_id: show }]);
