@@ -1,8 +1,14 @@
-import { AudioOutput, VolumeSettings } from "@lumen/contracts";
+import {
+  AudioOutput,
+  rememberTitleVolume,
+  VolumeMemory,
+  volumeForTitle,
+  type VolumeSettings,
+} from "@lumen/contracts";
 import { Schema } from "effect";
 import { JsonFileStore } from "../storage/JsonFileStore";
 
-const AudioSettings = Schema.Struct({ ...VolumeSettings.fields, audioOutput: AudioOutput });
+const AudioSettings = Schema.Struct({ ...VolumeMemory.fields, audioOutput: AudioOutput });
 export type AudioSettings = Schema.Schema.Type<typeof AudioSettings>;
 
 const defaultAudioSettings = (): AudioSettings => ({
@@ -13,7 +19,7 @@ const defaultAudioSettings = (): AudioSettings => ({
   audioOutput: process.platform === "win32" ? "stereo" : "auto-safe",
 });
 
-/** The viewer's volume and audio output, shared by everything this installation plays. */
+/** The viewer's audio output, and the volume they keep for each title this installation plays. */
 export class AudioSettingsStore {
   private constructor(private readonly store: JsonFileStore<AudioSettings>) {}
 
@@ -35,6 +41,15 @@ export class AudioSettingsStore {
 
   get current(): AudioSettings {
     return this.store.current;
+  }
+
+  /** The volume a title plays at; see {@link volumeForTitle}. */
+  volumeFor(titleId: string | null): VolumeSettings {
+    return volumeForTitle(this.settings, titleId);
+  }
+
+  rememberVolume(titleId: string | null, volume: VolumeSettings): void {
+    this.update(rememberTitleVolume(this.settings, titleId, volume));
   }
 
   update(changes: Partial<AudioSettings>): void {

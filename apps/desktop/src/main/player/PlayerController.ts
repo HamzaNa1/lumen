@@ -30,7 +30,7 @@ export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
   readonly surface: MpvSurface;
   readonly onState: (state: PlayerState) => void;
-  /** Where the viewer's volume and audio output are kept; forgotten on exit when omitted. */
+  /** Where the viewer's volumes and audio output are kept; forgotten on exit when omitted. */
   readonly audioSettings?: AudioSettingsStore;
 }
 
@@ -236,7 +236,8 @@ export class PlayerController extends EventEmitter {
         mpv.on("file-loaded", onLoaded);
       });
       void loaded.catch(() => undefined);
-      const { volume, muted, audioOutput } = this.audioSettings.current;
+      const { audioOutput } = this.audioSettings.current;
+      const { volume, muted } = this.audioSettings.volumeFor(session.titleId ?? null);
       try {
         await ipc.command(["set_property", "audio-channels", audioOutput]);
         await ipc.command(["set_property", "volume", volume]);
@@ -402,7 +403,7 @@ export class PlayerController extends EventEmitter {
     this.command(active, ["set_property", "mute", muted ? "yes" : "no"]).catch((cause: unknown) =>
       this.emitError(cause),
     );
-    this.audioSettings.update({ volume: bounded, muted });
+    this.audioSettings.rememberVolume(active.session.titleId ?? null, { volume: bounded, muted });
     this.state = { ...this.requireState(), volume: bounded, muted };
     this.publish();
     return this.requireState();

@@ -209,6 +209,7 @@ const itemPageSchema = Schema.Struct({
 const playerSessionSchema = Schema.Struct({
   sessionId: Schema.String,
   itemId: Schema.String,
+  titleId: Schema.optional(Schema.NullOr(Schema.String)),
   sourceId: Schema.String,
   title: Schema.String,
   streamUrl: Schema.String,

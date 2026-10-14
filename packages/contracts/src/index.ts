@@ -16,3 +16,5 @@ export * from "./schemas/search.ts";
 export * from "./watch-groups.ts";
 
 export * from "./track-memory.ts";
+
+export * from "./volume-memory.ts";

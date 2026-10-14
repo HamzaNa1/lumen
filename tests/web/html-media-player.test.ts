@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   HtmlMediaPlayer,
   type MediaElementLike,
-  type VolumeSettingsStorage,
+  type VolumeMemoryStorage,
 } from "../../apps/web/src/HtmlMediaPlayer";
 import {
   PlaybackUnsupportedError,
@@ -11,7 +11,7 @@ import {
 } from "../../packages/client/src/index.ts";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
-import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState, type VolumeSettings } from "../../packages/contracts/src/index.ts";
+import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState, type VolumeMemory } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
 
@@ -111,7 +111,7 @@ class FakeMedia implements MediaElementLike {
 
 const setup = (
   streams: PlayerSession["streams"] = [],
-  volumeSettings?: VolumeSettingsStorage,
+  volumeMemory?: VolumeMemoryStorage,
 ) => {
   const element = new FakeMedia();
   const calls: string[] = [];
@@ -123,6 +123,8 @@ const setup = (
     memory: defaultTrackMemory(),
     saveFailure: false,
     saves: [] as TrackChoiceInput[],
+    /** The show or movie each item belongs to, as the server tells it; older servers say nothing. */
+    titles: {} as Record<string, string>,
     saveTrackChoice: async (_sessionId: string, input: TrackChoiceInput): Promise<TrackMemory> => {
       api.saves.push(input);
       if (api.saveFailure) throw new Error("offline");
@@ -142,6 +144,7 @@ const setup = (
       return {
         sessionId: `session-${sessions}`,
         itemId,
+        ...(api.titles[itemId] === undefined ? {} : { titleId: api.titles[itemId] }),
         sourceId: "source",
         title: "Film",
         streamUrl: `/api/v1/media/${itemId}`,
@@ -178,32 +181,75 @@ const setup = (
     api,
     onState: (state) => states.push(state),
     onFailure: (cause) => failures.push(cause.message),
-    ...(volumeSettings === undefined ? {} : { volumeSettings }),
+    ...(volumeMemory === undefined ? {} : { volumeMemory }),
     loadTimeoutMs: 80,
     playAnswerTimeoutMs: 80,
   });
   return { element, api, player, calls, states, failures };
 };
 
+const keptVolumes = (initial: VolumeMemory | null = null) => {
+  const storage = {
+    kept: initial,
+    read: () => storage.kept,
+    write: (memory: VolumeMemory) => {
+      storage.kept = memory;
+    },
+  } satisfies VolumeMemoryStorage & { kept: VolumeMemory | null };
+  return storage;
+};
+
 describe("browser volume", () => {
-  test("the volume a viewer sets is kept and applied to whatever plays next", async () => {
-    let kept: VolumeSettings | null = null;
-    const storage: VolumeSettingsStorage = {
-      read: () => kept,
-      write: (settings) => {
-        kept = settings;
-      },
+  test("each show and movie keeps its own volume, across all of a show's episodes", async () => {
+    const storage = keptVolumes();
+    const { api, element, player } = setup([], storage);
+    api.titles = { "s1e1": "show", "s2e5": "show", "film": "movie", "other": "other-movie" };
+    const playAt = async (itemId: string) => {
+      await player.start({ itemId });
+      const { sessionId, volume, muted } = player.getState() ?? expect.unreachable();
+      return { sessionId, volume, muted };
     };
+
+    const episode = await playAt("s1e1");
+    expect(episode).toMatchObject({ volume: 100, muted: false });
+    await player.volume(episode.sessionId, 30, false);
+
+    // A title never adjusted starts where the viewer last left the volume.
+    const movie = await playAt("film");
+    expect(movie).toMatchObject({ volume: 30, muted: false });
+    await player.volume(movie.sessionId, 80, true);
+
+    // Another season's episode plays as loud as the show was left, not the movie.
+    expect(await playAt("s2e5")).toMatchObject({ volume: 30, muted: false });
+    expect(element.volume).toBe(0.3);
+    expect(await playAt("film")).toMatchObject({ volume: 80, muted: true });
+    expect(await playAt("other")).toMatchObject({ volume: 80, muted: true });
+
+    // What is kept outlasts the page.
+    const reopened = setup([], storage);
+    reopened.api.titles = api.titles;
+    await reopened.player.start({ itemId: "s1e1" });
+    expect(reopened.player.getState()).toMatchObject({ volume: 30, muted: false });
+  });
+
+  test("with a server that does not name the title, one volume is kept for everything", async () => {
+    const storage = keptVolumes();
     const first = setup([], storage);
     await first.player.start({ itemId: "item-1" });
     expect(first.player.getState()).toMatchObject({ volume: 100, muted: false });
     await first.player.volume("session-1", 35.4, true);
-    expect(kept).toEqual({ volume: 35, muted: true });
+    expect(storage.kept).toEqual({ volume: 35, muted: true, titleVolumes: [] });
 
     const second = setup([], storage);
-    expect(second.element.volume).toBe(0.35);
     await second.player.start({ itemId: "item-2" });
     expect(second.player.getState()).toMatchObject({ volume: 35, muted: true });
+  });
+
+  test("the single volume kept before titles were remembered is where every title starts", async () => {
+    const { api, player } = setup([], keptVolumes({ volume: 45, muted: true }));
+    api.titles = { "s1e1": "show" };
+    await player.start({ itemId: "s1e1" });
+    expect(player.getState()).toMatchObject({ volume: 45, muted: true });
   });
 });
 

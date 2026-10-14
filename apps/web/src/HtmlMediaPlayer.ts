@@ -1,5 +1,7 @@
 import {
+  rememberTitleVolume,
   resolveTrackSelection,
+  volumeForTitle,
   type TrackKind,
   type TrackChoiceInput,
   type TrackMemory,
@@ -19,7 +21,7 @@ import type {
   PlayableStream,
   PlayerSession,
   PlayerState,
-  VolumeSettings,
+  VolumeMemory,
 } from "@lumen/contracts";
 
 /** The parts of an HTML media element the player drives. */
@@ -69,10 +71,10 @@ export interface BrowserPlaybackApi {
   ) => Promise<void>;
 }
 
-export interface VolumeSettingsStorage {
+export interface VolumeMemoryStorage {
   /** Null when the viewer has not set a volume here, or it cannot be read. */
-  readonly read: () => VolumeSettings | null;
-  readonly write: (settings: VolumeSettings) => void;
+  readonly read: () => VolumeMemory | null;
+  readonly write: (memory: VolumeMemory) => void;
 }
 
 export interface HtmlMediaPlayerOptions {
@@ -81,8 +83,8 @@ export interface HtmlMediaPlayerOptions {
   readonly onState: (state: PlayerState | null) => void;
   /** Playback that had started can no longer continue. */
   readonly onFailure: (cause: Error) => void;
-  /** Where the viewer's volume is kept; forgotten with the page when omitted. */
-  readonly volumeSettings?: VolumeSettingsStorage;
+  /** Where the viewer's volumes are kept; forgotten with the page when omitted. */
+  readonly volumeMemory?: VolumeMemoryStorage;
   readonly loadTimeoutMs?: number;
   /** How long a command waits for the browser to answer a request to play. */
   readonly playAnswerTimeoutMs?: number;
@@ -164,7 +166,7 @@ export class HtmlMediaPlayer {
   private readonly api: BrowserPlaybackApi;
   private readonly onState: (state: PlayerState | null) => void;
   private readonly onFailure: (cause: Error) => void;
-  private readonly volumeSettings: VolumeSettingsStorage | null;
+  private readonly volumeMemory: VolumeMemoryStorage | null;
   private readonly loadTimeoutMs: number;
   private readonly playAnswerTimeoutMs: number;
   private active: ActiveSession | null = null;
@@ -187,12 +189,7 @@ export class HtmlMediaPlayer {
     this.api = options.api;
     this.onState = options.onState;
     this.onFailure = options.onFailure;
-    this.volumeSettings = options.volumeSettings ?? null;
-    const remembered = this.volumeSettings?.read() ?? null;
-    if (remembered !== null) {
-      this.element.volume = remembered.volume / 100;
-      this.element.muted = remembered.muted;
-    }
+    this.volumeMemory = options.volumeMemory ?? null;
     this.loadTimeoutMs = options.loadTimeoutMs ?? LOAD_TIMEOUT_MS;
     this.playAnswerTimeoutMs = options.playAnswerTimeoutMs ?? PLAY_ANSWER_TIMEOUT_MS;
   }
@@ -284,7 +281,15 @@ export class HtmlMediaPlayer {
     const bounded = Math.max(0, Math.min(100, Math.round(volume)));
     this.element.volume = bounded / 100;
     this.element.muted = muted;
-    this.volumeSettings?.write({ volume: bounded, muted });
+    const settings = { volume: bounded, muted };
+    // Read again rather than kept: another tab may have remembered a title since.
+    this.volumeMemory?.write(
+      rememberTitleVolume(
+        this.volumeMemory.read() ?? settings,
+        active.session.titleId ?? null,
+        settings,
+      ),
+    );
     return this.publish(active);
   }
 
@@ -443,6 +448,7 @@ export class HtmlMediaPlayer {
     }
     try {
       if (this.element.audioTracks === undefined) this.assertAudioSupported(session.streams);
+      this.applyRememberedVolume(session);
       await this.load(generation, session);
       // The element is shared: metadata may have arrived for a newer start's source.
       if (generation !== this.generation) throw cancelled();
@@ -513,6 +519,15 @@ export class HtmlMediaPlayer {
       throw cause;
     }
     if (this.active === active) this.publish(active);
+  }
+
+  /** Without anything remembered, the volume the element already has stands. */
+  private applyRememberedVolume(session: PlayerSession): void {
+    const memory = this.volumeMemory?.read() ?? null;
+    if (memory === null) return;
+    const { volume, muted } = volumeForTitle(memory, session.titleId ?? null);
+    this.element.volume = volume / 100;
+    this.element.muted = muted;
   }
 
   /** Points the element at the media and waits until the browser can tell whether it will play. */

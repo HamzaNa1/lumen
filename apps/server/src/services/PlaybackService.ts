@@ -50,6 +50,8 @@ export interface PlaybackStartResponse {
   readonly trackMemory: TrackMemory;
   readonly grantToken: string;
   readonly itemId: string;
+  /** The show an episode belongs to, or the movie itself. */
+  readonly titleId: string | null;
   readonly sourceId: string;
   readonly sourceGeneration: number;
   readonly title: string;
@@ -229,11 +231,13 @@ export const makePlaybackService = Effect.gen(function* () {
           ),
         )
         .orderBy(asc(streamTable.ordinal))) as ReadonlyArray<PlaybackStream>;
+      const titleId = yield* trackMemory.titleOf(trackId);
       return {
         session,
-        trackMemory: yield* trackMemory.memory(principal, trackId),
+        trackMemory: yield* trackMemory.memory(principal, titleId),
         grantToken,
         itemId: input.trackId,
+        titleId,
         sourceId: source.sourceId,
         sourceGeneration: 1,
         title: source.title,

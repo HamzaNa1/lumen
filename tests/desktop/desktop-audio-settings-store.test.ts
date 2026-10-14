@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { AudioSettingsStore } from "../../apps/desktop/src/main/player/AudioSettingsStore";
 
 const withSettingsFile = async (run: (path: string) => Promise<void>): Promise<void> => {
@@ -34,6 +34,27 @@ describe("desktop audio settings", () => {
       const expected = { volume: 40, muted: true, audioOutput: "stereo" };
       await expectStored(path, expected);
       expect((await AudioSettingsStore.open(path)).current).toEqual(expected);
+    }));
+
+  test("each title's volume is there the next time the app opens", () =>
+    withSettingsFile(async (path) => {
+      const store = await AudioSettingsStore.open(path);
+      store.rememberVolume("show", { volume: 30, muted: false });
+      store.rememberVolume("movie", { volume: 70, muted: true });
+      await expectStored(path, { volume: 70, muted: true });
+      const reopened = await AudioSettingsStore.open(path);
+      expect(reopened.volumeFor("show")).toEqual({ volume: 30, muted: false });
+      expect(reopened.volumeFor("movie")).toEqual({ volume: 70, muted: true });
+      expect(reopened.volumeFor("never-played")).toEqual({ volume: 70, muted: true });
+    }));
+
+  test("the single volume kept before titles were remembered is where every title starts", () =>
+    withSettingsFile(async (path) => {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, JSON.stringify({ volume: 45, muted: true, audioOutput: "stereo" }));
+      const store = await AudioSettingsStore.open(path);
+      expect(store.current.audioOutput).toBe("stereo");
+      expect(store.volumeFor("show")).toEqual({ volume: 45, muted: true });
     }));
 
   test("a drag of the volume slider leaves its last value on disk", () =>
