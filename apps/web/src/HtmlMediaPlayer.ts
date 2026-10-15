@@ -116,8 +116,8 @@ const PLAY_ANSWER_TIMEOUT_MS = 1000;
 const MAX_RECOVERIES = 2;
 const RECOVERY_WINDOW_MS = 60_000;
 
-// HTMLMediaElement.readyState: there is enough data past the current position for playback to
-// advance. One state lower, only the current frame is there and playing would stall at once.
+// HTMLMediaElement.readyState: decoded data at the current position, or enough to advance.
+const HAVE_CURRENT_DATA = 2;
 const HAVE_FUTURE_DATA = 3;
 // HTMLMediaElement.networkState: the browser has a source and is not fetching any of it just now.
 const NETWORK_IDLE = 1;
@@ -238,10 +238,14 @@ export class HtmlMediaPlayer {
   buffer(sessionId: string): PlayerBuffer {
     const active = this.requireActive(sessionId);
     const { element } = this;
+    const aheadSeconds = this.bufferedAhead();
     return {
-      aheadSeconds: this.bufferedAhead(),
+      aheadSeconds,
       // A seek also makes the element wait; that is not running out.
-      starved: active.buffering && !element.paused && !element.seeking,
+      // Nor can fetching replenish a file whose entire remainder is already buffered.
+      starved:
+        active.buffering && !element.paused && !element.seeking &&
+        aheadSeconds !== Number.POSITIVE_INFINITY,
       // A paused browser fetches only as much as it sees fit, and reports what it holds by its
       // own estimate, so it may come to rest short of any amount that is waited for.
       settled:
@@ -258,13 +262,15 @@ export class HtmlMediaPlayer {
     const end = Number.isFinite(element.duration) ? element.duration : Number.POSITIVE_INFINITY;
     // Nothing is left to fetch at the end, where the element reports no data to play on with.
     if (element.ended || position >= end - END_TOLERANCE_SECONDS) return Number.POSITIVE_INFINITY;
-    if (element.readyState < HAVE_FUTURE_DATA) return 0;
+    if (element.readyState < HAVE_CURRENT_DATA) return 0;
     for (let index = 0; index < element.buffered.length; index += 1) {
       const rangeEnd = element.buffered.end(index);
       if (element.buffered.start(index) > position || rangeEnd <= position) continue;
-      return rangeEnd >= end - END_TOLERANCE_SECONDS
-        ? Number.POSITIVE_INFINITY
-        : rangeEnd - position;
+      // WebKit can retain HAVE_CURRENT_DATA after a completed seek into a fully downloaded
+      // file. Waiting for another fetch then deadlocks a paused watch group; it has all the
+      // media it needs. Incomplete ranges still require playable future data.
+      if (rangeEnd >= end - END_TOLERANCE_SECONDS) return Number.POSITIVE_INFINITY;
+      return element.readyState >= HAVE_FUTURE_DATA ? rangeEnd - position : 0;
     }
     return 0;
   }

@@ -1,0 +1,46 @@
+{
+  "name": "Main Protection",
+  "target": "branch",
+  "enforcement": "active",
+  "bypass_actors": [],
+  "conditions": {
+    "ref_name": {
+      "include": ["refs/heads/main"],
+      "exclude": []
+    }
+  },
+  "rules": [
+    { "type": "deletion" },
+    { "type": "non_fast_forward" },
+    {
+      "type": "pull_request",
+      "parameters": {
+        "required_approving_review_count": 0,
+        "dismiss_stale_reviews_on_push": false,
+        "require_code_owner_review": false,
+        "require_last_push_approval": false,
+        "required_review_thread_resolution": false
+      }
+    },
+    {
+      "type": "required_status_checks",
+      "parameters": {
+        "strict_required_status_checks_policy": true,
+        "do_not_enforce_on_create": false,
+        "required_status_checks": [
+          { "context": "check", "integration_id": 15368 },
+          { "context": "browser", "integration_id": 15368 },
+          { "context": "server-image", "integration_id": 15368 },
+          {
+            "context": "native-desktop / macOS lifecycle and MPV audio",
+            "integration_id": 15368
+          },
+          {
+            "context": "native-desktop / Windows Electron and MPV playback",
+            "integration_id": 15368
+          }
+        ]
+      }
+    }
+  ]
+}

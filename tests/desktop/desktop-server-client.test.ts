@@ -69,7 +69,7 @@ describe("ServerClient discovery", () => {
       },
     });
     const session = await client.migrateLegacySession("legacy-refresh");
-    expect(session.accessToken).toBe(client.currentSession?.accessToken);
+    expect(client.currentSession?.accessToken).toBe(session.accessToken);
     expect(requests).toEqual(["/api/v1/auth/migrate-session"]);
   });
 
@@ -85,7 +85,7 @@ describe("ServerClient discovery", () => {
       },
     });
     client.setSession({ userId: ids.user, role: "admin", sessionId: ids.authSession, accessToken: "saved-session", accessExpiresAtMs: 1 });
-    expect(await client.request("/api/v1/test")).toEqual({ ok: true });
+    expect(await client.request<{ ok: boolean }>("/api/v1/test")).toEqual({ ok: true });
     expect(calls).toEqual(["request Bearer saved-session"]);
   });
 

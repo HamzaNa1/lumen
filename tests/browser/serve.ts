@@ -10,6 +10,10 @@ import { startServer } from "../../apps/server/src/Runtime";
 import { seedPlaybackFixture } from "../helpers/playback";
 
 const repository = fileURLToPath(new URL("../../", import.meta.url));
+const format = process.env.LUMEN_BROWSER_TEST_MEDIA ?? "mp4";
+if (format !== "mp4" && format !== "webm") throw new Error(`Unknown playback fixture: ${format}`);
+const codecs =
+  format === "mp4" ? { video: "h264", audio: "aac" } : { video: "vp8", audio: "vorbis" };
 const root = await mkdtemp(join(tmpdir(), "lumen-browser-test-"));
 const databasePath = join(root, "server.sqlite");
 const seeded = await seedPlaybackFixture(root, databasePath);
@@ -67,21 +71,21 @@ const addPlayable = async (
   year: number | null = null,
 ): Promise<void> => {
   const ids = { source: newUuid(), video: newUuid(), audio: newUuid(), track: newUuid() };
-  const name = `playable-${++files}.mp4`;
+  const name = `playable-${++files}.${format}`;
   const path = join(root, name);
-  await copyFile(join(repository, "tests/fixtures/playback.mp4"), path);
+  await copyFile(join(repository, `tests/fixtures/playback.${format}`), path);
   database.run(
     `INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, kind, file_size_bytes, modified_at_ms, inode, scanned_at_ms)
      SELECT ?, library_id, root_id, ?, ?, 'local', ?, ?, ?, ? FROM media_sources LIMIT 1`,
     [ids.source, name, path, (await stat(path)).size, now, `playable-${files}`, now],
   );
   database.run(
-    "INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (?, ?, 'video', 'mp4', 'h264', 0, 1)",
-    [ids.video, ids.source],
+    "INSERT INTO streams(id, source_id, kind, container, codec, ordinal, is_default) VALUES (?, ?, 'video', ?, ?, 0, 1)",
+    [ids.video, ids.source, format, codecs.video],
   );
   database.run(
-    "INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (?, ?, 'audio', 'mp4', 'aac', 'eng', 'English', 1, 1)",
-    [ids.audio, ids.source],
+    "INSERT INTO streams(id, source_id, kind, container, codec, language, title, ordinal, is_default) VALUES (?, ?, 'audio', ?, ?, 'eng', 'English', 1, 1)",
+    [ids.audio, ids.source, format, codecs.audio],
   );
   database.run(
     `INSERT INTO tracks(id, library_id, source_id, primary_stream_id, title, normalized_title, duration_ms, is_explicit, created_at_ms, updated_at_ms)
@@ -132,7 +136,7 @@ const server = await startServer({
   loginAttemptsPerMinute: 1_000,
   maxRequestsPerMinute: 100_000,
   // The tests exercise the build that would ship.
-  webApp: "required",
+  webApp: process.env.LUMEN_BROWSER_PRODUCT === "desktop" ? "optional" : "required",
 });
 const stop = async (): Promise<void> => {
   await server.stop();

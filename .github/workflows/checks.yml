@@ -4,6 +4,8 @@ on:
     branches: [main]
   pull_request:
 jobs:
+  native-desktop:
+    uses: ./.github/workflows/native-desktop.yml
   check:
     runs-on: ubuntu-latest
     steps:
@@ -14,7 +16,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
-      - run: bun test
+      - run: bun run test:coverage
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: production-coverage
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: error
       - run: bun run build
   browser:
     runs-on: ubuntu-latest
@@ -29,11 +38,47 @@ jobs:
       - run: bunx playwright install --with-deps chromium firefox webkit
       - run: bun run test:browser
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: ${{ !cancelled() }}
         with:
           name: browser-test-results
-          path: test-results
-          if-no-files-found: ignore
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+          if-no-files-found: error
+  product-verification:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        product: [server, desktop]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - name: Verify compatibility with the released counterpart
+        env:
+          RELEASE_PRODUCT: ${{ matrix.product }}
+        run: bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
+      - run: bunx playwright install --with-deps chromium firefox webkit
+      - name: Verify product browsers
+        env:
+          RELEASE_PRODUCT: ${{ matrix.product }}
+          LUMEN_BROWSER_TEST_PORT: '3279'
+        run: bun scripts/test-browser.ts "$RELEASE_PRODUCT"
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: ${{ matrix.product }}-browser-test-results
+          path: |
+            test-results/${{ matrix.product }}/
+            playwright-report/${{ matrix.product }}/
+          retention-days: 14
+          if-no-files-found: error
   server-image:
     runs-on: ubuntu-latest
     steps:

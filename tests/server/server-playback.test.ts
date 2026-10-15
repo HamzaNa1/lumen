@@ -1,4 +1,5 @@
-import { resolveTrackSelection, type PlayerSession } from "../../packages/contracts/src/index.ts";
+import { responseJson } from "../helpers/http";
+import { resolveTrackSelection, PlayerSession } from "../../packages/contracts/src/index.ts";
 import { seedPlaybackFixture } from "../helpers/playback";
 import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
@@ -544,7 +545,7 @@ describe("account track memory HTTP API", () => {
   const start = async (base: URL, headers: Record<string, string>, itemId: string): Promise<PlayerSession> => {
     const response = await jsonRequest(base, headers, "/api/v1/playback/sessions", "POST", { trackId: itemId });
     expect(response.status).toBe(201);
-    return response.json();
+    return responseJson(PlayerSession, response);
   };
   test("defaults, partial updates, movie revisits and server restart preserve independent choices", async () => {
     await withPlaybackSession(async ({ base, headers, seeded, sessionUrl, restartServer }) => {

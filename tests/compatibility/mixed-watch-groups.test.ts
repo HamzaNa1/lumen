@@ -1,4 +1,4 @@
-import { afterEach, expect, test } from "bun:test";
+import { afterEach, expect, onTestFinished, test } from "bun:test";
 import {
   PlaybackUnsupportedError,
   type WatchConnection,
@@ -9,6 +9,29 @@ import {
 } from "../../packages/client/src/index.ts";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
+
+const playbackProgress = () => {
+  const started = performance.now();
+  const stages: { stage: string; elapsedMs: number }[] = [];
+  let lastTick = started;
+  let maxTimerDelayMs = 0;
+  const sampleDelay = () => {
+    const now = performance.now();
+    maxTimerDelayMs = Math.max(maxTimerDelayMs, now - lastTick - 100);
+    lastTick = now;
+  };
+  const timer = setInterval(sampleDelay, 100);
+  onTestFinished(() => {
+    clearInterval(timer);
+    sampleDelay();
+    console.info("Mixed playback progress:", JSON.stringify({
+      stages, maxTimerDelayMs: Math.round(maxTimerDelayMs),
+    }));
+  });
+  return (stage: string) => {
+    stages.push({ stage, elapsedMs: Math.round(performance.now() - started) });
+  };
+};
 
 const NativeWebSocket = globalThis.WebSocket;
 afterEach(() => {
@@ -88,35 +111,46 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
 }
 
 test("a desktop viewer and a browser viewer share one group and follow each other's commands", async () => {
-  const fixture = await watchFixture();
+  const progress = playbackProgress();
+  const fixture = await watchFixture(progress);
   const origin = fixture.running.server.url.origin;
   const player = new BrowserPlayer();
   const browser = new WatchPlaybackController(player, () => undefined);
   try {
     const desktop = await fixture.connect(await fixture.login());
+    progress("creating watch group");
     await desktop.action({ type: "create", name: "Movie night", password: "together" });
+    progress("starting shared playback");
     await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 12 });
 
+    progress("authenticating browser viewer");
     browserSockets({ cookie: await browserLogin(origin), origin });
+    progress("connecting browser socket");
     browser.connect(cookieServer(origin), "web");
     browser.setSurfaceReady(true);
     await eventually(() => browser.status.connection === "connected");
+    progress("joining watch group");
     await browser.action({ type: "join", groupId: desktop.status.group?.id ?? "", password: "together" });
+    progress("waiting for browser playback");
     await eventually(() => player.state?.itemId === fixture.itemId && player.state.paused === false);
+    progress("browser playing");
     expect(player.state?.positionSeconds).toBeGreaterThanOrEqual(12);
     await eventually(() => desktop.status.group?.members.length === 2);
 
     // The browser viewer pauses for everyone.
+    progress("pausing shared playback");
     await browser.action({ type: "pause", itemId: fixture.itemId, paused: true, positionSeconds: 20 });
     await eventually(() => desktop.status.group?.playback?.paused === true);
     expect(desktop.status.group?.playback?.positionSeconds).toBe(20);
     await eventually(() => player.state?.paused === true && player.state.positionSeconds === 20);
 
     // The desktop viewer seeks for everyone.
+    progress("seeking shared playback");
     await desktop.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 45 });
     await eventually(() => player.state?.positionSeconds === 45);
 
     // Leaving stops only the browser's own player.
+    progress("leaving watch group");
     await browser.action({ type: "leave" });
     await eventually(() => desktop.status.group?.members.length === 1);
     expect(desktop.status.group?.playback?.itemId).toBe(fixture.itemId);
@@ -127,7 +161,8 @@ test("a desktop viewer and a browser viewer share one group and follow each othe
 });
 
 test("a browser that cannot play the file releases its join hold without stopping the group", async () => {
-  const fixture = await watchFixture();
+  const progress = playbackProgress();
+  const fixture = await watchFixture(progress);
   const origin = fixture.running.server.url.origin;
   const player = new BrowserPlayer();
   player.unsupported = true;
@@ -135,16 +170,23 @@ test("a browser that cannot play the file releases its join hold without stoppin
   const browser = new WatchPlaybackController(player, (status) => statuses.push(status.error));
   try {
     const desktop = await fixture.connect(await fixture.login());
+    progress("creating watch group");
     await desktop.action({ type: "create", name: "Movie night", password: "" });
+    progress("starting shared playback");
     await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 5 });
     const before = desktop.status.group;
 
+    progress("authenticating browser viewer");
     browserSockets({ cookie: await browserLogin(origin), origin });
+    progress("connecting browser socket");
     browser.connect(cookieServer(origin), "web");
     browser.setSurfaceReady(true);
     await eventually(() => browser.status.connection === "connected");
+    progress("joining watch group");
     await browser.action({ type: "join", groupId: before?.id ?? "", password: "" });
+    progress("waiting for unsupported playback error");
     await eventually(() => browser.status.error !== null);
+    progress("unsupported playback reported");
     expect(browser.status.error).toContain("can’t play this file’s format");
     // Trying again cannot help, so the player is not started over and over.
     await Bun.sleep(1_300);
@@ -159,7 +201,9 @@ test("a browser that cannot play the file releases its join hold without stoppin
 
     // Leaving the player after the failure is not a request to stop for everyone: neither the
     // stop Back makes, nor the one that follows when the player's route is torn down.
+    progress("stopping browser playback");
     await browser.stop();
+    progress("stopping browser playback");
     await browser.stop();
     await Bun.sleep(200);
     expect(desktop.status.group?.revision).toBe(released?.revision);
@@ -167,6 +211,7 @@ test("a browser that cannot play the file releases its join hold without stoppin
 
     // The viewer stays in the group, and plays along once the group moves to something else.
     player.unsupported = false;
+    progress("seeking shared playback");
     await desktop.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 30 });
     await eventually(() => player.state?.positionSeconds !== undefined);
     expect(browser.status.error).toBeNull();
@@ -177,21 +222,28 @@ test("a browser that cannot play the file releases its join hold without stoppin
 });
 
 test("a player that breaks mid-playback is not mistaken for the viewer stopping the group", async () => {
-  const fixture = await watchFixture();
+  const progress = playbackProgress();
+  const fixture = await watchFixture(progress);
   const origin = fixture.running.server.url.origin;
   const player = new BrowserPlayer();
   const browser = new WatchPlaybackController(player, () => undefined);
   try {
     const desktop = await fixture.connect(await fixture.login());
+    progress("creating watch group");
     await desktop.action({ type: "create", name: "Movie night", password: "" });
+    progress("starting shared playback");
     await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 5 });
+    progress("authenticating browser viewer");
     browserSockets({ cookie: await browserLogin(origin), origin });
+    progress("connecting browser socket");
     browser.connect(cookieServer(origin), "web");
     browser.setSurfaceReady(true);
     await eventually(() => browser.status.connection === "connected");
+    progress("joining watch group");
     await browser.action({ type: "join", groupId: desktop.status.group?.id ?? "", password: "" });
     await eventually(() => player.state?.paused === false);
     await eventually(() => desktop.status.group?.members.length === 2);
+    await eventually(() => desktop.status.group?.playback?.paused === false);
     const before = desktop.status.group;
 
     // The browser hits a frame it cannot decode: its player gives up and reports why.
@@ -201,7 +253,9 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     expect(browser.status.error).toContain("can’t play this file’s format");
     const starts = player.starts;
     // The viewer presses Back, and leaving the player's route stops once more.
+    progress("stopping browser playback");
     await browser.stop();
+    progress("stopping browser playback");
     await browser.stop();
     await Bun.sleep(700);
     expect(desktop.status.group?.revision).toBe(before?.revision);
@@ -211,9 +265,11 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     // Another participant changes playback while the failed viewer's route is being removed.
     // That revision must not turn a later cleanup into a group-wide stop.
     browser.setSurfaceReady(false);
+    progress("seeking shared playback");
     await desktop.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 30 });
     // The group holds at the new position for its members to load it.
     await eventually(() => browser.status.group?.revision === (before?.revision ?? 0) + 1);
+    progress("stopping browser playback");
     await browser.stop();
     // It does not go on waiting for a viewer who has given up on this device.
     await eventually(() => desktop.status.group?.playback?.paused === false);
@@ -227,8 +283,10 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     // Once local playback has recovered, a deliberate stop controls the group again.
     player.unsupported = false;
     browser.setSurfaceReady(true);
+    progress("starting shared playback");
     await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 35 });
     await eventually(() => player.state?.paused === false);
+    progress("stopping browser playback");
     await browser.stop();
     await eventually(() => desktop.status.group?.playback === null);
   } finally {
@@ -238,18 +296,24 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
 });
 
 test("a suspended browser tab reconnects, rejoins and catches up when it resumes", async () => {
-  const fixture = await watchFixture();
+  const progress = playbackProgress();
+  const fixture = await watchFixture(progress);
   const origin = fixture.running.server.url.origin;
   const player = new BrowserPlayer();
   const browser = new WatchPlaybackController(player, () => undefined);
   try {
     const desktop = await fixture.connect(await fixture.login());
+    progress("creating watch group");
     await desktop.action({ type: "create", name: "Movie night", password: "together" });
+    progress("starting shared playback");
     await desktop.action({ type: "play", itemId: fixture.itemId, positionSeconds: 1 });
+    progress("authenticating browser viewer");
     browserSockets({ cookie: await browserLogin(origin), origin });
+    progress("connecting browser socket");
     browser.connect(cookieServer(origin), "web");
     browser.setSurfaceReady(true);
     await eventually(() => browser.status.connection === "connected");
+    progress("joining watch group");
     await browser.action({ type: "join", groupId: desktop.status.group?.id ?? "", password: "together" });
     await eventually(() => player.state !== null);
     const memberId = browser.status.memberId;
@@ -275,7 +339,8 @@ test("a suspended browser tab reconnects, rejoins and catches up when it resumes
 });
 
 test("a cookie handshake needs this origin's cookie; a signed-out browser is disconnected", async () => {
-  const fixture = await watchFixture();
+  const progress = playbackProgress();
+  const fixture = await watchFixture(progress);
   const origin = fixture.running.server.url.origin;
   const clients: WatchGroupClient[] = [];
   const connect = (connection: WatchConnection) => {

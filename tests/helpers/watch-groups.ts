@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WatchAction } from "../../packages/contracts/src/index.ts";
 import { startServer } from "../../apps/server/src/Runtime";
 import {
   bearerCredentials,
@@ -11,10 +12,13 @@ import {
 import { seedPlaybackFixture } from "./playback";
 import { eventually } from "./eventually";
 
-export const watchFixture = async () => {
+export const watchFixture = async (progress: (stage: string) => void = () => {}) => {
+  progress("creating fixture directory");
   const root = await mkdtemp(join(tmpdir(), "lumen-watch-test-"));
   const databasePath = join(root, "server.sqlite");
+  progress("seeding playback database");
   const seeded = await seedPlaybackFixture(root, databasePath);
+  progress("starting server");
   const running = await startServer({
     databasePath,
     dataDir: root,
@@ -22,6 +26,7 @@ export const watchFixture = async () => {
     port: 0,
     logLevel: "error",
   });
+  progress("server started");
   const clients: WatchGroupClient[] = [];
   const login = async (username = "admin") => {
     let accessToken: string | null = null;
@@ -29,7 +34,9 @@ export const watchFixture = async () => {
       origin: running.server.url.toString(),
       credentials: bearerCredentials(() => accessToken),
     });
+    progress("fetching server identity");
     await server.identity();
+    progress("authenticating desktop viewer");
     const session = await server.tokenLogin(
       {
         username,
@@ -37,6 +44,7 @@ export const watchFixture = async () => {
       },
       { deviceId: crypto.randomUUID(), deviceName: "Test", platform: "desktop" },
     );
+    progress("desktop authenticated");
     accessToken = session.accessToken;
     return Object.assign(server, {
       currentSession: session,
@@ -46,8 +54,10 @@ export const watchFixture = async () => {
   const connect = async (server: WatchConnection, readiness = false) => {
     const client = new WatchGroupClient(server, () => undefined, readiness);
     clients.push(client);
+    progress("connecting desktop socket");
     client.connect();
     await eventually(() => client.status.connection === "connected");
+    progress("desktop connected");
     return client;
   };
   return {
@@ -56,9 +66,11 @@ export const watchFixture = async () => {
     login,
     connect,
     async close() {
+      progress("closing fixture");
       for (const client of clients) client.close();
       await running.stop();
       await rm(root, { recursive: true, force: true });
+      progress("fixture closed");
     },
   };
 };
@@ -67,6 +79,7 @@ export const watchProxy = (origin: URL) => {
   type Connection = { upstream: WebSocket; ready: Promise<void>; detached: boolean };
   const retained = new Set<WebSocket>();
   const sockets = new Set<import("bun").ServerWebSocket<Connection>>();
+  const receivedActions: WatchAction[] = [];
   let stallServerMessages = false;
   const stalledMessages: { socket: import("bun").ServerWebSocket<Connection>; raw: string }[] = [];
   let dropJoin = false;
@@ -106,7 +119,8 @@ export const watchProxy = (origin: URL) => {
       async message(socket, message) {
         if (socket.data.detached) return;
         const raw = String(message);
-        const request = JSON.parse(raw) as { requestId?: string; action?: { type?: string } };
+        const request = JSON.parse(raw) as { requestId?: string; action?: WatchAction };
+        if (request.action !== undefined) receivedActions.push(request.action);
         if (stopStalled && request.action?.type === "stop") {
           pendingStops.push({ socket, raw });
           return;
@@ -139,6 +153,9 @@ export const watchProxy = (origin: URL) => {
   });
   return {
     origin: server.url.toString(),
+    get receivedActions(): readonly WatchAction[] {
+      return receivedActions;
+    },
     stallServerMessages() {
       stallServerMessages = true;
     },

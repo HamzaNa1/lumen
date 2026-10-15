@@ -19,6 +19,11 @@ const deferred = <T>() => {
   return { promise, resolve };
 };
 
+const mockFetch = (implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) =>
+  spyOn(globalThis, "fetch").mockImplementation(
+    Object.assign(implementation, { preconnect: globalThis.fetch.preconnect }),
+  );
+
 const origin = "http://accounts.test";
 const serverId = crypto.randomUUID();
 const account = (username: string): AccountSummary => ({
@@ -36,7 +41,7 @@ const account = (username: string): AccountSummary => ({
 test.each([false, true])("desktop sign-in retry feedback survives Electron IPC (setup=%s)", async (setupRequired) => {
   let authAttempts = 0;
   let saves = 0;
-  const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+  const fetchMock = mockFetch(async (input) => {
     const path = new URL(String(input)).pathname;
     if (path === "/api/v1/server")
       return Response.json({ serverId, displayName: "Test", apiVersion: "1.0.0" });
@@ -91,7 +96,7 @@ test("desktop saves the server's own name, at sign-in and when an administrator 
   const user = account("admin");
   let serverName = "Living room";
   const saved: string[] = [];
-  const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+  const fetchMock = mockFetch(async (input, init) => {
     const path = new URL(String(input)).pathname;
     if (path === "/api/v1/server")
       return Response.json({ serverId, displayName: serverName, apiVersion: "1.0.0" });
@@ -176,7 +181,7 @@ for (const change of [
     let activeId: string | null = first.connectionId;
     const accounts = new Map([first, second].map((value) => [value.connectionId, value]));
     const requests: { signal: AbortSignal; answer: ReturnType<typeof deferred<Response>> }[] = [];
-    const fetchMock = spyOn(globalThis, "fetch").mockImplementation(async (input, init) => {
+    const fetchMock = mockFetch(async (input, init) => {
       const path = new URL(String(input)).pathname;
       if (path === "/api/v1/search") {
         const answer = deferred<Response>();

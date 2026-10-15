@@ -30,7 +30,7 @@ interface ServerRequest {
 
 /** The server's side of artwork: what each ID currently holds, answered as the real one would. */
 const artworkServer = () => {
-  const images = new Map<string, Uint8Array>();
+  const images = new Map<string, Uint8Array<ArrayBuffer>>();
   const requests: ServerRequest[] = [];
   let answer: (request: ServerRequest) => Promise<Response> | Response = (request) => {
     const url = new URL(request.url);
@@ -70,10 +70,10 @@ const artworkServer = () => {
  * objects using it and reuses only what the server declared immutable.
  */
 const chromiumDisk = (server: ReturnType<typeof artworkServer>) => {
-  const partitions = new Map<string, Map<string, Uint8Array>>();
+  const partitions = new Map<string, Map<string, Uint8Array<ArrayBuffer>>>();
   const failingClears = new Set<string>();
   const open = (partition: string): ArtworkSession => {
-    const stored = partitions.get(partition) ?? new Map<string, Uint8Array>();
+    const stored = partitions.get(partition) ?? new Map<string, Uint8Array<ArrayBuffer>>();
     partitions.set(partition, stored);
     return {
       fetch: async (input, init) => {

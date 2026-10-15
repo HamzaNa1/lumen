@@ -56,6 +56,7 @@ test("the page names its own icon, so the browser never asks the API for one", a
 
 test("every route survives direct navigation and refresh", async ({ page }) => {
   await signIn(page);
+  const libraryPath = await page.getByRole("link", { name: "Movies", exact: true }).getAttribute("href");
   for (const path of [
     "/web/search",
     "/web/settings",
@@ -65,7 +66,8 @@ test("every route survives direct navigation and refresh", async ({ page }) => {
     "/web/library",
   ]) {
     await page.goto(path);
-    await expect(page).toHaveURL(new RegExp(`${path}$`, "u"));
+    // /library resolves to the viewer's first library, whose ID belongs to this fixture server.
+    await expect(page).toHaveURL((url) => url.pathname === (path === "/web/library" ? libraryPath : path));
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     await page.reload();
     await expect(page.locator(".page").first()).toBeVisible();
@@ -229,12 +231,17 @@ const play = async (page: Page, title: string): Promise<void> => {
 };
 const playFilm = (page: Page): Promise<void> => play(page, "Film");
 
-test("supported media plays under the shared controls", async ({ page, browserName }, testInfo) => {
-  // Playwright's WebKit and Firefox builds ship without the proprietary H.264/AAC decoders.
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+test("supported media plays under the shared controls", async ({ page }, testInfo) => {
   await signIn(page);
   await page.goto("/web/library");
+  // Linux WebKit reports a synthetic status-zero response before its media backend's HTTP request.
+  const stream = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.startsWith("/api/v1/media/") && response.status() !== 0,
+  );
   await playFilm(page);
+  const response = await stream;
+  expect([200, 206]).toContain(response.status());
+  expect(response.headers()["content-type"]).toBe(testInfo.project.name === "chromium" ? "video/mp4" : "video/webm");
   // A film has no show to place it in, so only the year it came out sits under its title.
   await expect(page.getByRole("region", { name: "Media player" }).getByText("(2019)")).toBeVisible();
   await testInfo.attach("player on a film", {
@@ -275,9 +282,7 @@ test("supported media plays under the shared controls", async ({ page, browserNa
 
 test("each show and film keeps its own volume, across all of a show's episodes", async ({
   page,
-  browserName,
 }, testInfo) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
   const volumeSlider = page.getByRole("slider", { name: "Volume" });
   const elementVolume = () => page.evaluate(() => document.querySelector("video")?.volume);
@@ -328,8 +333,7 @@ test("each show and film keeps its own volume, across all of a show's episodes",
   await expectVolume(30, "S01E02 after a reload plays at the show's volume");
 });
 
-test("the player moves between a show's episodes", async ({ page, browserName }, testInfo) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+test("the player moves between a show's episodes", async ({ page }, testInfo) => {
   await signIn(page);
   await page.goto("/web/library");
   // Playing a show or a season opens it, since only its episodes can play.
@@ -390,9 +394,7 @@ test("the player moves between a show's episodes", async ({ page, browserName },
 
 test("an episode that plays through is followed by the next", async ({
   page,
-  browserName,
 }, testInfo) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   test.setTimeout(60_000);
   await signIn(page);
   await page.goto("/web/library");
@@ -440,9 +442,7 @@ test("an episode that plays through is followed by the next", async ({
 test("a watch group moves on to the next episode together", async ({
   page,
   browser,
-  browserName,
 }, testInfo) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   test.setTimeout(90_000);
   await signIn(page);
   await page.locator(".watch-group-trigger").click();
@@ -506,14 +506,15 @@ test("a watch group moves on to the next episode together", async ({
 
 test("clicking the video toggles playback without taking focus", async ({
   page,
-  browserName,
 }, testInfo) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
   const paused = () => page.evaluate(() => document.querySelector("video")?.paused);
 
+  // A restored position can be nonzero before loading finishes and the hit target is active.
+  await expect(page.locator('.media-player[data-status="ready"]')).toBeVisible();
+  await expect.poll(paused).toBe(false);
   await page.mouse.move(700, 400);
   await expect(page.getByRole("button", { name: "Pause playback" })).toBeVisible();
   await page.mouse.click(700, 400);
@@ -531,9 +532,7 @@ test("clicking the video toggles playback without taking focus", async ({
 
 test("double-clicking the video toggles fullscreen without pausing", async ({
   page,
-  browserName,
 }) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
@@ -563,9 +562,7 @@ test("double-clicking the video toggles fullscreen without pausing", async ({
 
 test("the show drawer opens at the playing episode and plays another", async ({
   page,
-  browserName,
 }, testInfo) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
   await page.goto("/web/library");
   // A show and its seasons have nothing of their own to play, so their play buttons open them.
@@ -608,8 +605,7 @@ test("the show drawer opens at the playing episode and plays another", async ({
   expect(await page.evaluate(() => document.querySelector("video")?.paused)).toBe(false);
 });
 
-test("the show drawer's episodes are loaded with the player", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+test("the show drawer's episodes are loaded with the player", async ({ page }) => {
   await signIn(page);
   await page.goto("/web/library");
   await page.getByRole("button", { name: "Play Harbor Lights" }).click({ force: true });
@@ -640,8 +636,7 @@ test("the show drawer's episodes are loaded with the player", async ({ page, bro
   await expect(drawer.getByRole("status")).toHaveCount(0);
 });
 
-test("a film's player has no show drawer", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+test("a film's player has no show drawer", async ({ page }) => {
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
@@ -652,9 +647,7 @@ test("a film's player has no show drawer", async ({ page, browserName }) => {
 
 test("the player controls hide once the viewer is done with the settings", async ({
   page,
-  browserName,
 }) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
@@ -680,8 +673,7 @@ test("the player controls hide once the viewer is done with the settings", async
   await expect(panel).toBeHidden();
 });
 
-test("a watch group's film starts playing in the browser", async ({ page, browserName }) => {
-  test.skip(browserName !== "chromium", "The fixture is H.264/AAC, which this browser build lacks");
+test("a watch group's film starts playing in the browser", async ({ page }) => {
   await signIn(page);
   await page.locator(".watch-group-trigger").click();
   await page.getByRole("button", { name: "New group" }).click();

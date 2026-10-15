@@ -441,8 +441,8 @@ test("video folders browse as series, seasons, episodes and movies without requi
       yield* db.run(
         sql`INSERT INTO scan_runs(id, library_id, mode, status, started_at_ms, created_at_ms) VALUES (${runId}, ${ids.showsId}, 'full', 'running', 1, 1)`,
       );
-      yield* scanner.discover(runId, ids.showRootId);
-      yield* scanner.cleanup(runId, ids.showRootId);
+      const discovery = yield* scanner.discover(runId, ids.showRootId);
+      yield* scanner.cleanup(runId, ids.showRootId, discovery.generation);
       const ingest = yield* makeMediaIngest;
       yield* ingest.ingest(must(ids.sourceIds[0]));
       yield* db.run(sql`DELETE FROM scan_jobs WHERE run_id = ${runId}`);
@@ -453,7 +453,7 @@ test("video folders browse as series, seasons, episodes and movies without requi
   );
   const nativeFetch = globalThis.fetch;
   let providerAvailable = true;
-  globalThis.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+  globalThis.fetch = ((input: Parameters<typeof fetch>[0], init?: RequestInit) => {
     const target = input instanceof Request ? input.url : String(input);
     const url = new URL(target);
     if (url.hostname === "api.themoviedb.org") {

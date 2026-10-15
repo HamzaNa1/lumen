@@ -354,7 +354,7 @@ describe("playback session reporting", () => {
     expect(errors).toEqual([]);
   });
   test("a newer save replaces one the server has not answered, and only its outcome is reported", async () => {
-    const requests: { sequence: number; signal: AbortSignal; answer: PromiseWithResolvers<void> }[] = [];
+    const requests: { sequence: number; signal: AbortSignal; answer: ReturnType<typeof Promise.withResolvers<void>> }[] = [];
     const errors: unknown[] = [];
     const reporter = new PlaybackSessionReporter(
       {

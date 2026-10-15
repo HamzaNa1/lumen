@@ -284,7 +284,7 @@ test.each([false, true])(
     let enteredStart = false;
     let resumed = false;
     class DelayedPlayback extends NativePlayback {
-      override async start(input: Parameters<WatchPlayer["start"]>[0]) {
+      override async start(input: Parameters<NativePlayback["start"]>[0]) {
         enteredStart = true;
         await starting;
         return super.start(input);
@@ -468,7 +468,7 @@ const groupViewer = async (
 
 test.each([false, true])("a late join buffers before the group plays on (already held: %s)", async (held) => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -497,7 +497,7 @@ test.each([false, true])("a late join buffers before the group plays on (already
     }
     existing.native.aheadSeconds = 5;
     await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
-    expect(owner.status.group?.playback?.waitingFor).toEqual([late.playback.status.memberId]);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([late.playback.status.memberId ?? expect.unreachable()]);
     const position = owner.status.group?.playback?.positionSeconds;
     expect(position).toBeGreaterThanOrEqual(3);
 
@@ -521,7 +521,7 @@ test.each([false, true])("a late join buffers before the group plays on (already
 
 test("a member that rejoins a held group reports readiness again at the same revision", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -532,7 +532,7 @@ test("a member that rejoins a held group reports readiness again at the same rev
     slow.native.aheadSeconds = 0;
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
     await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
-    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId]);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId ?? expect.unreachable()]);
     const revision = owner.status.group?.revision;
 
     await fast.playback.action({ type: "leave" });
@@ -542,7 +542,7 @@ test("a member that rejoins a held group reports readiness again at the same rev
     expect(owner.status.group?.revision).toBe(revision);
     fast.native.aheadSeconds = 5;
     await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
-    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId]);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId ?? expect.unreachable()]);
     slow.native.aheadSeconds = 5;
     await eventually(() => fast.native.state?.paused === false && slow.native.state?.paused === false);
   } finally {
@@ -553,7 +553,7 @@ test("a member that rejoins a held group reports readiness again at the same rev
 
 test("a group holds until a slow viewer has loaded, without making that viewer start over", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -594,7 +594,7 @@ test("a group holds until a slow viewer has loaded, without making that viewer s
 
 test("a held group can be paused, and stops waiting for a viewer who leaves", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -639,7 +639,7 @@ test("a held group can be paused, and stops waiting for a viewer who leaves", as
 
 test("readiness answered after the viewer changed groups does not release the new group", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const first = await fixture.connect(await fixture.login());
     await first.action({ type: "create", name: "First", password: "" });
@@ -663,7 +663,7 @@ test("readiness answered after the viewer changed groups does not release the ne
     });
     await second.action({ type: "play", itemId: fixture.itemId, positionSeconds: 50 });
     expect(second.status.group?.revision).toBe(held);
-    expect(second.status.group?.playback?.waitingFor).toEqual([viewer.playback.status.memberId]);
+    expect(second.status.group?.playback?.waitingFor).toEqual([viewer.playback.status.memberId ?? expect.unreachable()]);
 
     viewer.native.aheadSeconds = 0;
     answer.resolve({ aheadSeconds: 5, starved: false, settled: false });
@@ -672,7 +672,7 @@ test("readiness answered after the viewer changed groups does not release the ne
     expect(second.status.group?.playback).toMatchObject({
       positionSeconds: 50,
       paused: true,
-      waitingFor: [viewer.playback.status.memberId],
+      waitingFor: [viewer.playback.status.memberId ?? expect.unreachable()],
     });
 
     viewer.native.aheadSeconds = 5;
@@ -685,7 +685,7 @@ test("readiness answered after the viewer changed groups does not release the ne
 
 test("a viewer who runs out of buffered media holds the group until they have buffered enough", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -740,7 +740,7 @@ test("a viewer who runs out of buffered media holds the group until they have bu
 
 test("a buffered viewer whose drift cannot be measured does not keep a recovered group waiting", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -777,6 +777,7 @@ test("a buffered viewer whose drift cannot be measured does not keep a recovered
     await eventually(
       () => steady.native.state?.paused === false && stalled.native.state?.paused === false,
     );
+    await eventually(() => steady.native.samplesSkipped > 0);
     expect(steady.native.samplesSkipped).toBeGreaterThan(0);
     expect(owner.status.group?.playback).toMatchObject({
       positionSeconds: held?.playback?.positionSeconds,
@@ -791,7 +792,7 @@ test("a buffered viewer whose drift cannot be measured does not keep a recovered
 
 test("members are told how much each other's players have buffered, for as long as they say", async () => {
   const fixture = await watchFixture();
-  const viewers: WatchPlaybackController[] = [];
+  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
@@ -820,7 +821,7 @@ test("members are told how much each other's players have buffered, for as long 
     await thin.playback.action({ type: "leave" });
     expect(thin.playback.status.buffers).toEqual([]);
     await eventually(() => owner.status.buffers.length === 1);
-    expect(owner.status.buffers[0]?.memberId).toBe(ample.playback.status.memberId);
+    expect(owner.status.buffers[0]?.memberId).toBe(ample.playback.status.memberId ?? expect.unreachable());
 
     // Nothing is buffered for a group with nothing on.
     await owner.action({ type: "stop", itemId: fixture.itemId });

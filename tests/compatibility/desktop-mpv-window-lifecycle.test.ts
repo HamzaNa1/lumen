@@ -1,4 +1,5 @@
-import { describe, expect, mock, spyOn, test } from "bun:test";
+import type { MpvProcess as MpvProcessInstance } from "../../apps/desktop/src/main/player/MpvProcess";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { defaultTrackMemory, describeTrack, type PlayerSession, type TrackChoiceInput, type TrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
 import type { BrowserWindow } from "electron";
@@ -119,7 +120,7 @@ const withPlayback = async (
   const connections: InstanceType<typeof MpvIpc>[] = [];
   const startProcess = spyOn(MpvProcess, "start").mockImplementation((options) => {
     exits.push(() => options.onExit?.(1));
-    return { stop: stopProcess } as unknown as MpvProcess;
+    return { stop: stopProcess } as unknown as MpvProcessInstance;
   });
   const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async function (this: InstanceType<typeof MpvIpc>) {
     connections.push(this);
@@ -896,7 +897,11 @@ describe("player surface shutdown", () => {
 });
 
 describe("macOS MPV window lifecycle", () => {
-  test.skipIf(process.platform !== "darwin")("play, Back, and immediate replay attach and detach once per session", () => {
+  const platform = process.platform;
+  // Electron, Cocoa, MPV, and IPC are fakes here: exercise the macOS policy on every host.
+  beforeEach(() => { Object.defineProperty(process, "platform", { value: "darwin" }); });
+  afterEach(() => { Object.defineProperty(process, "platform", { value: platform }); });
+  test("play, Back, and immediate replay attach and detach once per session", () => {
     events.length = 0;
     const parent = {
       on: () => undefined,
@@ -1038,7 +1043,7 @@ describe("macOS MPV window lifecycle", () => {
     ]);
   });
 
-  test.skipIf(process.platform !== "darwin")("controller plays, stops on Back, and replays after destruction", async () => {
+  test("controller plays, stops on Back, and replays after destruction", async () => {
     const calls: string[] = [];
     let sessionNumber = 0;
     let windowNumber = 0;
@@ -1048,7 +1053,7 @@ describe("macOS MPV window lifecycle", () => {
         stop: async () => {
           calls.push("process:destroy");
         },
-      } as unknown as MpvProcess;
+      } as unknown as MpvProcessInstance;
     });
     const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async () => {
       calls.push("ipc:connect");

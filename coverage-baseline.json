@@ -1,0 +1,10 @@
+{
+  "apps/desktop": 674,
+  "apps/server": 305,
+  "apps/web": 222,
+  "packages/app": 1617,
+  "packages/client": 97,
+  "packages/contracts": 10,
+  "packages/database": 134,
+  "packages/ui": 277
+}
