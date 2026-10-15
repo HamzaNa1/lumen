@@ -1,6 +1,7 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { WatchAction } from "../../packages/contracts/src/index.ts";
 import { startServer } from "../../apps/server/src/Runtime";
 import {
   bearerCredentials,
@@ -67,6 +68,7 @@ export const watchProxy = (origin: URL) => {
   type Connection = { upstream: WebSocket; ready: Promise<void>; detached: boolean };
   const retained = new Set<WebSocket>();
   const sockets = new Set<import("bun").ServerWebSocket<Connection>>();
+  const receivedActions: WatchAction[] = [];
   let stallServerMessages = false;
   const stalledMessages: { socket: import("bun").ServerWebSocket<Connection>; raw: string }[] = [];
   let dropJoin = false;
@@ -106,7 +108,8 @@ export const watchProxy = (origin: URL) => {
       async message(socket, message) {
         if (socket.data.detached) return;
         const raw = String(message);
-        const request = JSON.parse(raw) as { requestId?: string; action?: { type?: string } };
+        const request = JSON.parse(raw) as { requestId?: string; action?: WatchAction };
+        if (request.action !== undefined) receivedActions.push(request.action);
         if (stopStalled && request.action?.type === "stop") {
           pendingStops.push({ socket, raw });
           return;
@@ -139,6 +142,9 @@ export const watchProxy = (origin: URL) => {
   });
   return {
     origin: server.url.toString(),
+    get receivedActions(): readonly WatchAction[] {
+      return receivedActions;
+    },
     stallServerMessages() {
       stallServerMessages = true;
     },
