@@ -18,6 +18,7 @@ import type {
   JobLogEntry,
   LibrarySummary,
   ManagedUser,
+  PlaybackInfo,
   PlayerAction,
   PlayerDisplay,
   PlayerState,
@@ -169,6 +170,8 @@ export interface PlaybackRuntime {
   readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;
   readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
   readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<PlayerState>;
+  /** What the player can tell about the playback in progress, for the viewer to troubleshoot it. */
+  readonly info: (sessionId: string) => Promise<PlaybackInfo>;
   /**
    * Starts playback the platform held back until the viewer interacted. Only this viewer's
    * player changes; a watch group is not asked to do anything.

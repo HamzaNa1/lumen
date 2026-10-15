@@ -2771,6 +2771,78 @@ body:has(.app-shell) {
 .media-player-settings-panel .button:hover:not(:disabled) {
   background: rgba(255, 255, 255, 0.11);
 }
+.media-player-settings-panel .media-player-info-toggle {
+  justify-content: flex-start;
+  gap: 8px;
+  color: rgba(255, 255, 255, 0.82);
+}
+.media-player-settings-panel .media-player-info-toggle[aria-pressed="true"] {
+  color: var(--accent);
+}
+.media-player-info {
+  position: absolute;
+  top: 72px;
+  left: 16px;
+  /* Above the video and the console, which may both sit beneath it. */
+  z-index: 3;
+  width: min(320px, calc(100% - 32px));
+  max-height: calc(100% - 200px);
+  overflow-y: auto;
+  display: grid;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-lg);
+  background: rgba(16, 16, 19, 0.82);
+  box-shadow: var(--shadow-popover);
+  backdrop-filter: blur(24px) saturate(140%);
+  color: #fff;
+  cursor: default;
+  font-size: 12px;
+  line-height: 1.4;
+  user-select: text;
+  animation: popup-in 120ms ease-out;
+  transform-origin: top left;
+}
+.media-player-info-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-right: -6px;
+}
+.media-player-info-header strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.media-player-info h2 {
+  margin: 0 0 4px;
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 12px;
+  font-weight: 600;
+}
+.media-player-info dl {
+  display: grid;
+  gap: 1px;
+  margin: 0;
+}
+.media-player-info dl > div {
+  display: grid;
+  grid-template-columns: 128px minmax(0, 1fr);
+  gap: 10px;
+}
+.media-player-info dt {
+  color: rgba(255, 255, 255, 0.6);
+}
+.media-player-info dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.media-player-info p {
+  margin: 0;
+  color: rgba(255, 255, 255, 0.6);
+}
 
 /* Player overlay window */
 

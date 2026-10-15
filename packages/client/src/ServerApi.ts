@@ -21,6 +21,7 @@ import {
   type LibraryAccess,
   type LibrarySummary,
   ManagedUser,
+  PlayableMedia,
   PlayableStream,
   type PlayerSession,
   type PlayerState,
@@ -219,6 +220,7 @@ const playerSessionSchema = Schema.Struct({
   grantExpiresInSeconds: Schema.Number,
   grantToken: Schema.String,
   trackMemory: Schema.optional(TrackMemory),
+  media: Schema.optional(PlayableMedia),
 });
 
 const serverNameSchema = Schema.Struct({ displayName: Schema.String.check(Schema.isMinLength(1)) });

@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test";
-import type { PlayableStream } from "../../packages/contracts/src/index.ts";
+import type { PlaybackInfo, PlayableStream } from "../../packages/contracts/src/index.ts";
 import {
   formatEndsAt,
+  formatPlayerTime,
+  playbackInfoSections,
   streamLabels,
   trackSelectionWarning,
 } from "../../packages/ui/src/PlayerFormatting.ts";
@@ -102,5 +104,81 @@ describe("trackSelectionWarning", () => {
     const both = "This browser can’t switch audio tracks or select embedded subtitles.";
     expect(trackSelectionWarning(false, true)).toBe(both);
     expect(trackSelectionWarning(false, false)).toBe(both);
+  });
+});
+
+describe("playbackInfoSections", () => {
+  const info: PlaybackInfo = {
+    player: "mpv 0.40.0",
+    protocol: "https",
+    playerSize: { width: 1280, height: 720 },
+    videoSize: { width: 1920, height: 1080 },
+    droppedFrames: 3,
+    corruptedFrames: null,
+    durationSeconds: 1_000,
+    media: {
+      container: "mkv",
+      sizeBytes: 1_500_000_000,
+      video: { codec: "hevc", size: { width: 1920, height: 1080 }, bitrate: 10_500_000 },
+    },
+    audio: stream({ codec: "eac3", channels: 6, bitrate: 640_000, sampleRateHz: 48_000 }),
+  };
+
+  test("groups what the player and the server know the way Jellyfin shows it", () => {
+    expect(playbackInfoSections(info)).toEqual([
+      {
+        title: "Playback info",
+        rows: [
+          ["Player", "mpv 0.40.0"],
+          ["Play method", "Direct playing"],
+          ["Protocol", "https"],
+          ["Stream type", "Video"],
+        ],
+      },
+      {
+        title: "Video info",
+        rows: [
+          ["Player dimensions", "1280×720"],
+          ["Video resolution", "1920×1080"],
+          ["Dropped frames", "3"],
+        ],
+      },
+      {
+        title: "Original media info",
+        rows: [
+          ["Container", "mkv"],
+          ["Size", "1.50 GB"],
+          ["Bitrate", "12.0 Mbps"],
+          ["Video codec", "HEVC"],
+          ["Video resolution", "1920×1080"],
+          ["Video bitrate", "10.5 Mbps"],
+          ["Audio codec", "Dolby Digital Plus"],
+          ["Audio bitrate", "640 kbps"],
+          ["Audio channels", "6 channels"],
+          ["Audio sample rate", "48000 Hz"],
+        ],
+      },
+    ]);
+  });
+
+  test("leaves out what an older server or a player that has decoded nothing cannot say", () => {
+    expect(
+      playbackInfoSections({
+        ...info,
+        playerSize: null,
+        videoSize: null,
+        droppedFrames: null,
+        media: null,
+        audio: null,
+      }).map((section) => section.title),
+    ).toEqual(["Playback info"]);
+  });
+});
+
+describe("formatPlayerTime", () => {
+  test("shows minutes and seconds, adding hours only once there are any", () => {
+    expect(formatPlayerTime(-3)).toBe("0:00");
+    expect(formatPlayerTime(65.9)).toBe("1:05");
+    expect(formatPlayerTime(3_725)).toBe("1:02:05");
   });
 });

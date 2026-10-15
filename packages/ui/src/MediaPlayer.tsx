@@ -1,6 +1,7 @@
 import { Slider } from "@base-ui/react/slider";
-import type { AudioOutput, BufferedRange, PlayableStream } from "@lumen/contracts";
+import type { AudioOutput, BufferedRange, PlaybackInfo, PlayableStream } from "@lumen/contracts";
 import {
+  Activity,
   ArrowLeft,
   LoaderCircle,
   Maximize,
@@ -20,6 +21,7 @@ import { type ReactNode, type Ref, useEffect, useEffectEvent, useState } from "r
 import { Button } from "./Button";
 import { useClickGesture } from "./useClickGesture";
 import { SelectField } from "./Controls";
+import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
   formatEndsAt,
   formatPlayerTime,
@@ -62,6 +64,8 @@ interface MediaPlayerProps {
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
   readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
+  /** What the player reports about the playback in progress; omitted while nothing is playing. */
+  readonly onPlaybackInfo?: (() => Promise<PlaybackInfo>) | undefined;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
   readonly trackSelection?: boolean;
   readonly subtitleSelection?: boolean;
@@ -123,6 +127,7 @@ export const MediaPlayer = ({
   selectedSubtitleStreamId,
   audioOutput,
   onAudioOutput,
+  onPlaybackInfo,
   trackSelection = true,
   subtitleSelection = true,
   buffering = false,
@@ -148,6 +153,8 @@ export const MediaPlayer = ({
   const [timelineHover, setTimelineHover] = useState<number | null>(null);
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  // Stays open while the controls hide, so it can be read over the video.
+  const [infoOpen, setInfoOpen] = useState(false);
   const [audioOutputError, setAudioOutputError] = useState<string | null>(null);
   const [changingAudioOutput, setChangingAudioOutput] = useState(false);
   const audioStreams = streams.filter((stream) => stream.kind === "audio");
@@ -272,6 +279,10 @@ export const MediaPlayer = ({
             ) : null}
           </div>
         </div>
+
+        {infoOpen ? (
+          <PlaybackInfoPanel load={onPlaybackInfo} onClose={() => setInfoOpen(false)} />
+        ) : null}
 
         {next === undefined || upNextIn === null || upNextSeconds === null ? null : (
           <aside className="media-player-up-next" aria-label="Up next">
@@ -556,6 +567,18 @@ export const MediaPlayer = ({
                         ) : null}
                       </>
                     )}
+                    <Button
+                      className="media-player-info-toggle"
+                      variant="ghost"
+                      aria-pressed={infoOpen}
+                      onClick={() => {
+                        setInfoOpen((open) => !open);
+                        closeSettings();
+                      }}
+                    >
+                      <Activity aria-hidden="true" size={16} />
+                      Playback info
+                    </Button>
                     {trackActionError == null ? null : <p role="alert">{trackActionError}</p>}
                     {trackMemoryError == null ? null : (
                       <p role="alert">

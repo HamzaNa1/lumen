@@ -948,6 +948,7 @@ export const makeHttpHandler = (
           streamUrl: result.streamPath,
           durationSeconds: result.durationSeconds,
           streams: result.streams,
+          media: result.media,
           trackMemory: result.trackMemory,
           grantExpiresInSeconds: result.grantExpiresInSeconds,
           grantToken: result.grantToken,

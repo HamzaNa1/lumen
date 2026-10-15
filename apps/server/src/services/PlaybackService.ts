@@ -3,6 +3,7 @@ import type {
   TrackPreferences,
   TrackPreferencesPatch,
   TrackChoiceInput,
+  PlayableMedia,
   PlayableStream,
   PlaybackProgress,
   PlaybackSession,
@@ -25,7 +26,8 @@ import {
   streams as streamTable,
   tracks,
 } from "@lumen/database";
-import { and, asc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { extname } from "node:path";
 import { Context, Effect, Layer } from "effect";
 import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
 import { hashToken, newOpaqueToken, newUuid } from "../core/Security";
@@ -58,6 +60,7 @@ export interface PlaybackStartResponse {
   readonly streamPath: string;
   readonly durationSeconds: number | null;
   readonly streams: ReadonlyArray<PlaybackStream>;
+  readonly media: PlayableMedia;
   readonly grantExpiresInSeconds: number;
 }
 
@@ -203,8 +206,11 @@ export const makePlaybackService = Effect.gen(function* () {
           sourceId: tracks.sourceId,
           title: tracks.title,
           durationMs: tracks.durationMs,
+          absolutePath: mediaSources.absolutePath,
+          sizeBytes: mediaSources.fileSizeBytes,
         })
         .from(tracks)
+        .innerJoin(mediaSources, eq(mediaSources.id, tracks.sourceId))
         .where(eq(tracks.id, trackId))
         .get();
       if (source == null) return yield* notFound("Media source not found");
@@ -221,6 +227,8 @@ export const makePlaybackService = Effect.gen(function* () {
           commentary: streamTable.commentary,
           forced: streamTable.forced,
           hearingImpaired: streamTable.hearingImpaired,
+          bitrate: streamTable.bitrate,
+          sampleRateHz: streamTable.sampleRateHz,
         })
         .from(streamTable)
         .where(
@@ -231,6 +239,19 @@ export const makePlaybackService = Effect.gen(function* () {
           ),
         )
         .orderBy(asc(streamTable.ordinal))) as ReadonlyArray<PlaybackStream>;
+      const video = yield* database
+        .select({
+          codec: streamTable.codec,
+          width: streamTable.width,
+          height: streamTable.height,
+          bitrate: streamTable.bitrate,
+        })
+        .from(streamTable)
+        .where(and(eq(streamTable.sourceId, source.sourceId), eq(streamTable.kind, "video")))
+        .orderBy(desc(streamTable.isDefault), asc(streamTable.ordinal))
+        .limit(1)
+        .get();
+      const extension = extname(source.absolutePath).slice(1).toLowerCase();
       const titleId = yield* trackMemory.titleOf(trackId);
       return {
         session,
@@ -244,6 +265,21 @@ export const makePlaybackService = Effect.gen(function* () {
         streamPath: `/api/v1/media/${encodeURIComponent(trackId)}`,
         durationSeconds: source.durationMs === null ? null : Math.round(source.durationMs / 1000),
         streams,
+        media: {
+          container: extension === "" ? null : extension,
+          sizeBytes: source.sizeBytes,
+          video:
+            video == null
+              ? null
+              : {
+                  codec: video.codec,
+                  size:
+                    video.width === null || video.height === null
+                      ? null
+                      : { width: video.width, height: video.height },
+                  bitrate: video.bitrate,
+                },
+        },
         grantExpiresInSeconds: playbackLifetimeMs / 1000,
       };
     },

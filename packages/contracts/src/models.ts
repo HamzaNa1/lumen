@@ -162,8 +162,28 @@ export const PlayableStream = Schema.Struct({
   commentary: Schema.optional(Schema.NullOr(Schema.Boolean)),
   forced: Schema.optional(Schema.NullOr(Schema.Boolean)),
   hearingImpaired: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  bitrate: Schema.optional(Schema.NullOr(Schema.Number)),
+  sampleRateHz: Schema.optional(Schema.NullOr(Schema.Number)),
 });
 export type PlayableStream = Schema.Schema.Type<typeof PlayableStream>;
+
+export const Dimensions = Schema.Struct({ width: Schema.Number, height: Schema.Number });
+export type Dimensions = Schema.Schema.Type<typeof Dimensions>;
+
+/** The file being played, as the server last scanned it. */
+export const PlayableMedia = Schema.Struct({
+  /** The file's format, such as "mkv". */
+  container: Schema.NullOr(Schema.String),
+  sizeBytes: Schema.NullOr(Schema.Number),
+  video: Schema.NullOr(
+    Schema.Struct({
+      codec: Schema.NullOr(Schema.String),
+      size: Schema.NullOr(Dimensions),
+      bitrate: Schema.NullOr(Schema.Number),
+    }),
+  ),
+});
+export type PlayableMedia = Schema.Schema.Type<typeof PlayableMedia>;
 
 export const PlayerSession = Schema.Struct({
   sessionId: Uuid,
@@ -178,6 +198,8 @@ export const PlayerSession = Schema.Struct({
   grantExpiresInSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   grantToken: Schema.String.check(Schema.isMinLength(1)),
   trackMemory: Schema.optional(TrackMemory),
+  /** Older servers leave it out. */
+  media: Schema.optional(PlayableMedia),
 });
 export type PlayerSession = Schema.Schema.Type<typeof PlayerSession>;
 
@@ -217,6 +239,23 @@ export const PlayerState = Schema.Struct({
   awaitingInteraction: Schema.optional(Schema.Boolean),
 });
 export type PlayerState = Schema.Schema.Type<typeof PlayerState>;
+
+/** What a player reports about the playback in progress, for the viewer to troubleshoot it. */
+export const PlaybackInfo = Schema.Struct({
+  /** What draws the video, such as "mpv 0.40.0". */
+  player: Schema.String,
+  /** How the file reaches the player, such as "https". */
+  protocol: Schema.String,
+  playerSize: Schema.NullOr(Dimensions),
+  videoSize: Schema.NullOr(Dimensions),
+  droppedFrames: Schema.NullOr(Schema.Number),
+  corruptedFrames: Schema.NullOr(Schema.Number),
+  durationSeconds: Schema.NullOr(Schema.Number),
+  /** Null where the server does not describe the file. */
+  media: Schema.NullOr(PlayableMedia),
+  audio: Schema.NullOr(PlayableStream),
+});
+export type PlaybackInfo = Schema.Schema.Type<typeof PlaybackInfo>;
 
 export const PlayerDisplay = Schema.Struct({
   /** What is playing, once known. */

@@ -258,35 +258,37 @@ test("the playback settings open over the timeline", async ({ context, baseURL }
   expect(topmost, "the settings panel is drawn over the timeline's thumb").toBe(true);
 });
 
-test("closing the playback settings clears the errors they were showing", async ({
-  context,
-  baseURL,
-}) => {
-  const { page } = (await signedInBuilds(context, baseURL ?? "")).desktop;
-  await gotoDesktop(page, desktopBuild, "/", {
-    overlay: true,
-    display: { ...filmDisplay, loading: false, error: null },
-    player: playing,
-  });
-  const settings = page.getByRole("button", { name: "Playback settings", exact: true });
-  const errors = page.locator(".media-player-settings-panel [role='alert']");
-  await settings.click();
-  // The harness bridge rejects both changes, so each leaves an error in the panel.
-  await page.getByRole("combobox", { name: "Audio output" }).click();
-  await page.getByRole("option", { name: "Automatic (system layout)" }).click();
-  await page.getByRole("combobox", { name: "Audio track" }).click();
-  await page.getByRole("option", { name: /^Japanese/u }).click();
-  await expect(errors).toHaveText([
-    "Not available in the parity harness",
-    "Could not change audio output.",
-  ]);
+for (const closeButton of ["Playback settings", "Playback info"]) {
+  test(`closing the playback settings via ${closeButton} clears the errors they were showing`, async ({
+    context,
+    baseURL,
+  }) => {
+    const { page } = (await signedInBuilds(context, baseURL ?? "")).desktop;
+    await gotoDesktop(page, desktopBuild, "/", {
+      overlay: true,
+      display: { ...filmDisplay, loading: false, error: null },
+      player: playing,
+    });
+    const settings = page.getByRole("button", { name: "Playback settings", exact: true });
+    const errors = page.locator(".media-player-settings-panel [role='alert']");
+    await settings.click();
+    // The harness bridge rejects both changes, so each leaves an error in the panel.
+    await page.getByRole("combobox", { name: "Audio output" }).click();
+    await page.getByRole("option", { name: "Automatic (system layout)" }).click();
+    await page.getByRole("combobox", { name: "Audio track" }).click();
+    await page.getByRole("option", { name: /^Japanese/u }).click();
+    await expect(errors).toHaveText([
+      "Not available in the parity harness",
+      "Could not change audio output.",
+    ]);
 
-  await settings.click();
-  await expect(page.locator(".media-player-settings-panel")).toHaveCount(0);
-  await settings.click();
-  await expect(page.locator(".media-player-settings-panel")).toBeVisible();
-  await expect(errors).toHaveCount(0);
-});
+    await page.getByRole("button", { name: closeButton, exact: true }).click();
+    await expect(page.locator(".media-player-settings-panel")).toHaveCount(0);
+    await settings.click();
+    await expect(page.locator(".media-player-settings-panel")).toBeVisible();
+    await expect(errors).toHaveCount(0);
+  });
+}
 
 test("hovering the timeline shows the time under the pointer", async ({
   context,

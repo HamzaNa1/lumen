@@ -3,11 +3,14 @@ import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import type {
   AudioOutput,
+  PlaybackInfo,
   PlayerSession,
   PlayerState,
   IpcPlayerSurfaceBounds,
 } from "@lumen/contracts";
 import {
+  describePlayback,
+  measuredSize,
   PlaybackDiagnostics,
   TrackSelectionController,
   PlaybackSessionReporter,
@@ -68,6 +71,11 @@ const wait = (milliseconds: number): Promise<void> =>
 
 const FILE_LOADED_TIMEOUT_MS = 15_000;
 const CACHE_STATE_TIMEOUT_MS = 100;
+
+const sumOfCounts = (...values: ReadonlyArray<unknown>): number | null => {
+  const counts = values.filter((value): value is number => typeof value === "number");
+  return counts.length === 0 ? null : counts.reduce((total, count) => total + count, 0);
+};
 
 const isPropertyUnavailable = (cause: unknown): boolean =>
   cause instanceof Error && cause.message.includes("property unavailable");
@@ -538,6 +546,39 @@ export class PlayerController extends EventEmitter {
       },
       null,
       2,
+    );
+  }
+
+  async info(sessionId: string): Promise<PlaybackInfo> {
+    const active = this.requireActive(sessionId);
+    // MPV has no video to describe until it has decoded some, and asking then is not a failure.
+    const property = (name: string): Promise<unknown> =>
+      this.command(active, ["get_property", name]).catch(() => null);
+    const [version, osdWidth, osdHeight, width, height, outputDrops, decoderDrops] =
+      await Promise.all(
+        [
+          "mpv-version",
+          "osd-width",
+          "osd-height",
+          "width",
+          "height",
+          "frame-drop-count",
+          "decoder-frame-drop-count",
+        ].map(property),
+      );
+    this.assertActive(sessionId);
+    return describePlayback(
+      active.session,
+      active.client.serverOrigin,
+      this.state?.selectedAudioStreamId ?? null,
+      {
+        player: typeof version === "string" ? version : "mpv",
+        playerSize: measuredSize(osdWidth, osdHeight),
+        videoSize: measuredSize(width, height),
+        droppedFrames: sumOfCounts(outputDrops, decoderDrops),
+        // MPV drops a frame it cannot decode rather than counting it apart.
+        corruptedFrames: null,
+      },
     );
   }
 

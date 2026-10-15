@@ -499,6 +499,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, output: AudioOutput }), raw);
     return dependencies.player.setAudioOutput(input.sessionId, input.output);
   });
+  handle("player:info", async (_event, raw) =>
+    dependencies.player.info(decode(Schema.String, raw)),
+  );
   handle("player:state", async () => dependencies.player.getState());
   handle("player:display", async (_event, raw) => {
     playerDisplay = decode(PlayerDisplay, raw);
