@@ -1,0 +1,59 @@
+name: native-desktop
+on:
+  workflow_call:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  macos:
+    name: macOS lifecycle and MPV audio
+    runs-on: macos-26
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      # The existing lifecycle suite imports server/database fixture helpers.
+      - run: bun install --frozen-lockfile
+      - name: macOS lifecycle regressions (mocked Electron/libmpv)
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          mkdir -p native-evidence
+          bun test tests/compatibility/desktop-mpv-window-lifecycle.test.ts \
+            --reporter=junit --reporter-outfile=native-evidence/lifecycle.xml \
+            2>&1 | tee native-evidence/lifecycle.log
+      - name: Install audio runtime
+        shell: bash
+        run: |
+          # Exercise Homebrew's current CLI runtime; this is not bundled macOS libmpv playback.
+          brew install mpv ffmpeg
+          mpv --version | tee native-evidence/mpv-version.txt
+          ffmpeg -version > native-evidence/ffmpeg-version.txt
+      - name: Real MPV E-AC-3 PCM and speed synchronization
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          # A short path keeps the Unix IPC socket below macOS's path length limit.
+          audio_evidence="$(mktemp -d /tmp/lumen-audio.XXXXXX)"
+          trap 'mv "$audio_evidence" native-evidence/audio' EXIT
+          bun tests/native/mpv-watch-audio.ts "$audio_evidence" 2>&1 | tee native-evidence/audio.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: macos-native-regression-${{ github.sha }}
+          path: native-evidence/
+          if-no-files-found: warn
+          retention-days: 14
+  windows:
+    name: Windows Electron and MPV playback
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/windows-playback

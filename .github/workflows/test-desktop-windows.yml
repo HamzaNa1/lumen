@@ -18,31 +18,7 @@ jobs:
         with:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
-      - name: Install Electron runtime for native tests
-        run: bun apps/desktop/node_modules/electron/install.js
-      - run: bun run check:desktop typecheck
-      - run: bun test tests/compatibility/desktop-mpv-window-lifecycle.test.ts
-      - name: Bundle MPV
-        shell: pwsh
-        run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
-      - name: Seal and verify native MPV files
-        run: |
-          bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
-          bun apps/desktop/scripts/verify-native-binaries.ts
-      - run: bun run --cwd apps/desktop build
-      - name: Native Windows fullscreen regression
-        shell: pwsh
-        run: |
-          bun build tests/native/windows-playback.ts --target=node --format=esm --external electron --external koffi --outfile apps/desktop/out/windows-playback.mjs
-          if ($LASTEXITCODE -ne 0) { throw "Smoke harness compilation failed" }
-          $electron = Resolve-Path apps/desktop/node_modules/electron/dist/electron.exe
-          $env:LUMEN_SMOKE_SCALE = "1"
-          $process = Start-Process $electron -ArgumentList "apps/desktop/out/windows-playback.mjs" -Wait -PassThru -NoNewWindow -RedirectStandardOutput smoke.stdout.log -RedirectStandardError smoke.stderr.log
-          Get-Content smoke.stdout.log
-          Get-Content smoke.stderr.log
-          if ($process.ExitCode -ne 0) { throw "Native Windows regression failed: $($process.ExitCode)" }
-          Remove-Item apps/desktop/out/windows-playback.mjs
-          Move-Item apps/desktop/out/playback-evidence windows-native-evidence
+      - uses: ./.github/actions/windows-playback
       - name: Package test installers
         shell: pwsh
         run: |
@@ -63,12 +39,3 @@ jobs:
             apps/desktop/release/SHA256SUMS.txt
           if-no-files-found: error
           retention-days: 14
-      - uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: windows-native-regression-${{ github.sha }}
-          path: |
-            windows-native-evidence/
-            apps/desktop/out/playback-evidence/
-            smoke.*.log
-          if-no-files-found: ignore

@@ -17,8 +17,11 @@ jobs:
     with:
       product: desktop
       version: ${{ inputs.version }}
-  package:
+  native-desktop:
     needs: preflight
+    uses: ./.github/workflows/native-desktop.yml
+  package:
+    needs: [preflight, native-desktop]
     runs-on: ${{ matrix.os }}
     permissions:
       contents: read
@@ -98,7 +101,7 @@ jobs:
             apps/desktop/release/latest.yml
           if-no-files-found: error
   publish:
-    needs: [preflight, package]
+    needs: [preflight, native-desktop, package]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
