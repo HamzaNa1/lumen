@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { join } from "node:path";
 import { parseProduct } from "./lib/products";
 import { repositoryRoot, run } from "./lib/releases";
 import { verifyTestOwnership } from "./lib/verification";
@@ -15,14 +14,7 @@ if (product !== "server") {
 const verify = (workspace: string) => {
   execFileSync(
     process.execPath,
-    [
-      "run",
-      "playwright",
-      "test",
-      "--output",
-      join(repositoryRoot, "test-results", product ?? "source"),
-      ...process.argv.slice(3),
-    ],
+    ["run", "playwright", "test", ...process.argv.slice(3)],
     {
       cwd: workspace,
       stdio: "inherit",
