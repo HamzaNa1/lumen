@@ -17,8 +17,8 @@
     "typecheck": "bun run --filter '*' typecheck && tsc -p tsconfig.scripts.json",
     "lint": "biome lint .",
     "test": "bun test",
-    "test:browser": "bun run build:web && bun run --cwd apps/desktop build && bun tests/browser/buildDesktopBaseline.ts && playwright test",
-    "test:browser:baseline": "bun run build:web && bun run --cwd apps/desktop build && bun tests/browser/buildDesktopBaseline.ts && playwright test desktop-parity --project chromium",
+    "test:browser": "bun scripts/test-browser.ts source",
+    "test:browser:baseline": "bun scripts/test-browser.ts source desktop- --project chromium",
     "check": "bun run lint && bun run typecheck && bun test && bun run build",
     "check:server": "bun scripts/check.ts server",
     "check:desktop": "bun scripts/check.ts desktop",
@@ -26,7 +26,9 @@
     "db:migrate": "bun run --cwd apps/server db:migrate",
     "version:set": "bun scripts/version.ts set",
     "version:check": "bun scripts/version.ts check",
-    "backup": "bun apps/server/scripts/backup.ts"
+    "backup": "bun apps/server/scripts/backup.ts",
+    "test:browser:server": "bun scripts/test-browser.ts server",
+    "test:browser:desktop": "bun scripts/test-browser.ts desktop"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.14",

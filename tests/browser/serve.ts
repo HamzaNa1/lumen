@@ -132,7 +132,7 @@ const server = await startServer({
   loginAttemptsPerMinute: 1_000,
   maxRequestsPerMinute: 100_000,
   // The tests exercise the build that would ship.
-  webApp: "required",
+  webApp: process.env.LUMEN_BROWSER_PRODUCT === "desktop" ? "optional" : "required",
 });
 const stop = async (): Promise<void> => {
   await server.stop();

@@ -31,6 +31,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.3
@@ -51,3 +52,31 @@ jobs:
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
         run: bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
+
+  browser:
+    needs: check
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.sha }}
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - name: Install the selected product
+        env:
+          RELEASE_PRODUCT: ${{ inputs.product }}
+        run: bun scripts/install-product.ts "$RELEASE_PRODUCT"
+      - run: bunx playwright install --with-deps chromium firefox webkit
+      - name: Verify the product in browsers
+        env:
+          RELEASE_PRODUCT: ${{ inputs.product }}
+          LUMEN_BROWSER_TEST_PORT: '3279'
+        run: bun scripts/test-browser.ts "$RELEASE_PRODUCT"
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: release-${{ inputs.product }}-browser-test-results
+          path: test-results
+          if-no-files-found: ignore

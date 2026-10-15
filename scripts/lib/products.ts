@@ -49,5 +49,22 @@ export const productTests = (product: Product): string[] => [
   "tests/tooling",
 ];
 
+// These regressions need both products at runtime. CI exercises the source pair;
+// releases substitute the latest stable counterpart, keeping its dependencies too.
+export const compatibilitySuites = {
+  "desktop-mpv-window-lifecycle.test.ts": ["desktop"],
+  "server-watch-groups.test.ts": ["server"],
+  "playback-bridge.test.ts": ["desktop", "server"],
+  "watch-group-client.test.ts": ["desktop", "server"],
+  "watch-playback.test.ts": ["desktop", "server"],
+  "mixed-watch-groups.test.ts": ["desktop", "server"],
+  "releases.test.ts": ["desktop", "server"],
+} satisfies Record<string, Product[]>;
+
+export const productCompatibilityTests = (product: Product): string[] =>
+  Object.entries(compatibilitySuites)
+    .filter(([, owners]) => owners.some((owner) => owner === product))
+    .map(([file]) => `tests/compatibility/${file}`);
+
 export const workspaceFilters = (paths: readonly string[]): string[] =>
   paths.flatMap((path) => ["--filter", `./${path}`]);
