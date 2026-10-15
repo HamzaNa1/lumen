@@ -2707,18 +2707,16 @@ body:has(.app-shell) {
   padding: 16px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-xl);
-  background: rgba(16, 16, 19, 0.9);
+  background: rgba(16, 16, 19, 0.96);
   box-shadow: var(--shadow-popover);
   backdrop-filter: blur(24px) saturate(140%);
   transform-origin: bottom right;
   animation: popup-in 120ms ease-out;
 }
 .media-player-settings-panel .field-label {
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 11px;
-  font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  font-weight: 500;
 }
 .media-player-settings-panel .select-trigger {
   height: 38px;
@@ -2745,7 +2743,18 @@ body:has(.app-shell) {
   line-height: 1.45;
 }
 .media-player-settings-panel p[role="alert"] {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
   color: var(--danger-text);
+}
+.media-player-settings-panel .button {
+  min-height: 38px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.07);
+}
+.media-player-settings-panel .button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11);
 }
 
 /* Player overlay window */
