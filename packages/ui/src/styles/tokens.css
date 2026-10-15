@@ -2647,9 +2647,6 @@ body:has(.app-shell) {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.media-player-actions {
-  gap: 4px;
-}
 .media-player .button-icon {
   width: 36px;
   min-width: 36px;
@@ -2681,11 +2678,11 @@ body:has(.app-shell) {
   font-weight: 700;
   transform: translate(-50%, -40%);
 }
-.media-player-volume {
-  gap: 2px;
-}
 .volume-slider {
   width: 84px;
+  /* The actions sit flush, spaced only by the padding a 36px icon button keeps around its 19px
+     glyph; the track keeps the same, so every neighbour is equally far apart. */
+  margin-inline: 8.5px;
 }
 .volume-slider .media-slider-track {
   height: 3px;

@@ -432,6 +432,7 @@ export const MediaPlayer = ({
                 </Button>
                 <Slider.Root
                   className="volume-slider"
+                  thumbAlignment="edge"
                   min={0}
                   max={100}
                   value={volumeValue}
@@ -573,9 +574,9 @@ export const MediaPlayer = ({
                   aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"}
                 >
                   {fullscreen ? (
-                    <Minimize aria-hidden="true" size={18} />
+                    <Minimize aria-hidden="true" size={19} />
                   ) : (
-                    <Maximize aria-hidden="true" size={18} />
+                    <Maximize aria-hidden="true" size={19} />
                   )}
                 </Button>
               )}

@@ -1,5 +1,5 @@
 import { desktopScenarios } from "./desktopScenarios";
-import { expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import type { ParityScenario } from "./desktopBridgeShim";
 import {
   setupDesktopRenderer,
@@ -152,6 +152,30 @@ test("a downloaded update offers a restart that installs it", async ({ context, 
     .toBe(true);
 });
 
+/**
+ * Draws the baseline's volume, settings and fullscreen controls as they are now spaced: flush,
+ * with the volume track padded like an icon button, every glyph 19px, and the volume thumb kept
+ * within its track, which also moves where the fill ends.
+ */
+const withEvenPlayerActions = async (page: Page): Promise<void> => {
+  const { value, thumb } = await page
+    .locator(".volume-slider")
+    .evaluate((slider) => ({
+      value: Number(slider.querySelector("input")?.value) / 100,
+      thumb: slider.querySelector(".media-slider-thumb")?.getBoundingClientRect().width ?? 0,
+    }));
+  const position = `calc(${thumb / 2}px + (100% - ${thumb}px) * ${value})`;
+  await page.addStyleTag({
+    content: `
+      .media-player-actions, .media-player-volume { gap: 0 !important; }
+      .volume-slider { margin-inline: 8.5px !important; }
+      .media-player-actions > .button-icon svg { width: 19px; height: 19px; }
+      .volume-slider .media-slider-thumb { inset-inline-start: ${position} !important; }
+      .volume-slider .media-slider-indicator { width: ${position} !important; }
+    `,
+  });
+};
+
 test("the desktop player controls are what they were before the extraction", async ({
   context,
   baseURL,
@@ -185,6 +209,7 @@ test("the desktop player controls are what they were before the extraction", asy
       await page.waitForLoadState("networkidle");
       await page.addStyleTag({ content: STILL });
     }
+    if (builds.baseline !== null) await withEvenPlayerActions(builds.baseline.page);
     // The loading state keeps its spinner; every other state has to have stopped moving.
     await expectDesktopUnchanged(testInfo, `player ${name}`, builds, withoutLaterControls);
   }
