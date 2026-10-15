@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, jest, test } from "bun:test";
+import { setImmediate as nextTurn } from "node:timers/promises";
 import {
   HtmlMediaPlayer,
   type MediaElementLike,
@@ -10,10 +11,20 @@ import {
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
 import { eventually } from "../helpers/eventually";
-import { watchFixture } from "../helpers/watch-groups";
+import { watchFixture, watchProxy } from "../helpers/watch-groups";
 import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState, type VolumeMemory } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
+
+const players = new Set<HtmlMediaPlayer>();
+afterEach(async () => {
+  try {
+    await Promise.all([...players].map((player) => player.stop()));
+  } finally {
+    players.clear();
+    jest.useRealTimers();
+  }
+});
 
 /** A media element whose loading and autoplay outcomes the test decides. */
 class FakeMedia implements MediaElementLike {
@@ -73,6 +84,7 @@ class FakeMedia implements MediaElementLike {
   load(): void {
     if (this.src === "") return;
     this.sources.push(this.src);
+    this.emit("loadstart");
     queueMicrotask(() => {
       if (this.loadOutcome === "loaded") {
         this.duration = 100;
@@ -108,6 +120,15 @@ class FakeMedia implements MediaElementLike {
     return [...this.listeners.values()].reduce((total, listeners) => total + listeners.size, 0);
   }
 }
+
+const nextMediaEvent = (element: FakeMedia, type: string): Promise<void> =>
+  new Promise((resolve) => {
+    const listener = () => {
+      element.removeEventListener(type, listener);
+      resolve();
+    };
+    element.addEventListener(type, listener);
+  });
 
 const setup = (
   streams: PlayerSession["streams"] = [],
@@ -185,6 +206,7 @@ const setup = (
     loadTimeoutMs: 80,
     playAnswerTimeoutMs: 80,
   });
+  players.add(player);
   return { element, api, player, calls, states, failures };
 };
 
@@ -285,9 +307,26 @@ describe("browser playback lifecycle", () => {
   });
 
   test("a file that never loads times out instead of loading forever", async () => {
+    jest.useFakeTimers();
     const { element, player, calls } = setup();
     element.loadOutcome = "hang";
-    await expect(player.start({ itemId: "item-1" })).rejects.toThrow("Timed out");
+    const loading = nextMediaEvent(element, "loadstart");
+    let settled = false;
+    const starting = player.start({ itemId: "item-1" })
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        settled = true;
+      });
+    await loading;
+    jest.advanceTimersByTime(79);
+    await nextTurn();
+    expect(settled).toBe(false);
+    jest.advanceTimersByTime(1);
+    await nextTurn();
+    expect(settled).toBe(true);
+    const failure = await starting;
+    expect(failure).toBeInstanceOf(Error);
+    expect((failure as Error).message).toContain("Timed out");
     expect(calls).toEqual(["start session-1", "stop session-1"]);
   });
 
@@ -366,14 +405,25 @@ describe("browser playback lifecycle", () => {
   });
 
   test("a start replaced while its file is still loading leaves the replacement's source alone", async () => {
+    jest.useFakeTimers();
     const { element, player } = setup();
     element.loadOutcome = "hang";
-    const first = player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
+    const firstLoading = nextMediaEvent(element, "loadstart");
+    let cancelled = false;
+    const first = player.start({ itemId: "item-1" })
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        cancelled = true;
+      });
     // Let the first start reach the element before it is replaced.
-    await Bun.sleep(5);
+    await firstLoading;
     expect(element.src).toContain("/api/v1/media/item-1");
+    const secondLoading = nextMediaEvent(element, "loadstart");
     const second = player.start({ itemId: "item-2" });
-    await Bun.sleep(5);
+    await secondLoading;
+    jest.advanceTimersByTime(50);
+    await nextTurn();
+    expect(cancelled).toBe(true);
     expect(element.src).toContain("/api/v1/media/item-2");
     // The first start notices it was replaced and gives up; the second's source must survive.
     expect(((await first) as Error).message).toBe("Playback was cancelled");
@@ -468,11 +518,12 @@ describe("browser playback lifecycle", () => {
     await player.start({ itemId: "item-1" });
     element.currentTime = 12;
     player.checkpoint();
-    await Bun.sleep(1);
+    // The fake API resolves immediately; drain its completion handlers before the next page event.
+    await nextTurn();
     expect(calls.at(-1)).toBe("progress session-1 @12 #1 keepalive");
     element.currentTime = 15;
     player.leave();
-    await Bun.sleep(1);
+    await eventually(() => calls.at(-1) === "stop session-1 keepalive");
     expect(calls.slice(-2)).toEqual(["progress session-1 @15 #2 keepalive", "stop session-1 keepalive"]);
     // Restored from the back/forward cache: the ended session is replaced before resuming.
     await player.reconcile();
@@ -483,14 +534,14 @@ describe("browser playback lifecycle", () => {
     const { element, player, failures, states } = setup();
     await player.start({ itemId: "item-1" });
     element.fail(2);
-    await Bun.sleep(5);
+    await eventually(() => player.getState()?.sessionId === "session-2");
     expect(player.getState()?.sessionId).toBe("session-2");
     element.fail(2);
-    await Bun.sleep(5);
+    await eventually(() => player.getState()?.sessionId === "session-3");
     expect(player.getState()?.sessionId).toBe("session-3");
     expect(failures).toEqual([]);
     element.fail(2);
-    await Bun.sleep(5);
+    await eventually(() => failures.length === 1 && player.getState() === null);
     expect(failures).toEqual(["The connection was lost while loading this file."]);
     expect(player.getState()).toBeNull();
     expect(states.at(-1)).toBeNull();
@@ -551,9 +602,46 @@ test("the browser reports how far it can play on, and when it has run out", asyn
 });
 
 test("a watch group is not told the browser is ready until it holds five seconds to play on with", async () => {
+  const group = await groupViewer((element) => {
+    element.bufferedRange = [0, 7.9];
+  });
+  const { element, viewer, owner, fixture } = group;
+  try {
+    // Once the seek finishes, the browser holds too little beyond where it landed.
+    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+    await group.waitForBufferChecks();
+    expect(group.readinessReports).toEqual([]);
+    expect(element.currentTime).toBe(3);
+    expect(owner.status.group?.playback).toMatchObject({
+      positionSeconds: 3,
+      paused: true,
+      waitingFor: [viewer.status.memberId],
+    });
+    expect(element.paused).toBe(true);
+    expect(group.seeks).toBe(1);
+
+    // Enough has arrived to play on from there.
+    element.bufferedRange = [0, 8];
+    await eventually(() => owner.status.group?.playback?.paused === false);
+    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+    await eventually(() => !element.paused);
+    // Playback starts from where the element already waits.
+    expect(group.seeks).toBe(1);
+    expect(element.currentTime).toBe(3);
+  } finally {
+    await group.close();
+  }
+}, 15_000);
+
+/** A browser's player joined to a watch group, as the browser runtime wires the two together. */
+const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefined) => {
   const fixture = await watchFixture();
+  const proxy = watchProxy(fixture.running.server.url);
   const { element, player } = setup();
+  element.bufferedRange = [0, 100];
+  prepare(element);
   let seeks = 0;
+  let bufferChecks = 0;
   const viewer = new WatchPlaybackController(
     {
       start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
@@ -566,82 +654,62 @@ test("a watch group is not told the browser is ready until it holds five seconds
       },
       pause: (sessionId, paused) => player.pause(sessionId, paused),
       speed: (sessionId, speed) => player.speed(sessionId, speed),
-      buffer: (sessionId) => player.buffer(sessionId),
+      buffer: (sessionId) => {
+        bufferChecks += 1;
+        return player.buffer(sessionId);
+      },
     },
     () => undefined,
   );
+  const close = async () => {
+    viewer.close();
+    try {
+      await player.stop();
+    } finally {
+      try {
+        await proxy.close();
+      } finally {
+        await fixture.close();
+      }
+    }
+  };
   try {
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
-    viewer.connect(await fixture.login(), "browser");
+    const account = await fixture.login();
+    viewer.connect({
+      serverOrigin: proxy.origin,
+      watchAuthentication: account.watchAuthentication,
+      supportsWatchGroups: account.supportsWatchGroups,
+    }, "browser");
     viewer.setSurfaceReady(true);
     await eventually(() => viewer.status.connection === "connected");
     await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
-
-    // The seek has finished, but the browser holds too little beyond where it landed.
-    element.seeking = false;
-    element.bufferedRange = [0, 7.9];
-    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
-    await eventually(() => seeks === 1 && element.currentTime === 3);
-    await Bun.sleep(700);
-    expect(owner.status.group?.playback).toMatchObject({
-      positionSeconds: 3,
-      paused: true,
-      waitingFor: [viewer.status.memberId],
-    });
-    expect(element.paused).toBe(true);
-    expect(seeks).toBe(1);
-
-    // Enough has arrived to play on from there.
-    element.bufferedRange = [0, 8];
-    await eventually(() => owner.status.group?.playback?.paused === false);
-    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
-    await eventually(() => !element.paused);
-    // Playback starts from where the element already waits.
-    expect(seeks).toBe(1);
-    expect(element.currentTime).toBe(3);
-  } finally {
-    viewer.close();
-    await fixture.close();
+    return {
+      fixture,
+      element,
+      player,
+      viewer,
+      owner,
+      get seeks() {
+        return seeks;
+      },
+      get readinessReports() {
+        return proxy.receivedActions.filter((action) => action.type === "ready");
+      },
+      async waitForBufferChecks() {
+        const before = bufferChecks;
+        await eventually(() => bufferChecks >= before + 3);
+        // The proxy receives earlier readiness reports before this ping, even if the server
+        // has not yet published the resulting group state to either client.
+        await viewer.action({ type: "ping", sentAtMs: Date.now() });
+      },
+      close,
+    };
+  } catch (cause) {
+    await close();
+    throw cause;
   }
-});
-
-/** A browser's player joined to a watch group, as the browser runtime wires the two together. */
-const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefined) => {
-  const fixture = await watchFixture();
-  const { element, player } = setup();
-  element.bufferedRange = [0, 100];
-  prepare(element);
-  const viewer = new WatchPlaybackController(
-    {
-      start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
-      stop: () => player.stop(),
-      getState: () => player.getState(),
-      sample: (sessionId) => player.sample(sessionId),
-      seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
-      pause: (sessionId, paused) => player.pause(sessionId, paused),
-      speed: (sessionId, speed) => player.speed(sessionId, speed),
-      buffer: (sessionId) => player.buffer(sessionId),
-    },
-    () => undefined,
-  );
-  const owner = await fixture.connect(await fixture.login());
-  await owner.action({ type: "create", name: "Movie night", password: "" });
-  viewer.connect(await fixture.login(), "browser");
-  viewer.setSurfaceReady(true);
-  await eventually(() => viewer.status.connection === "connected");
-  await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
-  return {
-    fixture,
-    element,
-    player,
-    viewer,
-    owner,
-    async close() {
-      viewer.close();
-      await fixture.close();
-    },
-  };
 };
 
 // Allow server setup and teardown in addition to the real synchronization waits below.
@@ -654,14 +722,20 @@ test("a browser that holds playback back for a click joins the group's playback 
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
     await eventually(() => owner.status.group?.playback?.paused === false);
     await eventually(() => player.getState()?.awaitingInteraction === true);
-    await Bun.sleep(1200);
+    await group.waitForBufferChecks();
+    // The group has moved on while autoplay is blocked; clicking must catch up to it.
+    await eventually(() => {
+      const playback = owner.status.group?.playback;
+      return playback !== undefined && playback !== null && Date.now() - playback.updatedAtMs > 1200;
+    });
     expect(element.paused).toBe(true);
 
     element.playOutcome = "plays";
     await player.allowPlayback();
     viewer.retry();
     await eventually(() => !element.paused);
-    await Bun.sleep(700);
+    await eventually(() => element.currentTime > 4);
+    await group.waitForBufferChecks();
     expect(element.paused).toBe(false);
     expect(player.getState()).toMatchObject({ paused: false, awaitingInteraction: false });
     expect(element.currentTime).toBeGreaterThan(4);
@@ -675,11 +749,12 @@ test("a browser that leaves play() unanswered still follows what the group does 
     // Some browsers neither start nor refuse playback in a page that is not in the foreground.
     element.playGate = new Promise(() => undefined);
   });
-  const { element, owner, fixture } = group;
+  const { element, player, owner, fixture } = group;
   try {
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
     await eventually(() => owner.status.group?.playback?.paused === false);
-    await Bun.sleep(300);
+    await eventually(() => element.playGate === null && player.getState()?.paused === true);
+    await group.waitForBufferChecks();
     expect(element.paused).toBe(true);
 
     await owner.action({
@@ -694,7 +769,7 @@ test("a browser that leaves play() unanswered still follows what the group does 
   } finally {
     await group.close();
   }
-});
+}, 15_000);
 
 test("a browser that stops fetching short of five seconds no longer keeps its watch group waiting", async () => {
   const group = await groupViewer((element) => {
@@ -704,8 +779,9 @@ test("a browser that stops fetching short of five seconds no longer keeps its wa
   const { element, viewer, owner, fixture } = group;
   try {
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
-    await eventually(() => element.currentTime === 3);
-    await Bun.sleep(400);
+    await group.waitForBufferChecks();
+    expect(group.readinessReports).toEqual([]);
+    expect(element.currentTime).toBe(3);
     expect(owner.status.group?.playback).toMatchObject({
       paused: true,
       waitingFor: [viewer.status.memberId],
@@ -718,7 +794,7 @@ test("a browser that stops fetching short of five seconds no longer keeps its wa
   } finally {
     await group.close();
   }
-});
+}, 15_000);
 
 test("browser diagnostics retain waiting, stalled and recovery metrics without media grants or URLs", async () => {
   const { player, element } = setup();
