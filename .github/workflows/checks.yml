@@ -4,6 +4,8 @@ on:
     branches: [main]
   pull_request:
 jobs:
+  native-desktop:
+    uses: ./.github/workflows/native-desktop.yml
   check:
     runs-on: ubuntu-latest
     steps:
