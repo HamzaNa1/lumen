@@ -123,6 +123,11 @@ export const PlayerView = ({
         trackMemoryError={player?.trackMemoryError ?? null}
         trackActionError={trackActionError}
         onRetryTrackMemory={() => trackAction((id) => runtime.playback.retryTrackMemory(id))}
+        onDismissErrors={() => {
+          setTrackActionError(null);
+          if (player?.trackMemoryError != null)
+            trackAction((id) => runtime.playback.dismissTrackMemoryError(id));
+        }}
         onResetTrack={(kind) => trackAction((id) => runtime.playback.resetTrack(id, kind))}
         subtitleSelection={capabilities.nativeAudioOutput}
         headerActions={
@@ -158,16 +163,6 @@ export const PlayerView = ({
             : async (output) => {
                 if (player === null) throw new Error("Playback is not active");
                 setPlayer(await nativeAudio.output(player.sessionId, output));
-              }
-        }
-        onCopyAudioDiagnostics={
-          (runtime.playback.copyDiagnostics === undefined && nativeAudio === null) ||
-          !capabilities.audioDiagnostics
-            ? undefined
-            : async () => {
-                if (runtime.playback.copyDiagnostics !== undefined)
-                  await runtime.playback.copyDiagnostics();
-                else if (player !== null) await nativeAudio?.copyDiagnostics(player.sessionId);
               }
         }
         buffering={player?.buffering === true || waiting !== undefined}

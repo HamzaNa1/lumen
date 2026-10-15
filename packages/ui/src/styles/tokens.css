@@ -28,6 +28,8 @@
   --positive: #5bd48a;
   --positive-soft: rgba(91, 212, 138, 0.13);
   --warning: #f0b541;
+  --warning-text: #f7d58c;
+  --warning-soft: rgba(240, 181, 65, 0.1);
   --danger: #f87171;
   --danger-text: #fca5a5;
   --danger-soft: rgba(248, 113, 113, 0.11);
@@ -2701,24 +2703,76 @@ body:has(.app-shell) {
   bottom: calc(100% + 10px);
   /* Above the timeline's fill and thumb, which the panel opens over. */
   z-index: 3;
-  width: min(300px, calc(100vw - 28px));
+  width: min(320px, calc(100vw - 28px));
   display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-lg);
-  background: rgba(24, 24, 27, 0.96);
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-xl);
+  background: rgba(16, 16, 19, 0.96);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(24px) saturate(140%);
+  transform-origin: bottom right;
+  animation: popup-in 120ms ease-out;
 }
-.media-player-settings-panel strong {
-  font-size: 13px;
-  font-weight: 600;
+.media-player-settings-panel .field-label {
+  color: rgba(255, 255, 255, 0.6);
+  font-size: 12px;
+  font-weight: 500;
+}
+.media-player-settings-panel .select-trigger {
+  height: 38px;
+  padding: 0 10px 0 12px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.07);
+  font-weight: 500;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.media-player-settings-panel .select-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11);
+}
+.media-player-settings-panel .select-trigger[data-popup-open],
+.media-player-settings-panel .select-trigger:focus-visible {
+  border-color: var(--accent-ring);
 }
 .media-player-settings-panel p {
   margin: 0;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.6);
   font-size: 12.5px;
+  line-height: 1.45;
+}
+.media-player-settings-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(240, 181, 65, 0.24);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+}
+.media-player-settings-warning > svg {
+  margin-top: 1px;
+  color: var(--warning);
+}
+.media-player-settings-panel .media-player-settings-warning p {
+  color: var(--warning-text);
+}
+.media-player-settings-panel p[role="alert"] {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  color: var(--danger-text);
+}
+.media-player-settings-panel .button {
+  min-height: 38px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.07);
+}
+.media-player-settings-panel .button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11);
 }
 
 /* Player overlay window */

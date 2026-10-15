@@ -1422,6 +1422,10 @@ describe("native track memory", () => {
       expect(result.selectedAudioStreamId).toBe("fr"); expect(result.trackMemoryError).toContain("Retry");
       await controller.retryTrackMemory("session-1");
       expect(controller.getState()?.trackMemoryError).toBeNull();
+      saveChoice.mockRejectedValueOnce(new Error("offline"));
+      expect((await controller.selectAudioStream("session-1", "fr")).trackMemoryError).toContain("Retry");
+      const dismissed = await controller.dismissTrackMemoryError("session-1");
+      expect(dismissed).toMatchObject({ selectedAudioStreamId: "fr", trackMemoryError: null });
       await restart(); expect(controller.getState()?.selectedAudioStreamId).toBe("fr");
     }, { streams, memory: { ...defaultTrackMemory(), audio: describeTrack("source", streams[2]), subtitle: describeTrack("source", streams[3]) } });
   });

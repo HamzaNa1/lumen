@@ -16,7 +16,7 @@ import {
   WatchAction,
 } from "@lumen/contracts";
 import { Schema } from "effect";
-import { type BrowserWindow, type IpcMainInvokeEvent, clipboard, ipcMain } from "electron";
+import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
 import { ServerClient, ServerHttpError, type AccountSession } from "../api/ServerClient";
@@ -174,6 +174,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   handle("player:retry-track-memory", async (_event, raw) =>
     dependencies.player.retryTrackMemory(decode(Schema.String, raw)),
+  );
+  handle("player:dismiss-track-memory-error", async (_event, raw) =>
+    dependencies.player.dismissTrackMemoryError(decode(Schema.String, raw)),
   );
   handle("accounts:list", async () => dependencies.registry.list());
   handle("accounts:discover-server", async (_event, raw) => {
@@ -495,10 +498,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("player:audio-output", async (_event, raw) => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, output: AudioOutput }), raw);
     return dependencies.player.setAudioOutput(input.sessionId, input.output);
-  });
-  handle("player:copy-audio-diagnostics", async (_event, raw) => {
-    const sessionId = decode(Schema.String, raw);
-    await clipboard.writeText(await dependencies.player.audioDiagnostics(sessionId));
   });
   handle("player:state", async () => dependencies.player.getState());
   handle("player:display", async (_event, raw) => {

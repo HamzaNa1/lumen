@@ -16,11 +16,16 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { type ReactNode, type Ref, useEffect, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useEffectEvent, useState } from "react";
 import { Button } from "./Button";
 import { useClickGesture } from "./useClickGesture";
 import { SelectField } from "./Controls";
-import { formatEndsAt, formatPlayerTime, streamLabels } from "./PlayerFormatting";
+import {
+  formatEndsAt,
+  formatPlayerTime,
+  streamLabels,
+  trackSelectionWarning,
+} from "./PlayerFormatting";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
 import { useThrottledCallback } from "./useThrottledCallback";
@@ -39,6 +44,8 @@ interface MediaPlayerProps {
   readonly trackActionError?: string | null;
   readonly onResetTrack?: (kind: "audio" | "subtitle") => void;
   readonly onRetryTrackMemory?: () => void;
+  /** The settings panel closed, so the errors it was showing are no longer wanted. */
+  readonly onDismissErrors?: () => void;
   readonly title: string;
   readonly subtitle?: string;
   readonly paused: boolean;
@@ -55,8 +62,6 @@ interface MediaPlayerProps {
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
   readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
-  /** Exports retained diagnostics even when playback has failed. */
-  readonly onCopyAudioDiagnostics?: () => Promise<void>;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
   readonly trackSelection?: boolean;
   readonly subtitleSelection?: boolean;
@@ -102,6 +107,7 @@ export const MediaPlayer = ({
   trackActionError,
   onResetTrack,
   onRetryTrackMemory,
+  onDismissErrors,
   title,
   subtitle,
   paused,
@@ -117,7 +123,6 @@ export const MediaPlayer = ({
   selectedSubtitleStreamId,
   audioOutput,
   onAudioOutput,
-  onCopyAudioDiagnostics,
   trackSelection = true,
   subtitleSelection = true,
   buffering = false,
@@ -143,12 +148,13 @@ export const MediaPlayer = ({
   const [timelineHover, setTimelineHover] = useState<number | null>(null);
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [audioActionStatus, setAudioActionStatus] = useState<string | null>(null);
+  const [audioOutputError, setAudioOutputError] = useState<string | null>(null);
   const [changingAudioOutput, setChangingAudioOutput] = useState(false);
   const audioStreams = streams.filter((stream) => stream.kind === "audio");
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
   const audioLabels = streamLabels(audioStreams);
   const subtitleLabels = streamLabels(subtitleStreams);
+  const trackWarning = trackSelectionWarning(trackSelection, subtitleSelection);
   const timelineEnd = duration ?? Math.max(position, 1);
   const seekValue = Math.min(seekPreview ?? position, timelineEnd);
   const volumeValue = volumePreview ?? volume;
@@ -187,9 +193,16 @@ export const MediaPlayer = ({
 
   const onVideoClick = useClickGesture(onPause, () => onFullscreen?.(), videoDoubleClickMs);
 
+  const closeSettings = (): void => {
+    if (!settingsOpen) return;
+    setSettingsOpen(false);
+    setAudioOutputError(null);
+    onDismissErrors?.();
+  };
+  const closeSettingsWithControls = useEffectEvent(closeSettings);
   useEffect(() => {
     // The settings panel is part of the controls, so it goes away with them.
-    if (!controlsVisible) setSettingsOpen(false);
+    if (!controlsVisible) closeSettingsWithControls();
   }, [controlsVisible]);
 
   return (
@@ -216,7 +229,7 @@ export const MediaPlayer = ({
             className="media-player-video-hit-target"
             aria-hidden="true"
             onClick={() => {
-              if (settingsOpen) setSettingsOpen(false);
+              if (settingsOpen) closeSettings();
               else if (!inactive) {
                 if (onFullscreen === undefined) onPause();
                 else onVideoClick();
@@ -448,13 +461,18 @@ export const MediaPlayer = ({
                   aria-label="Playback settings"
                   aria-expanded={settingsOpen}
                   aria-controls="media-player-settings-panel"
-                  onClick={() => setSettingsOpen((open) => !open)}
+                  onClick={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
                 >
                   <Settings2 aria-hidden="true" size={19} />
                 </Button>
                 {settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
-                    <strong>Audio and subtitles</strong>
+                    {trackWarning === null ? null : (
+                      <div className="media-player-settings-warning" role="note">
+                        <TriangleAlert aria-hidden="true" size={16} />
+                        <p>{trackWarning}</p>
+                      </div>
+                    )}
                     {onAudioOutput === undefined ? null : (
                       <SelectField
                         label="Audio output"
@@ -467,10 +485,10 @@ export const MediaPlayer = ({
                         ]}
                         onValueChange={(value) => {
                           if (value !== "stereo" && value !== "auto-safe") return;
-                          setAudioActionStatus(null);
+                          setAudioOutputError(null);
                           setChangingAudioOutput(true);
                           void onAudioOutput(value)
-                            .catch(() => setAudioActionStatus("Could not change audio output."))
+                            .catch(() => setAudioOutputError("Could not change audio output."))
                             .finally(() => setChangingAudioOutput(false));
                         }}
                       />
@@ -519,15 +537,8 @@ export const MediaPlayer = ({
                         }
                       />
                     ) : null}
-                    {!subtitleSelection ? (
-                      <p>This browser can’t select embedded subtitles.</p>
-                    ) : null}
-                    {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
-                      <p>
-                        {trackSelection
-                          ? "This file has no alternate audio or subtitle tracks."
-                          : "This player can’t switch audio or subtitle tracks."}
-                      </p>
+                    {trackSelection && audioStreams.length === 0 && subtitleStreams.length === 0 ? (
+                      <p>This file has no alternate audio or subtitle tracks.</p>
                     ) : null}
                     {onResetTrack === undefined ||
                     (audioStreams.length > 0 && subtitleSelection) ? null : (
@@ -544,19 +555,6 @@ export const MediaPlayer = ({
                         ) : null}
                       </>
                     )}
-                    {onCopyAudioDiagnostics === undefined ? null : (
-                      <Button
-                        onClick={() => {
-                          setAudioActionStatus(null);
-                          void onCopyAudioDiagnostics().then(
-                            () => setAudioActionStatus("Playback diagnostics exported."),
-                            () => setAudioActionStatus("Could not export playback diagnostics."),
-                          );
-                        }}
-                      >
-                        Export playback diagnostics
-                      </Button>
-                    )}
                     {trackActionError == null ? null : <p role="alert">{trackActionError}</p>}
                     {trackMemoryError == null ? null : (
                       <p role="alert">
@@ -564,7 +562,7 @@ export const MediaPlayer = ({
                         <Button onClick={onRetryTrackMemory}>Retry saving choice</Button>
                       </p>
                     )}
-                    {audioActionStatus === null ? null : <p role="status">{audioActionStatus}</p>}
+                    {audioOutputError === null ? null : <p role="alert">{audioOutputError}</p>}
                   </div>
                 ) : null}
               </div>

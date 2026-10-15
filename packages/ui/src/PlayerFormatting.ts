@@ -63,6 +63,17 @@ export const streamLabels = (streams: ReadonlyArray<PlayableStream>): string[] =
   );
 };
 
+/** Why some tracks cannot be switched in this player, whatever the file contains. */
+export const trackSelectionWarning = (
+  trackSelection: boolean,
+  subtitleSelection: boolean,
+): string | null =>
+  !trackSelection
+    ? "This browser can’t switch audio tracks or select embedded subtitles."
+    : !subtitleSelection
+      ? "This browser can’t select embedded subtitles."
+      : null;
+
 export const formatPlayerTime = (seconds: number): string => {
   const value = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(value / 60);

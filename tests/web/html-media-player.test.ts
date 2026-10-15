@@ -1035,4 +1035,13 @@ describe("browser track memory", () => {
     expect(f.api.memory.audio?.streamId).toBe("fr"); expect(f.player.getState()?.trackMemoryError).toBeNull();
     await f.player.stop();
   });
+  test("dismissing a save failure clears the error and keeps the chosen audio playing", async () => {
+    const f = setup(streams);
+    f.element.audioTracks = { length: 2, 0: { enabled: true }, 1: { enabled: false } };
+    await f.player.start({ itemId: "movie" }); f.api.saveFailure = true;
+    expect((await f.player.selectAudioStream("session-1", "fr")).trackMemoryError).toContain("Retry");
+    const state = await f.player.dismissTrackMemoryError("session-1");
+    expect(state).toMatchObject({ selectedAudioStreamId: "fr", trackMemoryError: null });
+    await f.player.stop();
+  });
 });

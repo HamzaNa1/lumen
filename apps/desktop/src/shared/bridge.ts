@@ -37,6 +37,7 @@ export interface DesktopBridge {
   readonly player: {
     readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
     readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
+    readonly dismissTrackMemoryError: (sessionId: string) => Promise<PlayerState>;
     readonly start: (
       itemId: string,
       startAtSeconds?: number,
@@ -50,7 +51,6 @@ export interface DesktopBridge {
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
     readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<PlayerState>;
     readonly audioOutput: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
-    readonly copyAudioDiagnostics: (sessionId: string) => Promise<void>;
     readonly state: () => Promise<PlayerState | null>;
     readonly display: (display: PlayerDisplay) => Promise<void>;
     readonly displayState: () => Promise<PlayerDisplay | null>;

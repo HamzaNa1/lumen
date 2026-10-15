@@ -189,32 +189,9 @@ test("the desktop player controls are what they were before the extraction", asy
     await expectDesktopUnchanged(testInfo, `player ${name}`, builds, withoutLaterControls);
   }
 
-  // The last state is still showing: open its menus.
-  for (const { page } of builds.desktops)
-    await page.getByRole("button", { name: "Playback settings", exact: true }).click();
-  await expect(
-    builds.desktop.page.getByRole("button", { name: "Export playback diagnostics", exact: true }),
-  ).toBeVisible();
-  // Diagnostics now include playback failures. Compare the rest of the menu against the
-  // fixed baseline while explicitly accounting for this intentional label change.
-  if (builds.baseline !== null) {
-    const previousLabel = builds.baseline.page.getByRole("button", {
-      name: "Copy audio diagnostics",
-      exact: true,
-    });
-    await expect(previousLabel).toBeVisible();
-    await previousLabel.evaluate((button) => {
-      button.textContent = "Export playback diagnostics";
-    });
-    // The menu has since been raised above the sliders it opens over, so its shadow now
-    // falls on the volume slider instead of behind it.
-    await builds.baseline.page.addStyleTag({
-      content: ".media-player-settings-panel { z-index: 3; }",
-    });
-  }
-  await expectDesktopUnchanged(testInfo, "playback settings", builds, withoutLaterControls);
+  // The last state is still showing: open its watch groups. The playback settings have been
+  // redesigned since the baseline, so they are no longer compared with it.
   for (const { page } of builds.desktops) {
-    await page.getByRole("button", { name: "Playback settings", exact: true }).click();
     await page.locator(".watch-group-chip").click();
     await expect(page.getByText("No groups yet")).toBeVisible();
   }
@@ -254,6 +231,36 @@ test("the playback settings open over the timeline", async ({ context, baseURL }
     point,
   );
   expect(topmost, "the settings panel is drawn over the timeline's thumb").toBe(true);
+});
+
+test("closing the playback settings clears the errors they were showing", async ({
+  context,
+  baseURL,
+}) => {
+  const { page } = (await signedInBuilds(context, baseURL ?? "")).desktop;
+  await gotoDesktop(page, desktopBuild, "/", {
+    overlay: true,
+    display: { ...filmDisplay, loading: false, error: null },
+    player: playing,
+  });
+  const settings = page.getByRole("button", { name: "Playback settings", exact: true });
+  const errors = page.locator(".media-player-settings-panel [role='alert']");
+  await settings.click();
+  // The harness bridge rejects both changes, so each leaves an error in the panel.
+  await page.getByRole("combobox", { name: "Audio output" }).click();
+  await page.getByRole("option", { name: "Automatic (system layout)" }).click();
+  await page.getByRole("combobox", { name: "Audio track" }).click();
+  await page.getByRole("option", { name: /^Japanese/u }).click();
+  await expect(errors).toHaveText([
+    "Not available in the parity harness",
+    "Could not change audio output.",
+  ]);
+
+  await settings.click();
+  await expect(page.locator(".media-player-settings-panel")).toHaveCount(0);
+  await settings.click();
+  await expect(page.locator(".media-player-settings-panel")).toBeVisible();
+  await expect(errors).toHaveCount(0);
 });
 
 test("hovering the timeline shows the time under the pointer", async ({

@@ -123,6 +123,7 @@ const bridge: DesktopBridge = {
   player: {
     resetTrack: unavailable,
     retryTrackMemory: unavailable,
+    dismissTrackMemoryError: unavailable,
     start: unavailable,
     pause: unavailable,
     seek: unavailable,
@@ -131,7 +132,6 @@ const bridge: DesktopBridge = {
     selectAudio: unavailable,
     selectSubtitle: unavailable,
     audioOutput: unavailable,
-    copyAudioDiagnostics: unavailable,
     state: async () => scenario.player ?? null,
     display: async () => undefined,
     displayState: async () => scenario.display ?? null,

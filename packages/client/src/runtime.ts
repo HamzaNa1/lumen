@@ -44,8 +44,6 @@ export interface PlatformCapabilities {
   readonly serverSwitching: boolean;
   /** The player can choose how audio channels reach the output device. */
   readonly nativeAudioOutput: boolean;
-  /** The player can describe its audio pipeline for troubleshooting. */
-  readonly audioDiagnostics: boolean;
   /** Audio and subtitle tracks inside a file can be switched during playback. */
   readonly trackSelection: boolean;
   readonly fullscreen: boolean;
@@ -143,7 +141,6 @@ export interface PlayerSurface {
 
 export interface NativeAudioRuntime {
   readonly output: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
-  readonly copyDiagnostics: (sessionId: string) => Promise<void>;
 }
 
 export interface TrackSettingsRuntime {
@@ -155,6 +152,8 @@ export interface TrackSettingsRuntime {
 export interface PlaybackRuntime {
   readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
   readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
+  /** Gives up saving the track choices that failed to save, which clears the error. */
+  readonly dismissTrackMemoryError: (sessionId: string) => Promise<PlayerState>;
   /**
    * Starts an item, or asks the watch group to when the viewer is in one. `replaces` is what the
    * viewer was watching when they asked; a group that has moved on from it plays nothing.
@@ -187,7 +186,6 @@ export interface PlaybackRuntime {
   readonly presentation: PlayerPresentation;
   /** Present only where the player controls the audio device itself. */
   readonly nativeAudio: NativeAudioRuntime | null;
-  readonly copyDiagnostics?: () => Promise<void>;
 }
 
 export interface WatchRuntime {

@@ -70,6 +70,8 @@ const api: DesktopBridge = {
   player: {
     resetTrack: (sessionId, kind) => invoke("player:reset-track", { sessionId, kind }),
     retryTrackMemory: (sessionId) => invoke("player:retry-track-memory", sessionId),
+    dismissTrackMemoryError: (sessionId) =>
+      invoke("player:dismiss-track-memory-error", sessionId),
     start: (itemId, startAtSeconds, title, replaces) =>
       invoke("player:start", { itemId, startAtSeconds, title, replaces }),
     pause: (sessionId, paused) => invoke("player:pause", { sessionId, paused }),
@@ -80,7 +82,6 @@ const api: DesktopBridge = {
     selectSubtitle: (sessionId, streamId) =>
       invoke("player:select-subtitle", { sessionId, streamId }),
     audioOutput: (sessionId, output) => invoke("player:audio-output", { sessionId, output }),
-    copyAudioDiagnostics: (sessionId) => invoke("player:copy-audio-diagnostics", sessionId),
     state: () => invoke("player:state"),
     display: (display) => invoke("player:display", display),
     displayState: () => invoke("player:display-state"),
