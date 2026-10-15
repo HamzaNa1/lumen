@@ -43,3 +43,15 @@ test("probe descriptors retain language, channels, commentary and subtitle role 
     hearingImpaired: null,
   });
 });
+
+test("format duration accepts fractional seconds", () => {
+  const parse = (duration: string | undefined) =>
+    parseFfprobeOutput({ format: { duration }, streams: [] }).durationMs;
+  expect(parse("20.021000")).toBe(20_021);
+  expect(parse("7200")).toBe(7_200_000);
+  expect(parse("0.0004")).toBe(0);
+  expect(parse(undefined)).toBeNull();
+  expect(parse("N/A")).toBeNull();
+  expect(parse("")).toBeNull();
+  expect(parse("-1.5")).toBeNull();
+});
