@@ -777,6 +777,7 @@ test("a buffered viewer whose drift cannot be measured does not keep a recovered
     await eventually(
       () => steady.native.state?.paused === false && stalled.native.state?.paused === false,
     );
+    await eventually(() => steady.native.samplesSkipped > 0);
     expect(steady.native.samplesSkipped).toBeGreaterThan(0);
     expect(owner.status.group?.playback).toMatchObject({
       positionSeconds: held?.playback?.positionSeconds,
