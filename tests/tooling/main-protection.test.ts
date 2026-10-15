@@ -11,6 +11,8 @@ const requiredContexts = [
   "server-image",
   "native-desktop / macOS lifecycle and MPV audio",
   "native-desktop / Windows Electron and MPV playback",
+  "product-verification (server)",
+  "product-verification (desktop)",
 ];
 const directories: string[] = [];
 afterEach(() => {
@@ -112,12 +114,71 @@ test("plan previews strict main checks without changing GitHub or dropping unrel
               context: "native-desktop / Windows Electron and MPV playback",
               integration_id: 15368,
             },
+            { context: "product-verification (server)", integration_id: 15368 },
+            { context: "product-verification (desktop)", integration_id: 15368 },
           ],
         },
       },
     ]),
   );
   expect(read()).toEqual(before);
+});
+
+test("apply adds product checks to active main protection without changing any unrelated settings", async () => {
+  const { run, read, write } = fixture();
+  const before = read();
+  before.enforcement = "active";
+  before.rules.push(
+    {
+      type: "pull_request",
+      parameters: {
+        required_approving_review_count: 0,
+        dismiss_stale_reviews_on_push: false,
+        required_reviewers: [],
+        require_code_owner_review: false,
+        require_last_push_approval: false,
+        required_review_thread_resolution: false,
+        require_extra_approval_for_unattributed_changes: true,
+        allowed_merge_methods: ["merge", "squash", "rebase"],
+      },
+    },
+    {
+      type: "required_status_checks",
+      parameters: {
+        strict_required_status_checks_policy: true,
+        do_not_enforce_on_create: false,
+        required_status_checks: [
+          { context: "check", integration_id: 15368 },
+          { context: "browser", integration_id: 15368 },
+          { context: "server-image", integration_id: 15368 },
+          { context: "native-desktop / macOS lifecycle and MPV audio", integration_id: 15368 },
+          {
+            context: "native-desktop / Windows Electron and MPV playback",
+            integration_id: 15368,
+          },
+        ],
+      },
+    },
+  );
+  write(before);
+  const expected = structuredClone(before);
+  delete expected.id;
+  expected.rules.find(
+    (rule: { type: string }) => rule.type === "required_status_checks",
+  ).parameters.required_status_checks.push(
+    { context: "product-verification (server)", integration_id: 15368 },
+    { context: "product-verification (desktop)", integration_id: 15368 },
+  );
+  const plan = await run("plan");
+  expect(plan.exitCode, plan.stderr).toBe(0);
+  expect(JSON.parse(plan.stdout)).toEqual(expected);
+  expect(read()).toEqual(before);
+  const applied = await run("apply");
+  expect(applied.exitCode, applied.stderr).toBe(0);
+  expect(read()).toEqual(expected);
+  const again = await run("apply", { RULESET_READ_ONLY: "1" });
+  expect(again.exitCode, again.stderr).toBe(0);
+  expect(read()).toEqual(expected);
 });
 
 test("apply activates strict checks while preserving stronger rules, and is a no-op once verified", async () => {
