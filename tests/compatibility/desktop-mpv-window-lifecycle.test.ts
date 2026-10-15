@@ -1,3 +1,4 @@
+import type { MpvProcess as MpvProcessInstance } from "../../apps/desktop/src/main/player/MpvProcess";
 import { describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { defaultTrackMemory, describeTrack, type PlayerSession, type TrackChoiceInput, type TrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
@@ -119,7 +120,7 @@ const withPlayback = async (
   const connections: InstanceType<typeof MpvIpc>[] = [];
   const startProcess = spyOn(MpvProcess, "start").mockImplementation((options) => {
     exits.push(() => options.onExit?.(1));
-    return { stop: stopProcess } as unknown as MpvProcess;
+    return { stop: stopProcess } as unknown as MpvProcessInstance;
   });
   const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async function (this: InstanceType<typeof MpvIpc>) {
     connections.push(this);
@@ -1048,7 +1049,7 @@ describe("macOS MPV window lifecycle", () => {
         stop: async () => {
           calls.push("process:destroy");
         },
-      } as unknown as MpvProcess;
+      } as unknown as MpvProcessInstance;
     });
     const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async () => {
       calls.push("ipc:connect");

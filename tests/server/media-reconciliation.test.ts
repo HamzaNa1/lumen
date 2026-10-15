@@ -97,8 +97,8 @@ const makeHarness = async () => {
     catalog,
     scheduler,
   );
-  const run = <A>(effect: Effect.Effect<A, unknown, never>): Promise<A> =>
-    Effect.runPromise(effect.pipe(Effect.provide(layer)) as Effect.Effect<A, unknown, never>);
+  const run = <A>(effect: Effect.Effect<A, unknown, Layer.Success<typeof layer>>): Promise<A> =>
+    Effect.runPromise(effect.pipe(Effect.provide(layer)));
 
   await run(
     Effect.gen(function* () {

@@ -31,7 +31,7 @@ describe("desktop audio settings", () => {
       expect(store.current).toMatchObject({ volume: 100, muted: false });
       store.update({ volume: 40, muted: true });
       store.update({ audioOutput: "stereo" });
-      const expected = { volume: 40, muted: true, audioOutput: "stereo" };
+      const expected = { volume: 40, muted: true, audioOutput: "stereo" } as const;
       await expectStored(path, expected);
       expect((await AudioSettingsStore.open(path)).current).toEqual(expected);
     }));

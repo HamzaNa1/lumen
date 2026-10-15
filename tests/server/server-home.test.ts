@@ -1,3 +1,5 @@
+import { HomeContent } from "../../packages/contracts/src/index.ts";
+import { responseJson } from "../helpers/http";
 import { afterEach, expect, test } from "bun:test";
 import { Database, sql } from "../../packages/database/src/index.ts";
 import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
@@ -8,7 +10,6 @@ import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
 import type {
-  HomeContent,
   CatalogItem,
   CatalogItemDetails,
   CatalogItemPage,
@@ -145,7 +146,7 @@ test("Home selects newest available movies across the catalog within the user's 
   expect((await fetch(new URL("/api/v1/home", home.base))).status).toBe(401);
   const response = await home.request("/api/v1/home");
   expect(response.status).toBe(200);
-  const data = await response.json();
+  const data = await responseJson(HomeContent, response);
   expect(data.libraries.map((library: { id: string }) => library.id)).toEqual([libraryId]);
   expect(data.latest).toHaveLength(1);
   expect(data.latest[0].items.map((item: { id: string }) => item.id)).toEqual([newest, old]);
@@ -206,7 +207,7 @@ test("Continue rows include nested episodes and movies beyond the first browse p
     ],
     [libraryId, musicId],
   );
-  const data = await (await home.request("/api/v1/home")).json();
+  const data = await responseJson(HomeContent, home.request("/api/v1/home"));
   expect(data.continueWatching.map((item: { id: string }) => item.id)).toEqual([episode, movie]);
   expect(data.continueListening.map((item: { id: string }) => item.id)).toEqual([song]);
   expect(data.continueWatching[0]).toMatchObject({
@@ -289,7 +290,7 @@ test("Next Up follows the furthest watched episode and moves in-progress episode
     ],
     [libraryId],
   );
-  const getHome = async () => (await home.request("/api/v1/home")).json();
+  const getHome = async () => responseJson(HomeContent, home.request("/api/v1/home"));
   expect((await getHome()).nextUp.map((item: { id: string }) => item.id)).toEqual([next]);
   expect(
     (
@@ -350,12 +351,12 @@ test("Home always uses default library ordering and filtering without preference
     ],
     [music, second, first],
   );
-  const content = await (await home.request("/api/v1/home")).json();
+  const content = await responseJson(HomeContent, home.request("/api/v1/home"));
   const orderedIds = [...[first, second].sort(), music];
   expect(content.libraryCount).toBe(3);
   expect(content.libraries.map((library: { id: string }) => library.id)).toEqual(orderedIds);
   expect(content.latest.map((row: { libraryId: string }) => row.libraryId)).toEqual(orderedIds);
-  expect(content.latest.every((row: { items: unknown[] }) => row.items.length === 1)).toBe(true);
+  expect(content.latest.every((row) => row.items.length === 1)).toBe(true);
   expect(content.continueWatching).toHaveLength(2);
   expect(content.continueListening).toHaveLength(1);
   expect(content).not.toHaveProperty("preferences");
@@ -375,7 +376,7 @@ test("Home always uses default library ordering and filtering without preference
       })
     ).status,
   ).toBe(404);
-  expect(await (await home.request("/api/v1/home")).json()).toEqual(content);
+  expect(await responseJson(HomeContent, home.request("/api/v1/home"))).toEqual(content);
 });
 
 test("Latest TV groups episode batches into seasons or shows and ranks by episode additions", async () => {
@@ -421,7 +422,7 @@ test("Latest TV groups episode batches into seasons or shows and ranks by episod
   const whole = makeShow("Whole show", [[9], [9]]);
   const oneSeason = makeShow("Single season", [[7, 7]]);
   const home = await fixture(items, [libraryId]);
-  const data = await (await home.request("/api/v1/home")).json();
+  const data = await responseJson(HomeContent, home.request("/api/v1/home"));
   expect(data.latest).toHaveLength(1);
   expect(data.latest[0].items.map((item: { id: string }) => item.id)).toEqual([
     single.episodeIds[0]?.[1],
@@ -501,7 +502,7 @@ test("Home applies default row limits after filtering and includes watched music
       available: false,
     });
   const home = await fixture(items, [moviesId, musicId, showsId]);
-  const data = await (await home.request("/api/v1/home")).json();
+  const data = await responseJson(HomeContent, home.request("/api/v1/home"));
   expect(data.continueWatching).toHaveLength(12);
   expect(data.continueWatching[0].title).toBe("Movie 35");
   expect(data.continueWatching[11].title).toBe("Movie 24");
@@ -510,6 +511,8 @@ test("Home applies default row limits after filtering and includes watched music
   expect(data.nextUp[23].title).toBe("Next 12");
   const movies = data.latest.find((row: { libraryId: string }) => row.libraryId === moviesId);
   const music = data.latest.find((row: { libraryId: string }) => row.libraryId === musicId);
+  if (movies === undefined || music === undefined)
+    throw new Error("Expected both libraries on Home");
   expect(movies.items).toHaveLength(16);
   expect(movies.items[0].title).toBe("Movie 35");
   expect(music.items).toHaveLength(30);
@@ -559,7 +562,9 @@ test("watch-state requests update whole seasons, clear resume, and preserve libr
     });
 
   expect((await setWatched(season, true)).status).toBe(200);
-  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(true);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(
+    true,
+  );
   const firstPage = await home.json<CatalogItemPage>(`/api/v1/items/${season}/children?limit=100`);
   expect(firstPage.items).toHaveLength(100);
   expect(
@@ -582,14 +587,18 @@ test("watch-state requests update whole seasons, clear resume, and preserve libr
 
   const episodeId = episodes[0]?.id ?? "";
   expect((await setWatched(episodeId, false)).status).toBe(200);
-  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(false);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(
+    false,
+  );
   expect(
     (await home.json<CatalogItemPage>(`/api/v1/items/${show}/children`)).items.find(
       (item) => item.id === season,
     )?.completed,
   ).toBe(false);
   expect((await setWatched(episodeId, true)).status).toBe(200);
-  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(true);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${season}`)).item.completed).toBe(
+    true,
+  );
   expect((await setWatched(season, false)).status).toBe(200);
   expect(
     (await home.json<CatalogItemPage>(`/api/v1/items/${season}/children`)).items.every(
@@ -615,7 +624,9 @@ test("watch-state requests update whole seasons, clear resume, and preserve libr
   });
   expect((await home.json<HomeContent>("/api/v1/home")).continueWatching).toEqual([]);
   expect((await setWatched(movie, false)).status).toBe(200);
-  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${movie}`)).item.completed).toBe(false);
+  expect((await home.json<CatalogItemDetails>(`/api/v1/items/${movie}`)).item.completed).toBe(
+    false,
+  );
   expect((await setWatched(privateMovie, true)).status).toBe(403);
   expect((await setWatched(newUuid(), true)).status).toBe(404);
 });

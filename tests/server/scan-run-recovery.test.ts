@@ -147,6 +147,8 @@ const makeHarness = async () => {
     setTmdbKey: () => Effect.void,
   });
   const tmdb = Layer.succeed(TmdbProvider, {
+    matchOptions: () => Effect.die("unused"),
+    setMatch: () => Effect.die("unused"),
     episodeOrder: () => Effect.die("unused"),
     setEpisodeOrder: () => Effect.void,
     enrichSource: (sourceId) =>
