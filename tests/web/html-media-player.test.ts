@@ -513,6 +513,27 @@ describe("browser playback lifecycle", () => {
     expect(player.getState()).toBeNull();
   });
 
+  test("active playback reports heartbeats and progress periodically, then stops reporting", async () => {
+    jest.useFakeTimers();
+    const { element, player, calls } = setup();
+    await player.start({ itemId: "item-1" });
+    element.currentTime = 42;
+    for (let tick = 0; tick < 6; tick += 1) {
+      jest.advanceTimersByTime(3_000);
+      await nextTurn();
+    }
+    expect(calls.filter((call) => call.startsWith("heartbeat"))).toEqual([
+      "heartbeat session-1", "heartbeat session-1",
+    ]);
+    expect(calls).toContain("progress session-1 @42 #6");
+
+    await player.stop();
+    const stopped = [...calls];
+    jest.advanceTimersByTime(18_000);
+    await nextTurn();
+    expect(calls).toEqual(stopped);
+  });
+
   test("leaving the page saves progress with requests that can outlive it", async () => {
     const { element, player, calls } = setup();
     await player.start({ itemId: "item-1" });
