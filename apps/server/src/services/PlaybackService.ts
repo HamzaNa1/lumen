@@ -457,7 +457,8 @@ export const makePlaybackService = Effect.gen(function* () {
         modifiedAtMs: sql<number>`coalesce(${mediaSources.modifiedAtMs}, 0)`,
         mimeType: sql<string>`case
         when lower(${mediaSources.absolutePath}) like '%.mkv' then 'video/x-matroska'
-        when lower(${mediaSources.absolutePath}) like '%.mp4' or lower(${mediaSources.absolutePath}) like '%.m4v' or lower(${mediaSources.absolutePath}) like '%.webm' then 'video/mp4'
+        when lower(${mediaSources.absolutePath}) like '%.mp4' or lower(${mediaSources.absolutePath}) like '%.m4v' then 'video/mp4'
+        when lower(${mediaSources.absolutePath}) like '%.webm' then 'video/webm'
         when lower(${mediaSources.absolutePath}) like '%.flac' then 'audio/flac'
         when lower(${mediaSources.absolutePath}) like '%.ogg' or lower(${mediaSources.absolutePath}) like '%.oga' then 'audio/ogg'
         when lower(${mediaSources.absolutePath}) like '%.wav' then 'audio/wav'

@@ -45,7 +45,7 @@ const baselineBuild: DesktopBuild = { files: baselineRenderer, base: "/desktop-b
 
 test.skip(
   ({ browserName }) => browserName !== "chromium",
-  "One engine is enough to compare builds",
+  "Desktop renderer parity targets Electron's Chromium engine; cross-browser playback is covered by web-app.e2e.ts",
 );
 test.skip(!existsSync(join(desktopRenderer, "index.html")), "Build the desktop renderer first");
 // The desktop renderer's document is supplied by the test, not loaded from the server, and the

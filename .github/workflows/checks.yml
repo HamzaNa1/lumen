@@ -14,7 +14,14 @@ jobs:
       - run: bun install --frozen-lockfile
       - run: bun run lint
       - run: bun run typecheck
-      - run: bun test
+      - run: bun run test:coverage
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: production-coverage
+          path: coverage/
+          retention-days: 14
+          if-no-files-found: error
       - run: bun run build
   browser:
     runs-on: ubuntu-latest
@@ -29,11 +36,14 @@ jobs:
       - run: bunx playwright install --with-deps chromium firefox webkit
       - run: bun run test:browser
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: ${{ !cancelled() }}
         with:
           name: browser-test-results
-          path: test-results
-          if-no-files-found: ignore
+          path: |
+            test-results/
+            playwright-report/
+          retention-days: 14
+          if-no-files-found: error
   server-image:
     runs-on: ubuntu-latest
     steps:

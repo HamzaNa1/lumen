@@ -17,9 +17,10 @@
     "typecheck": "bun run --filter '*' typecheck && tsc -p tsconfig.scripts.json",
     "lint": "biome lint .",
     "test": "bun test",
+    "test:coverage": "bun scripts/coverage.ts",
     "test:browser": "bun run build:web && bun run --cwd apps/desktop build && bun tests/browser/buildDesktopBaseline.ts && playwright test",
     "test:browser:baseline": "bun run build:web && bun run --cwd apps/desktop build && bun tests/browser/buildDesktopBaseline.ts && playwright test desktop-parity --project chromium",
-    "check": "bun run lint && bun run typecheck && bun test && bun run build",
+    "check": "bun run lint && bun run typecheck && bun run test:coverage && bun run build",
     "check:server": "bun scripts/check.ts server",
     "check:desktop": "bun scripts/check.ts desktop",
     "db:generate": "bun run --cwd packages/database generate",
@@ -29,9 +30,16 @@
     "backup": "bun apps/server/scripts/backup.ts"
   },
   "devDependencies": {
+    "@babel/core": "7.29.7",
+    "@babel/plugin-transform-modules-commonjs": "7.29.7",
+    "@babel/plugin-transform-typescript": "7.29.9",
     "@biomejs/biome": "2.5.14",
+    "@jridgewell/trace-mapping": "0.3.31",
     "@playwright/test": "1.63.0",
+    "@types/babel__core": "7.20.5",
     "@types/bun": "1.4.2",
+    "@types/istanbul-lib-instrument": "1.7.8",
+    "istanbul-lib-instrument": "6.0.3",
     "typescript": "7.0.2"
   }
 }
