@@ -234,9 +234,14 @@ const playFilm = (page: Page): Promise<void> => play(page, "Film");
 test("supported media plays under the shared controls", async ({ page }, testInfo) => {
   await signIn(page);
   await page.goto("/web/library");
-  const stream = page.waitForResponse((response) => new URL(response.url()).pathname.startsWith("/api/v1/media/"));
+  // Linux WebKit reports a synthetic status-zero response before its media backend's HTTP request.
+  const stream = page.waitForResponse((response) =>
+    new URL(response.url()).pathname.startsWith("/api/v1/media/") && response.status() !== 0,
+  );
   await playFilm(page);
-  expect((await stream).headers()["content-type"]).toBe(testInfo.project.name === "chromium" ? "video/mp4" : "video/webm");
+  const response = await stream;
+  expect([200, 206]).toContain(response.status());
+  expect(response.headers()["content-type"]).toBe(testInfo.project.name === "chromium" ? "video/mp4" : "video/webm");
   // A film has no show to place it in, so only the year it came out sits under its title.
   await expect(page.getByRole("region", { name: "Media player" }).getByText("(2019)")).toBeVisible();
   await testInfo.attach("player on a film", {
@@ -507,6 +512,9 @@ test("clicking the video toggles playback without taking focus", async ({
   await playFilm(page);
   const paused = () => page.evaluate(() => document.querySelector("video")?.paused);
 
+  // A restored position can be nonzero before loading finishes and the hit target is active.
+  await expect(page.locator('.media-player[data-status="ready"]')).toBeVisible();
+  await expect.poll(paused).toBe(false);
   await page.mouse.move(700, 400);
   await expect(page.getByRole("button", { name: "Pause playback" })).toBeVisible();
   await page.mouse.click(700, 400);

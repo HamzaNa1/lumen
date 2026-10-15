@@ -10,6 +10,8 @@ This is **statement-start line coverage**, not branch/function coverage or proof
 
 Enforce an uncovered-line budget per workspace, seeded from the existing full suite on the base of this change. This preserves current test investment without requiring a broad UI/native test rewrite or choosing an aspirational percentage. Adding covered code cannot dilute the budget, and a new workspace starts with zero allowance. Budget increases require an explicit reviewed baseline change and rationale; improvements should lower the baseline. The gate is not a substitute for reviewing meaningful assertions.
 
+The unit coverage contract is host-independent wherever native dependencies are already faked. macOS window lifecycle tests select the Darwin policy explicitly and restore the host platform after each test, just as the existing Windows policy tests do. Skipping these fake-based tests on Linux measured 679 uncovered desktop lines against macOS's 674, without any production change. Running both policies keeps one production inventory and one unchanged budget; it does not claim native Cocoa/MPV integration coverage. Native integration checks remain separate evidence.
+
 ## Browser coverage
 
 Keep the existing H.264/AAC fixture and all playback checks on Chromium. Firefox and WebKit use the same scenes encoded as VP8/Vorbis WebM. Separate fixture servers preserve identical catalog titles and avoid mutating a shared source between engines. No capability-driven skips conceal launch or codec regressions: unsupported playback fails with evidence. Desktop renderer parity intentionally targets Chromium because Electron uses it; its historical baseline is separate maintenance debt.
