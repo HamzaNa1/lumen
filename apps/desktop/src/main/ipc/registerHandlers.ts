@@ -175,6 +175,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("player:retry-track-memory", async (_event, raw) =>
     dependencies.player.retryTrackMemory(decode(Schema.String, raw)),
   );
+  handle("player:dismiss-track-memory-error", async (_event, raw) =>
+    dependencies.player.dismissTrackMemoryError(decode(Schema.String, raw)),
+  );
   handle("accounts:list", async () => dependencies.registry.list());
   handle("accounts:discover-server", async (_event, raw) => {
     const input = decode(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)), raw);

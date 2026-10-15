@@ -446,6 +446,14 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
+  async dismissTrackMemoryError(sessionId: string): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    if (active.selection === null) throw new Error("Playback is starting");
+    await active.selection.dismissError();
+    this.assertActive(sessionId);
+    return this.requireState();
+  }
+
   private async applyTrack(
     active: ActiveSession,
     kind: TrackKind,

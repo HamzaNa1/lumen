@@ -317,6 +317,12 @@ export class HtmlMediaPlayer {
     return this.publishIfActive(active);
   }
 
+  async dismissTrackMemoryError(sessionId: string): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    await active.selection?.dismissError();
+    return this.publishIfActive(active);
+  }
+
   private applyAudio(active: ActiveSession, streamId: string | null): void {
     const tracks = this.element.audioTracks;
     const index = active.streams.findIndex((stream) => stream.id === streamId);

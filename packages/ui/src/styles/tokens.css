@@ -28,6 +28,8 @@
   --positive: #5bd48a;
   --positive-soft: rgba(91, 212, 138, 0.13);
   --warning: #f0b541;
+  --warning-text: #f7d58c;
+  --warning-soft: rgba(240, 181, 65, 0.1);
   --danger: #f87171;
   --danger-text: #fca5a5;
   --danger-soft: rgba(248, 113, 113, 0.11);
@@ -2741,6 +2743,26 @@ body:has(.app-shell) {
   color: rgba(255, 255, 255, 0.6);
   font-size: 12.5px;
   line-height: 1.45;
+}
+.media-player-settings-warning {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid rgba(240, 181, 65, 0.24);
+  border-radius: var(--radius);
+  background: var(--warning-soft);
+}
+.media-player-settings-warning > svg {
+  margin-top: 1px;
+  color: var(--warning);
+}
+.media-player-settings-warning > div {
+  display: grid;
+  gap: 4px;
+}
+.media-player-settings-panel .media-player-settings-warning p {
+  color: var(--warning-text);
 }
 .media-player-settings-panel p[role="alert"] {
   display: grid;

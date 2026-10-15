@@ -249,6 +249,23 @@ describe("explicit track selection queue", () => {
       "save audio b",
     ]);
   });
+  test("dismissing a failed save clears the error and stops retrying that choice", async () => {
+    const f = controllerFixture();
+    f.fail(true);
+    await f.controller.select("audio", "b");
+    expect(f.events.at(-1)).toBe("error");
+    await f.controller.dismissError();
+    expect(f.events.at(-1)).toBe("saved");
+    expect(f.events).toContain("apply audio b");
+    f.fail(false);
+    await f.controller.select("subtitle", null);
+    await f.controller.retry();
+    expect(f.memory()).toMatchObject({ audio: null, subtitle: "off" });
+    expect(f.events.filter((event) => event.startsWith("save "))).toEqual([
+      "save audio b",
+      "save subtitle off",
+    ]);
+  });
   test("a failed reset applies settings immediately and retries clearing only that override", async () => {
     const f = controllerFixture();
     await f.controller.select("audio", "b");

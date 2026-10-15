@@ -1,6 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import type { PlayableStream } from "../../packages/contracts/src/index.ts";
-import { formatEndsAt, streamLabels } from "../../packages/ui/src/PlayerFormatting.ts";
+import {
+  formatEndsAt,
+  streamLabels,
+  trackSelectionWarnings,
+} from "../../packages/ui/src/PlayerFormatting.ts";
 
 const stream = (overrides: Partial<PlayableStream>): PlayableStream => ({
   id: "00000000-0000-4000-8000-000000000000",
@@ -80,5 +84,26 @@ describe("formatEndsAt", () => {
   test("never ends in the past", () => {
     const now = new Date(2026, 0, 1, 8, 26).getTime();
     expect(formatEndsAt(-30, now)).toBe(`Ends at ${clockTime(new Date(now))}`);
+  });
+});
+
+describe("trackSelectionWarnings", () => {
+  test("says nothing when every track can be switched", () => {
+    expect(trackSelectionWarnings(true, true)).toEqual([]);
+  });
+
+  test("warns about subtitles alone when only they cannot be selected", () => {
+    expect(trackSelectionWarnings(true, false)).toEqual([
+      "This browser can’t select embedded subtitles.",
+    ]);
+  });
+
+  test("warns about both when no track can be switched", () => {
+    const both = [
+      "This browser can’t switch audio tracks.",
+      "This browser can’t select embedded subtitles.",
+    ];
+    expect(trackSelectionWarnings(false, true)).toEqual(both);
+    expect(trackSelectionWarnings(false, false)).toEqual(both);
   });
 });

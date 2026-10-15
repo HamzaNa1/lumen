@@ -74,6 +74,7 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     selectAudio: bridge.player.selectAudio,
     resetTrack: bridge.player.resetTrack,
     retryTrackMemory: bridge.player.retryTrackMemory,
+    dismissTrackMemoryError: bridge.player.dismissTrackMemoryError,
     selectSubtitle: bridge.player.selectSubtitle,
     // MPV starts playback without waiting for the viewer, so there is never anything to allow.
     allowPlayback: async () => undefined,

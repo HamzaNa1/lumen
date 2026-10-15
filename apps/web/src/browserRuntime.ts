@@ -213,6 +213,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       volume: (sessionId, volume, muted) => player.volume(sessionId, volume, muted),
       resetTrack: (sessionId, kind) => player.resetTrack(sessionId, kind),
       retryTrackMemory: (sessionId) => player.retryTrackMemory(sessionId),
+      dismissTrackMemoryError: (sessionId) => player.dismissTrackMemoryError(sessionId),
       selectAudio: (sessionId, streamId) => player.selectAudioStream(sessionId, streamId),
       selectSubtitle: async () => {
         throw new Error("This browser cannot show this file’s subtitles");

@@ -37,6 +37,7 @@ export interface DesktopBridge {
   readonly player: {
     readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
     readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
+    readonly dismissTrackMemoryError: (sessionId: string) => Promise<PlayerState>;
     readonly start: (
       itemId: string,
       startAtSeconds?: number,

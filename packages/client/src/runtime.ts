@@ -152,6 +152,8 @@ export interface TrackSettingsRuntime {
 export interface PlaybackRuntime {
   readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
   readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
+  /** Gives up saving the track choices that failed to save, which clears the error. */
+  readonly dismissTrackMemoryError: (sessionId: string) => Promise<PlayerState>;
   /**
    * Starts an item, or asks the watch group to when the viewer is in one. `replaces` is what the
    * viewer was watching when they asked; a group that has moved on from it plays nothing.

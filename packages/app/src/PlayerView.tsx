@@ -123,6 +123,11 @@ export const PlayerView = ({
         trackMemoryError={player?.trackMemoryError ?? null}
         trackActionError={trackActionError}
         onRetryTrackMemory={() => trackAction((id) => runtime.playback.retryTrackMemory(id))}
+        onDismissErrors={() => {
+          setTrackActionError(null);
+          if (player?.trackMemoryError != null)
+            trackAction((id) => runtime.playback.dismissTrackMemoryError(id));
+        }}
         onResetTrack={(kind) => trackAction((id) => runtime.playback.resetTrack(id, kind))}
         subtitleSelection={capabilities.nativeAudioOutput}
         headerActions={

@@ -123,6 +123,7 @@ const bridge: DesktopBridge = {
   player: {
     resetTrack: unavailable,
     retryTrackMemory: unavailable,
+    dismissTrackMemoryError: unavailable,
     start: unavailable,
     pause: unavailable,
     seek: unavailable,

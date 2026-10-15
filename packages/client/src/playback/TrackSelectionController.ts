@@ -66,6 +66,14 @@ export class TrackSelectionController {
     });
   }
 
+  /** Gives up saving the choices that failed to save; they still apply to this playback. */
+  dismissError(): Promise<void> {
+    return this.enqueue(async () => {
+      this.pending.clear();
+      this.options.onError(null);
+    });
+  }
+
   private enqueue(action: () => Promise<void>): Promise<void> {
     const next = this.tail.then(async () => {
       this.options.assertActive();

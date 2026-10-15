@@ -16,11 +16,16 @@ import {
   Volume2,
   VolumeX,
 } from "lucide-react";
-import { type ReactNode, type Ref, useEffect, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useEffectEvent, useState } from "react";
 import { Button } from "./Button";
 import { useClickGesture } from "./useClickGesture";
 import { SelectField } from "./Controls";
-import { formatEndsAt, formatPlayerTime, streamLabels } from "./PlayerFormatting";
+import {
+  formatEndsAt,
+  formatPlayerTime,
+  streamLabels,
+  trackSelectionWarnings,
+} from "./PlayerFormatting";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
 import { useThrottledCallback } from "./useThrottledCallback";
@@ -39,6 +44,8 @@ interface MediaPlayerProps {
   readonly trackActionError?: string | null;
   readonly onResetTrack?: (kind: "audio" | "subtitle") => void;
   readonly onRetryTrackMemory?: () => void;
+  /** The settings panel closed, so the errors it was showing are no longer wanted. */
+  readonly onDismissErrors?: () => void;
   readonly title: string;
   readonly subtitle?: string;
   readonly paused: boolean;
@@ -100,6 +107,7 @@ export const MediaPlayer = ({
   trackActionError,
   onResetTrack,
   onRetryTrackMemory,
+  onDismissErrors,
   title,
   subtitle,
   paused,
@@ -146,6 +154,7 @@ export const MediaPlayer = ({
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
   const audioLabels = streamLabels(audioStreams);
   const subtitleLabels = streamLabels(subtitleStreams);
+  const trackWarnings = trackSelectionWarnings(trackSelection, subtitleSelection);
   const timelineEnd = duration ?? Math.max(position, 1);
   const seekValue = Math.min(seekPreview ?? position, timelineEnd);
   const volumeValue = volumePreview ?? volume;
@@ -184,9 +193,16 @@ export const MediaPlayer = ({
 
   const onVideoClick = useClickGesture(onPause, () => onFullscreen?.(), videoDoubleClickMs);
 
+  const closeSettings = (): void => {
+    if (!settingsOpen) return;
+    setSettingsOpen(false);
+    setAudioOutputError(null);
+    onDismissErrors?.();
+  };
+  const closeSettingsWithControls = useEffectEvent(closeSettings);
   useEffect(() => {
     // The settings panel is part of the controls, so it goes away with them.
-    if (!controlsVisible) setSettingsOpen(false);
+    if (!controlsVisible) closeSettingsWithControls();
   }, [controlsVisible]);
 
   return (
@@ -213,7 +229,7 @@ export const MediaPlayer = ({
             className="media-player-video-hit-target"
             aria-hidden="true"
             onClick={() => {
-              if (settingsOpen) setSettingsOpen(false);
+              if (settingsOpen) closeSettings();
               else if (!inactive) {
                 if (onFullscreen === undefined) onPause();
                 else onVideoClick();
@@ -445,7 +461,7 @@ export const MediaPlayer = ({
                   aria-label="Playback settings"
                   aria-expanded={settingsOpen}
                   aria-controls="media-player-settings-panel"
-                  onClick={() => setSettingsOpen((open) => !open)}
+                  onClick={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
                 >
                   <Settings2 aria-hidden="true" size={19} />
                 </Button>
@@ -515,15 +531,18 @@ export const MediaPlayer = ({
                         }
                       />
                     ) : null}
-                    {!subtitleSelection ? (
-                      <p>This browser can’t select embedded subtitles.</p>
-                    ) : null}
-                    {audioStreams.length === 0 && subtitleStreams.length === 0 ? (
-                      <p>
-                        {trackSelection
-                          ? "This file has no alternate audio or subtitle tracks."
-                          : "This player can’t switch audio or subtitle tracks."}
-                      </p>
+                    {trackWarnings.length === 0 ? null : (
+                      <div className="media-player-settings-warning" role="note">
+                        <TriangleAlert aria-hidden="true" size={16} />
+                        <div>
+                          {trackWarnings.map((warning) => (
+                            <p key={warning}>{warning}</p>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+                    {trackSelection && audioStreams.length === 0 && subtitleStreams.length === 0 ? (
+                      <p>This file has no alternate audio or subtitle tracks.</p>
                     ) : null}
                     {onResetTrack === undefined ||
                     (audioStreams.length > 0 && subtitleSelection) ? null : (
