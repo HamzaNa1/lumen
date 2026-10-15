@@ -26,3 +26,4 @@ Code must be self explanatory, you should not need to explain code in `.md` docs
 
 - use the `--attach` flag to attach any artifacts to PRs
 - use playwright cli when you want to take screenshots or videos
+- always include proof in your PR, either the proof specified in the prompt, or if the prompt has nothing specified, proof that you think is necessary to show the changes
