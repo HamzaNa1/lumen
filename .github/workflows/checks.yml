@@ -61,17 +61,30 @@ jobs:
           bun-version: 1.4.3
       - run: bun install --frozen-lockfile
       - name: Verify compatibility with the released counterpart
+        id: compatibility
         env:
           RELEASE_PRODUCT: ${{ matrix.product }}
-        run: bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
+        run: |
+          set -o pipefail
+          mkdir -p compatibility-results
+          bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT" 2>&1 | tee "compatibility-results/$RELEASE_PRODUCT.log"
+      - name: Upload compatibility diagnostics
+        uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() && (steps.compatibility.outcome == 'success' || steps.compatibility.outcome == 'failure') }}
+        with:
+          name: ${{ matrix.product }}-compatibility-results
+          path: compatibility-results/${{ matrix.product }}.log
+          retention-days: 14
+          if-no-files-found: error
       - run: bunx playwright install --with-deps chromium firefox webkit
       - name: Verify product browsers
+        id: product_browsers
         env:
           RELEASE_PRODUCT: ${{ matrix.product }}
           LUMEN_BROWSER_TEST_PORT: '3279'
         run: bun scripts/test-browser.ts "$RELEASE_PRODUCT"
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && (steps.product_browsers.outcome == 'success' || steps.product_browsers.outcome == 'failure') }}
         with:
           name: ${{ matrix.product }}-browser-test-results
           path: |

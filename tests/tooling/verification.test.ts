@@ -4,6 +4,29 @@ import { productCompatibilityTests } from "../../scripts/lib/products";
 
 const repository = fileURLToPath(new URL("../../", import.meta.url));
 
+const readWorkflow = async (name: string) =>
+  Bun.YAML.parse(await Bun.file(`${repository}.github/workflows/${name}.yml`).text()) as {
+    jobs: Record<
+      string,
+      {
+        needs?: string | string[];
+        uses?: string;
+        if?: string;
+        "continue-on-error"?: boolean;
+        with?: Record<string, string>;
+        steps?: {
+          id?: string;
+          uses?: string;
+          run?: string;
+          if?: string;
+          "continue-on-error"?: boolean;
+          env?: Record<string, string>;
+          with?: Record<string, string>;
+        }[];
+      }
+    >;
+  };
+
 test("release regression ownership includes shared watch behavior without coupling product internals", () => {
   const desktop = productCompatibilityTests("desktop");
   const server = productCompatibilityTests("server");
@@ -129,27 +152,6 @@ test.each(["server", "desktop"] as const)(
 );
 
 test("releases gate packaging and publishing on same-commit product browser verification", async () => {
-  const readWorkflow = async (name: string) =>
-    Bun.YAML.parse(await Bun.file(`${repository}.github/workflows/${name}.yml`).text()) as {
-      jobs: Record<
-        string,
-        {
-          needs?: string | string[];
-          uses?: string;
-          if?: string;
-          "continue-on-error"?: boolean;
-          with?: Record<string, string>;
-          steps?: {
-            uses?: string;
-            run?: string;
-            if?: string;
-            "continue-on-error"?: boolean;
-            env?: Record<string, string>;
-            with?: Record<string, string>;
-          }[];
-        }
-      >;
-    };
   const preflight = await readWorkflow("release-preflight");
   const browser = preflight.jobs.browser;
   expect(browser).toBeDefined();
@@ -330,3 +332,83 @@ test("browser artifacts escape temporary release workspaces and remain separated
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test("product verification collects evidence only for stages that ran without weakening failures", async () => {
+  const checks = await readWorkflow("checks");
+  const steps = checks.jobs["product-verification"]?.steps ?? [];
+  for (const [id, command, artifact, path] of [
+    [
+      "compatibility",
+      "check-release-compatibility.ts",
+      "compatibility-results",
+      "compatibility-results/${{ matrix.product }}.log",
+    ],
+    [
+      "product_browsers",
+      "test-browser.ts",
+      "browser-test-results",
+      "test-results/${{ matrix.product }}/",
+    ],
+  ]) {
+    const verify = steps.find((step) => step.id === id);
+    expect(verify?.run).toContain(`bun scripts/${command} "$RELEASE_PRODUCT"`);
+    expect(verify?.env?.RELEASE_PRODUCT).toBe("${{ matrix.product }}");
+    expect(verify?.if).toBeUndefined();
+    expect(verify?.["continue-on-error"]).toBeUndefined();
+    const upload = steps.find((step) => step.with?.name === `\${{ matrix.product }}-${artifact}`);
+    expect(upload?.uses).toBe("actions/upload-artifact@v4");
+    expect(upload?.if).toBe(
+      `\${{ !cancelled() && (steps.${id}.outcome == 'success' || steps.${id}.outcome == 'failure') }}`,
+    );
+    expect(upload?.with?.path).toContain(path);
+    expect(upload?.with?.["if-no-files-found"]).toBe("error");
+    expect(Number(upload?.with?.["retention-days"])).toBe(14);
+  }
+  const browserUpload = steps.find(
+    (step) => step.with?.name === "${{ matrix.product }}-browser-test-results",
+  );
+  expect(browserUpload?.with?.path).toContain("playwright-report/${{ matrix.product }}/");
+});
+
+test.each([0, 23])(
+  "compatibility diagnostics preserve output and exit status %s",
+  async (exitCode) => {
+    const { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const checks = await readWorkflow("checks");
+    const command = checks.jobs["product-verification"]?.steps?.find(
+      (step) => step.id === "compatibility",
+    )?.run;
+    expect(command).toBeDefined();
+    const root = mkdtempSync(join(tmpdir(), "lumen-compatibility-log-"));
+    try {
+      const bun = join(root, "bun");
+      writeFileSync(
+        bun,
+        `#!/bin/sh
+printf '%s\n' "$*"
+printf '%s\n' 'Mixed playback progress: diagnostic' >&2
+exit ${exitCode}
+`,
+      );
+      chmodSync(bun, 0o755);
+      const child = Bun.spawnSync(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", command ?? ""],
+        {
+          cwd: root,
+          env: { ...process.env, PATH: `${root}:${process.env.PATH}`, RELEASE_PRODUCT: "desktop" },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(child.exitCode, child.stderr.toString()).toBe(exitCode);
+      const log = readFileSync(join(root, "compatibility-results/desktop.log"), "utf8");
+      expect(log).toContain("scripts/check-release-compatibility.ts desktop");
+      expect(log).toContain("Mixed playback progress: diagnostic");
+      expect(child.stdout.toString()).toContain(log);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  },
+);
