@@ -192,6 +192,7 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     await browser.action({ type: "join", groupId: desktop.status.group?.id ?? "", password: "" });
     await eventually(() => player.state?.paused === false);
     await eventually(() => desktop.status.group?.members.length === 2);
+    await eventually(() => desktop.status.group?.playback?.paused === false);
     const before = desktop.status.group;
 
     // The browser hits a frame it cannot decode: its player gives up and reports why.
