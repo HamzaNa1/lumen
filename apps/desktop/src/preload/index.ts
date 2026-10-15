@@ -80,7 +80,6 @@ const api: DesktopBridge = {
     selectSubtitle: (sessionId, streamId) =>
       invoke("player:select-subtitle", { sessionId, streamId }),
     audioOutput: (sessionId, output) => invoke("player:audio-output", { sessionId, output }),
-    copyAudioDiagnostics: (sessionId) => invoke("player:copy-audio-diagnostics", sessionId),
     state: () => invoke("player:state"),
     display: (display) => invoke("player:display", display),
     displayState: () => invoke("player:display-state"),

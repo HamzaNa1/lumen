@@ -9,7 +9,6 @@ import {
   app,
   BaseWindow,
   BrowserWindow,
-  clipboard,
   desktopCapturer,
   ipcMain,
   nativeImage,
@@ -145,9 +144,6 @@ async function run(): Promise<void> {
   ipcMain.handle("player:audio-output", (_event, input) =>
     controller.setAudioOutput(input.sessionId, input.output),
   );
-  ipcMain.handle("player:copy-audio-diagnostics", async (_event, sessionId) => {
-    await clipboard.writeText(await controller.audioDiagnostics(sessionId));
-  });
   await overlay.load(undefined, join(root, "out/renderer/index.html"));
   overlay.setVisible(true);
   parent.show();
@@ -505,9 +501,14 @@ async function run(): Promise<void> {
     );
     assert.equal(result.audioOutput, output);
   }
-  const diagnostics = JSON.parse(await controller.audioDiagnostics(state.sessionId));
+  const diagnosticsText = await controller.audioDiagnostics(state.sessionId);
+  const diagnostics = JSON.parse(diagnosticsText);
   assert.equal(diagnostics.properties["audio-channels"], "stereo");
   assert.equal(diagnostics.properties.pause, true);
+  assert.equal(diagnostics.audioOutput, "stereo");
+  assert.equal(diagnostics.properties["audio-out-params"]["channel-count"], 2);
+  assert.equal(diagnostics.expectedAudioTrack, diagnostics.properties.aid);
+  assert(!diagnosticsText.includes("127.0.0.1"), "Diagnostics leaked the stream URL");
   assert.equal(controller.getState()?.selectedAudioStreamId, "audio-1");
   await controller.pause(state.sessionId, false);
   visible.push(await inspect("audio-output-changed"));
@@ -516,23 +517,12 @@ async function run(): Promise<void> {
      document.querySelector('[aria-label="Playback settings"]').click()`,
   );
   await delay(100);
-  await overlay.window.webContents.executeJavaScript(
-    `Array.from(document.querySelectorAll('button')).find(button => button.textContent === 'Export playback diagnostics').click()`,
+  assert(
+    await overlay.window.webContents.executeJavaScript(
+      `document.querySelector('#media-player-settings-panel') !== null`,
+    ),
+    "The playback settings did not open",
   );
-  let copyStatus = "";
-  for (let attempt = 0; attempt < 40 && copyStatus !== "Playback diagnostics exported."; attempt++) {
-    await delay(50);
-    copyStatus = await overlay.window.webContents.executeJavaScript(
-      `document.querySelector('#media-player-settings-panel [role="status"]')?.textContent ?? ''`,
-    );
-  }
-  assert.equal(copyStatus, "Playback diagnostics exported.");
-  const copiedText = await clipboard.readText();
-  const copied = JSON.parse(copiedText);
-  assert.equal(copied.audioOutput, "stereo");
-  assert.equal(copied.properties["audio-out-params"]["channel-count"], 2);
-  assert.equal(copied.expectedAudioTrack, copied.properties.aid);
-  assert(!copiedText.includes("127.0.0.1"), "Diagnostics leaked the stream URL");
   // The settings panel covers the center at 150% scaling. Sample the visible
   // video to its left while retaining a full desktop screenshot for UI review.
   visible.push(await inspect("audio-settings", 0.25));

@@ -50,7 +50,6 @@ export interface DesktopBridge {
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
     readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<PlayerState>;
     readonly audioOutput: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
-    readonly copyAudioDiagnostics: (sessionId: string) => Promise<void>;
     readonly state: () => Promise<PlayerState | null>;
     readonly display: (display: PlayerDisplay) => Promise<void>;
     readonly displayState: () => Promise<PlayerDisplay | null>;

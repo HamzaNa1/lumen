@@ -189,32 +189,9 @@ test("the desktop player controls are what they were before the extraction", asy
     await expectDesktopUnchanged(testInfo, `player ${name}`, builds, withoutLaterControls);
   }
 
-  // The last state is still showing: open its menus.
-  for (const { page } of builds.desktops)
-    await page.getByRole("button", { name: "Playback settings", exact: true }).click();
-  await expect(
-    builds.desktop.page.getByRole("button", { name: "Export playback diagnostics", exact: true }),
-  ).toBeVisible();
-  // Diagnostics now include playback failures. Compare the rest of the menu against the
-  // fixed baseline while explicitly accounting for this intentional label change.
-  if (builds.baseline !== null) {
-    const previousLabel = builds.baseline.page.getByRole("button", {
-      name: "Copy audio diagnostics",
-      exact: true,
-    });
-    await expect(previousLabel).toBeVisible();
-    await previousLabel.evaluate((button) => {
-      button.textContent = "Export playback diagnostics";
-    });
-    // The menu has since been raised above the sliders it opens over, so its shadow now
-    // falls on the volume slider instead of behind it.
-    await builds.baseline.page.addStyleTag({
-      content: ".media-player-settings-panel { z-index: 3; }",
-    });
-  }
-  await expectDesktopUnchanged(testInfo, "playback settings", builds, withoutLaterControls);
+  // The last state is still showing: open its watch groups. The playback settings have been
+  // redesigned since the baseline, so they are no longer compared with it.
   for (const { page } of builds.desktops) {
-    await page.getByRole("button", { name: "Playback settings", exact: true }).click();
     await page.locator(".watch-group-chip").click();
     await expect(page.getByText("No groups yet")).toBeVisible();
   }

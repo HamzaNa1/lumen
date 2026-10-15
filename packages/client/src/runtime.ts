@@ -44,8 +44,6 @@ export interface PlatformCapabilities {
   readonly serverSwitching: boolean;
   /** The player can choose how audio channels reach the output device. */
   readonly nativeAudioOutput: boolean;
-  /** The player can describe its audio pipeline for troubleshooting. */
-  readonly audioDiagnostics: boolean;
   /** Audio and subtitle tracks inside a file can be switched during playback. */
   readonly trackSelection: boolean;
   readonly fullscreen: boolean;
@@ -143,7 +141,6 @@ export interface PlayerSurface {
 
 export interface NativeAudioRuntime {
   readonly output: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
-  readonly copyDiagnostics: (sessionId: string) => Promise<void>;
 }
 
 export interface TrackSettingsRuntime {
@@ -187,7 +184,6 @@ export interface PlaybackRuntime {
   readonly presentation: PlayerPresentation;
   /** Present only where the player controls the audio device itself. */
   readonly nativeAudio: NativeAudioRuntime | null;
-  readonly copyDiagnostics?: () => Promise<void>;
 }
 
 export interface WatchRuntime {

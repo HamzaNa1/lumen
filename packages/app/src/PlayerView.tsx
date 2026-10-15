@@ -160,16 +160,6 @@ export const PlayerView = ({
                 setPlayer(await nativeAudio.output(player.sessionId, output));
               }
         }
-        onCopyAudioDiagnostics={
-          (runtime.playback.copyDiagnostics === undefined && nativeAudio === null) ||
-          !capabilities.audioDiagnostics
-            ? undefined
-            : async () => {
-                if (runtime.playback.copyDiagnostics !== undefined)
-                  await runtime.playback.copyDiagnostics();
-                else if (player !== null) await nativeAudio?.copyDiagnostics(player.sessionId);
-              }
-        }
         buffering={player?.buffering === true || waiting !== undefined}
         {...(waiting === undefined ? {} : { bufferingMessage: waiting })}
         awaitingInteraction={player?.awaitingInteraction === true}

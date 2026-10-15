@@ -2701,24 +2701,51 @@ body:has(.app-shell) {
   bottom: calc(100% + 10px);
   /* Above the timeline's fill and thumb, which the panel opens over. */
   z-index: 3;
-  width: min(300px, calc(100vw - 28px));
+  width: min(320px, calc(100vw - 28px));
   display: grid;
-  gap: 12px;
-  padding: 14px;
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: var(--radius-lg);
-  background: rgba(24, 24, 27, 0.96);
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-xl);
+  background: rgba(16, 16, 19, 0.9);
   box-shadow: var(--shadow-popover);
-  backdrop-filter: blur(20px);
+  backdrop-filter: blur(24px) saturate(140%);
+  transform-origin: bottom right;
+  animation: popup-in 120ms ease-out;
 }
-.media-player-settings-panel strong {
-  font-size: 13px;
+.media-player-settings-panel .field-label {
+  color: rgba(255, 255, 255, 0.5);
+  font-size: 11px;
   font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.media-player-settings-panel .select-trigger {
+  height: 38px;
+  padding: 0 10px 0 12px;
+  border-color: transparent;
+  background: rgba(255, 255, 255, 0.07);
+  font-weight: 500;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease;
+}
+.media-player-settings-panel .select-trigger:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.11);
+}
+.media-player-settings-panel .select-trigger[data-popup-open],
+.media-player-settings-panel .select-trigger:focus-visible {
+  border-color: var(--accent-ring);
 }
 .media-player-settings-panel p {
   margin: 0;
-  color: rgba(255, 255, 255, 0.65);
+  color: rgba(255, 255, 255, 0.6);
   font-size: 12.5px;
+  line-height: 1.45;
+}
+.media-player-settings-panel p[role="alert"] {
+  color: var(--danger-text);
 }
 
 /* Player overlay window */

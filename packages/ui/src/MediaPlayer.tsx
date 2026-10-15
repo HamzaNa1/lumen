@@ -55,8 +55,6 @@ interface MediaPlayerProps {
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
   readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
-  /** Exports retained diagnostics even when playback has failed. */
-  readonly onCopyAudioDiagnostics?: () => Promise<void>;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
   readonly trackSelection?: boolean;
   readonly subtitleSelection?: boolean;
@@ -117,7 +115,6 @@ export const MediaPlayer = ({
   selectedSubtitleStreamId,
   audioOutput,
   onAudioOutput,
-  onCopyAudioDiagnostics,
   trackSelection = true,
   subtitleSelection = true,
   buffering = false,
@@ -143,7 +140,7 @@ export const MediaPlayer = ({
   const [timelineHover, setTimelineHover] = useState<number | null>(null);
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [audioActionStatus, setAudioActionStatus] = useState<string | null>(null);
+  const [audioOutputError, setAudioOutputError] = useState<string | null>(null);
   const [changingAudioOutput, setChangingAudioOutput] = useState(false);
   const audioStreams = streams.filter((stream) => stream.kind === "audio");
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
@@ -454,7 +451,6 @@ export const MediaPlayer = ({
                 </Button>
                 {settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
-                    <strong>Audio and subtitles</strong>
                     {onAudioOutput === undefined ? null : (
                       <SelectField
                         label="Audio output"
@@ -467,10 +463,10 @@ export const MediaPlayer = ({
                         ]}
                         onValueChange={(value) => {
                           if (value !== "stereo" && value !== "auto-safe") return;
-                          setAudioActionStatus(null);
+                          setAudioOutputError(null);
                           setChangingAudioOutput(true);
                           void onAudioOutput(value)
-                            .catch(() => setAudioActionStatus("Could not change audio output."))
+                            .catch(() => setAudioOutputError("Could not change audio output."))
                             .finally(() => setChangingAudioOutput(false));
                         }}
                       />
@@ -544,19 +540,6 @@ export const MediaPlayer = ({
                         ) : null}
                       </>
                     )}
-                    {onCopyAudioDiagnostics === undefined ? null : (
-                      <Button
-                        onClick={() => {
-                          setAudioActionStatus(null);
-                          void onCopyAudioDiagnostics().then(
-                            () => setAudioActionStatus("Playback diagnostics exported."),
-                            () => setAudioActionStatus("Could not export playback diagnostics."),
-                          );
-                        }}
-                      >
-                        Export playback diagnostics
-                      </Button>
-                    )}
                     {trackActionError == null ? null : <p role="alert">{trackActionError}</p>}
                     {trackMemoryError == null ? null : (
                       <p role="alert">
@@ -564,7 +547,7 @@ export const MediaPlayer = ({
                         <Button onClick={onRetryTrackMemory}>Retry saving choice</Button>
                       </p>
                     )}
-                    {audioActionStatus === null ? null : <p role="status">{audioActionStatus}</p>}
+                    {audioOutputError === null ? null : <p role="alert">{audioOutputError}</p>}
                   </div>
                 ) : null}
               </div>
