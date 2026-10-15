@@ -1,4 +1,5 @@
 import { type BrowserContext, expect, type Page, test } from "@playwright/test";
+import { waitUntilPlaying } from "./playback";
 
 const PASSWORD = "correct horse battery staple";
 
@@ -211,18 +212,6 @@ test("a file the browser cannot play says so instead of loading forever", async 
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
 });
-
-/** Waits until the player is really playing, clicking through a browser's refusal to autoplay. */
-const waitUntilPlaying = async (page: Page): Promise<void> => {
-  await expect(page).toHaveURL(/\/web\/player$/u);
-  await expect(page.getByRole("region", { name: "Media player" })).toBeVisible();
-  // Headless browsers refuse unprompted playback with sound; the player then asks for a click.
-  const start = page.getByRole("button", { name: "Play", exact: true });
-  if (await start.isVisible().catch(() => false)) await start.click();
-  await expect
-    .poll(() => page.evaluate(() => document.querySelector("video")?.currentTime ?? 0))
-    .toBeGreaterThan(0.2);
-};
 
 /** Starts a fixture title from a page that lists it, and waits until it is really playing. */
 const play = async (page: Page, title: string): Promise<void> => {

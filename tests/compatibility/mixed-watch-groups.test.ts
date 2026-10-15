@@ -10,6 +10,10 @@ import {
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
 
+// Includes server startup, two authentication flows, shared playback, and teardown.
+// Keep individual state waits bounded by eventually's separate five-second deadline.
+const MIXED_VIEWER_TIMEOUT_MS = 15_000;
+
 const playbackProgress = () => {
   const started = performance.now();
   const stages: { stage: string; elapsedMs: number }[] = [];
@@ -158,7 +162,7 @@ test("a desktop viewer and a browser viewer share one group and follow each othe
     browser.close();
     await fixture.close();
   }
-});
+}, MIXED_VIEWER_TIMEOUT_MS);
 
 test("a browser that cannot play the file releases its join hold without stopping the group", async () => {
   const progress = playbackProgress();
@@ -219,7 +223,7 @@ test("a browser that cannot play the file releases its join hold without stoppin
     browser.close();
     await fixture.close();
   }
-});
+}, MIXED_VIEWER_TIMEOUT_MS);
 
 test("a player that breaks mid-playback is not mistaken for the viewer stopping the group", async () => {
   const progress = playbackProgress();
@@ -293,7 +297,7 @@ test("a player that breaks mid-playback is not mistaken for the viewer stopping 
     browser.close();
     await fixture.close();
   }
-});
+}, MIXED_VIEWER_TIMEOUT_MS);
 
 test("a suspended browser tab reconnects, rejoins and catches up when it resumes", async () => {
   const progress = playbackProgress();
@@ -336,7 +340,7 @@ test("a suspended browser tab reconnects, rejoins and catches up when it resumes
     browser.close();
     await fixture.close();
   }
-});
+}, MIXED_VIEWER_TIMEOUT_MS);
 
 test("a cookie handshake needs this origin's cookie; a signed-out browser is disconnected", async () => {
   const progress = playbackProgress();
@@ -382,4 +386,4 @@ test("a cookie handshake needs this origin's cookie; a signed-out browser is dis
     for (const client of clients) client.close();
     await fixture.close();
   }
-});
+}, MIXED_VIEWER_TIMEOUT_MS);

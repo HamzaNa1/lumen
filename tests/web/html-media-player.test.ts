@@ -29,7 +29,15 @@ afterEach(async () => {
 /** A media element whose loading and autoplay outcomes the test decides. */
 class FakeMedia implements MediaElementLike {
   src = "";
-  currentTime = 0;
+  private positionSeconds = 0;
+  holdSeeks = false;
+  get currentTime(): number {
+    return this.positionSeconds;
+  }
+  set currentTime(value: number) {
+    this.positionSeconds = value;
+    if (this.holdSeeks) this.seeking = true;
+  }
   volume = 1;
   muted = false;
   playbackRate = 1;
@@ -58,7 +66,7 @@ class FakeMedia implements MediaElementLike {
   audioTracks?: { readonly length: number; [index: number]: { enabled: boolean } };
   sources: string[] = [];
   /** What happens when a source is loaded: metadata arrives, an error, or nothing yet. */
-  loadOutcome: "loaded" | "unsupported" | "hang" = "loaded";
+  loadOutcome: "loaded" | "unsupported" | "hang" | "throws" = "loaded";
   playOutcome: "plays" | "blocked" = "plays";
   /** Holds back the next successful `play()` until the test lets it through. */
   playGate: Promise<void> | null = null;
@@ -84,6 +92,7 @@ class FakeMedia implements MediaElementLike {
   load(): void {
     if (this.src === "") return;
     this.sources.push(this.src);
+    if (this.loadOutcome === "throws") throw new Error("Media load failed");
     this.emit("loadstart");
     queueMicrotask(() => {
       if (this.loadOutcome === "loaded") {
@@ -276,6 +285,50 @@ describe("browser volume", () => {
 });
 
 describe("browser playback lifecycle", () => {
+  test("resumed playback waits for the initial seek to settle before asking the browser to play", async () => {
+    const { element, player } = setup();
+    element.holdSeeks = true;
+    const starting = player.start({ itemId: "item-1", startAtSeconds: 30 });
+    await eventually(() => element.seeking);
+    expect(element.paused).toBe(true);
+    element.seeking = false;
+    element.emit("seeked");
+    await starting;
+    expect(player.getState()).toMatchObject({ paused: false, positionSeconds: 30 });
+  });
+
+  test("stopping during an initial seek cancels startup and releases the session and event listeners", async () => {
+    const { element, player, calls } = setup();
+    element.holdSeeks = true;
+    const starting = player.start({ itemId: "item-1", startAtSeconds: 30 }).catch((cause) => cause);
+    await eventually(() => element.seeking);
+    await player.stop();
+    expect(((await starting) as Error).message).toBe("Playback was cancelled");
+    expect(player.getState()).toBeNull();
+    expect(calls.filter((call) => call === "stop session-1")).toHaveLength(1);
+    expect(element.listenerCount()).toBe(0);
+  });
+
+  test("an initial seek that never finishes fails within the media deadline and releases its session", async () => {
+    const { element, player, calls } = setup();
+    element.holdSeeks = true;
+    await expect(player.start({ itemId: "item-1", startAtSeconds: 30 })).rejects.toThrow(
+      "Timed out waiting for media to seek",
+    );
+    expect(player.getState()).toBeNull();
+    expect(calls.filter((call) => call === "stop session-1")).toHaveLength(1);
+    expect(element.listenerCount()).toBe(0);
+  });
+
+  test("a synchronous media load failure releases startup listeners and closes the session", async () => {
+    const { element, player, calls } = setup();
+    element.loadOutcome = "throws";
+    await expect(player.start({ itemId: "item-1" })).rejects.toThrow("Media load failed");
+    expect(player.getState()).toBeNull();
+    expect(calls.filter((call) => call === "stop session-1")).toHaveLength(1);
+    expect(element.listenerCount()).toBe(0);
+  });
+
   test("plays with a grant in the element's source only, and reports the session's end", async () => {
     const { element, player, calls, states } = setup();
     await player.start({ itemId: "item-1", startAtSeconds: 30 });

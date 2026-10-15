@@ -9,6 +9,7 @@ import {
   playing,
 } from "./desktopRenderer";
 import { desktopScenarios } from "./desktopScenarios";
+import { waitUntilPlaying } from "./playback";
 
 setupDesktopRenderer();
 desktopScenarios({ includeWeb: true });
@@ -21,10 +22,7 @@ test("the player controls are drawn identically over playing media", async ({
   const { web, desktop } = builds;
   await web.page.goto("/web/library");
   await web.page.getByRole("button", { name: "Play Film" }).first().click({ force: true });
-  await expect(web.page.getByRole("region", { name: "Media player" })).toBeVisible();
-  // Headless browsers refuse unprompted playback with sound; the player then asks for a click.
-  const start = web.page.getByRole("button", { name: "Play", exact: true });
-  if (await start.isVisible().catch(() => false)) await start.click();
+  await waitUntilPlaying(web.page);
   const video = (): Promise<{
     readonly paused: boolean;
     readonly positionSeconds: number;
@@ -51,7 +49,6 @@ test("the player controls are drawn identically over playing media", async ({
         muted: element.muted,
       };
     });
-  await expect.poll(async () => (await video())?.positionSeconds ?? 0).toBeGreaterThan(0.2);
   await web.page.mouse.move(300, 300);
   await web.page.getByRole("button", { name: "Pause playback" }).last().click();
   await expect.poll(async () => (await video())?.paused).toBe(true);

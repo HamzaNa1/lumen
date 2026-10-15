@@ -458,6 +458,12 @@ export class HtmlMediaPlayer {
       await this.load(generation, session);
       // The element is shared: metadata may have arrived for a newer start's source.
       if (generation !== this.generation) throw cancelled();
+      if (Number.isFinite(startAtSeconds) && startAtSeconds > 0) {
+        this.element.currentTime = startAtSeconds;
+        // Starting while the initial seek is pending can leave WebKit waiting indefinitely.
+        if (this.element.seeking) await this.waitForMediaEvent(generation, "seeked");
+        if (generation !== this.generation) throw cancelled();
+      }
     } catch (cause) {
       // Only the latest start owns the element. A replaced one must leave its successor's
       // source alone and just close the session it opened.
@@ -516,8 +522,6 @@ export class HtmlMediaPlayer {
       throw cause;
     }
     active.detach = this.attach(active);
-    if (Number.isFinite(startAtSeconds) && startAtSeconds > 0)
-      this.element.currentTime = startAtSeconds;
     try {
       if (!paused) await this.play(active);
     } catch (cause) {
@@ -542,29 +546,45 @@ export class HtmlMediaPlayer {
     // source: never in state handed to the application, and never in anything that is stored.
     const url = new URL(session.streamUrl, this.api.serverOrigin);
     url.searchParams.set("grant", session.grantToken);
+    return this.waitForMediaEvent(generation, "loadedmetadata", () => {
+      this.element.src = url.toString();
+      this.element.load();
+    });
+  }
+
+  private waitForMediaEvent(
+    generation: number,
+    event: "loadedmetadata" | "seeked",
+    start: () => void = () => {},
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const settle = (outcome: () => void): void => {
         clearTimeout(timer);
         clearInterval(watchdog);
-        this.element.removeEventListener("loadedmetadata", onLoaded);
+        this.element.removeEventListener(event, onReady);
         this.element.removeEventListener("error", onError);
         outcome();
       };
-      const onLoaded = (): void => settle(resolve);
+      const onReady = (): void => settle(resolve);
       const onError = (): void =>
         settle(() => reject(describeMediaError(this.element.error?.code)));
       const timer = setTimeout(
-        () => settle(() => reject(new Error("Timed out waiting for media to load"))),
+        () => settle(() => reject(new Error(
+          `Timed out waiting for media to ${event === "loadedmetadata" ? "load" : "seek"}`,
+        ))),
         this.loadTimeoutMs,
       );
       // A newer start or stop abandons this load without waiting for the browser to give up.
       const watchdog = setInterval(() => {
         if (generation !== this.generation) settle(() => reject(cancelled()));
       }, 50);
-      this.element.addEventListener("loadedmetadata", onLoaded);
+      this.element.addEventListener(event, onReady);
       this.element.addEventListener("error", onError);
-      this.element.src = url.toString();
-      this.element.load();
+      try {
+        start();
+      } catch (cause) {
+        settle(() => reject(cause));
+      }
     });
   }
 
