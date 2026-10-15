@@ -12,10 +12,13 @@ import {
 import { seedPlaybackFixture } from "./playback";
 import { eventually } from "./eventually";
 
-export const watchFixture = async () => {
+export const watchFixture = async (progress: (stage: string) => void = () => {}) => {
+  progress("creating fixture directory");
   const root = await mkdtemp(join(tmpdir(), "lumen-watch-test-"));
   const databasePath = join(root, "server.sqlite");
+  progress("seeding playback database");
   const seeded = await seedPlaybackFixture(root, databasePath);
+  progress("starting server");
   const running = await startServer({
     databasePath,
     dataDir: root,
@@ -23,6 +26,7 @@ export const watchFixture = async () => {
     port: 0,
     logLevel: "error",
   });
+  progress("server started");
   const clients: WatchGroupClient[] = [];
   const login = async (username = "admin") => {
     let accessToken: string | null = null;
@@ -30,7 +34,9 @@ export const watchFixture = async () => {
       origin: running.server.url.toString(),
       credentials: bearerCredentials(() => accessToken),
     });
+    progress("fetching server identity");
     await server.identity();
+    progress("authenticating desktop viewer");
     const session = await server.tokenLogin(
       {
         username,
@@ -38,6 +44,7 @@ export const watchFixture = async () => {
       },
       { deviceId: crypto.randomUUID(), deviceName: "Test", platform: "desktop" },
     );
+    progress("desktop authenticated");
     accessToken = session.accessToken;
     return Object.assign(server, {
       currentSession: session,
@@ -47,8 +54,10 @@ export const watchFixture = async () => {
   const connect = async (server: WatchConnection, readiness = false) => {
     const client = new WatchGroupClient(server, () => undefined, readiness);
     clients.push(client);
+    progress("connecting desktop socket");
     client.connect();
     await eventually(() => client.status.connection === "connected");
+    progress("desktop connected");
     return client;
   };
   return {
@@ -57,9 +66,11 @@ export const watchFixture = async () => {
     login,
     connect,
     async close() {
+      progress("closing fixture");
       for (const client of clients) client.close();
       await running.stop();
       await rm(root, { recursive: true, force: true });
+      progress("fixture closed");
     },
   };
 };
