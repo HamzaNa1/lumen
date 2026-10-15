@@ -38,7 +38,9 @@
           {
             "context": "native-desktop / Windows Electron and MPV playback",
             "integration_id": 15368
-          }
+          },
+          { "context": "product-verification (server)", "integration_id": 15368 },
+          { "context": "product-verification (desktop)", "integration_id": 15368 }
         ]
       }
     }
