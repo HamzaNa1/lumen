@@ -29,6 +29,7 @@ test("dashed, prefixed and chained episode ranges are all recognised", () => {
   expect(episode("Show S03E10-E12.mkv")).toEqual([10, 12, null]);
   expect(episode("Show S03E10E11E12.mkv")).toEqual([10, 12, null]);
   expect(episode("Show S03E10-E11-E12.mkv")).toEqual([10, 12, null]);
+  expect(episode("Show S03E10-11-12.mkv")).toEqual([10, 12, null]);
 });
 
 test("a single episode keeps its old coordinates and title", () => {
@@ -46,6 +47,8 @@ test("resolutions, codecs and numeric titles after an episode are not ranges", (
   expect(episode("Show.S03E10-720p.mkv")).toEqual([10, null, null]);
   expect(episode("Show S03E10 - 11 Monkeys.mkv")).toEqual([10, null, null]);
   expect(episode("Show.S03E10.x264-2160.mkv")).toEqual([10, null, null]);
+  expect(episode("Show.S03E10-11-1080p.mkv")).toEqual([10, 11, null]);
+  expect(episode("Show.S03E10-11-720p.mkv")).toEqual([10, 11, null]);
   expect(parseVideoPath("shows", "Show/Season 3/Show S03E10 - 24 Hours.mkv").title).toBe("24 Hours");
 });
 
@@ -55,6 +58,12 @@ test("reversed, repeated, gapped and implausibly long ranges fall back to the fi
   expect(episode("Show S03E10E12.mkv")).toEqual([10, null, "episode_range_invalid"]);
   expect(episode("Show S03E10E11E13.mkv")).toEqual([10, null, "episode_range_invalid"]);
   expect(episode("Show S03E01-E40.mkv")).toEqual([1, null, "episode_range_invalid"]);
+  // A malformed continuation rejects the whole suffix instead of keeping its valid start.
+  expect(episode("Show S03E10-11-13.mkv")).toEqual([10, null, "episode_range_invalid"]);
+  expect(episode("Show S03E10-E11-E13.mkv")).toEqual([10, null, "episode_range_invalid"]);
+  expect(episode("Show S03E10E11-13.mkv")).toEqual([10, null, "episode_range_invalid"]);
+  expect(episode("Show S03E10-11-10.mkv")).toEqual([10, null, "episode_range_invalid"]);
+  expect(parseVideoPath("shows", "Show/Season 3/Show S03E10-11-13.mkv").title).toBe("Episode 10");
   expect(episode("Show S03E01-E10.mkv")).toEqual([1, 10, null]);
 });
 

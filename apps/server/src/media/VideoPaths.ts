@@ -28,14 +28,16 @@ const name = (value: string) => ({
 });
 
 // "S03E10", optionally followed by more episodes: "-11", "-E11", "E11", "E11E12" or "-E11-E12".
-// The lookahead keeps "-1080p" or "-720p" from reading as a range.
-const episodeCoordinates = /(?:^|[^a-z\d])s(\d{1,2})e(\d{1,3})((?:-?e\d{1,3})+|-\d{1,3})?(?=[^a-z\d]|$)/iu;
+// Every following episode number is taken, so a malformed continuation such as "-11-13" is
+// judged as a whole rather than as its valid start. The lookahead keeps "-1080p" or "-720p"
+// from reading as an episode.
+const episodeCoordinates = /(?:^|[^a-z\d])s(\d{1,2})e(\d{1,3})((?:-e?\d{1,3}|e\d{1,3})+)?(?=[^a-z\d]|$)/iu;
 
 /**
  * The last episode a file's coordinates cover, null for one episode, or "invalid" where more
  * episodes are named but do not form a range one file can hold. A single dashed number is an
  * inclusive range ("E10-E12" is 10 to 12); anything else lists every episode, which must then be
- * consecutive ("E10E11E12", but not "E10E12").
+ * consecutive ("E10E11E12" or "E10-11-12", but not "E10E12" or "E10-11-13").
  */
 const episodeEnd = (start: number, suffix: string | undefined): number | null | "invalid" => {
   if (suffix === undefined) return null;
