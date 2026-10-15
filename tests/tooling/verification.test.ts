@@ -171,6 +171,11 @@ test("releases gate packaging and publishing on same-commit product browser veri
   expect(regressions?.run).toContain('"$RELEASE_PRODUCT"');
   expect(regressions?.if).toBeUndefined();
   expect(regressions?.["continue-on-error"]).toBeUndefined();
+  const upload = browser?.steps?.find((step) => step.uses?.startsWith("actions/upload-artifact@"));
+  expect(upload?.if).toBe("${{ !cancelled() }}");
+  expect(upload?.with?.path).toContain("test-results/${{ inputs.product }}/");
+  expect(upload?.with?.path).toContain("playwright-report/${{ inputs.product }}/");
+  expect(upload?.with?.["if-no-files-found"]).toBe("error");
   for (const product of ["desktop", "server"]) {
     const release = await readWorkflow(`release-${product}`);
     expect(release.jobs.preflight?.uses).toBe("./.github/workflows/release-preflight.yml");
@@ -179,6 +184,11 @@ test("releases gate packaging and publishing on same-commit product browser veri
       dependencies(release.jobs[product === "desktop" ? "package" : "server-image"]?.needs),
     ).toContain("preflight");
     expect(release.jobs.publish?.needs).toContain("preflight");
+    if (product === "desktop") {
+      expect(release.jobs["native-desktop"]?.uses).toBe("./.github/workflows/native-desktop.yml");
+      expect(dependencies(release.jobs.package?.needs)).toContain("native-desktop");
+      expect(dependencies(release.jobs.publish?.needs)).toContain("native-desktop");
+    }
   }
 });
 
@@ -256,6 +266,65 @@ test("filesystem ownership discovery rejects alternative Bun test filenames", as
       writeFileSync(path, "");
       expect(() => verifyTestOwnership(root)).toThrow(file);
       rmSync(path);
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("browser artifacts escape temporary release workspaces and remain separated by product", async () => {
+  const { mkdtempSync, rmSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  const root = mkdtempSync(join(tmpdir(), "lumen-browser-artifacts-"));
+  try {
+    for (const product of ["source", "server", "desktop"]) {
+      const child = Bun.spawnSync(
+        [
+          process.execPath,
+          "--eval",
+          `
+        import config from "./playwright.config.ts";
+        console.log(JSON.stringify(config));
+      `,
+        ],
+        {
+          cwd: repository,
+          env: {
+            ...process.env,
+            LUMEN_BROWSER_PRODUCT: product,
+            LUMEN_BROWSER_ARTIFACT_ROOT: root,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        },
+      );
+      expect(child.exitCode, child.stderr.toString()).toBe(0);
+      const config = JSON.parse(child.stdout.toString());
+      expect(config.outputDir).toBe(join(root, "test-results", product));
+      expect(config.reporter).toContainEqual([
+        "html",
+        {
+          outputFolder: join(root, "playwright-report", product),
+          open: "never",
+        },
+      ]);
+      expect(config.reporter).toContainEqual([
+        "json",
+        { outputFile: join(root, "test-results", product, "results.json") },
+      ]);
+      expect(config.reporter).toContainEqual([
+        "junit",
+        { outputFile: join(root, "test-results", product, "junit.xml") },
+      ]);
+      expect(config.use.trace).toBe("retain-on-failure");
+      expect(config.use.screenshot).toBe("only-on-failure");
+      expect(
+        config.webServer.map(
+          (server: { env: { LUMEN_BROWSER_TEST_MEDIA: string } }) =>
+            server.env.LUMEN_BROWSER_TEST_MEDIA,
+        ),
+      ).toEqual(product === "desktop" ? ["mp4"] : ["mp4", "webm"]);
     }
   } finally {
     rmSync(root, { recursive: true, force: true });

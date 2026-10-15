@@ -75,8 +75,11 @@ jobs:
           LUMEN_BROWSER_TEST_PORT: '3279'
         run: bun scripts/test-browser.ts "$RELEASE_PRODUCT"
       - uses: actions/upload-artifact@v4
-        if: failure()
+        if: ${{ !cancelled() }}
         with:
           name: release-${{ inputs.product }}-browser-test-results
-          path: test-results
-          if-no-files-found: ignore
+          path: |
+            test-results/${{ inputs.product }}/
+            playwright-report/${{ inputs.product }}/
+          retention-days: 14
+          if-no-files-found: error

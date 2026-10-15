@@ -26,7 +26,11 @@ const verify = (workspace: string) => {
     {
       cwd: workspace,
       stdio: "inherit",
-      env: { ...process.env, LUMEN_BROWSER_PRODUCT: product ?? "source" },
+      env: {
+        ...process.env,
+        LUMEN_BROWSER_PRODUCT: product ?? "source",
+        LUMEN_BROWSER_ARTIFACT_ROOT: repositoryRoot,
+      },
     },
   );
 };

@@ -47,7 +47,7 @@ let shim = "";
 export const setupDesktopRenderer = () => {
   test.skip(
     ({ browserName }) => browserName !== "chromium",
-    "The desktop renderer ships in Chromium",
+    "Desktop renderer parity targets Electron's Chromium engine; cross-browser playback is covered by web-app.e2e.ts",
   );
   test.use({ launchOptions: { args: ["--disable-features=LocalNetworkAccessChecks"] } });
   test.beforeAll(() => {
