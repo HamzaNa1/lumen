@@ -51,11 +51,16 @@ const asNumber = (value: string | undefined): number | null => {
   return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
 };
 
+const asDurationMs = (seconds: string | undefined): number | null => {
+  if (seconds === undefined || seconds.trim() === "") return null;
+  const durationMs = Math.round(Number(seconds) * 1000);
+  return Number.isSafeInteger(durationMs) && durationMs >= 0 ? durationMs : null;
+};
+
 export const parseFfprobeOutput = (output: unknown): FfprobeResult => {
   const value = Schema.decodeUnknownSync(FfprobeOutput)(output);
-  const duration = asNumber(value.format?.duration);
   return {
-    durationMs: duration === null ? null : Math.round(duration * 1000),
+    durationMs: asDurationMs(value.format?.duration),
     tags: value.format?.tags ?? {},
     streams: value.streams.flatMap((stream) => {
       if (
