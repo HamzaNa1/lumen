@@ -2792,8 +2792,8 @@ body:has(.app-shell) {
   max-height: calc(100% - 200px);
   overflow-y: auto;
   display: grid;
-  gap: 14px;
-  padding: 12px 14px 14px;
+  gap: 8px;
+  padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
   border-radius: var(--radius-lg);
   background: rgba(16, 16, 19, 0.82);
@@ -2802,6 +2802,7 @@ body:has(.app-shell) {
   color: #fff;
   cursor: default;
   font-size: 12px;
+  line-height: 1.4;
   user-select: text;
   animation: popup-in 120ms ease-out;
   transform-origin: top left;
@@ -2818,16 +2819,14 @@ body:has(.app-shell) {
   font-weight: 600;
 }
 .media-player-info h2 {
-  margin: 0 0 6px;
+  margin: 0 0 4px;
   color: rgba(255, 255, 255, 0.5);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
 }
 .media-player-info dl {
   display: grid;
-  gap: 3px;
+  gap: 1px;
   margin: 0;
 }
 .media-player-info dl > div {
