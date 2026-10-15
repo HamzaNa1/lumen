@@ -62,6 +62,19 @@ export default defineConfig({
         ...devices["Desktop Safari"],
         baseURL: baseURL(1),
         viewport: { width: 1440, height: 920 },
+        ...(process.platform === "linux"
+          ? {
+              launchOptions: {
+                env: {
+                  ...process.env,
+                  GST_DEBUG: "2",
+                  GST_DEBUG_NO_COLOR: "1",
+                  // Separate files survive worker restarts and are collected with test results.
+                  GST_DEBUG_FILE: join(output, "gstreamer-%p.log"),
+                },
+              },
+            }
+          : {}),
       },
     },
   ].filter((project) => product !== "desktop" || project.name === "chromium"),
