@@ -432,12 +432,18 @@ describe("direct-play HTTP delivery", () => {
       grantToken: string;
       streamUrl: string;
       streams: ReadonlyArray<{ id: string; kind: string; ordinal: number; language: string | null; title: string | null; isDefault: boolean }>;
+      media: unknown;
     };
     expect(playback.streams.every((stream) => typeof stream.isDefault === "boolean")).toBe(true);
     expect(playback.streams).toEqual([
       expect.objectContaining({ id: seeded.audioStreamId, kind: "audio", ordinal: 1, language: "eng", title: "English" }),
       expect.objectContaining({ id: seeded.subtitleStreamId, kind: "subtitle", ordinal: 2, language: "eng", title: "English" }),
     ]);
+    expect(playback.media).toEqual({
+      container: "mkv",
+      sizeBytes: 10,
+      video: { codec: "h264", size: null, bitrate: null },
+    });
     const streamUrl = new URL(playback.streamUrl, base);
     const full = await fetch(streamUrl, { headers: { authorization: `Bearer ${playback.grantToken}` } });
     expect(full.status).toBe(200);

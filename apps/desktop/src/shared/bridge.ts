@@ -11,6 +11,7 @@ import type {
   AudioOutput,
   TrackKind,
   IpcPlayerSurfaceBounds,
+  PlaybackInfo,
   PlayerAction,
   PlayerDisplay,
   PlayerState,
@@ -51,6 +52,7 @@ export interface DesktopBridge {
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
     readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<PlayerState>;
     readonly audioOutput: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
+    readonly info: (sessionId: string) => Promise<PlaybackInfo>;
     readonly state: () => Promise<PlayerState | null>;
     readonly display: (display: PlayerDisplay) => Promise<void>;
     readonly displayState: () => Promise<PlayerDisplay | null>;

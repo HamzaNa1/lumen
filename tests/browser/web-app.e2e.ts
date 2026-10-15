@@ -662,6 +662,38 @@ test("the player controls hide once the viewer is done with the settings", async
   await expect(panel).toBeHidden();
 });
 
+test("playback info opens from the settings and stays over the video at the top left", async ({
+  page,
+}, testInfo) => {
+  await signIn(page);
+  await page.goto("/web/library");
+  await playFilm(page);
+  const player = page.getByRole("region", { name: "Media player" });
+  await page.mouse.move(300, 300);
+  await page.getByRole("button", { name: "Playback settings", exact: true }).click();
+  await page.getByRole("button", { name: "Playback info", exact: true }).click();
+  await expect(page.locator(".media-player-settings-panel")).toBeHidden();
+
+  const info = page.getByRole("complementary", { name: "Playback info" });
+  await expect(info).toContainText("Direct playing");
+  await expect(info.getByRole("heading", { name: "Original media info" })).toBeVisible();
+  await expect(info).toContainText("Video resolution");
+  const box = await info.boundingBox();
+  const viewport = page.viewportSize();
+  expect(box !== null && viewport !== null && box.x < viewport.width / 4 && box.y < viewport.height / 4).toBe(true);
+
+  // Still there to read once the controls have hidden.
+  await page.mouse.move(320, 320);
+  await expect(player).not.toHaveClass(/controls-visible/u, { timeout: 8_000 });
+  await expect(info).toBeVisible();
+  await testInfo.attach("playback info over the film", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
+  await info.getByRole("button", { name: "Close playback info" }).click();
+  await expect(info).toBeHidden();
+});
+
 test("a watch group's film starts playing in the browser", async ({ page }) => {
   await signIn(page);
   await page.locator(".watch-group-trigger").click();

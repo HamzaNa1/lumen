@@ -165,6 +165,9 @@ export const PlayerView = ({
                 setPlayer(await nativeAudio.output(player.sessionId, output));
               }
         }
+        onPlaybackInfo={
+          player === null ? undefined : () => runtime.playback.info(player.sessionId)
+        }
         buffering={player?.buffering === true || waiting !== undefined}
         {...(waiting === undefined ? {} : { bufferingMessage: waiting })}
         awaitingInteraction={player?.awaitingInteraction === true}

@@ -227,6 +227,36 @@ const withPlayback = async (
   }
 };
 
+test("MPV reports the video it is drawing, and the server's description of the file", async () => {
+  await withPlayback(async ({ controller, properties }) => {
+    // Nothing decoded yet: MPV has no video size or frame counts to give.
+    expect(await controller.info("session-1")).toMatchObject({
+      player: "mpv",
+      protocol: "http",
+      playerSize: null,
+      videoSize: null,
+      droppedFrames: null,
+      corruptedFrames: null,
+      durationSeconds: 60,
+      media: null,
+    });
+    properties.set("mpv-version", "mpv 0.40.0");
+    properties.set("osd-width", 2560);
+    properties.set("osd-height", 1440);
+    properties.set("width", 1920);
+    properties.set("height", 1080);
+    properties.set("frame-drop-count", 2);
+    properties.set("decoder-frame-drop-count", 1);
+    expect(await controller.info("session-1")).toMatchObject({
+      player: "mpv 0.40.0",
+      playerSize: { width: 2560, height: 1440 },
+      videoSize: { width: 1920, height: 1080 },
+      droppedFrames: 3,
+    });
+    await expect(controller.info("session-0")).rejects.toThrow("Playback session is not active");
+  });
+});
+
 test("MPV reports how far it has read ahead, and when it has run out", async () => {
   await withPlayback(async ({ controller, properties }) => {
     properties.set("seeking", true);

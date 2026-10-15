@@ -132,6 +132,7 @@ const bridge: DesktopBridge = {
     selectAudio: unavailable,
     selectSubtitle: unavailable,
     audioOutput: unavailable,
+    info: unavailable,
     state: async () => scenario.player ?? null,
     display: async () => undefined,
     displayState: async () => scenario.display ?? null,

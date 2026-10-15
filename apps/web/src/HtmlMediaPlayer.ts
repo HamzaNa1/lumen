@@ -7,6 +7,8 @@ import {
   type TrackMemory,
 } from "@lumen/contracts";
 import {
+  describePlayback,
+  measuredSize,
   PlaybackDiagnostics,
   TrackSelectionController,
   PLAYBACK_REPORT_INTERVAL_MS,
@@ -18,6 +20,7 @@ import {
   ServerHttpError,
 } from "@lumen/client";
 import type {
+  PlaybackInfo,
   PlayableStream,
   PlayerSession,
   PlayerState,
@@ -42,6 +45,15 @@ export interface MediaElementLike {
     readonly length: number;
     start(index: number): number;
     end(index: number): number;
+  };
+  /** Present on video elements only. */
+  readonly videoWidth?: number;
+  readonly videoHeight?: number;
+  readonly clientWidth?: number;
+  readonly clientHeight?: number;
+  getVideoPlaybackQuality?(): {
+    readonly droppedVideoFrames: number;
+    readonly corruptedVideoFrames?: number;
   };
   /** Only some browsers let a page switch between a file's audio tracks. */
   readonly audioTracks?: { readonly length: number; [index: number]: { enabled: boolean } };
@@ -381,6 +393,19 @@ export class HtmlMediaPlayer {
   }
 
   /** The state of a session that is still the one playing. */
+  info(sessionId: string): PlaybackInfo {
+    const active = this.requireActive(sessionId);
+    const { element } = this;
+    const quality = element.getVideoPlaybackQuality?.();
+    return describePlayback(active.session, this.api.serverOrigin, active.selectedAudioStreamId, {
+      player: "HTML video player",
+      playerSize: measuredSize(element.clientWidth, element.clientHeight),
+      videoSize: measuredSize(element.videoWidth, element.videoHeight),
+      droppedFrames: quality?.droppedVideoFrames ?? null,
+      corruptedFrames: quality?.corruptedVideoFrames ?? null,
+    });
+  }
+
   getActiveState(sessionId: string): PlayerState {
     return this.snapshot(this.requireActive(sessionId));
   }

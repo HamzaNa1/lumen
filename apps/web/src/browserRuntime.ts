@@ -218,6 +218,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       selectSubtitle: async () => {
         throw new Error("This browser cannot show this file’s subtitles");
       },
+      info: async (sessionId) => player.info(sessionId),
       allowPlayback: async () => {
         await player.allowPlayback();
         // In a group, playback moved on while this viewer was waiting to click.

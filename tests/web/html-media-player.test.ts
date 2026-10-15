@@ -348,6 +348,34 @@ describe("browser playback lifecycle", () => {
     expect(element.listenerCount()).toBe(0);
   });
 
+  test("reports what the element measures alongside what the server said about the file", async () => {
+    const { element, player } = setup();
+    await player.start({ itemId: "item-1" });
+    expect(player.info("session-1")).toMatchObject({
+      player: "HTML video player",
+      protocol: "http",
+      playerSize: null,
+      videoSize: null,
+      droppedFrames: null,
+      durationSeconds: 100,
+      media: null,
+    });
+    Object.assign(element, {
+      clientWidth: 1280,
+      clientHeight: 720,
+      videoWidth: 1920,
+      videoHeight: 1080,
+      getVideoPlaybackQuality: () => ({ droppedVideoFrames: 4, corruptedVideoFrames: 1 }),
+    });
+    expect(player.info("session-1")).toMatchObject({
+      playerSize: { width: 1280, height: 720 },
+      videoSize: { width: 1920, height: 1080 },
+      droppedFrames: 4,
+      corruptedFrames: 1,
+    });
+    expect(() => player.info("session-0")).toThrow("Playback session is not active");
+  });
+
   test("a file the browser cannot decode fails with a clear, non-retryable error", async () => {
     const { element, player, calls } = setup();
     element.loadOutcome = "unsupported";
