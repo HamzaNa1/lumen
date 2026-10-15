@@ -5,6 +5,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const command = fileURLToPath(new URL("../../scripts/main-protection.ts", import.meta.url));
+const requiredContexts = [
+  "check",
+  "browser",
+  "server-image",
+  "native-desktop / macOS lifecycle and MPV audio",
+  "native-desktop / Windows Electron and MPV playback",
+];
 const directories: string[] = [];
 afterEach(() => {
   for (const directory of directories.splice(0))
@@ -97,6 +104,14 @@ test("plan previews strict main checks without changing GitHub or dropping unrel
             { context: "check", integration_id: 15368 },
             { context: "browser", integration_id: 15368 },
             { context: "server-image", integration_id: 15368 },
+            {
+              context: "native-desktop / macOS lifecycle and MPV audio",
+              integration_id: 15368,
+            },
+            {
+              context: "native-desktop / Windows Electron and MPV playback",
+              integration_id: 15368,
+            },
           ],
         },
       },
@@ -126,6 +141,7 @@ test("apply activates strict checks while preserving stronger rules, and is a no
   const applied = await run("apply");
   expect(applied.exitCode, applied.stderr).toBe(0);
   expect(applied.stdout).toContain("Verified");
+  for (const context of requiredContexts) expect(applied.stdout).toContain(context);
   const verified = await run("check");
   expect(verified.exitCode, verified.stderr).toBe(0);
   const after = read();
@@ -180,7 +196,7 @@ test("check rejects disabled, incomplete, loose, spoofable, or bypassable protec
       rules: desired.rules.filter((rule: { type: string }) => rule.type !== "pull_request"),
     },
   ];
-  for (const context of ["check", "browser", "server-image"]) {
+  for (const context of requiredContexts) {
     const state = structuredClone(desired);
     const checks = state.rules.find(
       (rule: { type: string }) => rule.type === "required_status_checks",
@@ -189,6 +205,16 @@ test("check rejects disabled, incomplete, loose, spoofable, or bypassable protec
       (check: { context: string }) => check.context !== context,
     );
     scenarios.push(state);
+    for (const integration_id of [undefined, null, 42]) {
+      const spoofable = structuredClone(desired);
+      const parameters = spoofable.rules.find(
+        (rule: { type: string }) => rule.type === "required_status_checks",
+      ).parameters;
+      parameters.required_status_checks.find(
+        (check: { context: string }) => check.context === context,
+      ).integration_id = integration_id;
+      scenarios.push(spoofable);
+    }
   }
   for (const weakParameter of [
     { strict_required_status_checks_policy: false },
@@ -215,7 +241,7 @@ test("check rejects disabled, incomplete, loose, spoofable, or bypassable protec
     expect(result.exitCode, JSON.stringify(state)).not.toBe(0);
     expect(result.stderr).toContain("differs from policy");
     expect(result.stdout).not.toContain("Verified");
-    expect(read()).toEqual(state);
+    expect(read()).toEqual(JSON.parse(JSON.stringify(state)));
   }
 });
 

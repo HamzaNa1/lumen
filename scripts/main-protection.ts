@@ -119,6 +119,6 @@ if (command === "plan") {
       "GitHub did not retain the planned ruleset. Inspect live protection before retrying.",
     );
   console.log(
-    `Verified ${endpoint}: active, no bypass, pull requests, strict check/browser/server-image from GitHub Actions.`,
+    `Verified ${endpoint}: active, no bypass, pull requests, strict required checks from GitHub Actions: ${policy.rules.flatMap((rule) => rule.parameters?.required_status_checks ?? []).map((check) => check.context).join(", ")}.`,
   );
 }

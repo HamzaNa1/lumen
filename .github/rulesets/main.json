@@ -30,7 +30,15 @@
         "required_status_checks": [
           { "context": "check", "integration_id": 15368 },
           { "context": "browser", "integration_id": 15368 },
-          { "context": "server-image", "integration_id": 15368 }
+          { "context": "server-image", "integration_id": 15368 },
+          {
+            "context": "native-desktop / macOS lifecycle and MPV audio",
+            "integration_id": 15368
+          },
+          {
+            "context": "native-desktop / Windows Electron and MPV playback",
+            "integration_id": 15368
+          }
         ]
       }
     }
