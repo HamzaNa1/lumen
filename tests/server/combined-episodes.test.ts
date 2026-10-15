@@ -2,7 +2,7 @@ import { afterEach, expect, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
 import { Database, sql } from "../../packages/database/src/index.ts";
 import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { CatalogItem, HomeContent } from "../../packages/contracts/src/index.ts";
@@ -10,8 +10,18 @@ import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
 
-// A real (synthetic) video under release-style names, scanned and probed by the actual server.
+// A synthetic video under release-style names, scanned by the actual server. Its ffprobe is a stub
+// printing what ffprobe reports for this fixture, so the test needs no ffmpeg install while the
+// server still spawns, reads and parses a probe.
 const video = join(import.meta.dir, "../fixtures/playback-ac3.mkv");
+const probeOutput = {
+  format: { duration: "20.000000" },
+  streams: [
+    { index: 0, codec_type: "video", codec_name: "h264", width: 640, height: 360, disposition: { default: 1 } },
+    { index: 1, codec_type: "audio", codec_name: "ac3", channels: 6, sample_rate: "48000", disposition: { default: 0 } },
+  ],
+};
+const ffprobePath = process.env.LUMEN_FFPROBE_PATH;
 const season = "The Office (2005)/Season 3";
 const files = {
   before: "The.Office.US.S03E09.1080p.AMZN.WEB.x264-MRSK.mkv",
@@ -25,6 +35,8 @@ const servers: RunningServer[] = [];
 const paths: string[] = [];
 afterEach(async () => {
   for (const server of servers.splice(0)) await server.stop();
+  if (ffprobePath === undefined) delete process.env.LUMEN_FFPROBE_PATH;
+  else process.env.LUMEN_FFPROBE_PATH = ffprobePath;
   for (const path of paths.splice(0)) await rm(path, { recursive: true, force: true });
 });
 
@@ -34,6 +46,10 @@ const library = async () => {
   const media = join(root, "shows");
   await mkdir(join(media, season), { recursive: true });
   for (const file of Object.values(files)) await copyFile(video, join(media, season, file));
+  const ffprobe = join(root, "ffprobe");
+  await writeFile(ffprobe, `#!/bin/sh\ncat <<'JSON'\n${JSON.stringify(probeOutput)}\nJSON\n`);
+  await chmod(ffprobe, 0o755);
+  process.env.LUMEN_FFPROBE_PATH = ffprobe;
   const databasePath = join(root, "catalog.sqlite");
   const libraryId = newUuid();
   await Effect.runPromise(
