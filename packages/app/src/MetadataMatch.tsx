@@ -4,6 +4,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tansta
 import { Film } from "lucide-react";
 import { useState } from "react";
 import { errorMessage } from "./format";
+import { CurrentBadge, ItemSettingsPanel, SettingsChoice } from "./ItemSettingsPanel";
+import type { MetadataRefresh } from "./useMetadataRefresh";
 import { useWorkspace } from "./Workspace";
 import { useRuntime } from "./Runtime";
 
@@ -20,49 +22,46 @@ const MatchOption = ({
   readonly disabled: boolean;
   readonly onSelect: () => void;
 }): React.ReactElement => (
-  <li>
-    <button
-      type="button"
-      className="match-option"
-      aria-pressed={selected}
-      disabled={disabled}
-      onClick={onSelect}
-    >
+  <SettingsChoice
+    selected={selected}
+    disabled={disabled}
+    onSelect={onSelect}
+    media={
       <span className="match-poster">
         {candidate.posterUrl === null ? (
-          <Film aria-hidden="true" size={18} />
+          <Film aria-hidden="true" size={16} />
         ) : (
           <img src={candidate.posterUrl} alt="" draggable={false} />
         )}
       </span>
-      <span className="match-text">
-        <span className="match-title">
-          {candidate.title}
-          {candidate.year === null ? null : <span className="match-year">{candidate.year}</span>}
-        </span>
-        <span className="match-id">
-          TMDb ID {candidate.tmdbId}
-          {current ? <span className="match-current">Current match</span> : null}
-        </span>
-        {candidate.overview === "" ? null : (
-          <span className="match-overview">{candidate.overview}</span>
-        )}
-      </span>
-    </button>
-  </li>
+    }
+  >
+    <span className="settings-choice-title">
+      {candidate.title}{" "}
+      {candidate.year === null ? null : (
+        <span className="settings-choice-muted">{candidate.year}</span>
+      )}{" "}
+      {current ? <CurrentBadge /> : null}
+    </span>
+    <span className="settings-choice-meta">TMDb {candidate.tmdbId}</span>
+    {candidate.overview === "" ? null : (
+      <span className="settings-choice-description">{candidate.overview}</span>
+    )}
+  </SettingsChoice>
 );
 
 /** Chooses which TMDb title a movie or show takes its details and artwork from. */
 export const MetadataMatch = ({
   itemId,
   title,
-  busy,
+  hidden,
+  refresh,
   onSaved,
 }: {
   readonly itemId: string;
   readonly title: string;
-  /** A refresh is still applying the last change. */
-  readonly busy: boolean;
+  readonly hidden: boolean;
+  readonly refresh: MetadataRefresh;
   readonly onSaved: (runId: string) => void;
 }): React.ReactElement => {
   const runtime = useRuntime();
@@ -89,20 +88,36 @@ export const MetadataMatch = ({
     },
   });
 
+  const busy = save.isPending || refresh === "running";
   const current = options.data?.tmdbId ?? null;
+  const selected = chosen ?? current;
   const candidates = options.data?.candidates ?? [];
   const error = options.error ?? save.error;
   return (
-    <section className="item-settings-section" aria-labelledby="match-heading">
-      <div>
-        <h3 id="match-heading">TMDb match</h3>
-        <p>
-          Details and artwork come from the title you pick here.{" "}
-          {current === null
-            ? "Nothing is matched yet."
-            : `Currently matched to TMDb ID ${current}.`}
-        </p>
-      </div>
+    <ItemSettingsPanel
+      label="TMDb match"
+      hidden={hidden}
+      refresh={refresh}
+      action={
+        <Button
+          variant="primary"
+          disabled={chosen === undefined || chosen === current || busy}
+          onClick={() => {
+            if (chosen !== undefined) save.mutate(chosen);
+          }}
+        >
+          {save.isPending ? "Saving…" : "Use this match"}
+        </Button>
+      }
+    >
+      <p className="item-settings-intro">
+        Details and artwork come from the TMDb title you pick.{" "}
+        {current === null
+          ? "Nothing is matched yet."
+          : candidates.some((candidate) => candidate.tmdbId === current)
+            ? null
+            : `Currently matched to TMDb ${current}.`}
+      </p>
       <Form
         className="match-search"
         onSubmit={(event) => {
@@ -120,7 +135,7 @@ export const MetadataMatch = ({
           hideLabel
           value={text}
           onValueChange={setText}
-          placeholder="Title or TMDb ID"
+          placeholder="Search by title or TMDb ID"
           autoComplete="off"
           maxLength={200}
         />
@@ -130,21 +145,23 @@ export const MetadataMatch = ({
       </Form>
       {options.data === undefined ? (
         options.isPending ? (
-          <p role="status">Searching TMDb…</p>
+          <p className="item-settings-note" role="status">
+            Searching TMDb…
+          </p>
         ) : null
       ) : candidates.length === 0 ? (
-        <p className="field-description">
+        <p className="item-settings-note">
           Nothing on TMDb matches “{options.data.query}”. Try another title, or enter the TMDb ID.
         </p>
       ) : (
-        <ul className="match-list" aria-label="Possible matches">
+        <ul className="settings-choices" aria-label="Possible matches">
           {candidates.map((candidate) => (
             <MatchOption
               key={candidate.tmdbId}
               candidate={candidate}
               current={candidate.tmdbId === current}
-              selected={candidate.tmdbId === chosen}
-              disabled={save.isPending || busy}
+              selected={candidate.tmdbId === selected}
+              disabled={busy}
               onSelect={() => {
                 setChosen(candidate.tmdbId);
                 save.reset();
@@ -158,17 +175,6 @@ export const MetadataMatch = ({
           {errorMessage(error, "Could not load or save the match")}
         </p>
       )}
-      <div className="item-settings-actions">
-        <Button
-          variant="primary"
-          disabled={chosen === undefined || chosen === current || save.isPending || busy}
-          onClick={() => {
-            if (chosen !== undefined) save.mutate(chosen);
-          }}
-        >
-          {save.isPending ? "Saving…" : "Use this match"}
-        </Button>
-      </div>
-    </section>
+    </ItemSettingsPanel>
   );
 };

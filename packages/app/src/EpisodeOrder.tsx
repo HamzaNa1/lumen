@@ -1,7 +1,9 @@
-import { Button, SelectField } from "@lumen/ui";
+import { Button } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { errorMessage } from "./format";
+import { CurrentBadge, ItemSettingsPanel, SettingsChoice } from "./ItemSettingsPanel";
+import type { MetadataRefresh } from "./useMetadataRefresh";
 import { useWorkspace } from "./Workspace";
 import { useRuntime } from "./Runtime";
 
@@ -10,12 +12,13 @@ const defaultOrder = "default";
 /** Chooses which TMDb episode order a show's season folders follow. */
 export const EpisodeOrder = ({
   itemId,
-  busy,
+  hidden,
+  refresh,
   onSaved,
 }: {
   readonly itemId: string;
-  /** A refresh is still applying the last change. */
-  readonly busy: boolean;
+  readonly hidden: boolean;
+  readonly refresh: MetadataRefresh;
   readonly onSaved: (runId: string) => void;
 }): React.ReactElement => {
   const runtime = useRuntime();
@@ -41,69 +44,96 @@ export const EpisodeOrder = ({
     },
   });
 
-  const value = chosen ?? order.data?.groupId ?? defaultOrder;
+  const busy = save.isPending || refresh === "running";
+  const saved = order.data === undefined ? undefined : (order.data.groupId ?? defaultOrder);
+  const value = chosen ?? saved;
   const groups = order.data?.groups ?? [];
-  const unavailable = value !== defaultOrder && !groups.some((group) => group.id === value);
-  const selected = groups.find((group) => group.id === value);
+  const unavailable =
+    saved !== undefined && saved !== defaultOrder && !groups.some((group) => group.id === saved);
+  const choose = (next: string): void => {
+    setChosen(next);
+    save.reset();
+  };
   const error = order.error ?? save.error;
   return (
-    <section className="item-settings-section" aria-labelledby="episode-order-heading">
-      <div>
-        <h3 id="episode-order-heading">Episode order</h3>
-        <p>
-          Choose the order that matches your season folders. Your files and episode numbers stay the
-          same.
-        </p>
-      </div>
+    <ItemSettingsPanel
+      label="Episode order"
+      hidden={hidden}
+      refresh={refresh}
+      action={
+        <>
+          {order.isError ? <Button onClick={() => void order.refetch()}>Retry</Button> : null}
+          <Button
+            variant="primary"
+            disabled={
+              value === undefined || (unavailable && value === saved) || order.isError || busy
+            }
+            onClick={() => save.mutate()}
+          >
+            {save.isPending ? "Saving…" : "Save order"}
+          </Button>
+        </>
+      }
+    >
+      <p className="item-settings-intro">
+        Choose the order that matches your season folders. Your files and episode numbers stay the
+        same.
+      </p>
       {order.isPending ? (
-        <p role="status">Loading episode orders…</p>
+        <p className="item-settings-note" role="status">
+          Loading episode orders…
+        </p>
       ) : order.data === undefined ? null : (
-        <div className="item-settings-field">
-          <SelectField
-            label="Episode order"
-            hideLabel
-            value={value}
-            disabled={save.isPending || busy}
-            options={[
-              { value: defaultOrder, label: "Default order" },
-              ...groups.map((group) => ({
-                value: group.id,
-                label: `${group.name} · ${group.type}`,
-              })),
-              ...(unavailable ? [{ value, label: "Saved order (unavailable)" }] : []),
-            ]}
-            onValueChange={(next) => {
-              setChosen(next);
-              save.reset();
-            }}
-          />
-          <p className="field-description">
-            {unavailable
-              ? "This order is no longer available. Choose another order before refreshing."
-              : selected?.description ||
-                (groups.length === 0
-                  ? "No alternate orders are available for this show."
-                  : "Default uses the season and episode numbers listed by TMDb.")}
-          </p>
-        </div>
+        <ul className="settings-choices" aria-label="Episode orders">
+          <SettingsChoice
+            selected={value === defaultOrder}
+            disabled={busy}
+            onSelect={() => choose(defaultOrder)}
+          >
+            <span className="settings-choice-title">
+              Default order {saved === defaultOrder ? <CurrentBadge /> : null}
+            </span>
+            <span className="settings-choice-description">
+              The season and episode numbers listed by TMDb.
+            </span>
+          </SettingsChoice>
+          {groups.map((group) => (
+            <SettingsChoice
+              key={group.id}
+              selected={value === group.id}
+              disabled={busy}
+              onSelect={() => choose(group.id)}
+            >
+              <span className="settings-choice-title">
+                {group.name} {saved === group.id ? <CurrentBadge /> : null}
+              </span>
+              <span className="settings-choice-meta">{group.type}</span>
+              {group.description === "" ? null : (
+                <span className="settings-choice-description">{group.description}</span>
+              )}
+            </SettingsChoice>
+          ))}
+          {unavailable ? (
+            <SettingsChoice selected={value === saved} disabled onSelect={() => undefined}>
+              <span className="settings-choice-title">
+                Saved order <CurrentBadge />
+              </span>
+              <span className="settings-choice-meta">Unavailable</span>
+              <span className="settings-choice-description">
+                TMDb no longer offers this order. Choose another before refreshing.
+              </span>
+            </SettingsChoice>
+          ) : null}
+        </ul>
       )}
+      {order.data !== undefined && groups.length === 0 ? (
+        <p className="item-settings-note">No alternate orders are available for this show.</p>
+      ) : null}
       {error === null ? null : (
         <p className="form-error" role="alert">
           {errorMessage(error, "Could not load or save episode orders")}
         </p>
       )}
-      <div className="item-settings-actions">
-        {order.isError ? <Button onClick={() => void order.refetch()}>Retry</Button> : null}
-        <Button
-          variant="primary"
-          disabled={
-            order.data === undefined || order.isError || unavailable || save.isPending || busy
-          }
-          onClick={() => save.mutate()}
-        >
-          {save.isPending ? "Saving…" : "Save order"}
-        </Button>
-      </div>
-    </section>
+    </ItemSettingsPanel>
   );
 };

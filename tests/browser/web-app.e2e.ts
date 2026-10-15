@@ -750,3 +750,88 @@ test("audio and subtitle settings persist after reload", async ({ page }) => {
   await subtitles.click(); await page.getByRole("option", { name: "Off", exact: true }).click();
   await expect(subtitles).toContainText("Off");
 });
+
+test("a show's settings keep the TMDb match and episode order in tabs with one action each", async ({
+  page,
+}) => {
+  // The fixture server has no TMDb key, so TMDb's answers are stubbed in the browser.
+  const saved: string[] = [];
+  await page.route(/\/api\/v1\/items\/[^/]+$/u, async (route) => {
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      json: { ...(await response.json()), metadataProviderConfigured: true },
+    });
+  });
+  await page.route(/\/api\/v1\/items\/[^/]+\/match/u, (route) => {
+    if (route.request().method() === "PUT") {
+      saved.push(`match ${route.request().postDataJSON().tmdbId}`);
+      return route.fulfill({ json: { runId: "00000000-0000-4000-8000-000000000001" } });
+    }
+    return route.fulfill({
+      json: {
+        tmdbId: "1399",
+        query: "Serial",
+        candidates: [
+          { tmdbId: "1399", title: "Serial", year: 2021, overview: "", posterUrl: null },
+          {
+            tmdbId: "71912",
+            title: "Serial Experiments Lain",
+            year: 1998,
+            overview: "",
+            posterUrl: null,
+          },
+        ],
+      },
+    });
+  });
+  await page.route(/\/api\/v1\/items\/[^/]+\/episode-order/u, (route) => {
+    if (route.request().method() === "PUT") {
+      saved.push(`order ${route.request().postDataJSON().groupId}`);
+      return route.fulfill({ json: { runId: "00000000-0000-4000-8000-000000000002" } });
+    }
+    return route.fulfill({
+      json: {
+        tmdbSeriesId: "1399",
+        groupId: null,
+        groups: [
+          { id: "5b11ba820e0a265abc008b8d", name: "DVD Order", description: "", type: "DVD" },
+        ],
+      },
+    });
+  });
+  // The refresh stays running, so its progress stays on screen.
+  await page.route(/\/api\/v1\/scans\//u, () => undefined);
+
+  await signIn(page);
+  await page.goto("/web/library");
+  await page.getByRole("button", { name: "Serial Serial 2021" }).first().click();
+  await page.getByRole("button", { name: "Show settings" }).click();
+  const dialog = page.getByRole("dialog", { name: "Show settings" });
+  const match = dialog.getByRole("region", { name: "TMDb match" });
+  const order = dialog.getByRole("region", { name: "Episode order" });
+  await expect(match).toBeVisible();
+  await expect(order).toBeHidden();
+  await expect(dialog.getByRole("button", { name: "Close", exact: true })).toHaveCount(0);
+
+  const current = match.getByRole("button", { name: /^Serial 2021 Current/u });
+  await expect(current).toHaveAttribute("aria-pressed", "true");
+  await expect(current).toContainText("Current");
+  const useMatch = match.getByRole("button", { name: "Use this match" });
+  await expect(useMatch).toBeDisabled();
+  await match.getByRole("button", { name: /Serial Experiments Lain/u }).click();
+  await expect(current).toHaveAttribute("aria-pressed", "false");
+  await useMatch.click();
+  await expect(match.getByRole("status")).toHaveText("Saved. Refreshing details from TMDb…");
+
+  await dialog.getByRole("tab", { name: "Episode order" }).click();
+  await expect(match).toBeHidden();
+  await expect(order.getByRole("button", { name: /^Default order/u })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  // A change is not saved over a refresh that is still applying the last one.
+  await expect(order.getByRole("button", { name: "Save order" })).toBeDisabled();
+  await expect(order.getByRole("status")).toHaveText("Saved. Refreshing details from TMDb…");
+  expect(saved).toEqual(["match 71912"]);
+});
