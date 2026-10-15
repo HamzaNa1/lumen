@@ -3,6 +3,7 @@ import {
   WatchPlaybackController,
   PlaybackDiagnostics,
   type WatchPlayer,
+  type WatchServer,
   type WatchPlayerState,
   type WatchPlaybackSample,
 } from "../../packages/client/src/index.ts";
@@ -10,7 +11,7 @@ import type { PlayerBuffer } from "../../packages/client/src/index.ts";
 import type { WatchAction, WatchGroup } from "../../packages/contracts/src/index.ts";
 
 /** Drive the actual controller without network or wall-clock timers. */
-const runController = async (run: (fixture: ReturnType<typeof fixture>) => Promise<void>) => {
+const runController = async (run: (context: ReturnType<typeof fixture>) => Promise<void>) => {
   const f = fixture();
   const clock = spyOn(performance, "now").mockImplementation(() => f.now);
   try {
@@ -63,7 +64,7 @@ const fixture = () => {
     durationSeconds: 1000,
     positionSeconds: position - (paused || starved ? 0 : (cachedAge * rate) / 1000),
   });
-  const player: WatchPlayer = {
+  const player: WatchPlayer<WatchServer> = {
     getState: state,
     recordSynchronization: (fields) => diagnostics.record("watch_synchronization", fields),
     start: async () => {},
@@ -119,6 +120,7 @@ const fixture = () => {
     groups: [],
     group,
     error: null,
+    buffers: [],
   };
   const client = {
     get serverNow() {

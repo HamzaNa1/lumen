@@ -1,3 +1,5 @@
+import { Message } from "../../apps/server/src/http/Schemas";
+import { responseJson } from "../helpers/http";
 import { describe, expect, test } from "bun:test";
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
@@ -27,18 +29,24 @@ const capture = (level: "debug" | "info" | "warn" | "error" = "info") => {
 
 const handler = (
   logging: ReturnType<typeof capture>,
-  services: Partial<HttpServices> = {},
+  services: Omit<Partial<HttpServices>, "auth"> & { auth?: Partial<HttpServices["auth"]> } = {},
   maxRequests = 600,
 ) =>
   makeHttpHandler(
     {
-      auth: {
-        setupRequired: () => Effect.succeed(false),
-        authenticate: () => Effect.fail(unauthorized()),
-      },
       playback: { authorizeGrant: () => Effect.fail(unauthorized()) },
       databaseReady: async () => true,
       ...services,
+      auth: {
+        setupRequired: () => Effect.succeed(false),
+        authenticate: () => Effect.fail(unauthorized()),
+        register: () => Effect.die("Unexpected registration"),
+        login: () => Effect.die("Unexpected login"),
+        migrateLegacySession: () => Effect.die("Unexpected session migration"),
+        authenticateSession: () => Effect.die("Unexpected session authentication"),
+        logout: () => Effect.die("Unexpected logout"),
+        ...services.auth,
+      },
     } as HttpServices,
     { ...decodeConfig({}), maxRequestsPerMinute: maxRequests },
     logging.logger,
@@ -86,14 +94,18 @@ describe("HTTP and lifecycle logging", () => {
       }),
     );
     expect(denied.status).toBe(401);
-    expect((await denied.json()).requestId).toBe(denied.headers.get("x-request-id"));
+    expect((await responseJson(Message, denied)).requestId).toBe(
+      denied.headers.get("x-request-id") ?? expect.unreachable(),
+    );
     expect((await fetch(new Request("http://localhost/api/v1/items/private-title"))).status).toBe(
       401,
     );
     const limited = await fetch(new Request("http://localhost/api/v1/items/private-title"));
     expect(limited.status).toBe(429);
     expect(limited.headers.get("retry-after")).not.toBeNull();
-    expect((await limited.json()).requestId).toBe(limited.headers.get("x-request-id"));
+    expect((await responseJson(Message, limited)).requestId).toBe(
+      limited.headers.get("x-request-id") ?? expect.unreachable(),
+    );
     const invalid = await handler(logging)(
       new Request("http://localhost/api/v1/auth/login", {
         method: "POST",
@@ -122,7 +134,7 @@ describe("HTTP and lifecycle logging", () => {
     const fetch = handler(logging, {
       auth: {
         setupRequired: () => Effect.fail(internal("private-message", new Error("private-SQL"))),
-      } as HttpServices["auth"],
+      },
     });
     const response = await fetch(new Request("http://localhost/api/v1/auth/setup"));
     expect(response.status).toBe(500);
@@ -153,8 +165,21 @@ describe("HTTP and lifecycle logging", () => {
     );
     const fetch = handler(logging, {
       auth: {
-        authenticate: () => Effect.succeed({ user: { id: "user" } }),
-      } as HttpServices["auth"],
+        authenticate: () =>
+          Effect.succeed({
+            user: {
+              id: "user",
+              username: "viewer",
+              displayName: "Viewer",
+              role: "user",
+              isActive: true,
+              createdAtMs: 1,
+              updatedAtMs: 1,
+            },
+            sessionId: "session",
+            deviceId: "device",
+          }),
+      },
       events: { stream: () => stream } as unknown as HttpServices["events"],
     });
     const response = await fetch(

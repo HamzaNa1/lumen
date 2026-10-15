@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
-export const readLocalFile = async (path: string, maxBytes: number): Promise<Uint8Array | null> => {
+export const readLocalFile = async (path: string, maxBytes: number): Promise<Uint8Array<ArrayBuffer> | null> => {
   try {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {

@@ -189,13 +189,13 @@ const setup = (
 };
 
 const keptVolumes = (initial: VolumeMemory | null = null) => {
-  const storage = {
+  const storage: VolumeMemoryStorage & { kept: VolumeMemory | null } = {
     kept: initial,
     read: () => storage.kept,
     write: (memory: VolumeMemory) => {
       storage.kept = memory;
     },
-  } satisfies VolumeMemoryStorage & { kept: VolumeMemory | null };
+  };
   return storage;
 };
 

@@ -9,7 +9,7 @@ import { clientKey, normalizeAddress } from "../../apps/server/src/http/ClientId
 import { isMediaRequest, MediaAdmission } from "../../apps/server/src/http/MediaAdmission";
 import { makeHttpHandler, type HttpServices } from "../../apps/server/src/http/HttpApp";
 
-const request = (headers: HeadersInit = {}) =>
+const request = (headers: RequestInit["headers"] = {}) =>
   new Request("http://lumen.test/api/v1/media/track?grant=private-grant", { headers });
 const context = (peerAddress: string | null) => ({ peerAddress });
 

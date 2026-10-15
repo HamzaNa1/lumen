@@ -57,24 +57,34 @@ const fixture = () => {
       `${path}/tsconfig.json`,
       JSON.stringify({
         extends: "../../tsconfig.base.json",
-        compilerOptions: { types: [] },
+        compilerOptions: { types: ["bun"] },
         include: ["src/**/*.ts"],
       }),
     );
     write(`${path}/src/index.ts`, "export const value: string = 'valid';\n");
+  }
+  for (const path of [
+    ...new Bun.Glob("tests/*/tsconfig.json").scanSync({ cwd: repository }),
+    "apps/desktop/tsconfig.main.json",
+  ]) {
+    mkdirSync(dirname(join(root, path)), { recursive: true });
+    cpSync(join(repository, path), join(root, path));
   }
   for (const owner of ["server", "desktop", "web", "shared", "tooling"])
     write(
       `tests/${owner}/example.test.ts`,
       'import { test, expect } from "bun:test"; test("works", () => expect(1).toBe(1));\n',
     );
+  write("tests/helpers/example.ts", "export const helper = true;\n");
+  write("tests/browser/example.e2e.ts", "export const browser = true;\n");
+  write("playwright.config.ts", "export const config = true;\n");
   write("tests/native/example.ts", "export const native = true;\n");
   write(
     "tests/compatibility/example.test.ts",
     'throw new Error("Unreleased counterpart is broken");\n',
   );
-  const check = async (product: string) => {
-    const child = Bun.spawn([process.execPath, "run", `check:${product}`], {
+  const runScript = async (script: string) => {
+    const child = Bun.spawn([process.execPath, "run", script], {
       cwd: root,
       stdout: "pipe",
       stderr: "pipe",
@@ -86,7 +96,11 @@ const fixture = () => {
     ]);
     return { exitCode, output: stdout + stderr };
   };
-  return { write, check };
+  return {
+    write,
+    check: (product: string) => runScript(`check:${product}`),
+    typecheck: () => runScript("typecheck"),
+  };
 };
 
 test.each(["server", "desktop"])(
@@ -95,6 +109,9 @@ test.each(["server", "desktop"])(
     const { write, check } = fixture();
     const counterpart = product === "server" ? "desktop" : "server";
     write(`apps/${counterpart}/src/index.ts`, "export const broken: string = 1;\n");
+    write(`tests/${counterpart}/type-error.test.ts`, "export const broken: string = 1;\n");
+    write("tests/compatibility/type-error.test.ts", "export const broken: string = 1;\n");
+    write("playwright.config.ts", "export const broken: string = 1;\n");
     // The database belongs to the server alone; the web app ships only with the server.
     const unowned = product === "server" ? [] : ["packages/database", "apps/web"];
     for (const path of unowned) write(`${path}/src/index.ts`, "export const broken: string = 1;\n");
@@ -181,3 +198,47 @@ test("server checks run the web app's tests", async () => {
   expect(result.exitCode).not.toBe(0);
   expect(result.output).toContain("Web test failure");
 });
+
+test.each(["server", "desktop"])(
+  "%s checks reject type errors in their tests",
+  async (product) => {
+    const { write, check } = fixture();
+    write(`tests/${product}/type-error.test.ts`, "export const broken: string = 1;\n");
+    const result = await check(product);
+    expect(result.exitCode, result.output).not.toBe(0);
+    expect(result.output).toContain("TS2322");
+    expect(result.output).toContain("type-error.test.ts");
+  },
+  30_000,
+);
+
+test.each([
+  "tests/helpers/type-error.ts",
+  "tests/browser/type-error.e2e.ts",
+  "playwright.config.ts",
+])(
+  "normal typecheck rejects errors in %s",
+  async (path) => {
+    const { write, typecheck } = fixture();
+    write(path, "export const broken: string = 1;\n");
+    const result = await typecheck();
+    expect(result.exitCode, result.output).not.toBe(0);
+    expect(result.output).toContain("TS2322");
+    expect(result.output).toContain(path);
+  },
+  30_000,
+);
+
+test.each(["server", "desktop"])(
+  "%s checks reject type errors in helpers imported by shared tests",
+  async (product) => {
+    const { write, check } = fixture();
+    write("tests/helpers/type-error.ts", "export const broken: string = 1;\n");
+    write("tests/shared/example.test.ts", 'import "../helpers/type-error";\n');
+    const result = await check(product);
+    expect(result.exitCode, result.output).not.toBe(0);
+    expect(result.output).toContain("TS2322");
+    expect(result.output).toContain("tests/helpers/type-error.ts");
+  },
+  30_000,
+);

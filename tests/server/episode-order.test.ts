@@ -1,7 +1,8 @@
+import { Message } from "../../apps/server/src/http/Schemas";
 import { afterEach, expect, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
 import { Database, sql } from "../../packages/database/src/index.ts";
-import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Effect, Schema } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +10,19 @@ import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
 import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
 
+import {
+  CatalogItemDetails,
+  CatalogItemPage,
+  EpisodeOrderOptions,
+  LoginResponse,
+  MetadataMatchOptions,
+  ScanJob,
+  ScanRun,
+  Uuid,
+} from "../../packages/contracts/src/index.ts";
+import { responseJson } from "../helpers/http";
+
+const refreshResponse = Schema.Struct({ runId: Uuid });
 const groupId = "641eb9d6b234b9007ac67063";
 const nativeFetch = globalThis.fetch;
 const poster = Buffer.from(
@@ -124,7 +138,12 @@ const fixture = async (episodes: number | ReadonlyArray<Numbering> = 2) => {
                   overview: "Starting life in another world",
                   poster_path: "/poster.png",
                 },
-                { id: 123, name: "Re:ZERO Break Time", first_air_date: "", poster_path: "/gone.png" },
+                {
+                  id: 123,
+                  name: "Re:ZERO Break Time",
+                  first_air_date: "",
+                  poster_path: "/gone.png",
+                },
                 { id: 124, first_air_date: "2020-01-01" },
               ]
             : [],
@@ -191,7 +210,7 @@ const fixture = async (episodes: number | ReadonlyArray<Numbering> = 2) => {
       }),
     });
     expect(res.status).toBe(200);
-    return (await res.json()).accessToken as string;
+    return (await responseJson(LoginResponse, res)).accessToken;
   };
   const admin = await login("admin"),
     viewer = await login("user");
@@ -206,9 +225,9 @@ const fixture = async (episodes: number | ReadonlyArray<Numbering> = 2) => {
     request(orderPath, "PUT", { tmdbSeriesId: series, groupId: id });
   const waitForRun = async (response: Response) => {
     expect(response.status).toBe(200);
-    const { runId } = await response.json();
+    const { runId } = await responseJson(refreshResponse, response);
     for (let i = 0; i < 200; i++) {
-      const status = await (await request(`scans/${runId}`)).json();
+      const status = await responseJson(ScanRun, request(`scans/${runId}`));
       if (!["queued", "running"].includes(status.status)) return status;
       await Bun.sleep(100);
     }
@@ -263,7 +282,7 @@ test("admins select a persisted episode order and refresh titles without changin
       .status,
   ).toBe(200);
   expect((await f.waitForRun(await f.save())).status).toBe("succeeded");
-  const details = await (await f.request(episode)).json();
+  const details = await responseJson(CatalogItemDetails, f.request(episode));
   expect(details.item).toMatchObject({
     id: f.episodes[0],
     parentId: f.season,
@@ -272,21 +291,18 @@ test("admins select a persisted episode order and refresh titles without changin
   });
   expect(details.watchState).toMatchObject({ completed: true, positionSeconds: 12 });
   expect(details.isFavorite).toBe(true);
-  expect((await (await f.request(`items/${f.episodes[1]}`)).json()).item.title).toBe(
-    "My episode title",
-  );
-  expect((await (await f.request(`items/${f.season}`)).json()).item).toMatchObject({
+  expect(
+    (await responseJson(CatalogItemDetails, f.request(`items/${f.episodes[1]}`))).item.title,
+  ).toBe("My episode title");
+  expect(
+    (await responseJson(CatalogItemDetails, f.request(`items/${f.season}`))).item,
+  ).toMatchObject({
     indexNumber: 4,
     title: "Season 4",
   });
-  const children = await (await f.request(`items/${f.season}/children`)).json();
+  const children = await responseJson(CatalogItemPage, f.request(`items/${f.season}/children`));
   expect(children.items).toHaveLength(19);
-  expect(
-    children.items.map((item: { indexNumber: number; title: string }) => [
-      item.indexNumber,
-      item.title,
-    ]),
-  ).toEqual(
+  expect(children.items.map((item) => [item.indexNumber, item.title])).toEqual(
     Array.from({ length: 19 }, (_, i) => [
       i + 1,
       i === 0
@@ -299,28 +315,28 @@ test("admins select a persisted episode order and refresh titles without changin
     ]),
   );
   await f.restart();
-  expect((await (await f.request(f.orderPath)).json()).groupId).toBe(groupId);
+  expect((await responseJson(EpisodeOrderOptions, f.request(f.orderPath))).groupId).toBe(groupId);
   expect((await f.waitForRun(await f.save(null))).status).toBe("succeeded");
-  expect((await (await f.request(episode)).json()).item.title).toBe("Default episode 1");
-  expect((await (await f.request(f.orderPath)).json()).groupId).toBeNull();
+  expect((await responseJson(CatalogItemDetails, f.request(episode))).item.title).toBe(
+    "Default episode 1",
+  );
+  expect((await responseJson(EpisodeOrderOptions, f.request(f.orderPath))).groupId).toBeNull();
 }, 30_000);
 
 test("unmatched groups fail visibly without overwriting episode titles or silently using the default order", async () => {
   const f = await fixture();
   f.upstream.missingMapping = true;
   const response = await f.save();
-  const { runId } = await response.clone().json();
+  const { runId } = await responseJson(refreshResponse, response.clone());
   expect((await f.waitForRun(response)).status).toBe("failed");
-  const jobs = await (await f.request(`scans/${runId}/jobs`)).json();
+  const jobs = await responseJson(Schema.Array(ScanJob), f.request(`scans/${runId}/jobs`));
   expect(
     jobs.every((job: { status: string }) => ["failed", "succeeded"].includes(job.status)),
   ).toBe(true);
+  expect(jobs.some((job) => job.errorMessage?.includes("Choose another episode order"))).toBe(true);
   expect(
-    jobs.some((job: { errorMessage: string }) =>
-      job.errorMessage?.includes("Choose another episode order"),
-    ),
-  ).toBe(true);
-  expect((await (await f.request(`items/${f.episodes[0]}`)).json()).item.title).toBe("Episode 1");
+    (await responseJson(CatalogItemDetails, f.request(`items/${f.episodes[0]}`))).item.title,
+  ).toBe("Episode 1");
 }, 30_000);
 
 test("provider errors do not reset an order, and rematching a show clears its old order", async () => {
@@ -330,9 +346,9 @@ test("provider errors do not reset an order, and rematching a show clears its ol
   expect((await f.request(f.orderPath)).status).toBe(503);
   expect((await f.save(null)).status).toBe(503);
   f.upstream.unavailable = false;
-  expect((await (await f.request(f.orderPath)).json()).groupId).toBe(groupId);
+  expect((await responseJson(EpisodeOrderOptions, f.request(f.orderPath))).groupId).toBe(groupId);
   expect((await f.request(`items/${f.show}/match`, "PUT", { tmdbId: "123" })).status).toBe(200);
-  expect(await (await f.request(f.orderPath)).json()).toMatchObject({
+  expect(await responseJson(EpisodeOrderOptions, f.request(f.orderPath))).toMatchObject({
     tmdbSeriesId: "123",
     groupId: null,
     groups: [],
@@ -342,7 +358,7 @@ test("provider errors do not reset an order, and rematching a show clears its ol
 test("admins see possible matches, pick one by search or ID, and the refresh follows it", async () => {
   const f = await fixture();
   const matchPath = `items/${f.show}/match`;
-  expect(await (await f.request(matchPath)).json()).toEqual({
+  expect(await responseJson(MetadataMatchOptions, f.request(matchPath))).toEqual({
     tmdbId: null,
     query: "Re:ZERO",
     candidates: [
@@ -356,12 +372,14 @@ test("admins see possible matches, pick one by search or ID, and the refresh fol
       { tmdbId: "123", title: "Re:ZERO Break Time", year: null, overview: "", posterUrl: null },
     ],
   });
-  expect(await (await f.request(`${matchPath}?query=123`)).json()).toEqual({
+  expect(await responseJson(MetadataMatchOptions, f.request(`${matchPath}?query=123`))).toEqual({
     tmdbId: null,
     query: "123",
     candidates: [{ tmdbId: "123", title: "Re:ZERO", year: null, overview: "", posterUrl: null }],
   });
-  expect((await (await f.request(`${matchPath}?query=999`)).json()).candidates).toEqual([]);
+  expect(
+    (await responseJson(MetadataMatchOptions, f.request(`${matchPath}?query=999`))).candidates,
+  ).toEqual([]);
   expect((await f.request(matchPath, "GET", undefined, f.viewer)).status).toBe(403);
   expect((await f.request(matchPath, "PUT", { tmdbId: "123" }, f.viewer)).status).toBe(403);
   expect((await f.request(`items/${f.season}/match`)).status).toBe(400);
@@ -369,30 +387,32 @@ test("admins see possible matches, pick one by search or ID, and the refresh fol
 
   const unknown = await f.request(matchPath, "PUT", { tmdbId: "999" });
   expect(unknown.status).toBe(400);
-  expect((await unknown.json()).message).toContain("no series with ID 999");
+  expect((await responseJson(Message, unknown)).message).toContain("no series with ID 999");
   expect((await f.request(matchPath, "PUT", { tmdbId: "12345678901" })).status).toBe(400);
-  expect((await (await f.request(matchPath)).json()).tmdbId).toBeNull();
+  expect((await responseJson(MetadataMatchOptions, f.request(matchPath))).tmdbId).toBeNull();
 
   expect((await f.waitForRun(await f.request(matchPath, "PUT", { tmdbId: "123" }))).status).toBe(
     "succeeded",
   );
-  expect((await (await f.request(matchPath)).json()).tmdbId).toBe("123");
-  expect((await (await f.request(`items/${f.episodes[0]}`)).json()).item.title).toBe(
-    "Default episode 1",
-  );
+  expect((await responseJson(MetadataMatchOptions, f.request(matchPath))).tmdbId).toBe("123");
+  expect(
+    (await responseJson(CatalogItemDetails, f.request(`items/${f.episodes[0]}`))).item.title,
+  ).toBe("Default episode 1");
 
   f.upstream.unavailable = true;
   expect((await f.request(matchPath)).status).toBe(503);
   expect((await f.request(matchPath, "PUT", { tmdbId: "65942" })).status).toBe(503);
   f.upstream.unavailable = false;
-  expect((await (await f.request(matchPath)).json()).tmdbId).toBe("123");
+  expect((await responseJson(MetadataMatchOptions, f.request(matchPath))).tmdbId).toBe("123");
 }, 30_000);
 
 test("a non-404 season failure still fails the refresh and preserves local episode metadata", async () => {
   const f = await fixture();
   f.upstream.seasonStatus = 429;
   expect((await f.waitForRun(await f.save(null))).status).toBe("failed");
-  expect((await (await f.request(`items/${f.episodes[0]}`)).json()).item.title).toBe("Episode 1");
+  expect(
+    (await responseJson(CatalogItemDetails, f.request(`items/${f.episodes[0]}`))).item.title,
+  ).toBe("Episode 1");
 }, 30_000);
 
 test("a mixed refresh stays running until its last episode completes, then reports the failure", async () => {
@@ -408,18 +428,18 @@ test("a mixed refresh stays running until its last episode completes, then repor
   f.upstream.waitForLastEpisode = () => blocked;
   const saved = await f.save();
   expect(saved.status).toBe(200);
-  const { runId } = await saved.clone().json();
+  const { runId } = await responseJson(refreshResponse, saved.clone());
   try {
     await lastStarted;
-    const progress = await (await f.request(`scans/${runId}`)).json();
+    const progress = await responseJson(ScanRun, f.request(`scans/${runId}`));
     expect(progress.status).toBe("running");
   } finally {
     release();
   }
   expect((await f.waitForRun(saved)).status).toBe("failed");
-  const jobs = await (await f.request(`scans/${runId}/jobs`)).json();
+  const jobs = await responseJson(Schema.Array(ScanJob), f.request(`scans/${runId}/jobs`));
   expect(jobs.map((job: { status: string }) => job.status).sort()).toEqual(["failed", "succeeded"]);
-  const children = await (await f.request(`items/${f.season}/children`)).json();
+  const children = await responseJson(CatalogItemPage, f.request(`items/${f.season}/children`));
   expect(
     children.items.filter((item: { title: string }) => item.title.startsWith("Mapped")),
   ).toHaveLength(1);
@@ -437,7 +457,7 @@ test("a combined file takes every covered episode's metadata in the selected ord
       .status,
   ).toBe(200);
   expect((await f.waitForRun(await f.save())).status).toBe("succeeded");
-  const mapped = await (await f.request(entry)).json();
+  const mapped = await responseJson(CatalogItemDetails, f.request(entry));
   expect(mapped.item).toMatchObject({
     id: combined,
     indexNumber: 1,
@@ -448,7 +468,9 @@ test("a combined file takes every covered episode's metadata in the selected ord
     durationSeconds: 2640,
   });
   expect(mapped.watchState).toMatchObject({ positionSeconds: 95, completed: false });
-  expect((await (await f.request(`items/${third}`)).json()).item.title).toBe("Mapped episode 3");
+  expect((await responseJson(CatalogItemDetails, f.request(`items/${third}`))).item.title).toBe(
+    "Mapped episode 3",
+  );
   const records = new SqliteDatabase(f.databasePath, { readonly: true });
   expect(
     records
@@ -458,7 +480,7 @@ test("a combined file takes every covered episode's metadata in the selected ord
   records.close();
 
   expect((await f.waitForRun(await f.save(null))).status).toBe("succeeded");
-  expect((await (await f.request(entry)).json()).item).toMatchObject({
+  expect((await responseJson(CatalogItemDetails, f.request(entry))).item).toMatchObject({
     title: "Default episode 1 / Default episode 2",
     overview: "Synopsis 1\n\nSynopsis 2",
     indexNumberEnd: 2,
@@ -467,7 +489,7 @@ test("a combined file takes every covered episode's metadata in the selected ord
     (await f.request(`${entry}/metadata`, "PATCH", { title: "Two-part premiere" })).status,
   ).toBe(200);
   expect((await f.waitForRun(await f.save())).status).toBe("succeeded");
-  expect((await (await f.request(entry)).json()).item).toMatchObject({
+  expect((await responseJson(CatalogItemDetails, f.request(entry))).item).toMatchObject({
     title: "Two-part premiere",
     overview: "Synopsis 67\n\nSynopsis 68",
   });
@@ -481,24 +503,28 @@ test("a combined file whose second episode TMDb lacks keeps its local title and 
   const [combined, third] = f.episodes;
   f.upstream.missingEpisode = 2;
   const response = await f.save(null);
-  const { runId } = await response.clone().json();
+  const { runId } = await responseJson(refreshResponse, response.clone());
   expect((await f.waitForRun(response)).status).toBe("failed");
-  const jobs = await (await f.request(`scans/${runId}/jobs`)).json();
+  const jobs = await responseJson(Schema.Array(ScanJob), f.request(`scans/${runId}/jobs`));
   expect(
-    jobs.filter((job: { status: string }) => job.status === "failed").map(
-      (job: { errorMessage: string }) => job.errorMessage,
-    ),
+    jobs
+      .filter((job: { status: string }) => job.status === "failed")
+      .map((job) => job.errorMessage),
   ).toEqual(["TMDb returned 404"]);
-  expect((await (await f.request(`items/${combined}`)).json()).item).toMatchObject({
+  expect(
+    (await responseJson(CatalogItemDetails, f.request(`items/${combined}`))).item,
+  ).toMatchObject({
     title: "Episode 1",
     overview: null,
     indexNumber: 1,
     indexNumberEnd: 2,
   });
-  expect((await (await f.request(`items/${third}`)).json()).item.title).toBe("Default episode 3");
+  expect((await responseJson(CatalogItemDetails, f.request(`items/${third}`))).item.title).toBe(
+    "Default episode 3",
+  );
   f.upstream.missingEpisode = null;
   expect((await f.waitForRun(await f.save(null))).status).toBe("succeeded");
-  expect((await (await f.request(`items/${combined}`)).json()).item.title).toBe(
+  expect((await responseJson(CatalogItemDetails, f.request(`items/${combined}`))).item.title).toBe(
     "Default episode 1 / Default episode 2",
   );
 }, 30_000);

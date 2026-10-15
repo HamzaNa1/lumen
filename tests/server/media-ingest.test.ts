@@ -79,7 +79,8 @@ describe("media ingest", () => {
         yield* ingest.ingest(sourceId);
         const recovered = yield* database.select().from(streams);
         expect(recovered.map((stream) => stream.id)).toEqual(["video", "forced", "sdh", "commentary"]);
-        const playable: PlayableStream[] = recovered.map((stream) => ({ ...stream, ordinal: stream.ordinal ?? 0 }));
+        const playable: PlayableStream[] = recovered.flatMap((stream) => stream.kind === "audio" || stream.kind === "subtitle"
+          ? [{ ...stream, kind: stream.kind, ordinal: stream.ordinal ?? 0 }] : []);
         const sdh = playable.find((stream) => stream.id === "sdh");
         if (sdh === undefined) throw new Error("Missing subtitle fixture");
         const nextEpisode = playable.map((stream) => ({ ...stream, id: `next-${stream.id}` }));
@@ -87,7 +88,7 @@ describe("media ingest", () => {
           ...defaultTrackMemory(), subtitle: describeTrack(sourceId, sdh),
         }).subtitle?.id).toBe("next-sdh");
       }
-      return yield* database.all<{ kind: string; language: string | null }>(sql`SELECT kind, language, channels, commentary, forced, hearing_impaired FROM streams WHERE source_id = ${sourceId} ORDER BY rowid`);
+      return yield* database.all<{ kind: string; language: string | null; channels: number | null; commentary: number | null; forced: number | null; hearing_impaired: number | null }>(sql`SELECT kind, language, channels, commentary, forced, hearing_impaired FROM streams WHERE source_id = ${sourceId} ORDER BY rowid`);
     }).pipe(Effect.provide(layer))));
 
     expect(result).toEqual([

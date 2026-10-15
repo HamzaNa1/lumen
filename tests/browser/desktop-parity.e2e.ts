@@ -625,6 +625,7 @@ test("watch groups are drawn identically", async ({ context, baseURL }, testInfo
 });
 
 const filmDisplay = {
+  itemId: null,
   title: "Film",
   context: "",
   duration: 100,
@@ -888,6 +889,7 @@ test("the player controls are drawn identically over playing media", async ({
   await gotoDesktop(desktop.page, desktopBuild, "/", {
     overlay: true,
     display: {
+      itemId: null,
       title: await header.locator("h1").innerText(),
       context:
         (await header.locator("p").count()) === 0 ? "" : await header.locator("p").innerText(),
