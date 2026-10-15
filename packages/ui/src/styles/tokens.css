@@ -40,10 +40,11 @@
   --shadow-popover: 0 16px 40px rgba(0, 0, 0, 0.5);
   --shadow-dialog: 0 24px 80px rgba(0, 0, 0, 0.6);
 
-  --scrollbar-size: 10px;
-  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --scrollbar-size: 8px;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.1);
   --scrollbar-thumb-visible: rgba(255, 255, 255, 0.2);
-  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.3);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.32);
+  --scrollbar-thumb-active: rgba(255, 255, 255, 0.45);
 
   --font-mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
   --page-gutter: 36px;
@@ -87,9 +88,10 @@ img {
   outline: 2px solid var(--accent-ring);
   outline-offset: 2px;
 }
-/* Scrollbars: a slim rounded thumb floating in a transparent track. It stays faint until the
-   scrolling area is hovered so it never competes with artwork. Browsers without the WebKit
-   pseudo-elements (Firefox) fall back to the standard thin, tinted scrollbar. */
+/* Scrollbars: only a thin rounded thumb, with no track or arrow buttons. Its shade tells the
+   state: faint at rest, brighter while its scrolling area is hovered, brighter again when the
+   thumb is hovered, and brightest while dragged. Browsers without the WebKit pseudo-elements
+   (Firefox) fall back to the standard thin, tinted scrollbar. */
 ::-webkit-scrollbar {
   width: var(--scrollbar-size);
   height: var(--scrollbar-size);
@@ -97,6 +99,9 @@ img {
 ::-webkit-scrollbar-track,
 ::-webkit-scrollbar-corner {
   background: transparent;
+}
+::-webkit-scrollbar-button {
+  display: none;
 }
 ::-webkit-scrollbar-thumb {
   min-height: 32px;
@@ -109,9 +114,11 @@ img {
 :hover::-webkit-scrollbar-thumb {
   background-color: var(--scrollbar-thumb-visible);
 }
-::-webkit-scrollbar-thumb:hover,
-::-webkit-scrollbar-thumb:active {
+::-webkit-scrollbar-thumb:hover {
   background-color: var(--scrollbar-thumb-hover);
+}
+::-webkit-scrollbar-thumb:active {
+  background-color: var(--scrollbar-thumb-active);
 }
 @supports not selector(::-webkit-scrollbar) {
   * {
