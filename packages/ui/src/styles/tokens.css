@@ -2757,10 +2757,6 @@ body:has(.app-shell) {
   margin-top: 1px;
   color: var(--warning);
 }
-.media-player-settings-warning > div {
-  display: grid;
-  gap: 4px;
-}
 .media-player-settings-panel .media-player-settings-warning p {
   color: var(--warning-text);
 }

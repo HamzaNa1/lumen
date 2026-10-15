@@ -24,7 +24,7 @@ import {
   formatEndsAt,
   formatPlayerTime,
   streamLabels,
-  trackSelectionWarnings,
+  trackSelectionWarning,
 } from "./PlayerFormatting";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
@@ -154,7 +154,7 @@ export const MediaPlayer = ({
   const subtitleStreams = streams.filter((stream) => stream.kind === "subtitle");
   const audioLabels = streamLabels(audioStreams);
   const subtitleLabels = streamLabels(subtitleStreams);
-  const trackWarnings = trackSelectionWarnings(trackSelection, subtitleSelection);
+  const trackWarning = trackSelectionWarning(trackSelection, subtitleSelection);
   const timelineEnd = duration ?? Math.max(position, 1);
   const seekValue = Math.min(seekPreview ?? position, timelineEnd);
   const volumeValue = volumePreview ?? volume;
@@ -467,6 +467,12 @@ export const MediaPlayer = ({
                 </Button>
                 {settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
+                    {trackWarning === null ? null : (
+                      <div className="media-player-settings-warning" role="note">
+                        <TriangleAlert aria-hidden="true" size={16} />
+                        <p>{trackWarning}</p>
+                      </div>
+                    )}
                     {onAudioOutput === undefined ? null : (
                       <SelectField
                         label="Audio output"
@@ -531,16 +537,6 @@ export const MediaPlayer = ({
                         }
                       />
                     ) : null}
-                    {trackWarnings.length === 0 ? null : (
-                      <div className="media-player-settings-warning" role="note">
-                        <TriangleAlert aria-hidden="true" size={16} />
-                        <div>
-                          {trackWarnings.map((warning) => (
-                            <p key={warning}>{warning}</p>
-                          ))}
-                        </div>
-                      </div>
-                    )}
                     {trackSelection && audioStreams.length === 0 && subtitleStreams.length === 0 ? (
                       <p>This file has no alternate audio or subtitle tracks.</p>
                     ) : null}

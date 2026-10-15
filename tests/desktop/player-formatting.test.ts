@@ -3,7 +3,7 @@ import type { PlayableStream } from "../../packages/contracts/src/index.ts";
 import {
   formatEndsAt,
   streamLabels,
-  trackSelectionWarnings,
+  trackSelectionWarning,
 } from "../../packages/ui/src/PlayerFormatting.ts";
 
 const stream = (overrides: Partial<PlayableStream>): PlayableStream => ({
@@ -87,23 +87,20 @@ describe("formatEndsAt", () => {
   });
 });
 
-describe("trackSelectionWarnings", () => {
+describe("trackSelectionWarning", () => {
   test("says nothing when every track can be switched", () => {
-    expect(trackSelectionWarnings(true, true)).toEqual([]);
+    expect(trackSelectionWarning(true, true)).toBeNull();
   });
 
   test("warns about subtitles alone when only they cannot be selected", () => {
-    expect(trackSelectionWarnings(true, false)).toEqual([
+    expect(trackSelectionWarning(true, false)).toBe(
       "This browser can’t select embedded subtitles.",
-    ]);
+    );
   });
 
-  test("warns about both when no track can be switched", () => {
-    const both = [
-      "This browser can’t switch audio tracks.",
-      "This browser can’t select embedded subtitles.",
-    ];
-    expect(trackSelectionWarnings(false, true)).toEqual(both);
-    expect(trackSelectionWarnings(false, false)).toEqual(both);
+  test("puts both limitations in one sentence when no track can be switched", () => {
+    const both = "This browser can’t switch audio tracks or select embedded subtitles.";
+    expect(trackSelectionWarning(false, true)).toBe(both);
+    expect(trackSelectionWarning(false, false)).toBe(both);
   });
 });
