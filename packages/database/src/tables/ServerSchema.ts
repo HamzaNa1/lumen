@@ -99,6 +99,8 @@ export const catalogItems = sqliteTable(
     overview: text("overview"),
     year: integer("year"),
     indexNumber: integer("index_number"),
+    // The last episode of a file holding several consecutive episodes; null for one episode.
+    indexNumberEnd: integer("index_number_end"),
     durationSeconds: integer("duration_seconds"),
     metadataState: text("metadata_state").notNull().default("local"),
     addedAtMs: millis("added_at_ms"),
@@ -128,6 +130,10 @@ export const catalogItems = sqliteTable(
     check(
       "catalog_items_index_chk",
       sql`${table.indexNumber} is null or ${table.indexNumber} >= 0`,
+    ),
+    check(
+      "catalog_items_index_end_chk",
+      sql`${table.indexNumberEnd} is null or (${table.indexNumber} is not null and ${table.indexNumberEnd} > ${table.indexNumber})`,
     ),
     check(
       "catalog_items_duration_chk",

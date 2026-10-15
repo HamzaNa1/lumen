@@ -1,4 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
+import { Database as SqliteDatabase } from "bun:sqlite";
 import { Database, sql } from "../../packages/database/src/index.ts";
 import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -23,14 +24,22 @@ afterEach(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-const fixture = async (episodeCount = 2) => {
+/** Each episode entry's first and last episode; a single episode has no last. */
+type Numbering = readonly [number, number | null];
+
+/** A season of `episodes` single episodes, or of entries numbered as given. */
+const fixture = async (episodes: number | ReadonlyArray<Numbering> = 2) => {
+  const numbering: ReadonlyArray<Numbering> =
+    typeof episodes === "number"
+      ? Array.from({ length: episodes }, (_, i) => [i + 1, null])
+      : episodes;
   root = await mkdtemp(join(tmpdir(), "lumen-episode-order-"));
   const databasePath = join(root, "catalog.sqlite");
   const layer = makeDatabaseLayers({ databasePath } as never);
   const library = newUuid(),
     show = newUuid(),
     season = newUuid();
-  const episodes = Array.from({ length: episodeCount }, () => newUuid());
+  const episodeIds = numbering.map(() => newUuid());
   await Effect.runPromise(
     Effect.gen(function* () {
       const db = yield* Database;
@@ -55,24 +64,26 @@ const fixture = async (episodeCount = 2) => {
       yield* db.run(
         sql`INSERT INTO catalog_items(id,library_id,kind,parent_id,title,sort_title,index_number,metadata_state,added_at_ms,updated_at_ms) VALUES(${season},${library},'season',${show},'Season 4','season 4',4,'path',1,1)`,
       );
-      for (const [i, id] of episodes.entries()) {
+      for (const [i, id] of episodeIds.entries()) {
+        const [first, last] = numbering[i] ?? [i + 1, null];
+        const code = `E${String(first).padStart(2, "0")}${last === null ? "" : `-E${last}`}`;
         yield* db.run(
-          sql`INSERT INTO catalog_items(id,library_id,kind,parent_id,title,sort_title,index_number,metadata_state,added_at_ms,updated_at_ms) VALUES(${id},${library},'episode',${season},${`Episode ${i + 1}`},${`episode ${i + 1}`},${i + 1},'path',1,1)`,
+          sql`INSERT INTO catalog_items(id,library_id,kind,parent_id,title,sort_title,index_number,index_number_end,duration_seconds,metadata_state,added_at_ms,updated_at_ms) VALUES(${id},${library},'episode',${season},${`Episode ${first}`},${`episode ${first}`},${first},${last},2640,'path',1,1)`,
         );
         yield* db.run(
-          sql`INSERT INTO media_sources(id,library_id,root_id,relative_path,absolute_path,scanned_at_ms) VALUES(${id},${library},${library},${`ReZERO/Season 4/ReZERO S04E${String(i + 1).padStart(2, "0")}.mkv`},${`${root}/${i}.mkv`},1)`,
+          sql`INSERT INTO media_sources(id,library_id,root_id,relative_path,absolute_path,scanned_at_ms) VALUES(${id},${library},${library},${`ReZERO/Season 4/ReZERO S04${code}.mkv`},${`${root}/${i}.mkv`},1)`,
         );
         yield* db.run(
           sql`INSERT INTO catalog_item_sources(item_id,source_id,is_primary) VALUES(${id},${id},1)`,
         );
         // Already scanned: refresh is triggered by the HTTP request, not server startup.
         yield* db.run(
-          sql`INSERT INTO provider_records(id,item_id,provider,provider_item_id,payload_json,confidence,fetched_at_ms,locked_fields_json) VALUES(${newUuid()},${id},'tmdb',${`65942:4:${i + 1}`},'{}',95,1,'[]')`,
+          sql`INSERT INTO provider_records(id,item_id,provider,provider_item_id,payload_json,confidence,fetched_at_ms,locked_fields_json) VALUES(${newUuid()},${id},'tmdb',${`65942:4:${first}`},'{}',95,1,'[]')`,
         );
       }
-      if (episodes[2])
+      if (episodeIds[2])
         yield* db.run(
-          sql`INSERT INTO catalog_item_metadata(item_id,field_sources_json) VALUES(${episodes[2]},'{"title":"nfo"}')`,
+          sql`INSERT INTO catalog_item_metadata(item_id,field_sources_json) VALUES(${episodeIds[2]},'{"title":"nfo"}')`,
         );
       yield* db.run(
         sql`INSERT INTO metadata_provider_settings(provider,api_key,updated_at_ms) VALUES('tmdb','fixture-key',1)`,
@@ -84,6 +95,7 @@ const fixture = async (episodeCount = 2) => {
     seasonStatus: 404,
     unavailable: false,
     mixedOutcome: false,
+    missingEpisode: null as number | null,
     lastEpisodeStarted: () => {},
     waitForLastEpisode: async () => {},
   };
@@ -141,6 +153,7 @@ const fixture = async (episodeCount = 2) => {
     if (/\/season\/4$/u.test(path)) return new Response(null, { status: upstream.seasonStatus });
     if (path.includes("/episode/")) {
       const episode = Number(path.split("/").at(-1));
+      if (episode === upstream.missingEpisode) return new Response(null, { status: 404 });
       if (upstream.mixedOutcome) {
         const attempts = (episodeAttempts.get(episode) ?? 0) + 1;
         episodeAttempts.set(episode, attempts);
@@ -150,6 +163,7 @@ const fixture = async (episodeCount = 2) => {
         await upstream.waitForLastEpisode();
       }
       return Response.json({
+        overview: `Synopsis ${episode}`,
         name:
           episode >= 67
             ? episode === 67
@@ -208,7 +222,8 @@ const fixture = async (episodeCount = 2) => {
   return {
     show,
     season,
-    episodes,
+    episodes: episodeIds,
+    databasePath,
     upstream,
     request,
     orderPath,
@@ -408,4 +423,82 @@ test("a mixed refresh stays running until its last episode completes, then repor
   expect(
     children.items.filter((item: { title: string }) => item.title.startsWith("Mapped")),
   ).toHaveLength(1);
+}, 30_000);
+
+test("a combined file takes every covered episode's metadata in the selected order, keeping its range, runtime and state", async () => {
+  const f = await fixture([
+    [1, 2],
+    [3, null],
+  ]);
+  const [combined, third] = f.episodes;
+  const entry = `items/${combined}`;
+  expect(
+    (await f.request(`${entry}/watch-state`, "PUT", { positionSeconds: 95, completed: false }))
+      .status,
+  ).toBe(200);
+  expect((await f.waitForRun(await f.save())).status).toBe("succeeded");
+  const mapped = await (await f.request(entry)).json();
+  expect(mapped.item).toMatchObject({
+    id: combined,
+    indexNumber: 1,
+    indexNumberEnd: 2,
+    title: "Mapped premiere / Mapped episode 2",
+    overview: "Synopsis 67\n\nSynopsis 68",
+    // The file's own runtime, not one episode's.
+    durationSeconds: 2640,
+  });
+  expect(mapped.watchState).toMatchObject({ positionSeconds: 95, completed: false });
+  expect((await (await f.request(`items/${third}`)).json()).item.title).toBe("Mapped episode 3");
+  const records = new SqliteDatabase(f.databasePath, { readonly: true });
+  expect(
+    records
+      .query("SELECT provider_item_id AS id FROM provider_records WHERE item_id = ?")
+      .all(combined ?? ""),
+  ).toEqual([{ id: "65942:1:67,65942:1:68" }]);
+  records.close();
+
+  expect((await f.waitForRun(await f.save(null))).status).toBe("succeeded");
+  expect((await (await f.request(entry)).json()).item).toMatchObject({
+    title: "Default episode 1 / Default episode 2",
+    overview: "Synopsis 1\n\nSynopsis 2",
+    indexNumberEnd: 2,
+  });
+  expect(
+    (await f.request(`${entry}/metadata`, "PATCH", { title: "Two-part premiere" })).status,
+  ).toBe(200);
+  expect((await f.waitForRun(await f.save())).status).toBe("succeeded");
+  expect((await (await f.request(entry)).json()).item).toMatchObject({
+    title: "Two-part premiere",
+    overview: "Synopsis 67\n\nSynopsis 68",
+  });
+}, 30_000);
+
+test("a combined file whose second episode TMDb lacks keeps its local title and range and fails visibly", async () => {
+  const f = await fixture([
+    [1, 2],
+    [3, null],
+  ]);
+  const [combined, third] = f.episodes;
+  f.upstream.missingEpisode = 2;
+  const response = await f.save(null);
+  const { runId } = await response.clone().json();
+  expect((await f.waitForRun(response)).status).toBe("failed");
+  const jobs = await (await f.request(`scans/${runId}/jobs`)).json();
+  expect(
+    jobs.filter((job: { status: string }) => job.status === "failed").map(
+      (job: { errorMessage: string }) => job.errorMessage,
+    ),
+  ).toEqual(["TMDb returned 404"]);
+  expect((await (await f.request(`items/${combined}`)).json()).item).toMatchObject({
+    title: "Episode 1",
+    overview: null,
+    indexNumber: 1,
+    indexNumberEnd: 2,
+  });
+  expect((await (await f.request(`items/${third}`)).json()).item.title).toBe("Default episode 3");
+  f.upstream.missingEpisode = null;
+  expect((await f.waitForRun(await f.save(null))).status).toBe("succeeded");
+  expect((await (await f.request(`items/${combined}`)).json()).item.title).toBe(
+    "Default episode 1 / Default episode 2",
+  );
 }, 30_000);

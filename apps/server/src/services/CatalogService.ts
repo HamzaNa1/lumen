@@ -18,11 +18,12 @@ import {
   Repositories,
   tracks,
 } from "@lumen/database";
-import { and, asc, eq, exists, inArray, isNull, or, type SQL, sql } from "drizzle-orm";
+import { and, asc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer, type Schema } from "effect";
 import { badRequest, forbidden, notFound } from "../core/Errors";
 import { AccessControl } from "./AccessControl";
+import { firstUnwatchedEpisode, nextEpisode, previousEpisode } from "./EpisodeSequence";
 import { decodeMetadataList, decodeMetadataMap } from "../media/MetadataJson";
 import type { AuthPrincipal } from "./AuthService";
 import type {
@@ -59,6 +60,9 @@ const itemArtwork = (column: "id" | "revision", roles: ReadonlyArray<ArtworkRole
     )})
   order by ${catalogItemArtwork.role} limit 1
 )`;
+
+// Entries starting at the same episode list a single episode before a file of several.
+const lastEpisode = sql`coalesce(${catalogItems.indexNumberEnd}, ${catalogItems.indexNumber})`;
 
 // Where the viewer left off; finished items have nothing to resume.
 const resumePositionSeconds = sql<
@@ -300,6 +304,7 @@ export const makeCatalogService = Effect.gen(function* () {
         title: catalogItems.title,
         kind: catalogItems.kind,
         indexNumber: catalogItems.indexNumber,
+        indexNumberEnd: catalogItems.indexNumberEnd,
         durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
         year: catalogItems.year,
         artworkId: itemArtwork("id", ["poster", "still"]),
@@ -316,7 +321,12 @@ export const makeCatalogService = Effect.gen(function* () {
         ),
       )
       .where(and(eq(catalogItems.parentId, itemId), eq(catalogItems.libraryId, parent.libraryId)))
-      .orderBy(asc(catalogItems.indexNumber), asc(catalogItems.sortTitle), asc(catalogItems.id))
+      .orderBy(
+        asc(catalogItems.indexNumber),
+        asc(lastEpisode),
+        asc(catalogItems.sortTitle),
+        asc(catalogItems.id),
+      )
       .limit(input.limit + 1)
       .offset(offset);
     return {
@@ -327,7 +337,7 @@ export const makeCatalogService = Effect.gen(function* () {
 
   const season = alias(catalogItems, "season");
   /** A show's episodes in watching order, whether they sit in seasons or directly in the show. */
-  const showEpisodes = (showId: string, userId: string, condition?: SQL) =>
+  const showEpisodes = (showId: string, userId: string) =>
     database
       .select({
         id: catalogItems.id,
@@ -336,6 +346,7 @@ export const makeCatalogService = Effect.gen(function* () {
         title: catalogItems.title,
         kind: catalogItems.kind,
         indexNumber: catalogItems.indexNumber,
+        indexNumberEnd: catalogItems.indexNumberEnd,
         seasonNumber: season.indexNumber,
         durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
         year: catalogItems.year,
@@ -354,12 +365,12 @@ export const makeCatalogService = Effect.gen(function* () {
         and(
           or(eq(season.parentId, showId), eq(catalogItems.parentId, showId)),
           eq(catalogItems.kind, "episode"),
-          condition,
         ),
       )
       .orderBy(
         asc(sql`coalesce(${season.indexNumber}, 0)`),
         asc(catalogItems.indexNumber),
+        asc(lastEpisode),
         asc(catalogItems.sortTitle),
         asc(catalogItems.id),
       );
@@ -373,14 +384,8 @@ export const makeCatalogService = Effect.gen(function* () {
         .get();
       if (show == null || show.kind !== "show") return yield* notFound("Series not found");
       yield* access.requireLibrary(principal, show.libraryId, "library:read", nowMs);
-      const episode = yield* showEpisodes(
-        itemId,
-        principal.user.id,
-        sql`coalesce(${itemWatchStates.completed}, 0) = 0`,
-      )
-        .limit(1)
-        .get();
-      return { item: episode };
+      const episodes = yield* showEpisodes(itemId, principal.user.id);
+      return { item: firstUnwatchedEpisode(episodes) };
     },
   );
 
@@ -411,10 +416,7 @@ export const makeCatalogService = Effect.gen(function* () {
     if (showId === null) return { previous: null, next: null };
     const episodes = yield* showEpisodes(showId, principal.user.id);
     const index = episodes.findIndex((episode) => episode.id === itemId);
-    return {
-      previous: episodes[index - 1] ?? null,
-      next: index === -1 ? null : (episodes[index + 1] ?? null),
-    };
+    return { previous: previousEpisode(episodes, index), next: nextEpisode(episodes, index) };
   });
 
   const itemDetails: CatalogServiceShape["itemDetails"] = Effect.fn("Catalog.itemDetails")(
@@ -430,6 +432,7 @@ export const makeCatalogService = Effect.gen(function* () {
           kind: catalogItems.kind,
           year: catalogItems.year,
           indexNumber: catalogItems.indexNumber,
+          indexNumberEnd: catalogItems.indexNumberEnd,
           // An episode sits in a season of its show, or directly in the show.
           seriesTitle: sql<string | null>`case ${parent.kind}
             when 'show' then ${parent.title} when 'season' then ${show.title} end`,

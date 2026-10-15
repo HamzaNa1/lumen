@@ -11,6 +11,7 @@ import {
   Database,
   libraryProfiles,
   mediaSources,
+  providerRecords,
   Repositories,
   streams as streamTable,
   tracks,
@@ -326,7 +327,11 @@ export const makeMediaIngest = Effect.gen(function* () {
       }
     }
     const existingItem = yield* database
-      .select({ id: catalogItems.id })
+      .select({
+        id: catalogItems.id,
+        indexNumber: catalogItems.indexNumber,
+        indexNumberEnd: catalogItems.indexNumberEnd,
+      })
       .from(catalogItems)
       .innerJoin(catalogItemSources, eq(catalogItemSources.itemId, catalogItems.id))
       .where(eq(catalogItemSources.sourceId, sourceId))
@@ -348,6 +353,16 @@ export const makeMediaIngest = Effect.gen(function* () {
       });
     }
     if (video !== null) {
+      // Provider metadata describes the episodes an entry covered when it was fetched, so a file
+      // renamed to cover other episodes is fetched again.
+      if (
+        existingItem != null &&
+        (existingItem.indexNumber !== video.episodeNumber ||
+          existingItem.indexNumberEnd !== video.episodeNumberEnd)
+      )
+        yield* database
+          .delete(providerRecords)
+          .where(and(eq(providerRecords.itemId, itemId), eq(providerRecords.provider, "tmdb")));
       const mayReplace = sql`${catalogItems.metadataState} in ('path', 'local')`;
       yield* database
         .update(catalogItems)
@@ -355,6 +370,7 @@ export const makeMediaIngest = Effect.gen(function* () {
           kind: itemKind,
           parentId,
           indexNumber: video.episodeNumber,
+          indexNumberEnd: video.episodeNumberEnd,
           title: sql`case when ${mayReplace} then ${itemTitle} else ${catalogItems.title} end`,
           sortTitle: sql`case when ${mayReplace} then ${itemTitle.toLowerCase()} else ${catalogItems.sortTitle} end`,
           year: sql`case when ${mayReplace} then ${year} else ${catalogItems.year} end`,

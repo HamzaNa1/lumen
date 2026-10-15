@@ -18,3 +18,5 @@ export * from "./watch-groups.ts";
 export * from "./track-memory.ts";
 
 export * from "./volume-memory.ts";
+
+export * from "./episode-range.ts";

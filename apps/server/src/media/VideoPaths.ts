@@ -1,3 +1,4 @@
+import { isEpisodeRange } from "@lumen/contracts";
 import { basename, extname } from "node:path";
 
 export interface VideoPath {
@@ -9,6 +10,8 @@ export interface VideoPath {
   readonly show: { readonly path: string; readonly title: string; readonly year: number | null; readonly providerId: string | null; readonly imdbId: string | null } | null;
   readonly season: { readonly path: string; readonly number: number } | null;
   readonly episodeNumber: number | null;
+  /** The last episode of a file holding several consecutive episodes; null for one episode. */
+  readonly episodeNumberEnd: number | null;
   readonly warning: string | null;
 }
 
@@ -24,31 +27,54 @@ const name = (value: string) => ({
   imdbId: /\[(?:imdbid|imdb)-(tt\d+)\]/iu.exec(value)?.[1] ?? null,
 });
 
+// "S03E10", optionally followed by more episodes: "-11", "-E11", "E11", "E11E12" or "-E11-E12".
+// The lookahead keeps "-1080p" or "-720p" from reading as a range.
+const episodeCoordinates = /(?:^|[^a-z\d])s(\d{1,2})e(\d{1,3})((?:-?e\d{1,3})+|-\d{1,3})?(?=[^a-z\d]|$)/iu;
+
+/**
+ * The last episode a file's coordinates cover, null for one episode, or "invalid" where more
+ * episodes are named but do not form a range one file can hold. A single dashed number is an
+ * inclusive range ("E10-E12" is 10 to 12); anything else lists every episode, which must then be
+ * consecutive ("E10E11E12", but not "E10E12").
+ */
+const episodeEnd = (start: number, suffix: string | undefined): number | null | "invalid" => {
+  if (suffix === undefined) return null;
+  const numbers = [...suffix.matchAll(/\d+/gu)].map((match) => Number(match[0]));
+  const listed = numbers.length > 1 || !suffix.startsWith("-");
+  const end = numbers.at(-1) ?? start;
+  if (listed && numbers.some((number, index) => number !== start + index + 1)) return "invalid";
+  return isEpisodeRange(start, end) ? end : "invalid";
+};
+
 export const parseVideoPath = (kind: "movies" | "shows", relativePath: string): VideoPath => {
   const parts = relativePath.split(/[\\/]/u).filter(Boolean);
   const file = parts.at(-1) ?? "Untitled";
   const stem = basename(file, extname(file));
   if (kind === "movies") {
     const label = parts.length > 1 ? parts.at(-2) ?? stem : stem;
-    return { kind: "movie", ...name(label), show: null, season: null, episodeNumber: null, warning: null };
+    return { kind: "movie", ...name(label), show: null, season: null, episodeNumber: null, episodeNumberEnd: null, warning: null };
   }
   const showPath = parts.length > 1 ? parts[0] ?? "" : "";
   const show = { path: showPath, ...name(showPath || "Unsorted") };
   const seasonLabel = parts.length > 2 ? parts[1] ?? "" : "";
   const seasonNumber = /^(?:season|series)\s*0*(\d+)$/iu.exec(seasonLabel)?.[1];
-  const coordinates = /(?:^|[^a-z\d])s(\d{1,2})e(\d{1,3})(?:[^a-z\d]|$)/iu.exec(stem);
+  const coordinates = episodeCoordinates.exec(stem);
   const season = seasonNumber !== undefined
     ? { path: `${showPath}/${seasonLabel}`, number: Number(seasonNumber) }
     : coordinates !== null ? { path: `${showPath}/Season ${Number(coordinates[1])}`, number: Number(coordinates[1]) } : null;
   const episodeNumber = coordinates === null ? null : Number(coordinates[2]);
-  const episodeTitle = stem.replace(/.*?s\d{1,2}e\d{1,3}[\s._-]*/iu, "").replace(/[._]+/gu, " ").trim();
+  const end = episodeNumber === null ? null : episodeEnd(episodeNumber, coordinates?.[3]);
+  const afterCoordinates = coordinates === null ? stem : stem.slice(coordinates.index + coordinates[0].length);
+  const episodeTitle = afterCoordinates.replace(/[._]+/gu, " ").replace(/^[\s-]+/u, "").trim();
   const warning = showPath === "" ? "show_folder_missing"
     : seasonNumber === undefined ? "season_folder_missing"
     : coordinates === null ? "episode_coordinates_missing"
     : Number(coordinates[1]) !== Number(seasonNumber) ? "season_number_mismatch"
+    : end === "invalid" ? "episode_range_invalid"
     : null;
   return {
     kind: "episode", title: episodeTitle || `Episode ${episodeNumber ?? stem}`, year: null,
-    providerId: null, imdbId: null, show, season, episodeNumber, warning,
+    providerId: null, imdbId: null, show, season, episodeNumber,
+    episodeNumberEnd: end === "invalid" ? null : end, warning,
   };
 };

@@ -10,11 +10,12 @@ import {
   Repositories,
   seriesEpisodeOrders,
 } from "@lumen/database";
-import type {
-  EpisodeOrderOptions,
-  EpisodeOrderSelection,
-  MetadataMatchOptions,
-  MetadataMatchSelection,
+import {
+  coveredEpisodeNumbers,
+  type EpisodeOrderOptions,
+  type EpisodeOrderSelection,
+  type MetadataMatchOptions,
+  type MetadataMatchSelection,
 } from "@lumen/contracts";
 import { badRequest, ServerError } from "../core/Errors";
 import { and, eq, inArray, or } from "drizzle-orm";
@@ -49,6 +50,7 @@ type Item = {
   title: string;
   year: number | null;
   indexNumber: number | null;
+  indexNumberEnd: number | null;
   origin: string | null;
 };
 
@@ -169,36 +171,78 @@ const lookup = async (
     };
   }
   if (parentProviderId === null || item.indexNumber === null) return null;
-  let seasonId = item.kind === "season" ? item.indexNumber : Number(parentProviderId.split(":")[1]);
-  if (!Number.isInteger(seasonId)) return null;
-  let episodeNumber = item.indexNumber;
-  if (item.kind === "season" && episodeGroupId !== null)
-    return { id: `${parentProviderId}:${seasonId}`, payload: null, confidence: 95 };
-  if (item.kind === "episode" && episodeGroupId !== null) {
-    const coordinates = await tmdbEpisodeCoordinates(episodeGroupId, seasonId, episodeNumber, key);
-    seasonId = coordinates.seasonNumber;
-    episodeNumber = coordinates.episodeNumber;
+  if (item.kind === "season") {
+    const seasonPath = `${parentProviderId}:${item.indexNumber}`;
+    if (episodeGroupId !== null) return { id: seasonPath, payload: null, confidence: 95 };
+    let payload: TmdbObject | null;
+    try {
+      payload = await fetchTmdb(`/tv/${parentProviderId}/season/${item.indexNumber}`, key);
+    } catch (cause) {
+      if (!(cause instanceof TmdbHttpError) || cause.status !== 404) throw cause;
+      // The local season remains usable even when TMDb has no season metadata.
+      payload = null;
+    }
+    return { id: seasonPath, payload, confidence: 95 };
   }
-  const path =
-    item.kind === "season"
-      ? `/tv/${parentProviderId}/season/${seasonId}`
-      : `/tv/${parentProviderId.split(":")[0]}/season/${seasonId}/episode/${episodeNumber}`;
-  let payload: TmdbObject | null;
-  try {
-    payload = await fetchTmdb(path, key);
-  } catch (cause) {
-    if (item.kind !== "season" || !(cause instanceof TmdbHttpError) || cause.status !== 404)
-      throw cause;
-    // The local season remains usable even when TMDb has no season metadata.
-    payload = null;
-  }
+  const [seriesId, season] = parentProviderId.split(":");
+  const seasonNumber = Number(season);
+  if (!Number.isInteger(seasonNumber)) return null;
+  const episodeNumbers = coveredEpisodeNumbers(item);
+  const coordinates =
+    episodeGroupId === null
+      ? episodeNumbers.map((episodeNumber) => ({ seasonNumber, episodeNumber }))
+      : await tmdbEpisodeCoordinates(episodeGroupId, seasonNumber, episodeNumbers, key);
+  // Every episode a combined file covers must resolve; a failure leaves the entry's local
+  // metadata and range in place rather than describing only some of its episodes.
+  const episodes: TmdbObject[] = [];
+  for (const episode of coordinates)
+    episodes.push(
+      await fetchTmdb(
+        `/tv/${seriesId}/season/${episode.seasonNumber}/episode/${episode.episodeNumber}`,
+        key,
+      ),
+    );
   return {
-    id:
-      item.kind === "season"
-        ? `${parentProviderId}:${seasonId}`
-        : `${parentProviderId.split(":")[0]}:${seasonId}:${episodeNumber}`,
-    payload,
+    id: coordinates
+      .map((episode) => `${seriesId}:${episode.seasonNumber}:${episode.episodeNumber}`)
+      .join(","),
+    payload: combinedEpisode(episodes),
     confidence: 95,
+  };
+};
+
+const distinct = (values: ReadonlyArray<string>): string[] => [...new Set(values)];
+
+/**
+ * One entry's metadata from every episode its file covers: titles joined as "Part 1 / Part 2",
+ * overviews in episode order, and the first episode's air date and still. The episodes' own
+ * payloads are kept alongside.
+ */
+const combinedEpisode = (episodes: ReadonlyArray<TmdbObject>): TmdbObject => {
+  const [first] = episodes;
+  if (first === undefined) throw new Error("TMDb returned no episodes");
+  if (episodes.length === 1) return first;
+  const names = episodes.map((episode) => str(episode.name));
+  const overviews = episodes
+    .map((episode) => str(episode.overview))
+    .filter((overview): overview is string => overview !== null);
+  const ratings = episodes
+    .map((episode) => num(episode.vote_average))
+    .filter((rating): rating is number => rating !== null && rating > 0);
+  return {
+    ...first,
+    // A title naming only some of the episodes would read as complete, so it needs every name.
+    name: names.every((name) => name !== null) ? distinct(names).join(" / ") : null,
+    overview: overviews.length === 0 ? null : distinct(overviews).join("\n\n"),
+    vote_average:
+      ratings.length === 0
+        ? null
+        : Math.round((ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length) * 10) /
+          10,
+    still_path:
+      episodes.map((episode) => episode.still_path).find((path) => tmdbImageUrl("w780", path)) ??
+      null,
+    episodes,
   };
 };
 
@@ -217,6 +261,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
           title: catalogItems.title,
           year: catalogItems.year,
           indexNumber: catalogItems.indexNumber,
+          indexNumberEnd: catalogItems.indexNumberEnd,
           origin: catalogItemOrigins.relativePath,
           externalIdsJson: catalogItemMetadata.externalIdsJson,
         })
@@ -422,6 +467,7 @@ export const makeTmdbProvider = (config: ServerConfig) =>
               title: catalogItems.title,
               year: catalogItems.year,
               indexNumber: catalogItems.indexNumber,
+              indexNumberEnd: catalogItems.indexNumberEnd,
               origin: catalogItemOrigins.relativePath,
             })
             .from(catalogItems)

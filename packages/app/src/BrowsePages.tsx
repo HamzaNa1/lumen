@@ -31,7 +31,7 @@ import {
   useRef,
   useState,
 } from "react";
-import { kindLabel, libraryCount, plural, resumeLabel } from "./format";
+import { episodeCode, kindLabel, libraryCount, plural, resumeLabel } from "./format";
 import {
   CatalogCard,
   PageHeader,
@@ -149,7 +149,7 @@ const homeCardText = (
       : [
           item.seriesTitle,
           item.kind === "episode" && item.indexNumber != null
-            ? `S${item.seasonNumber ?? 1} E${item.indexNumber}`
+            ? episodeCode(item.seasonNumber ?? 1, item)
             : null,
         ]
           .filter(Boolean)
