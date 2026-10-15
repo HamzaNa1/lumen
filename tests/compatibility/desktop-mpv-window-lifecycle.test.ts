@@ -1,4 +1,4 @@
-import { describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { defaultTrackMemory, describeTrack, type PlayerSession, type TrackChoiceInput, type TrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
 import type { BrowserWindow } from "electron";
@@ -896,7 +896,11 @@ describe("player surface shutdown", () => {
 });
 
 describe("macOS MPV window lifecycle", () => {
-  test.skipIf(process.platform !== "darwin")("play, Back, and immediate replay attach and detach once per session", () => {
+  const platform = process.platform;
+  // Electron, Cocoa, MPV, and IPC are fakes here: exercise the macOS policy on every host.
+  beforeEach(() => { Object.defineProperty(process, "platform", { value: "darwin" }); });
+  afterEach(() => { Object.defineProperty(process, "platform", { value: platform }); });
+  test("play, Back, and immediate replay attach and detach once per session", () => {
     events.length = 0;
     const parent = {
       on: () => undefined,
@@ -1038,7 +1042,7 @@ describe("macOS MPV window lifecycle", () => {
     ]);
   });
 
-  test.skipIf(process.platform !== "darwin")("controller plays, stops on Back, and replays after destruction", async () => {
+  test("controller plays, stops on Back, and replays after destruction", async () => {
     const calls: string[] = [];
     let sessionNumber = 0;
     let windowNumber = 0;

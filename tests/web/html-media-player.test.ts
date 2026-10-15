@@ -550,6 +550,33 @@ test("the browser reports how far it can play on, and when it has run out", asyn
   expect(player.buffer(sessionId).starved).toBe(false);
 });
 
+test("a fully buffered remainder can resume after a seek without waiting for more media", async () => {
+  const { element, player } = setup();
+  await player.start({ itemId: "item-1", paused: true });
+  try {
+    element.currentTime = 10;
+    element.bufferedRange = [0, 100];
+    element.readyState = 2;
+    element.seeking = true;
+    expect(player.buffer("session-1").aheadSeconds).toBe(0);
+    element.seeking = false;
+    expect(player.buffer("session-1").aheadSeconds).toBe(Number.POSITIVE_INFINITY);
+
+    await player.pause("session-1", false);
+    element.emit("waiting");
+    expect(player.buffer("session-1").starved).toBe(false);
+    // An incomplete range still needs playable future data, even after a previous full buffer.
+    element.bufferedRange = [0, 30];
+    expect(player.buffer("session-1")).toMatchObject({ aheadSeconds: 0, starved: true });
+    // A buffered range alone cannot make an uninitialised decoder ready.
+    element.bufferedRange = [0, 100];
+    element.readyState = 1;
+    expect(player.buffer("session-1")).toMatchObject({ aheadSeconds: 0, starved: true });
+  } finally {
+    await player.stop();
+  }
+});
+
 test("a watch group is not told the browser is ready until it holds five seconds to play on with", async () => {
   const fixture = await watchFixture();
   const { element, player } = setup();
