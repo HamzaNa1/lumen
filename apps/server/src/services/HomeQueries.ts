@@ -4,6 +4,7 @@ import { sql } from "drizzle-orm";
 export const homeItems = (userId: string, libraryIds: ReadonlyArray<string>) => sql`
   SELECT i.id, i.library_id AS libraryId, i.parent_id AS parentId, i.title, i.kind,
     i.duration_seconds * 1000 AS durationMs, i.year, i.index_number AS indexNumber,
+    i.index_number_end AS indexNumberEnd,
     i.added_at_ms AS addedAtMs,
     CASE WHEN w.completed = 1 THEN NULL ELSE w.position_seconds END AS resumePositionSeconds,
     coalesce(w.completed, 0) AS completed, w.updated_at_ms AS activity,
@@ -36,7 +37,7 @@ export const homeItems = (userId: string, libraryIds: ReadonlyArray<string>) => 
 `;
 
 export const homeCardColumns = sql`id, libraryId, parentId, title, kind, durationMs, year,
-  indexNumber, resumePositionSeconds, artworkId, artworkRevision, seriesTitle, seasonNumber`;
+  indexNumber, indexNumberEnd, resumePositionSeconds, artworkId, artworkRevision, seriesTitle, seasonNumber`;
 
 export const nextUpQuery = (
   userId: string,
@@ -44,24 +45,33 @@ export const nextUpQuery = (
   cutoff: number,
 ) => sql`
   WITH items AS (${homeItems(userId, libraryIds)}),
-  episodes AS (SELECT * FROM items WHERE kind = 'episode' AND showId IS NOT NULL AND seasonNumber > 0),
+  episodes AS (
+    SELECT *, coalesce(indexNumberEnd, indexNumber) AS lastNumber FROM items
+    WHERE kind = 'episode' AND showId IS NOT NULL AND seasonNumber > 0
+  ),
   active AS (
     SELECT showId, max(activity) AS lastActivity FROM episodes
     WHERE completed = 1 OR resumePositionSeconds > 0
     GROUP BY showId HAVING max(activity) >= ${cutoff}
   ),
   watched AS (
-    SELECT *, row_number() OVER (PARTITION BY showId ORDER BY seasonNumber DESC, indexNumber DESC, id DESC) AS watchedRank
+    SELECT *, row_number() OVER (PARTITION BY showId ORDER BY seasonNumber DESC, lastNumber DESC, id DESC) AS watchedRank
     FROM episodes WHERE completed = 1
   ),
+  -- A candidate must reach past the furthest watched episode, so a file of episodes a finished
+  -- combined file covered is passed over. One that also repeats watched episodes ranks by the
+  -- first episode it adds, behind an entry starting at that episode.
   candidates AS (
     SELECT e.*, coalesce(w.activity, a.lastActivity) AS lastWatched,
-      row_number() OVER (PARTITION BY e.showId ORDER BY e.seasonNumber, e.indexNumber, e.id) AS nextRank
+      row_number() OVER (PARTITION BY e.showId ORDER BY e.seasonNumber,
+        CASE WHEN e.seasonNumber = w.seasonNumber AND e.indexNumber <= w.lastNumber
+          THEN w.lastNumber + 1 ELSE e.indexNumber END,
+        e.indexNumber DESC, e.lastNumber, e.id) AS nextRank
     FROM episodes e JOIN active a ON a.showId = e.showId
     LEFT JOIN watched w ON w.showId = e.showId AND w.watchedRank = 1
     WHERE e.available = 1 AND e.completed = 0 AND e.indexNumber IS NOT NULL
       AND (w.id IS NULL OR e.seasonNumber > w.seasonNumber
-        OR (e.seasonNumber = w.seasonNumber AND e.indexNumber > w.indexNumber))
+        OR (e.seasonNumber = w.seasonNumber AND e.lastNumber > w.lastNumber))
   )
   SELECT ${homeCardColumns} FROM candidates
   WHERE nextRank = 1 AND coalesce(resumePositionSeconds, 0) = 0

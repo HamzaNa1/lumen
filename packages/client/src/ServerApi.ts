@@ -201,6 +201,7 @@ const itemPageSchema = Schema.Struct({
       resumePositionSeconds: Schema.NullOr(Schema.Number),
       parentId: Schema.optional(Schema.NullOr(Schema.String)),
       indexNumber: Schema.optional(Schema.NullOr(Schema.Number)),
+      indexNumberEnd: Schema.optional(Schema.NullOr(Schema.Number)),
     }),
   ),
   nextCursor: Schema.NullOr(Schema.String),

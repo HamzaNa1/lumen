@@ -41,7 +41,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     );
 
     expect(result.foreignKeys?.foreign_keys).toBe(1);
-    expect(result.migrations?.count).toBe(9);
+    expect(result.migrations?.count).toBe(10);
     expect(result.fts?.value).toBe(1);
     expect(result.tables.map((row) => row.name)).toEqual(
       expect.arrayContaining([
@@ -230,6 +230,56 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         after.exec("DELETE FROM users WHERE id = 'owner'");
         expect(after.query("SELECT * FROM user_track_preferences").all()).toEqual([]);
         expect(after.query("SELECT * FROM media_track_overrides").all()).toEqual([]);
+        expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
+      } finally { after.close(); }
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
+  test("combined episode migration keeps existing episodes, watch state and catalog triggers", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lumen-episode-range-migration-"));
+    const filename = join(root, "server.sqlite");
+    const earlier = join(root, "earlier");
+    const latest = "20261015070915_combined_episode_range";
+    const migrateTo = (folder?: string) => Effect.runPromise(Effect.scoped(
+      Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
+    ));
+    try {
+      cpSync(defaultMigrationsFolder, earlier, { recursive: true, filter: (source) => !source.includes(latest) });
+      await migrateTo(earlier);
+      const before = new SqliteDatabase(filename);
+      before.exec(`
+        INSERT INTO users(id, username, username_normalized, display_name, password_hash, created_at_ms, updated_at_ms)
+        VALUES ('viewer', 'Viewer', 'viewer', 'Viewer', 'hash', 1, 1);
+        INSERT INTO libraries(id, name, slug, created_at_ms, updated_at_ms) VALUES ('library', 'Shows', 'shows', 1, 1);
+        INSERT INTO catalog_items(id, library_id, kind, title, sort_title, index_number, added_at_ms, updated_at_ms)
+        VALUES ('episode', 'library', 'episode', 'Pilot', 'pilot', 10, 1, 1);
+        INSERT INTO item_watch_states(user_id, item_id, position_seconds, completed, updated_at_ms)
+        VALUES ('viewer', 'episode', 321, 0, 1);
+      `);
+      before.close(); await migrateTo();
+      const after = new SqliteDatabase(filename);
+      try {
+        after.exec("PRAGMA foreign_keys = ON");
+        expect(after.query("SELECT id, index_number, index_number_end FROM catalog_items").all()).toEqual([
+          { id: "episode", index_number: 10, index_number_end: null },
+        ]);
+        expect(after.query("SELECT item_id, position_seconds FROM item_watch_states").all()).toEqual([
+          { item_id: "episode", position_seconds: 321 },
+        ]);
+        after.exec("UPDATE catalog_items SET index_number_end = 11 WHERE id = 'episode'");
+        for (const invalid of ["10", "9"])
+          expect(() => after.exec(`UPDATE catalog_items SET index_number_end = ${invalid}`)).toThrow();
+        expect(() =>
+          after.exec("UPDATE catalog_items SET index_number = NULL WHERE id = 'episode'"),
+        ).toThrow();
+        // Search and parent triggers still fire on the table the migration altered.
+        after.exec("UPDATE catalog_items SET title = 'Pilot Parts' WHERE id = 'episode'");
+        expect(after.query("SELECT item_id FROM catalog_item_fts WHERE catalog_item_fts MATCH 'parts'").all()).toEqual([
+          { item_id: "episode" },
+        ]);
+        expect(() =>
+          after.exec("UPDATE catalog_items SET parent_id = 'missing' WHERE id = 'episode'"),
+        ).toThrow("catalog parent must belong to the same library");
         expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
       } finally { after.close(); }
     } finally { rmSync(root, { recursive: true, force: true }); }

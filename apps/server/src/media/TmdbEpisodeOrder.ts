@@ -57,24 +57,27 @@ export const tmdbEpisodeOrders = async (
   });
 };
 
+/** Where each of a season's episodes sits in TMDb's own numbering under the selected order. */
 export const tmdbEpisodeCoordinates = async (
   groupId: string,
   seasonNumber: number,
-  episodeNumber: number,
+  episodeNumbers: ReadonlyArray<number>,
   key: string,
-): Promise<{ seasonNumber: number; episodeNumber: number }> => {
+): Promise<Array<{ seasonNumber: number; episodeNumber: number }>> => {
   const group = Schema.decodeUnknownSync(Group)(
     await fetchTmdb(`/tv/episode_group/${groupId}`, key),
   );
   const seasons = group.groups.filter((season) => season.order === seasonNumber);
-  const episodes =
-    seasons.length === 1
-      ? (seasons[0]?.episodes.filter((episode) => episode.order === episodeNumber - 1) ?? [])
-      : [];
-  const episode = episodes.length === 1 ? episodes[0] : undefined;
-  if (episode === undefined)
-    throw new Error(
-      `Selected episode order has no unique match for S${seasonNumber}E${episodeNumber}. Choose another episode order.`,
-    );
-  return { seasonNumber: episode.season_number, episodeNumber: episode.episode_number };
+  return episodeNumbers.map((episodeNumber) => {
+    const episodes =
+      seasons.length === 1
+        ? (seasons[0]?.episodes.filter((episode) => episode.order === episodeNumber - 1) ?? [])
+        : [];
+    const episode = episodes.length === 1 ? episodes[0] : undefined;
+    if (episode === undefined)
+      throw new Error(
+        `Selected episode order has no unique match for S${seasonNumber}E${episodeNumber}. Choose another episode order.`,
+      );
+    return { seasonNumber: episode.season_number, episodeNumber: episode.episode_number };
+  });
 };

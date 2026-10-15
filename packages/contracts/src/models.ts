@@ -88,6 +88,10 @@ export const CatalogItem = Schema.Struct({
   seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
   seasonNumber: Schema.optional(Schema.NullOr(Schema.Int)),
   indexNumber: Schema.optional(Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)))),
+  /** The last episode a file holding several consecutive episodes covers. */
+  indexNumberEnd: Schema.optional(
+    Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  ),
 });
 export type CatalogItem = Schema.Schema.Type<typeof CatalogItem>;
 
@@ -104,6 +108,8 @@ export const CatalogItemDetails = Schema.Struct({
     libraryId: Uuid,
     parentId: Schema.NullOr(Uuid),
     indexNumber: Schema.NullOr(Schema.Number),
+    /** The last episode a file holding several consecutive episodes covers. */
+    indexNumberEnd: Schema.optional(Schema.NullOr(Schema.Number)),
     seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
     seasonNumber: Schema.optional(Schema.NullOr(Schema.Number)),
     /** The year an episode's season came out, or its show's where the season's is not known. */

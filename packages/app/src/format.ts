@@ -1,5 +1,7 @@
 import {
   type CatalogItem,
+  coveredEpisodeCount,
+  type EpisodeNumbering,
   type JobLogEntry,
   type LibrarySummary,
   MIN_PASSWORD_LENGTH,
@@ -79,34 +81,47 @@ export const hostOf = (origin: string): string => {
   }
 };
 
-/** Where an episode sits in its show: "House (2004) · S01E03", or whichever parts are known. */
-export const episodeContext = (item: {
-  readonly seriesTitle?: string | null | undefined;
-  readonly seasonYear?: number | null | undefined;
-  readonly seasonNumber?: number | null | undefined;
-  readonly indexNumber?: number | null | undefined;
-}): string => {
-  const part = (prefix: string, value: number | null | undefined): string =>
-    value == null ? "" : `${prefix}${String(value).padStart(2, "0")}`;
+/**
+ * An entry's episode numbers after `E`: "E3", or "E10–11" for a file holding several episodes,
+ * with `endPrefix` before its last episode and `pad` applied to both.
+ */
+const episodeNumbers = (
+  entry: EpisodeNumbering,
+  pad: (value: number) => string,
+  endPrefix: string,
+): string | null =>
+  entry.indexNumber == null
+    ? null
+    : `E${pad(entry.indexNumber)}${entry.indexNumberEnd == null ? "" : `–${endPrefix}${pad(entry.indexNumberEnd)}`}`;
+
+const twoDigits = (value: number): string => String(value).padStart(2, "0");
+
+/** Where an episode sits in its show: "House (2004) · S01E03", or "S03E10–E11" for a file of several. */
+export const episodeContext = (
+  item: EpisodeNumbering & {
+    readonly seriesTitle?: string | null | undefined;
+    readonly seasonYear?: number | null | undefined;
+    readonly seasonNumber?: number | null | undefined;
+  },
+): string => {
   // The year dates the show's name, so it is left out where the show is not named.
   const series =
     item.seriesTitle == null || item.seriesTitle === "" || item.seasonYear == null
       ? item.seriesTitle
       : `${item.seriesTitle} (${item.seasonYear})`;
-  return [series, part("S", item.seasonNumber) + part("E", item.indexNumber)]
-    .filter(Boolean)
-    .join(" · ");
+  const code =
+    (item.seasonNumber == null ? "" : `S${twoDigits(item.seasonNumber)}`) +
+    (episodeNumbers(item, twoDigits, "E") ?? "");
+  return [series, code].filter(Boolean).join(" · ");
 };
 
 /** What the player says under the title of what is playing: an episode's place in its show, or the year anything else came out. */
-export const playingContext = (item: {
-  readonly kind: string;
-  readonly year: number | null;
-  readonly seriesTitle?: string | null | undefined;
-  readonly seasonYear?: number | null | undefined;
-  readonly seasonNumber?: number | null | undefined;
-  readonly indexNumber?: number | null | undefined;
-}): string =>
+export const playingContext = (
+  item: Parameters<typeof episodeContext>[0] & {
+    readonly kind: string;
+    readonly year: number | null;
+  },
+): string =>
   item.kind === "episode" ? episodeContext(item) : item.year === null ? "" : `(${item.year})`;
 
 /** 83 seconds → "1:23", 5000 seconds → "1:23:20". */
@@ -136,17 +151,18 @@ export const formatRuntime = (seconds: number): string => {
 export const runtimeOf = (seconds: number | null): string | null =>
   seconds === null || Math.round(seconds / 60) < 1 ? null : formatRuntime(seconds);
 
-/** "S1 E3", or whichever part is known. */
+/** "S1 E3", "S3 E10–11" for a file holding several episodes, or whichever part is known. */
 export const episodeCode = (
   seasonNumber: number | null | undefined,
-  episodeNumber: number | null | undefined,
+  entry: EpisodeNumbering,
 ): string | null =>
-  [
-    seasonNumber == null ? null : `S${seasonNumber}`,
-    episodeNumber == null ? null : `E${episodeNumber}`,
-  ]
+  [seasonNumber == null ? null : `S${seasonNumber}`, episodeNumbers(entry, String, "")]
     .filter(Boolean)
     .join(" ") || null;
+
+/** How many episodes a list of entries holds, counting each episode of a combined file. */
+export const episodeCount = (entries: ReadonlyArray<EpisodeNumbering>): number =>
+  entries.reduce((total, entry) => total + coveredEpisodeCount(entry), 0);
 
 /** An episode card's second line: its code, then where it resumes or how long it runs. */
 export const episodeSubtitle = (
@@ -154,7 +170,7 @@ export const episodeSubtitle = (
   seasonNumber: number | null | undefined,
 ): string =>
   [
-    episodeCode(seasonNumber, episode.indexNumber),
+    episodeCode(seasonNumber, episode),
     (episode.resumePositionSeconds ?? 0) > 0
       ? resumeLabel(episode.resumePositionSeconds ?? 0)
       : runtimeOf(episode.durationMs === null ? null : episode.durationMs / 1_000),

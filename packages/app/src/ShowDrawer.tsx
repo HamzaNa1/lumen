@@ -78,7 +78,7 @@ const EpisodeCard = ({
       title={episode.title}
       subtitle={
         current
-          ? [episodeCode(seasonNumber, episode.indexNumber), "Now playing"]
+          ? [episodeCode(seasonNumber, episode), "Now playing"]
               .filter(Boolean)
               .join(" · ")
           : episodeSubtitle(episode, seasonNumber)

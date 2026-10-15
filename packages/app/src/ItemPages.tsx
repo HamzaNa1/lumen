@@ -13,6 +13,7 @@ import { type ReactNode, useState } from "react";
 import { LoadMore } from "./BrowsePages";
 import {
   episodeCode,
+  episodeCount,
   episodeSubtitle,
   formatClock,
   formatReleaseDate,
@@ -61,6 +62,7 @@ const catalogItem = ({ item, watchState }: CatalogItemDetails): CatalogItem => (
   kind: item.kind,
   year: item.year,
   indexNumber: item.indexNumber,
+  indexNumberEnd: item.indexNumberEnd ?? null,
   artworkId: item.artworkId,
   artworkRevision: item.artworkRevision,
   durationMs: item.durationSeconds === null ? null : item.durationSeconds * 1_000,
@@ -433,6 +435,7 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
   const showItem = show.data?.item;
   const list = episodes.data?.pages.flatMap((page) => page.items) ?? [];
   const more = episodes.hasNextPage;
+  const count = episodeCount(list);
   return (
     <div className="details-page">
       <DetailsHeader
@@ -449,7 +452,7 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
           yearOf(item.year),
           episodes.data === undefined
             ? null
-            : `${list.length}${more ? "+" : ""} ${list.length === 1 && !more ? "episode" : "episodes"}`,
+            : `${count}${more ? "+" : ""} ${count === 1 && !more ? "episode" : "episodes"}`,
         ]}
         onBack={() =>
           void navigate(
@@ -523,7 +526,7 @@ const EpisodeDetails = ({ itemId }: { readonly itemId: string }): React.ReactEle
           )
         }
         meta={[
-          episodeCode(season?.indexNumber, item.indexNumber),
+          episodeCode(season?.indexNumber, item),
           runtimeOf(item.durationSeconds),
           yearOf(item.year),
         ]}

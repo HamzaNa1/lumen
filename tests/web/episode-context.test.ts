@@ -1,5 +1,12 @@
 import { expect, test } from "bun:test";
-import { episodeContext, episodeSubtitle, playingContext, runtimeOf } from "../../packages/app/src/format.ts";
+import {
+  episodeCode,
+  episodeContext,
+  episodeCount,
+  episodeSubtitle,
+  playingContext,
+  runtimeOf,
+} from "../../packages/app/src/format.ts";
 
 test("an episode is placed in its show by a padded season and episode code", () => {
   expect(episodeContext({ seriesTitle: "House", seasonNumber: 1, indexNumber: 3 })).toBe(
@@ -55,4 +62,43 @@ test("an episode too short to have a runtime is described by its code alone", ()
   };
   expect(episodeSubtitle({ ...episode, durationMs: 20_000 }, 1)).toBe("S1 E1");
   expect(episodeSubtitle({ ...episode, durationMs: 1_500_000 }, 1)).toBe("S1 E1 · 25m");
+});
+
+test("a file holding several episodes is labelled by its whole range everywhere", () => {
+  const combined = { seriesTitle: "The Office", seasonNumber: 3, indexNumber: 10, indexNumberEnd: 11 };
+  expect(episodeContext(combined)).toBe("The Office · S03E10–E11");
+  expect(playingContext({ ...combined, kind: "episode", year: 2006, seasonYear: 2006 })).toBe(
+    "The Office (2006) · S03E10–E11",
+  );
+  expect(episodeCode(3, combined)).toBe("S3 E10–11");
+  expect(episodeCode(3, { indexNumber: 10, indexNumberEnd: null })).toBe("S3 E10");
+  expect(
+    episodeSubtitle(
+      {
+        id: "00000000-0000-4000-8000-000000000001",
+        libraryId: "00000000-0000-4000-8000-000000000002",
+        title: "Ben Franklin / Phyllis' Wedding",
+        kind: "episode",
+        year: null,
+        artworkId: null,
+        resumePositionSeconds: 90,
+        durationMs: 2_640_000,
+        indexNumber: 10,
+        indexNumberEnd: 11,
+      },
+      3,
+    ),
+  ).toBe("S3 E10–11 · Resume at 1:30");
+});
+
+test("episode counts count every episode of a combined file", () => {
+  expect(episodeCount([])).toBe(0);
+  expect(
+    episodeCount([
+      { indexNumber: 9 },
+      { indexNumber: 10, indexNumberEnd: 11 },
+      { indexNumber: 12, indexNumberEnd: null },
+      { indexNumber: null },
+    ]),
+  ).toBe(5);
 });

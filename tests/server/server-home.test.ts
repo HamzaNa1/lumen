@@ -28,6 +28,7 @@ interface FixtureItem {
   readonly kind?: "movie" | "show" | "season" | "episode" | "track";
   readonly parentId?: string;
   readonly number?: number;
+  readonly numberEnd?: number;
   readonly added?: number;
   readonly available?: boolean;
   readonly playable?: boolean;
@@ -67,8 +68,8 @@ const fixture = async (items: ReadonlyArray<FixtureItem>, allowed: ReadonlyArray
       }
       for (const item of items) {
         const kind = item.kind ?? "movie";
-        yield* db.run(sql`INSERT INTO catalog_items(id, library_id, kind, parent_id, title, sort_title, index_number, duration_seconds, added_at_ms, updated_at_ms)
-        VALUES (${item.id}, ${item.libraryId}, ${kind}, ${item.parentId ?? null}, ${item.title}, ${item.title.toLowerCase()}, ${item.number ?? null}, 1800, ${item.added ?? 1}, ${item.added ?? 1})`);
+        yield* db.run(sql`INSERT INTO catalog_items(id, library_id, kind, parent_id, title, sort_title, index_number, index_number_end, duration_seconds, added_at_ms, updated_at_ms)
+        VALUES (${item.id}, ${item.libraryId}, ${kind}, ${item.parentId ?? null}, ${item.title}, ${item.title.toLowerCase()}, ${item.number ?? null}, ${item.numberEnd ?? null}, 1800, ${item.added ?? 1}, ${item.added ?? 1})`);
         if (!["show", "season"].includes(kind)) {
           yield* db.run(sql`INSERT INTO media_sources(id, library_id, root_id, relative_path, absolute_path, scanned_at_ms)
           VALUES (${item.id}, ${item.libraryId}, ${item.libraryId}, ${item.id}, ${join(root, item.libraryId, item.id)}, 1)`);
@@ -309,6 +310,31 @@ test("Next Up follows the furthest watched episode and moves in-progress episode
     ).status,
   ).toBe(200);
   expect((await getHome()).nextUp.map((item: { id: string }) => item.id)).toEqual([later]);
+});
+
+test("Next Up after a single episode prefers the next one over a combined file repeating it", async () => {
+  const libraryId = newUuid();
+  const show = newUuid();
+  const season = newUuid();
+  const combined = newUuid();
+  const eleventh = newUuid();
+  const episode = (id: string, title: string, number: number, extra: Partial<FixtureItem> = {}) =>
+    ({ id, libraryId, title, kind: "episode", parentId: season, number, ...extra }) as const;
+  const items = [
+    { id: show, libraryId, title: "The Office", kind: "show" },
+    { id: season, libraryId, title: "Season 3", kind: "season", parentId: show, number: 3 },
+    episode(newUuid(), "A Benihana Christmas", 10, { completed: true }),
+    episode(combined, "Ben Franklin / Phyllis' Wedding", 10, { numberEnd: 11 }),
+    episode(eleventh, "Phyllis' Wedding", 11),
+    episode(newUuid(), "Business School", 12),
+  ] satisfies ReadonlyArray<FixtureItem>;
+  const nextUp = async (fixtureItems: ReadonlyArray<FixtureItem>) => {
+    const home = await fixture(fixtureItems, [libraryId]);
+    return (await home.json<HomeContent>("/api/v1/home")).nextUp.map((item) => item.id);
+  };
+  expect(await nextUp(items)).toEqual([eleventh]);
+  // Without a separate E11, the combined file is the only way to see it.
+  expect(await nextUp(items.filter((item) => item.id !== eleventh))).toEqual([combined]);
 });
 
 test("Home always uses default library ordering and filtering without preference endpoints", async () => {
