@@ -4,7 +4,9 @@ on:
   schedule:
     - cron: "17 3 * * 1"
 jobs:
-  native-driver:
+  native-desktop:
+    uses: ./.github/workflows/native-desktop.yml
+  portable-tests:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
