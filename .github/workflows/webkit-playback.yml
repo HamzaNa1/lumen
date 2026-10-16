@@ -5,10 +5,11 @@ on:
     paths:
       - .github/workflows/webkit-playback.yml
       - tests/fixtures/playback.webm
-      - tests/tooling/playback-fixture.test.ts
       - tests/browser/playback.ts
       - apps/web/src/HtmlMediaPlayer.ts
-      - apps/server/src/http/ServeFile.ts
+      - apps/server/src/**
+      - apps/server/package.json
+      - bun.lock
 jobs:
   playback:
     runs-on: ubuntu-latest

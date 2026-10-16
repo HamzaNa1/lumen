@@ -12,6 +12,7 @@ import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { decodeConfig } from "../../apps/server/src/config/Config";
 import { createLogger } from "../../apps/server/src/core/Logger";
 import { makeHttpHandler, type HttpServices } from "../../apps/server/src/http/HttpApp";
+import { serveHttp } from "../../apps/server/src/http/HttpServer";
 import { serveFile } from "../../apps/server/src/http/ServeFile";
 
 const open = (url: string): Promise<IncomingMessage> =>
@@ -22,12 +23,12 @@ const open = (url: string): Promise<IncomingMessage> =>
   });
 
 
-test("forwards byte-exact Bun.file full, bounded, open and suffix ranges and HEAD/conditional responses", async () => {
+test("forwards length-delimited byte-exact full, bounded, open and suffix ranges and HEAD/conditional responses", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "bridge-range-"));
   const path = join(workspace, "media.bin");
   const bytes = Uint8Array.from({ length: 4096 }, (_, index) => index % 251);
   await writeFile(path, bytes);
-  const upstream = Bun.serve({
+  const upstream = await serveHttp({
     hostname: "127.0.0.1",
     port: 0,
     fetch: (request) =>
@@ -37,7 +38,6 @@ test("forwards byte-exact Bun.file full, bounded, open and suffix ranges and HEA
         size: bytes.length,
         modifiedAtMs: 1000,
         mimeType: "application/octet-stream",
-        preserveIdleTimeout: true,
       }),
   });
   const bridge = new PlaybackBridge();
@@ -58,6 +58,8 @@ test("forwards byte-exact Bun.file full, bounded, open and suffix ranges and HEA
     ] as const) {
       const response = await fetch(url, { headers: range === null ? {} : { range } });
       expect(response.status).toBe(range === null ? 200 : 206);
+      expect(response.headers.get("content-length")).toBe(String(end - start));
+      expect(response.headers.get("transfer-encoding")).toBeNull();
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes.slice(start, end));
     }
     const head = await fetch(url, { method: "HEAD" });
@@ -100,15 +102,15 @@ test("authorized media survives a downstream pause longer than the server's defa
     createLogger({ level: "error", destination: { write: () => undefined } }),
   );
   let exemptions = 0;
-  const upstream = Bun.serve({
+  const upstream = await serveHttp({
     hostname: "127.0.0.1",
     port: 0,
-    fetch: (request, server) =>
+    fetch: (request, context) =>
       handler(request, {
-        peerAddress: server.requestIP(request)?.address ?? null,
+        peerAddress: context.peerAddress,
         disableIdleTimeout: () => {
           exemptions += 1;
-          server.timeout(request, 0);
+          context.disableIdleTimeout?.();
         },
       }),
   });
