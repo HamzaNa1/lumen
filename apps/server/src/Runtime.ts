@@ -1,3 +1,4 @@
+import { serveHttp, type HttpServer } from "./http/HttpServer";
 import { WatchGroups, type WatchSocketData } from "./watch-groups/WatchGroups";
 import { createLogger, ServerLogger, type Logger } from "./core/Logger";
 import { Database, RepositoriesLive, serverIdentity } from "@lumen/database";
@@ -147,7 +148,7 @@ const makeServices = Effect.gen(function* () {
 });
 
 export interface RunningServer {
-  readonly server: Bun.Server<WatchSocketData>;
+  readonly server: HttpServer;
   readonly stop: () => Promise<void>;
 }
 
@@ -198,7 +199,7 @@ const startConfiguredServer = async (
     if (Exit.isFailure(exit)) rejectServices(Cause.squash(exit.cause));
   });
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
-  let server: Bun.Server<WatchSocketData> | undefined;
+  let server: HttpServer | undefined;
   try {
     const services = await Promise.race([
       servicesPromise,
@@ -255,18 +256,14 @@ const startConfiguredServer = async (
       isTrustedOrigin(request, origin, config),
       { logger: logger.child({ component: "watch-groups" }) },
     );
-    const listeningServer = Bun.serve<WatchSocketData>({
+    const listeningServer = await serveHttp<WatchSocketData>({
       hostname: config.host,
       port: config.port,
-      fetch: (request, server) => {
+      fetch: (request, context) => {
         const { pathname } = new URL(request.url);
-        if (pathname === "/api/v1/watch-groups") return watchGroups.upgrade(request, server);
+        if (pathname === "/api/v1/watch-groups") return watchGroups.upgrade(request, context);
         // The app's files are matched by prefix before the API sees the request, and the API
         // owns every other path, so neither can answer for the other.
-        const context = {
-          peerAddress: server.requestIP(request)?.address ?? null,
-          disableIdleTimeout: () => server.timeout(request, 0),
-        };
         return isWebPath(pathname) ? web(request, context) : handler(request, context);
       },
       websocket: watchGroups.websocket,

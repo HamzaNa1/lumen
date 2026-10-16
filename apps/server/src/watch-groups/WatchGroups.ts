@@ -13,7 +13,7 @@ import {
   type WatchPlayback,
 } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
-import type { ServerWebSocket, WebSocketHandler } from "bun";
+import type { HttpSocket, HttpSocketHandler, HttpUpgrade } from "../http/HttpServer";
 import type { HttpServices } from "../http/HttpApp";
 import type { AuthPrincipal } from "../services/AuthService";
 import type { Logger } from "../core/Logger";
@@ -47,7 +47,7 @@ export interface WatchSocketData {
   authTimer?: ReturnType<typeof setTimeout>;
 }
 interface ClientConnection {
-  socket: ServerWebSocket<WatchSocketData> | null;
+  socket: HttpSocket<WatchSocketData> | null;
   readonly sequence: number;
   retiredAtMs: number | null;
 }
@@ -88,14 +88,14 @@ class WatchGroupsBusy extends Error {
 }
 
 export class WatchGroups {
-  private readonly sockets = new Set<ServerWebSocket<WatchSocketData>>();
+  private readonly sockets = new Set<HttpSocket<WatchSocketData>>();
   private readonly clients = new Map<string, ClientConnection>();
   private nextSequence = 0;
   private readonly now: () => number;
   private readonly logger: Logger | undefined;
   private readonly groups = new Map<string, Group>();
-  private readonly deliveries = new Map<ServerWebSocket<WatchSocketData>, StateDelivery>();
-  private readonly directories = new Map<ServerWebSocket<WatchSocketData>, DirectoryDelivery>();
+  private readonly deliveries = new Map<HttpSocket<WatchSocketData>, StateDelivery>();
+  private readonly directories = new Map<HttpSocket<WatchSocketData>, DirectoryDelivery>();
   private passwordOperations = 0;
   private readonly attempts = new RequestLimiter({
     maxRequests: 10,
@@ -119,7 +119,7 @@ export class WatchGroups {
     this.bufferTimer.unref();
   }
 
-  upgrade(request: Request, server: Bun.Server<WatchSocketData>): Response | undefined {
+  upgrade(request: Request, server: HttpUpgrade<WatchSocketData>): Response | undefined {
     if (this.sockets.size >= 256) return new Response("Watch groups are busy", { status: 503 });
     if (request.method !== "GET") return new Response(null, { status: 405 });
     // Desktop sockets have no Origin. Browser callers must be same-origin.
@@ -152,7 +152,7 @@ export class WatchGroups {
     return upgraded ? undefined : new Response("WebSocket required", { status: 426 });
   }
 
-  readonly websocket: WebSocketHandler<WatchSocketData> = {
+  readonly websocket: HttpSocketHandler<WatchSocketData> = {
     maxPayloadLength: 4096,
     idleTimeout: 30,
     backpressureLimit: 128 * 1024,
@@ -215,7 +215,7 @@ export class WatchGroups {
   }
 
   /** Retire immediately, without waiting for the transport's close callback or pending work. */
-  private retire(socket: ServerWebSocket<WatchSocketData>, code?: number, reason?: string): void {
+  private retire(socket: HttpSocket<WatchSocketData>, code?: number, reason?: string): void {
     const data = socket.data;
     if (data.closed) return;
     data.closed = true;
@@ -244,7 +244,7 @@ export class WatchGroups {
 
   /** Claim only after authentication: independent clients, users, and sessions stay separate. */
   private claim(
-    socket: ServerWebSocket<WatchSocketData>,
+    socket: HttpSocket<WatchSocketData>,
     principal: AuthPrincipal,
     authentication: typeof WatchConnect.Type,
   ): void {
@@ -279,11 +279,11 @@ export class WatchGroups {
     }
   }
 
-  private send(socket: ServerWebSocket<WatchSocketData>, message: WatchMessage): void {
+  private send(socket: HttpSocket<WatchSocketData>, message: WatchMessage): void {
     if (!socket.data.closed) socket.send(JSON.stringify(message));
   }
 
-  private list(socket: ServerWebSocket<WatchSocketData>): Promise<void> {
+  private list(socket: HttpSocket<WatchSocketData>): Promise<void> {
     const running = this.directories.get(socket);
     if (running !== undefined) {
       running.revision += 1;
@@ -313,7 +313,7 @@ export class WatchGroups {
   }
 
   private async authenticate(
-    socket: ServerWebSocket<WatchSocketData>,
+    socket: HttpSocket<WatchSocketData>,
   ): Promise<AuthPrincipal | null> {
     const token = socket.data.token;
     if (token === null || socket.data.closed) return null;
@@ -344,7 +344,7 @@ export class WatchGroups {
   }
 
   private async visibleDirectory(
-    socket: ServerWebSocket<WatchSocketData>,
+    socket: HttpSocket<WatchSocketData>,
     delivery: DirectoryDelivery,
   ): Promise<void> {
     const revision = delivery.revision;
@@ -381,7 +381,7 @@ export class WatchGroups {
     await Promise.all(deliveries);
   }
 
-  private deliverState(socket: ServerWebSocket<WatchSocketData>, group: Group): Promise<void> {
+  private deliverState(socket: HttpSocket<WatchSocketData>, group: Group): Promise<void> {
     const running = this.deliveries.get(socket);
     if (running !== undefined) {
       running.group = group;
@@ -407,7 +407,7 @@ export class WatchGroups {
   }
 
   private async visibleState(
-    socket: ServerWebSocket<WatchSocketData>,
+    socket: HttpSocket<WatchSocketData>,
     delivery: StateDelivery,
   ): Promise<void> {
     while (!socket.data.closed && socket.data.groupId === delivery.group.state.id) {
@@ -432,7 +432,7 @@ export class WatchGroups {
   }
 
   private enterGroup(
-    socket: ServerWebSocket<WatchSocketData>,
+    socket: HttpSocket<WatchSocketData>,
     group: Group,
     displayName: string,
     replaces?: string,
@@ -465,7 +465,7 @@ export class WatchGroups {
       this.release(group, group.state.revision);
   }
 
-  private leave(socket: ServerWebSocket<WatchSocketData>): void {
+  private leave(socket: HttpSocket<WatchSocketData>): void {
     const group = this.groups.get(socket.data.groupId ?? "");
     socket.data.groupId = null;
     socket.data.buffer = null;
@@ -611,7 +611,7 @@ export class WatchGroups {
     }
   }
 
-  private async receive(socket: ServerWebSocket<WatchSocketData>, raw: string): Promise<void> {
+  private async receive(socket: HttpSocket<WatchSocketData>, raw: string): Promise<void> {
     if (socket.data.closed) return;
     const value: unknown = JSON.parse(raw);
     if (socket.data.token === null) {

@@ -3,6 +3,7 @@ import {
   request as httpRequest,
   type IncomingMessage,
 } from "node:http";
+import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,35 +12,67 @@ import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient"
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { decodeConfig } from "../../apps/server/src/config/Config";
 import { createLogger } from "../../apps/server/src/core/Logger";
+import type { RequestContext } from "../../apps/server/src/http/ClientIdentity";
 import { makeHttpHandler, type HttpServices } from "../../apps/server/src/http/HttpApp";
 import { serveFile } from "../../apps/server/src/http/ServeFile";
 
+const transportModule = join(import.meta.dir, "../../apps/server/src/http/HttpServer.ts");
+
+/** Serves through the transport of the server under test, which may be the released one. */
+const serveUpstream = async (
+  fetch: (request: Request, context: RequestContext) => Response | Promise<Response>,
+): Promise<{ readonly url: URL; stop(force: boolean): Promise<void> }> => {
+  if (existsSync(transportModule)) {
+    const { serveHttp } = (await import(
+      transportModule
+    )) as typeof import("../../apps/server/src/http/HttpServer");
+    return serveHttp({ hostname: "127.0.0.1", port: 0, fetch });
+  }
+  // Servers released before the node:http transport answered from Bun.serve directly.
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (request, server) =>
+      fetch(request, {
+        peerAddress: server.requestIP(request)?.address ?? null,
+        disableIdleTimeout: () => server.timeout(request, 0),
+      }),
+  });
+  return { url: server.url, stop: (force) => server.stop(force) };
+};
+
+const framing = (response: Response) => ({
+  status: response.status,
+  contentLength: response.headers.get("content-length"),
+  contentRange: response.headers.get("content-range"),
+  chunked: response.headers.get("transfer-encoding") !== null,
+});
+
+// A paused player holds its connection open. Bun's global agent instead times out an idle,
+// in-use socket after 5 seconds with ETIMEDOUT, so the consumer opens its own connection.
 const open = (url: string): Promise<IncomingMessage> =>
   new Promise((resolve, reject) => {
-    const request = httpRequest(url, resolve);
+    const request = httpRequest(url, { agent: false }, resolve);
     request.on("error", reject);
     request.end();
   });
 
 
-test("forwards byte-exact Bun.file full, bounded, open and suffix ranges and HEAD/conditional responses", async () => {
+test("forwards byte-exact full, bounded, open and suffix ranges with the server's framing, and HEAD/conditional responses", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "bridge-range-"));
   const path = join(workspace, "media.bin");
   const bytes = Uint8Array.from({ length: 4096 }, (_, index) => index % 251);
+  let size = bytes.length;
   await writeFile(path, bytes);
-  const upstream = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: (request) =>
-      serveFile({
-        request,
-        path,
-        size: bytes.length,
-        modifiedAtMs: 1000,
-        mimeType: "application/octet-stream",
-        preserveIdleTimeout: true,
-      }),
-  });
+  const upstream = await serveUpstream((request) =>
+    serveFile({
+      request,
+      path,
+      size,
+      modifiedAtMs: 1000,
+      mimeType: "application/octet-stream",
+    }),
+  );
   const bridge = new PlaybackBridge();
   await bridge.listen();
   const { url } = bridge.register({
@@ -56,8 +89,12 @@ test("forwards byte-exact Bun.file full, bounded, open and suffix ranges and HEA
       ["bytes=4000-", 4000, 4096],
       ["bytes=-10", 4086, 4096],
     ] as const) {
-      const response = await fetch(url, { headers: range === null ? {} : { range } });
+      const headers: Record<string, string> = range === null ? {} : { range };
+      const direct = await fetch(new URL("/media", upstream.url), { headers });
+      await direct.body?.cancel();
+      const response = await fetch(url, { headers });
       expect(response.status).toBe(range === null ? 200 : 206);
+      expect(framing(response)).toEqual(framing(direct));
       expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes.slice(start, end));
     }
     const head = await fetch(url, { method: "HEAD" });
@@ -70,6 +107,14 @@ test("forwards byte-exact Bun.file full, bounded, open and suffix ranges and HEA
     const unsatisfiable = await fetch(url, { headers: { range: "bytes=4096-" } });
     expect(unsatisfiable.status).toBe(416);
     expect(unsatisfiable.headers.get("content-range")).toBe("bytes */4096");
+    await writeFile(path, new Uint8Array());
+    size = 0;
+    const directEmpty = await fetch(new URL("/media", upstream.url));
+    await directEmpty.body?.cancel();
+    const empty = await fetch(url);
+    expect(empty.status).toBe(200);
+    expect(framing(empty)).toEqual(framing(directEmpty));
+    expect(await empty.text()).toBe("");
   } finally {
     await bridge.close();
     await upstream.stop(true);
@@ -100,18 +145,15 @@ test("authorized media survives a downstream pause longer than the server's defa
     createLogger({ level: "error", destination: { write: () => undefined } }),
   );
   let exemptions = 0;
-  const upstream = Bun.serve({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: (request, server) =>
-      handler(request, {
-        peerAddress: server.requestIP(request)?.address ?? null,
-        disableIdleTimeout: () => {
-          exemptions += 1;
-          server.timeout(request, 0);
-        },
-      }),
-  });
+  const upstream = await serveUpstream((request, context) =>
+    handler(request, {
+      peerAddress: context.peerAddress,
+      disableIdleTimeout: () => {
+        exemptions += 1;
+        context.disableIdleTimeout?.();
+      },
+    }),
+  );
   // Electron's main process runs Node, whose HTTP idle behavior differs from Bun's shim.
   const source = await readFile(
     join(import.meta.dir, "../../apps/desktop/src/main/player/PlaybackBridge.ts"),
