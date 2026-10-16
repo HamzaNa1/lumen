@@ -7,7 +7,7 @@ on:
       - tests/fixtures/playback.webm
       - tests/browser/playback.ts
       - apps/web/src/HtmlMediaPlayer.ts
-      - apps/server/src/**
+      - apps/server/src/http/**
       - apps/server/package.json
       - bun.lock
 jobs:
@@ -35,12 +35,17 @@ jobs:
           uname -a > proof/environment.txt
           bun --version >> proof/environment.txt
           bun run playwright --version >> proof/environment.txt
-          bun scripts/test-browser.ts "$DELIVERY" web-app.e2e.ts --project webkit --grep "supported media plays|each show and film|double-clicking|the player moves between" --repeat-each 20 --retries 0 --trace on 2>&1 | tee proof/repetitions.log
-      - name: Preserve repetitions before running the broader browser suite
-        if: ${{ !cancelled() }}
-        run: |
-          mkdir -p proof/repetitions
-          mv test-results playwright-report proof/repetitions/
+          # Each repetition seeds a fresh server, so saved progress never carries between them.
+          failed=0
+          for iteration in $(seq 1 20); do
+            bun scripts/test-browser.ts "$DELIVERY" web-app.e2e.ts --project webkit \
+              --grep "supported media plays|each show and film|double-clicking|the player moves between" \
+              --retries 0 --trace on 2>&1 | tee "proof/repetition-$iteration.log" || failed=$((failed + 1))
+            mkdir -p "proof/repetition-$iteration"
+            mv test-results playwright-report "proof/repetition-$iteration/"
+          done
+          echo "$failed of 20 repetitions failed" | tee proof/repetitions-summary.txt
+          test "$failed" -eq 0
       - name: Run all browsers for this delivery
         if: ${{ !cancelled() }}
         env:

@@ -27,6 +27,7 @@ test("forwards length-delimited byte-exact full, bounded, open and suffix ranges
   const workspace = await mkdtemp(join(tmpdir(), "bridge-range-"));
   const path = join(workspace, "media.bin");
   const bytes = Uint8Array.from({ length: 4096 }, (_, index) => index % 251);
+  let size = bytes.length;
   await writeFile(path, bytes);
   const upstream = await serveHttp({
     hostname: "127.0.0.1",
@@ -35,7 +36,7 @@ test("forwards length-delimited byte-exact full, bounded, open and suffix ranges
       serveFile({
         request,
         path,
-        size: bytes.length,
+        size,
         modifiedAtMs: 1000,
         mimeType: "application/octet-stream",
       }),
@@ -72,6 +73,13 @@ test("forwards length-delimited byte-exact full, bounded, open and suffix ranges
     const unsatisfiable = await fetch(url, { headers: { range: "bytes=4096-" } });
     expect(unsatisfiable.status).toBe(416);
     expect(unsatisfiable.headers.get("content-range")).toBe("bytes */4096");
+    await writeFile(path, new Uint8Array());
+    size = 0;
+    const empty = await fetch(url);
+    expect(empty.status).toBe(200);
+    expect(empty.headers.get("content-length")).toBe("0");
+    expect(empty.headers.get("transfer-encoding")).toBeNull();
+    expect(await empty.text()).toBe("");
   } finally {
     await bridge.close();
     await upstream.stop(true);
