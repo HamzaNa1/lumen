@@ -1,0 +1,40 @@
+name: WebKit playback proof
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/flaky-webkit-playback]
+jobs:
+  playback:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        delivery: [source, server]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.3
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps webkit
+      - name: Repeat each affected scenario twenty times without retries
+        env:
+          DELIVERY: ${{ matrix.delivery }}
+        run: |
+          set -o pipefail
+          mkdir -p proof
+          uname -a > proof/environment.txt
+          bun --version >> proof/environment.txt
+          bun run playwright --version >> proof/environment.txt
+          bun scripts/test-browser.ts "$DELIVERY" web-app.e2e.ts --project webkit --grep "supported media plays|each show and film|double-clicking|the player moves between" --repeat-each 20 --retries 0 --trace on 2>&1 | tee proof/repetitions.log
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: webkit-playback-${{ matrix.delivery }}
+          path: |
+            proof/
+            test-results/
+            playwright-report/
+          retention-days: 14
