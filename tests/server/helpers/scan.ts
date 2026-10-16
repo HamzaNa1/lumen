@@ -4,6 +4,7 @@ import { JobService } from "../../../apps/server/src/jobs/JobService";
 import { cleanupParkedAtMs } from "../../../apps/server/src/jobs/ScanJobs";
 
 interface NextJob {
+  readonly id: string;
   readonly dedupeKey: string;
   readonly attempts: number;
 }
@@ -18,22 +19,32 @@ export const finishScan = (
     const db = yield* Database;
     const worker = yield* JobService;
     let nowMs = fromMs;
-    for (let step = 0; step < 1_000; step++) {
+    for (;;) {
       const run = yield* db.get<{ status: string }>(
         sql`SELECT status FROM scan_runs WHERE id = ${runId}`,
       );
       if (run === undefined) throw new Error(`Scan ${runId} does not exist`);
       if (["succeeded", "failed", "cancelled"].includes(run.status)) return run.status;
 
-      if (beforeJob !== undefined) {
-        const next = yield* db.get<NextJob>(sql`
-          SELECT dedupe_key AS dedupeKey, attempts FROM scan_jobs
-          WHERE status = 'queued' AND available_at_ms <= ${nowMs}
-          ORDER BY priority DESC, available_at_ms, id LIMIT 1
-        `);
-        if (next !== undefined) yield* Effect.promise(() => beforeJob(next));
+      const eligible = yield* db.get<NextJob>(sql`
+        SELECT id, dedupe_key AS dedupeKey, attempts FROM scan_jobs
+        WHERE status = 'queued' AND available_at_ms <= ${nowMs}
+        ORDER BY priority DESC, available_at_ms, id LIMIT 1
+      `);
+      if (eligible !== undefined && beforeJob !== undefined)
+        yield* Effect.promise(() => beforeJob(eligible));
+      if (yield* worker.runOne(nowMs)) {
+        if (eligible === undefined)
+          throw new Error(`Scan ${runId}: worker reported work without an eligible scan job`);
+        const attempted = yield* db.get<{ attempts: number }>(
+          sql`SELECT attempts FROM scan_jobs WHERE id = ${eligible.id}`,
+        );
+        // Progress is a claimed attempt (or a job removed by reconciliation),
+        // not a fixed number of dispatches. The test timeout bounds total time.
+        if (attempted !== undefined && attempted.attempts <= eligible.attempts)
+          throw new Error(`Scan ${runId}: worker did not advance job ${eligible.id}`);
+        continue;
       }
-      if (yield* worker.runOne(nowMs)) continue;
 
       // Idle only means no job is eligible at nowMs. Parked cleanup has no due
       // time until discovery releases it, so it must never advance this clock.
@@ -51,5 +62,4 @@ export const finishScan = (
       }
       nowMs = next.availableAtMs;
     }
-    throw new Error(`Scan ${runId} did not finish within 1000 worker steps`);
   });

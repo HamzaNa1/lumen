@@ -25,7 +25,7 @@ import { CatalogService, CatalogServiceLive } from "../../apps/server/src/servic
 import { LibraryService, LibraryServiceLive } from "../../apps/server/src/services/LibraryService";
 import { MetadataSettingsLive } from "../../apps/server/src/services/MetadataSettings";
 import { Scanner, ScannerLive } from "../../apps/server/src/services/Scanner";
-import { cleanupParkedAtMs } from "../../apps/server/src/jobs/ScanJobs";
+import { cleanupParkedAtMs, insertScanRun } from "../../apps/server/src/jobs/ScanJobs";
 import { finishScan } from "./helpers/scan";
 
 const paths: string[] = [];
@@ -200,6 +200,96 @@ const makeHarness = async () => {
 };
 
 describe("media reconciliation", () => {
+  test.each([
+    { jobs: 601, spacingMs: 1 },
+    { jobs: 1_001, spacingMs: 0 },
+  ])(
+    "finishing a progressing scan has no workload-size limit (%j)",
+    async ({ jobs, spacingMs }) => {
+      const harness = await makeHarness();
+      const movies = await harness.createLibrary("movies");
+      const result = await harness.run(
+        Effect.gen(function* () {
+          const db = yield* Database;
+          const worker = yield* JobService;
+          const runId = newUuid();
+          const nowMs = Date.now();
+          yield* db.transaction((transaction) =>
+            insertScanRun(
+              transaction,
+              {
+                runId,
+                libraryId: movies.libraryId,
+                mode: "refresh",
+                jobs: Array.from({ length: jobs }, (_, index) => ({
+                  sourceId: null,
+                  dedupeKey: `analyze:${index}`,
+                  operation: "analyze",
+                  priority: 100,
+                  maxAttempts: 1,
+                  availableAtMs: nowMs + (index + 1) * spacingMs,
+                })),
+              },
+              nowMs,
+            ),
+          );
+          let claimed = 0;
+          let idle = 0;
+          const status = yield* finishScan(runId, nowMs).pipe(
+            Effect.provideService(JobService, {
+              ...worker,
+              runOne: (atMs) =>
+                worker.runOne(atMs).pipe(
+                  Effect.tap((ran) =>
+                    Effect.sync(() => {
+                      if (ran) claimed++;
+                      else idle++;
+                    }),
+                  ),
+                ),
+            }),
+          );
+          const settled = yield* db.all<{ status: string; attempts: number; jobs: number }>(sql`
+            SELECT status, attempts, count(*) AS jobs FROM scan_jobs
+            WHERE run_id = ${runId} GROUP BY status, attempts
+          `);
+          return { status, claimed, idle, settled };
+        }),
+      );
+      expect(result).toEqual({
+        status: "succeeded",
+        claimed: jobs,
+        idle: spacingMs === 0 ? 0 : jobs,
+        settled: [{ status: "succeeded", attempts: 1, jobs }],
+      });
+    },
+    60_000,
+  );
+
+  test("finishing a scan rejects a worker that reports work without claiming a job", async () => {
+    const harness = await makeHarness();
+    const movies = await harness.createLibrary("movies");
+    await expect(
+      harness.run(
+        Effect.gen(function* () {
+          const libraries = yield* LibraryService;
+          const worker = yield* JobService;
+          const nowMs = Date.now();
+          const { runId } = yield* libraries.startScan(
+            { libraryId: movies.libraryId, mode: "full" },
+            nowMs,
+          );
+          return yield* finishScan(runId, nowMs).pipe(
+            Effect.provideService(JobService, {
+              ...worker,
+              runOne: () => Effect.succeed(true),
+            }),
+          );
+        }),
+      ),
+    ).rejects.toThrow("worker did not advance job");
+  });
+
   test.each([1, 60_000])(
     "an idle worker finishes cleanup scheduled %d ms later before the next scan",
     async (delayMs) => {
