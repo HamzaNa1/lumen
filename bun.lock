@@ -25,7 +25,7 @@
     },
     "apps/desktop": {
       "name": "lumen-desktop",
-      "version": "0.0.29",
+      "version": "0.0.30",
       "dependencies": {
         "koffi": "3.3.1",
       },
