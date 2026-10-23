@@ -11,14 +11,13 @@
     "./schemas/*": "./src/schemas/*.ts"
   },
   "scripts": {
-    "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit"
+    "build": "bun ../../scripts/typecheck.ts --noEmit",
+    "typecheck": "bun ../../scripts/typecheck.ts --noEmit"
   },
   "dependencies": {
     "effect": "4.0.0-beta.83"
   },
   "devDependencies": {
-    "@types/bun": "1.4.2",
-    "typescript": "7.0.2"
+    "@types/bun": "1.4.2"
   }
 }

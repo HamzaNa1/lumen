@@ -22,8 +22,8 @@ const steps = {
     ]),
   typecheck: () => {
     run(process.execPath, ["run", ...workspaceFilters(workspaces), "typecheck"]);
-    run(process.execPath, ["run", "tsc", "-p", "tsconfig.scripts.json"]);
-    for (const directory of tests) run(process.execPath, ["run", "tsc", "-p", directory]);
+    run(process.execPath, ["run", "scripts/typecheck.ts", "-p", "tsconfig.scripts.json"]);
+    for (const directory of tests) run(process.execPath, ["run", "scripts/typecheck.ts", "-p", directory]);
   },
   test: () => run(process.execPath, ["test", ...tests]),
   // One workspace at a time, in the product's declared order: packages before the apps that
