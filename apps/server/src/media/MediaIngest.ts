@@ -331,6 +331,7 @@ export const makeMediaIngest = Effect.gen(function* () {
         id: catalogItems.id,
         indexNumber: catalogItems.indexNumber,
         indexNumberEnd: catalogItems.indexNumberEnd,
+        metadataState: catalogItems.metadataState,
       })
       .from(catalogItems)
       .innerJoin(catalogItemSources, eq(catalogItemSources.itemId, catalogItems.id))
@@ -354,15 +355,102 @@ export const makeMediaIngest = Effect.gen(function* () {
     }
     if (video !== null) {
       // Provider metadata describes the episodes an entry covered when it was fetched, so a file
-      // renamed to cover other episodes is fetched again.
+      // renamed to cover other episodes is fetched again. Until that fresh fetch answers, the old
+      // provider values still describe the previous numbering, so in one transaction they revert to
+      // path state: provider rows, provider-sourced metadata and provider artwork all go, while
+      // values the user, an NFO or a field lock owns survive.
       if (
         existingItem != null &&
         (existingItem.indexNumber !== video.episodeNumber ||
           existingItem.indexNumberEnd !== video.episodeNumberEnd)
-      )
-        yield* database
-          .delete(providerRecords)
-          .where(and(eq(providerRecords.itemId, itemId), eq(providerRecords.provider, "tmdb")));
+      ) {
+        yield* database.transaction((transaction) =>
+          Effect.gen(function* () {
+            yield* transaction
+              .delete(providerRecords)
+              .where(and(eq(providerRecords.itemId, itemId), eq(providerRecords.provider, "tmdb")));
+            yield* transaction
+              .delete(catalogItemArtwork)
+              .where(
+                and(eq(catalogItemArtwork.itemId, itemId), eq(catalogItemArtwork.source, "tmdb")),
+              );
+            const stored = yield* transaction
+              .select()
+              .from(catalogItemMetadata)
+              .where(eq(catalogItemMetadata.itemId, itemId))
+              .get();
+            const locks = new Set(decodeMetadataList(stored?.lockedFieldsJson ?? null));
+            const sources = decodeMetadataMap(stored?.fieldSourcesJson ?? null);
+            const providerOwned = (field: string): boolean =>
+              !locks.has(field) && sources[field] !== "user" && sources[field] !== "nfo";
+            const resetTitle = providerOwned("title");
+            const resetOverview = providerOwned("overview");
+            const resetYear = providerOwned("year");
+            if (stored !== undefined) {
+              const externalIds = decodeMetadataMap(stored.externalIdsJson);
+              if (!locks.has("tmdb") && sources.tmdb !== "user") {
+                delete externalIds.tmdb;
+                delete sources.tmdb;
+              }
+              for (const field of [
+                "title",
+                "overview",
+                "year",
+                "releaseDate",
+                "contentRating",
+                "communityRating",
+                "genres",
+                "studios",
+                "tags",
+              ] as const)
+                if (providerOwned(field)) delete sources[field];
+              const metadata = {
+                itemId,
+                releaseDate: providerOwned("releaseDate") ? null : stored.releaseDate,
+                contentRating: providerOwned("contentRating") ? null : stored.contentRating,
+                communityRating: providerOwned("communityRating") ? null : stored.communityRating,
+                genresJson: JSON.stringify(
+                  providerOwned("genres") ? [] : decodeMetadataList(stored.genresJson),
+                ),
+                studiosJson: JSON.stringify(
+                  providerOwned("studios") ? [] : decodeMetadataList(stored.studiosJson),
+                ),
+                tagsJson: JSON.stringify(
+                  providerOwned("tags") ? [] : decodeMetadataList(stored.tagsJson),
+                ),
+                externalIdsJson: JSON.stringify(externalIds),
+                fieldSourcesJson: JSON.stringify(sources),
+                lockedFieldsJson: stored.lockedFieldsJson,
+              };
+              yield* transaction.insert(catalogItemMetadata).values(metadata).onConflictDoUpdate({
+                target: catalogItemMetadata.itemId,
+                set: metadata,
+              });
+            }
+            // The episode update below rewrites title, sortTitle and year whenever the state lets
+            // it, so the state may only fall back to values that update would restore anyway.
+            if (resetTitle || resetOverview || resetYear) {
+              const reset: {
+                title?: string;
+                sortTitle?: string;
+                overview?: null;
+                year?: number | null;
+                metadataState?: string;
+                updatedAtMs?: number;
+              } = { updatedAtMs: Date.now() };
+              if (resetTitle) {
+                reset.title = itemTitle;
+                reset.sortTitle = itemTitle.toLowerCase();
+              }
+              if (resetOverview) reset.overview = null;
+              if (resetYear) reset.year = year;
+              if (resetTitle && resetYear && existingItem.metadataState === "tmdb")
+                reset.metadataState = "path";
+              yield* transaction.update(catalogItems).set(reset).where(eq(catalogItems.id, itemId));
+            }
+          }),
+        );
+      }
       const mayReplace = sql`${catalogItems.metadataState} in ('path', 'local')`;
       yield* database
         .update(catalogItems)
