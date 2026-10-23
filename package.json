@@ -14,8 +14,8 @@
     "dev:web": "bun run --cwd apps/web dev",
     "build": "bun run --filter '*' build",
     "build:web": "bun run --cwd apps/web build",
-    "typecheck": "bun run --filter '*' typecheck && tsc -p tsconfig.scripts.json && bun run typecheck:tests",
-    "typecheck:tests": "tsc -p tests/server && tsc -p tests/web && tsc -p tests/desktop && tsc -p tests/shared && tsc -p tests/tooling && tsc -p tests/compatibility && tsc -p tests/browser && tsc -p tests/helpers",
+    "typecheck": "bun run --filter '*' typecheck && bun scripts/typecheck.ts -p tsconfig.scripts.json && bun run typecheck:tests",
+    "typecheck:tests": "bun scripts/typecheck.ts -p tests/server && bun scripts/typecheck.ts -p tests/web && bun scripts/typecheck.ts -p tests/desktop && bun scripts/typecheck.ts -p tests/shared && bun scripts/typecheck.ts -p tests/tooling && bun scripts/typecheck.ts -p tests/compatibility && bun scripts/typecheck.ts -p tests/browser && bun scripts/typecheck.ts -p tests/helpers",
     "lint": "biome lint .",
     "test": "bun test",
     "test:browser": "bun scripts/test-browser.ts source",
@@ -47,6 +47,7 @@
     "istanbul-lib-instrument": "6.0.3",
     "react": "19.3.0",
     "react-dom": "19.3.0",
+    "tsrs": "0.18.0-ts7.1.0-dev.20260929",
     "typescript": "7.0.2"
   }
 }

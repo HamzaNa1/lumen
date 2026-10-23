@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite build --watch --mode development",
     "build": "vite build",
-    "typecheck": "tsc --noEmit && tsc -p tsconfig.node.json --noEmit",
+    "typecheck": "bun ../../scripts/typecheck.ts --noEmit && bun ../../scripts/typecheck.ts -p tsconfig.node.json --noEmit",
     "test": "bun test ../../tests/web ../../tests/shared"
   },
   "devDependencies": {
@@ -22,7 +22,6 @@
     "lucide-react": "1.48.0",
     "react": "19.3.0",
     "react-dom": "19.3.0",
-    "typescript": "7.0.2",
     "vite": "7.3.6"
   }
 }

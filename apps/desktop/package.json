@@ -10,7 +10,7 @@
     "build": "electron-vite build",
     "package": "electron-builder --publish never",
     "preview": "electron-vite preview",
-    "typecheck": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "typecheck": "bun ../../scripts/typecheck.ts -p tsconfig.main.json --noEmit && bun ../../scripts/typecheck.ts -p tsconfig.renderer.json --noEmit",
     "test": "bun test ../../tests/desktop ../../tests/shared"
   },
   "dependencies": {
@@ -37,7 +37,6 @@
     "electron-builder": "26.15.3",
     "electron-updater": "6.8.9",
     "electron-vite": "5.0.0",
-    "typescript": "7.0.2",
     "vite": "7.3.6"
   }
 }

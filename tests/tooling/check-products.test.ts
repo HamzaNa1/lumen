@@ -48,7 +48,7 @@ const fixture = () => {
       JSON.stringify({
         name: path.replace("/", "-"),
         scripts: {
-          typecheck: "tsc -p tsconfig.json",
+          typecheck: "bun ../../scripts/typecheck.ts -p tsconfig.json",
           build: "bun build src/index.ts --outdir dist",
         },
       }),
@@ -154,7 +154,7 @@ for (const product of ["server", "desktop"]) {
           JSON.stringify({
             name: `apps-${product}`,
             scripts: {
-              typecheck: "tsc -p tsconfig.json",
+              typecheck: "bun ../../scripts/typecheck.ts -p tsconfig.json",
               build: "bun build missing-entry.ts --outdir dist",
             },
           }),
