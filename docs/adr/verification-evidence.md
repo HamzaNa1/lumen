@@ -16,6 +16,8 @@ The unit coverage contract is host-independent wherever native dependencies are 
 
 Recalibrate the workspace budgets from the full 697-test suite when upgrading to Bun 1.4.4. Its [coverage fixes](https://bun.com/blog/bun-v1.4.4#bun-test) stop crediting skipped branches and code after an `await` or `yield` that never resumes, and correct other line mappings. The existing budgets were measured with the older reporter. Keep the same production inventory, exclusions, tests, and regression gate; use the corrected uncovered-line counts, including lower budgets where reporting improves. Retaining the old counts would compare different coverage measurements, while disabling the gate would lose regression protection.
 
+Tests must supply configuration explicitly rather than rely on a developer's `.env` to exercise environment overrides. Numeric configuration coverage differed by three lines between a configured workstation and clean CI; explicit default, override, and validation cases keep the same budget enforceable in both environments.
+
 ## Browser coverage
 
 Keep the existing H.264/AAC fixture and all playback checks on Chromium. Firefox and WebKit use the same scenes encoded as VP8/Vorbis WebM. Separate fixture servers preserve identical catalog titles and avoid mutating a shared source between engines. No capability-driven skips conceal launch or codec regressions: unsupported playback fails with evidence. Desktop renderer parity intentionally targets Chromium because Electron uses it; its historical baseline is separate maintenance debt.
