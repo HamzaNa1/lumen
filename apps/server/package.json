@@ -6,8 +6,8 @@
   "scripts": {
     "dev": "bun --watch src/main.ts",
     "start": "bun src/main.ts",
-    "build": "tsc --noEmit",
-    "typecheck": "tsc --noEmit",
+    "build": "bun ../../scripts/typecheck.ts --noEmit",
+    "typecheck": "bun ../../scripts/typecheck.ts --noEmit",
     "test": "bun test ../../tests/server ../../tests/shared",
     "db:migrate": "bun src/database/migrate.ts"
   },
@@ -23,7 +23,6 @@
   },
   "devDependencies": {
     "@types/bun": "1.4.2",
-    "@types/ws": "8.18.2",
-    "typescript": "7.0.2"
+    "@types/ws": "8.18.2"
   }
 }
