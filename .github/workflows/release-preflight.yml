@@ -34,7 +34,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - name: Validate release
         id: release
         env:
@@ -63,7 +63,7 @@ jobs:
           ref: ${{ github.sha }}
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - name: Install the selected product
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}

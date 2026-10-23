@@ -12,6 +12,10 @@ Enforce an uncovered-line budget per workspace, seeded from the existing full su
 
 The unit coverage contract is host-independent wherever native dependencies are already faked. macOS window lifecycle tests select the Darwin policy explicitly and restore the host platform after each test, just as the existing Windows policy tests do. Skipping these fake-based tests on Linux measured 679 uncovered desktop lines against macOS's 674, without any production change. Running both policies keeps one production inventory and one unchanged budget; it does not claim native Cocoa/MPV integration coverage. Native integration checks remain separate evidence.
 
+## Bun 1.4.4 coverage baseline
+
+Recalibrate the workspace budgets from the full 697-test suite when upgrading to Bun 1.4.4. Its [coverage fixes](https://bun.com/blog/bun-v1.4.4#bun-test) stop crediting skipped branches and code after an `await` or `yield` that never resumes, and correct other line mappings. The existing budgets were measured with the older reporter. Keep the same production inventory, exclusions, tests, and regression gate; use the corrected uncovered-line counts, including lower budgets where reporting improves. Retaining the old counts would compare different coverage measurements, while disabling the gate would lose regression protection.
+
 ## Browser coverage
 
 Keep the existing H.264/AAC fixture and all playback checks on Chromium. Firefox and WebKit use the same scenes encoded as VP8/Vorbis WebM. Separate fixture servers preserve identical catalog titles and avoid mutating a shared source between engines. No capability-driven skips conceal launch or codec regressions: unsupported playback fails with evidence. Desktop renderer parity intentionally targets Chromium because Electron uses it; its historical baseline is separate maintenance debt.
