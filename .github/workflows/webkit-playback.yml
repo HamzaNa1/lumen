@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
-          bun-version: 1.4.3
+          bun-version: 1.4.4
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium firefox webkit
       - name: Repeat each affected scenario twenty times without retries
