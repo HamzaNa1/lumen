@@ -189,6 +189,35 @@ async function run(): Promise<void> {
     sampleX = 0.5,
     bottomEdge?: "video" | "gradient",
   ): Promise<boolean> {
+    let lastFailure: Error | undefined;
+    try {
+      await eventually(
+        async () => {
+          try {
+            assert(await inspectFrame(label, sampleX, bottomEdge), "The video is not visible");
+            return true;
+          } catch (error) {
+            if (!(error instanceof assert.AssertionError)) throw error;
+            lastFailure = error;
+            return false;
+          }
+        },
+        5000,
+        50,
+      );
+    } catch (error) {
+      throw new Error(`The desktop did not reach the expected frame during ${label}`, {
+        cause: lastFailure ?? error,
+      });
+    }
+    return true;
+  }
+
+  async function inspectFrame(
+    label: string,
+    sampleX = 0.5,
+    bottomEdge?: "video" | "gradient",
+  ): Promise<boolean> {
     if (bottomEdge === "gradient") {
       await overlay.window.webContents.executeJavaScript(
         `window.dispatchEvent(new MouseEvent('mousemove'))`,
@@ -200,16 +229,6 @@ async function run(): Promise<void> {
         (await active.ipc.command(["get_property", "vo-configured"])) === true &&
         (await active.ipc.command(["get_property", "audio-out-params"]).catch(() => null)) !== null,
     );
-    // Chromium suspends animation frames while the controls are deliberately hidden.
-    if (overlay.window.isVisible()) {
-      await withDeadline(
-        overlay.window.webContents.executeJavaScript(
-          "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
-        ),
-        5000,
-        `The visible controls did not paint during ${label}`,
-      );
-    }
     await active.ipc
       .command(["screenshot-to-file", join(evidence, `${label}-decoded.png`), "video"])
       .catch((error: unknown) => observations.push({ screenshotError: String(error) }));
