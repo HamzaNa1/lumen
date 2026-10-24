@@ -1,4 +1,4 @@
-import { load, struct, type LibraryHandle } from "koffi";
+import { type LibraryHandle, load, struct } from "koffi";
 
 type NativePointer = bigint;
 type Point = { readonly x: number; readonly y: number };

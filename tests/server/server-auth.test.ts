@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
-import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import {
   hashPassword,
   hashToken,
   newOpaqueToken,
   newUuid,
 } from "../../apps/server/src/core/Security";
-import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
+import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
+import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
+import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
 
 const runningServers: RunningServer[] = [];
 const paths: string[] = [];
@@ -174,9 +174,11 @@ describe("server authentication and ACL", () => {
     // The name belongs to the server, so it survives a restart.
     for (const running of runningServers.splice(0)) await running.stop();
     expect(
-      ((await (await request(await start(databasePath), "/api/v1/server")).json()) as {
-        displayName: string;
-      }).displayName,
+      (
+        (await (await request(await start(databasePath), "/api/v1/server")).json()) as {
+          displayName: string;
+        }
+      ).displayName,
     ).toBe("Living room");
   });
 

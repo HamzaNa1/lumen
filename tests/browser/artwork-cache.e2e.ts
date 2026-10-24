@@ -1,9 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test("artwork caching respects logout and account changes", async ({
-  page,
-  browserName,
-}) => {
+test("artwork caching respects logout and account changes", async ({ page, browserName }) => {
   // Use the real browser cache and cookie jar without app queries racing the account changes.
   await page.goto("/health/live");
   const results = await page.evaluate(async () => {

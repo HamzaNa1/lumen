@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { load, type LibraryHandle } from "koffi";
+import { type LibraryHandle, load } from "koffi";
 
 type NativeHandle = object;
 type CreateMpv = () => NativeHandle | null;

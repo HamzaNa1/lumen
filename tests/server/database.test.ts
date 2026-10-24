@@ -1,5 +1,5 @@
-import { describe, expect, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
+import { describe, expect, test } from "bun:test";
 import { cpSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -166,9 +166,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
       await migrateTo();
       const after = new SqliteDatabase(filename);
       try {
-        expect(
-          after.query("SELECT id, role, all_libraries FROM users ORDER BY id").all(),
-        ).toEqual([
+        expect(after.query("SELECT id, role, all_libraries FROM users ORDER BY id").all()).toEqual([
           { id: "owner", role: "admin", all_libraries: 0 },
           { id: "visitor", role: "user", all_libraries: 0 },
         ]);
@@ -179,9 +177,7 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
           after.query("SELECT id, user_id, capabilities_json FROM library_grants").all(),
         ).toEqual([{ id: "grant", user_id: "visitor", capabilities_json: '["library:read"]' }]);
         expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
-        expect(() =>
-          after.exec("UPDATE users SET role = 'guest' WHERE id = 'visitor'"),
-        ).toThrow();
+        expect(() => after.exec("UPDATE users SET role = 'guest' WHERE id = 'visitor'")).toThrow();
       } finally {
         after.close();
       }
@@ -195,11 +191,17 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     const filename = join(root, "server.sqlite");
     const earlier = join(root, "earlier");
     const latest = "20261006061748_true_songbird";
-    const migrateTo = (folder?: string) => Effect.runPromise(Effect.scoped(
-      Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
-    ));
+    const migrateTo = (folder?: string) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
+        ),
+      );
     try {
-      cpSync(defaultMigrationsFolder, earlier, { recursive: true, filter: (source) => !source.includes(latest) });
+      cpSync(defaultMigrationsFolder, earlier, {
+        recursive: true,
+        filter: (source) => !source.includes(latest),
+      });
       await migrateTo(earlier);
       const before = new SqliteDatabase(filename);
       before.exec(`
@@ -214,25 +216,38 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         INSERT INTO catalog_items(id, library_id, kind, title, sort_title, added_at_ms, updated_at_ms)
         VALUES ('movie', 'library', 'movie', 'Movie', 'movie', 1, 1);
       `);
-      before.close(); await migrateTo();
+      before.close();
+      await migrateTo();
       const after = new SqliteDatabase(filename);
       try {
         after.exec("PRAGMA foreign_keys = ON");
-        expect(after.query("SELECT id, language, commentary, forced, hearing_impaired FROM streams").all()).toEqual([
+        expect(
+          after
+            .query("SELECT id, language, commentary, forced, hearing_impaired FROM streams")
+            .all(),
+        ).toEqual([
           { id: "stream", language: "eng", commentary: null, forced: null, hearing_impaired: null },
         ]);
         after.exec("INSERT INTO user_track_preferences(user_id) VALUES ('owner')");
         expect(after.query("SELECT * FROM user_track_preferences").all()).toEqual([
           { user_id: "owner", audio_language: "en", subtitle_language: null },
         ]);
-        after.exec(`INSERT INTO media_track_overrides(user_id, item_id, subtitle_json) VALUES ('owner', 'movie', '"off"')`);
-        expect(() => after.exec("INSERT INTO user_track_preferences(user_id) VALUES ('missing')")).toThrow();
+        after.exec(
+          `INSERT INTO media_track_overrides(user_id, item_id, subtitle_json) VALUES ('owner', 'movie', '"off"')`,
+        );
+        expect(() =>
+          after.exec("INSERT INTO user_track_preferences(user_id) VALUES ('missing')"),
+        ).toThrow();
         after.exec("DELETE FROM users WHERE id = 'owner'");
         expect(after.query("SELECT * FROM user_track_preferences").all()).toEqual([]);
         expect(after.query("SELECT * FROM media_track_overrides").all()).toEqual([]);
         expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
-      } finally { after.close(); }
-    } finally { rmSync(root, { recursive: true, force: true }); }
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("combined episode migration keeps existing episodes, watch state and catalog triggers", async () => {
@@ -240,11 +255,17 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
     const filename = join(root, "server.sqlite");
     const earlier = join(root, "earlier");
     const latest = "20261015070915_combined_episode_range";
-    const migrateTo = (folder?: string) => Effect.runPromise(Effect.scoped(
-      Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
-    ));
+    const migrateTo = (folder?: string) =>
+      Effect.runPromise(
+        Effect.scoped(
+          Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename }, folder)),
+        ),
+      );
     try {
-      cpSync(defaultMigrationsFolder, earlier, { recursive: true, filter: (source) => !source.includes(latest) });
+      cpSync(defaultMigrationsFolder, earlier, {
+        recursive: true,
+        filter: (source) => !source.includes(latest),
+      });
       await migrateTo(earlier);
       const before = new SqliteDatabase(filename);
       before.exec(`
@@ -256,33 +277,42 @@ describe("native Effect and Drizzle SQLite compatibility", () => {
         INSERT INTO item_watch_states(user_id, item_id, position_seconds, completed, updated_at_ms)
         VALUES ('viewer', 'episode', 321, 0, 1);
       `);
-      before.close(); await migrateTo();
+      before.close();
+      await migrateTo();
       const after = new SqliteDatabase(filename);
       try {
         after.exec("PRAGMA foreign_keys = ON");
-        expect(after.query("SELECT id, index_number, index_number_end FROM catalog_items").all()).toEqual([
-          { id: "episode", index_number: 10, index_number_end: null },
-        ]);
-        expect(after.query("SELECT item_id, position_seconds FROM item_watch_states").all()).toEqual([
-          { item_id: "episode", position_seconds: 321 },
-        ]);
+        expect(
+          after.query("SELECT id, index_number, index_number_end FROM catalog_items").all(),
+        ).toEqual([{ id: "episode", index_number: 10, index_number_end: null }]);
+        expect(
+          after.query("SELECT item_id, position_seconds FROM item_watch_states").all(),
+        ).toEqual([{ item_id: "episode", position_seconds: 321 }]);
         after.exec("UPDATE catalog_items SET index_number_end = 11 WHERE id = 'episode'");
         for (const invalid of ["10", "9"])
-          expect(() => after.exec(`UPDATE catalog_items SET index_number_end = ${invalid}`)).toThrow();
+          expect(() =>
+            after.exec(`UPDATE catalog_items SET index_number_end = ${invalid}`),
+          ).toThrow();
         expect(() =>
           after.exec("UPDATE catalog_items SET index_number = NULL WHERE id = 'episode'"),
         ).toThrow();
         // Search and parent triggers still fire on the table the migration altered.
         after.exec("UPDATE catalog_items SET title = 'Pilot Parts' WHERE id = 'episode'");
-        expect(after.query("SELECT item_id FROM catalog_item_fts WHERE catalog_item_fts MATCH 'parts'").all()).toEqual([
-          { item_id: "episode" },
-        ]);
+        expect(
+          after
+            .query("SELECT item_id FROM catalog_item_fts WHERE catalog_item_fts MATCH 'parts'")
+            .all(),
+        ).toEqual([{ item_id: "episode" }]);
         expect(() =>
           after.exec("UPDATE catalog_items SET parent_id = 'missing' WHERE id = 'episode'"),
         ).toThrow("catalog parent must belong to the same library");
         expect(after.query("PRAGMA foreign_key_check").all()).toEqual([]);
-      } finally { after.close(); }
-    } finally { rmSync(root, { recursive: true, force: true }); }
+      } finally {
+        after.close();
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("persists deterministic repository fixtures and searches FTS5", async () => {

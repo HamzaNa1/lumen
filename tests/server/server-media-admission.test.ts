@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
-import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { decodeConfig } from "../../apps/server/src/config/Config";
 import { createLogger } from "../../apps/server/src/core/Logger";
 import { clientKey, normalizeAddress } from "../../apps/server/src/http/ClientIdentity";
+import { type HttpServices, makeHttpHandler } from "../../apps/server/src/http/HttpApp";
 import { isMediaRequest, MediaAdmission } from "../../apps/server/src/http/MediaAdmission";
-import { makeHttpHandler, type HttpServices } from "../../apps/server/src/http/HttpApp";
 
 const request = (headers: RequestInit["headers"] = {}) =>
   new Request("http://lumen.test/api/v1/media/track?grant=private-grant", { headers });

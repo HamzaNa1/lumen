@@ -4,7 +4,7 @@ import { decodeConfig } from "../../apps/server/src/config/Config";
 import { unauthorized } from "../../apps/server/src/core/Errors";
 import { LimitExceeded, RequestLimiter } from "../../apps/server/src/core/Limits";
 import { createLogger } from "../../apps/server/src/core/Logger";
-import { makeHttpHandler, type HttpServices } from "../../apps/server/src/http/HttpApp";
+import { type HttpServices, makeHttpHandler } from "../../apps/server/src/http/HttpApp";
 
 const limiter = (maxRequests = 2, loginRequests = 1) =>
   new RequestLimiter({ maxRequests, loginRequests, maxActive: 1 });
@@ -41,21 +41,31 @@ describe("request limits", () => {
     const limits = limiter();
     let enter!: () => void;
     let release!: () => void;
-    const entered = new Promise<void>((resolve) => { enter = resolve; });
-    const held = new Promise<void>((resolve) => { release = resolve; });
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
     await check(limits, 0);
-    const pending = Effect.runPromise(limits.run("client", Effect.promise(async () => {
-      enter();
-      await held;
-    })));
+    const pending = Effect.runPromise(
+      limits.run(
+        "client",
+        Effect.promise(async () => {
+          enter();
+          await held;
+        }),
+      ),
+    );
     try {
       await entered;
       limits.sweep(60_000);
       await check(limits, 60_000);
       await check(limits, 60_000, "login");
       for (const kind of ["request", "login"] as const) {
-        await expect(Effect.runPromise(limits.run("client", Effect.succeed(kind))))
-          .rejects.toMatchObject({ retryAfterSeconds: 1 });
+        await expect(
+          Effect.runPromise(limits.run("client", Effect.succeed(kind))),
+        ).rejects.toMatchObject({ retryAfterSeconds: 1 });
       }
       // Another client keeps its own concurrency allowance.
       expect(await Effect.runPromise(limits.run("other", Effect.succeed("ok")))).toBe("ok");
@@ -63,41 +73,56 @@ describe("request limits", () => {
       release();
       await pending;
     }
-    expect(await Effect.runPromise(limits.run("client", Effect.succeed("released")))).toBe("released");
-    await expect(Effect.runPromise(limits.run("client", Effect.fail(new Error("failed")))))
-      .rejects.toThrow("failed");
+    expect(await Effect.runPromise(limits.run("client", Effect.succeed("released")))).toBe(
+      "released",
+    );
+    await expect(
+      Effect.runPromise(limits.run("client", Effect.fail(new Error("failed")))),
+    ).rejects.toThrow("failed");
     limits.sweep(120_000);
-    expect(await Effect.runPromise(limits.run("client", Effect.succeed("released after failure"))))
-      .toBe("released after failure");
+    expect(
+      await Effect.runPromise(limits.run("client", Effect.succeed("released after failure"))),
+    ).toBe("released after failure");
   });
 });
 
 const handler = () => {
   let loginCalls = 0;
-  const fetch = makeHttpHandler({
-    auth: {
-      setupRequired: () => Effect.succeed(false),
-      login: () => {
-        loginCalls += 1;
-        return Effect.succeed({ accessToken: "test-session" });
+  const fetch = makeHttpHandler(
+    {
+      auth: {
+        setupRequired: () => Effect.succeed(false),
+        login: () => {
+          loginCalls += 1;
+          return Effect.succeed({ accessToken: "test-session" });
+        },
+        authenticate: () => Effect.fail(unauthorized()),
       },
-      authenticate: () => Effect.fail(unauthorized()),
-    },
-    identity: { installationId: crypto.randomUUID() },
-    serverName: { name: () => Effect.succeed("Lumen") },
-  } as unknown as HttpServices, decodeConfig({}), createLogger({
-    level: "error",
-    format: "json",
-    destination: { write: () => undefined },
-  }));
-  const login = () => fetch(new Request("http://lumen.test/api/v1/auth/login", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({
-      username: "admin", password: "password", deviceId: crypto.randomUUID(),
-      deviceName: "Test", platform: "desktop", platformDeviceId: null,
+      identity: { installationId: crypto.randomUUID() },
+      serverName: { name: () => Effect.succeed("Lumen") },
+    } as unknown as HttpServices,
+    decodeConfig({}),
+    createLogger({
+      level: "error",
+      format: "json",
+      destination: { write: () => undefined },
     }),
-  }));
+  );
+  const login = () =>
+    fetch(
+      new Request("http://lumen.test/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          username: "admin",
+          password: "password",
+          deviceId: crypto.randomUUID(),
+          deviceName: "Test",
+          platform: "desktop",
+          platformDeviceId: null,
+        }),
+      }),
+    );
   return { fetch, login, loginCalls: () => loginCalls };
 };
 
@@ -116,10 +141,20 @@ describe("HTTP authentication rate limits", () => {
   test("all token and browser auth mutations share the stricter login allowance", async () => {
     const { fetch, login, loginCalls } = handler();
     for (let index = 0; index < 10; index += 1) expect((await login()).status).toBe(200);
-    for (const path of ["login", "register", "migrate-session", "browser/login", "browser/register"]) {
-      const response = await fetch(new Request(`http://lumen.test/api/v1/auth/${path}`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: "{}",
-      }));
+    for (const path of [
+      "login",
+      "register",
+      "migrate-session",
+      "browser/login",
+      "browser/register",
+    ]) {
+      const response = await fetch(
+        new Request(`http://lumen.test/api/v1/auth/${path}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      );
       expect(response.status).toBe(429);
       const retryAfterSeconds = Number(response.headers.get("retry-after"));
       expect(retryAfterSeconds).toBeGreaterThan(0);

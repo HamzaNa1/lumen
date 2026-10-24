@@ -1,14 +1,14 @@
-import { afterEach, expect, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
-import { Database, sql } from "../../packages/database/src/index.ts";
-import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
+import { afterEach, expect, test } from "bun:test";
 import { chmod, copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CatalogItem, HomeContent } from "../../packages/contracts/src/index.ts";
-import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
-import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
+import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
+import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
+import type { CatalogItem, HomeContent } from "../../packages/contracts/src/index.ts";
+import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Database, sql } from "../../packages/database/src/index.ts";
 
 // A synthetic video under release-style names, scanned by the actual server. Its ffprobe is a stub
 // printing what ffprobe reports for this fixture, so the test needs no ffmpeg install while the
@@ -17,8 +17,22 @@ const video = join(import.meta.dir, "../fixtures/playback-ac3.mkv");
 const probeOutput = {
   format: { duration: "20.000000" },
   streams: [
-    { index: 0, codec_type: "video", codec_name: "h264", width: 640, height: 360, disposition: { default: 1 } },
-    { index: 1, codec_type: "audio", codec_name: "ac3", channels: 6, sample_rate: "48000", disposition: { default: 0 } },
+    {
+      index: 0,
+      codec_type: "video",
+      codec_name: "h264",
+      width: 640,
+      height: 360,
+      disposition: { default: 1 },
+    },
+    {
+      index: 1,
+      codec_type: "audio",
+      codec_name: "ac3",
+      channels: 6,
+      sample_rate: "48000",
+      disposition: { default: 0 },
+    },
   ],
 };
 const ffprobePath = process.env.LUMEN_FFPROBE_PATH;
@@ -120,7 +134,9 @@ const library = async () => {
     const list = (await request<{ items: CatalogItem[] }>(`items/${seasonItem?.id}/children`))
       .items;
     const byFile = (start: number, end: number | null) => {
-      const found = list.find((item) => item.indexNumber === start && (item.indexNumberEnd ?? null) === end);
+      const found = list.find(
+        (item) => item.indexNumber === start && (item.indexNumberEnd ?? null) === end,
+      );
       if (found === undefined) throw new Error(`No entry for E${start}${end ? `-${end}` : ""}`);
       return found;
     };
@@ -166,11 +182,15 @@ test("a file named S03E10-11 is one playable entry that survives rescans with it
   // A database scanned before ranges existed holds the file as a single E10.
   const legacy = new SqliteDatabase(lib.databasePath);
   legacy.exec("PRAGMA busy_timeout = 5000");
-  legacy.query("UPDATE catalog_items SET index_number_end = NULL WHERE id = ?").run(first.combined.id);
+  legacy
+    .query("UPDATE catalog_items SET index_number_end = NULL WHERE id = ?")
+    .run(first.combined.id);
   legacy.close();
   // An incremental scan leaves unchanged files alone; a full scan re-reads every path.
   expect(await lib.scan("incremental")).toBe("succeeded");
-  expect((await lib.request<{ item: CatalogItem }>(`items/${first.combined.id}`)).item.indexNumberEnd).toBeNull();
+  expect(
+    (await lib.request<{ item: CatalogItem }>(`items/${first.combined.id}`)).item.indexNumberEnd,
+  ).toBeNull();
   expect(await lib.scan("full")).toBe("succeeded");
   const upgraded = await lib.episodes();
   expect(upgraded.list.map((item) => item.id)).toEqual(first.list.map((item) => item.id));

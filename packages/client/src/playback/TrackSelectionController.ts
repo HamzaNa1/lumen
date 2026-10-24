@@ -1,8 +1,8 @@
 import {
   defaultTrackMemory,
   describeTrack,
-  resolveTrackSelection,
   type PlayableStream,
+  resolveTrackSelection,
   type TrackChoiceInput,
   type TrackKind,
   type TrackMemory,

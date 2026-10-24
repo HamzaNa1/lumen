@@ -70,8 +70,7 @@ const api: DesktopBridge = {
   player: {
     resetTrack: (sessionId, kind) => invoke("player:reset-track", { sessionId, kind }),
     retryTrackMemory: (sessionId) => invoke("player:retry-track-memory", sessionId),
-    dismissTrackMemoryError: (sessionId) =>
-      invoke("player:dismiss-track-memory-error", sessionId),
+    dismissTrackMemoryError: (sessionId) => invoke("player:dismiss-track-memory-error", sessionId),
     start: (itemId, startAtSeconds, title, replaces) =>
       invoke("player:start", { itemId, startAtSeconds, title, replaces }),
     pause: (sessionId, paused) => invoke("player:pause", { sessionId, paused }),

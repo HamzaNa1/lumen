@@ -1,6 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
-import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdir, mkdtemp, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +6,8 @@ import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { Ffprobe } from "../../apps/server/src/media/Ffprobe";
 import { makeMediaIngest } from "../../apps/server/src/media/MediaIngest";
+import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
 
 const paths: string[] = [];
 afterEach(async () => {
@@ -274,10 +274,7 @@ describe("media ingest renumber reset", () => {
     expect(before.metadataState).toBe("tmdb");
     expect(before.indexNumber).toBe(11);
 
-    await harness.renumberFile(
-      officeEpisodeFile,
-      "The Office/Season 4/The Office S04E15.mkv",
-    );
+    await harness.renumberFile(officeEpisodeFile, "The Office/Season 4/The Office S04E15.mkv");
     await harness.ingest();
 
     expect(await harness.episode()).toEqual({
@@ -301,7 +298,10 @@ describe("media ingest renumber reset", () => {
       lockedFieldsJson: "[]",
     });
     expect(await harness.providerRecordCount()).toBe(0);
-    expect(await harness.artwork()).toEqual([{ role: "backdrop", source: "user" }, { role: "poster", source: "local" }]);
+    expect(await harness.artwork()).toEqual([
+      { role: "backdrop", source: "user" },
+      { role: "poster", source: "local" },
+    ]);
   });
 
   test.each([

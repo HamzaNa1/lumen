@@ -19,7 +19,9 @@ const deferred = <T>() => {
   return { promise, resolve };
 };
 
-const mockFetch = (implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>) =>
+const mockFetch = (
+  implementation: (...args: Parameters<typeof fetch>) => ReturnType<typeof fetch>,
+) =>
   spyOn(globalThis, "fetch").mockImplementation(
     Object.assign(implementation, { preconnect: globalThis.fetch.preconnect }),
   );
@@ -38,59 +40,75 @@ const account = (username: string): AccountSummary => ({
   lastConnectedAtMs: null,
 });
 
-test.each([false, true])("desktop sign-in retry feedback survives Electron IPC (setup=%s)", async (setupRequired) => {
-  let authAttempts = 0;
-  let saves = 0;
-  const fetchMock = mockFetch(async (input) => {
-    const path = new URL(String(input)).pathname;
-    if (path === "/api/v1/server")
-      return Response.json({ serverId, displayName: "Test", apiVersion: "1.0.0" });
-    if (path === "/api/v1/auth/setup") return Response.json({ setupRequired });
-    if (path === `/api/v1/auth/${setupRequired ? "register" : "login"}`) {
-      authAttempts += 1;
-      return Response.json({ message: "Rate limit exceeded" }, {
-        status: 429, headers: { "retry-after": "25" },
-      });
-    }
-    throw new Error(`Unexpected request ${path}`);
-  });
-  const window = Object.assign(new EventEmitter(), {
-    isDestroyed: () => false,
-    webContents: { send: () => undefined },
-  });
-  registerIpcHandlers({
-    registry: { save: async () => { saves += 1; } },
-    clients: new Map(),
-    installationId: crypto.randomUUID(),
-    window,
-    overlay: { window },
-    player: { getState: () => null },
-  } as unknown as Parameters<typeof registerIpcHandlers>[0]);
-  const invoke = async (name: string, ...args: unknown[]) => {
-    const handler = ipcHandlers.get(name);
-    if (handler === undefined) throw new Error(`Missing handler ${name}`);
+test.each([false, true])(
+  "desktop sign-in retry feedback survives Electron IPC (setup=%s)",
+  async (setupRequired) => {
+    let authAttempts = 0;
+    let saves = 0;
+    const fetchMock = mockFetch(async (input) => {
+      const path = new URL(String(input)).pathname;
+      if (path === "/api/v1/server")
+        return Response.json({ serverId, displayName: "Test", apiVersion: "1.0.0" });
+      if (path === "/api/v1/auth/setup") return Response.json({ setupRequired });
+      if (path === `/api/v1/auth/${setupRequired ? "register" : "login"}`) {
+        authAttempts += 1;
+        return Response.json(
+          { message: "Rate limit exceeded" },
+          {
+            status: 429,
+            headers: { "retry-after": "25" },
+          },
+        );
+      }
+      throw new Error(`Unexpected request ${path}`);
+    });
+    const window = Object.assign(new EventEmitter(), {
+      isDestroyed: () => false,
+      webContents: { send: () => undefined },
+    });
+    registerIpcHandlers({
+      registry: {
+        save: async () => {
+          saves += 1;
+        },
+      },
+      clients: new Map(),
+      installationId: crypto.randomUUID(),
+      window,
+      overlay: { window },
+      player: { getState: () => null },
+    } as unknown as Parameters<typeof registerIpcHandlers>[0]);
+    const invoke = async (name: string, ...args: unknown[]) => {
+      const handler = ipcHandlers.get(name);
+      if (handler === undefined) throw new Error(`Missing handler ${name}`);
+      try {
+        return await handler({ senderFrame: { url: "file:///renderer/index.html" } }, ...args);
+      } catch (cause) {
+        // Electron preserves only the thrown error's message when crossing processes.
+        throw new Error(
+          `Error invoking remote method '${name}': ${(cause as Error).name}: ${(cause as Error).message}`,
+        );
+      }
+    };
     try {
-      return await handler({ senderFrame: { url: "file:///renderer/index.html" } }, ...args);
-    } catch (cause) {
-      // Electron preserves only the thrown error's message when crossing processes.
-      throw new Error(`Error invoking remote method '${name}': ${(cause as Error).name}: ${(cause as Error).message}`);
+      await invoke("accounts:discover-server", origin);
+      const failure = await invoke("accounts:connect", {
+        origin,
+        username: "admin",
+        password: "password",
+      }).catch((cause: unknown) => cause);
+      expect(errorMessage(failure, "Could not sign in")).toBe(
+        "Rate limit exceeded Try again in 25 seconds.",
+      );
+      expect(authAttempts).toBe(1);
+      expect(saves).toBe(0);
+    } finally {
+      window.emit("closed");
+      unregisterIpcHandlers();
+      fetchMock.mockRestore();
     }
-  };
-  try {
-    await invoke("accounts:discover-server", origin);
-    const failure = await invoke("accounts:connect", {
-      origin, username: "admin", password: "password",
-    }).catch((cause: unknown) => cause);
-    expect(errorMessage(failure, "Could not sign in"))
-      .toBe("Rate limit exceeded Try again in 25 seconds.");
-    expect(authAttempts).toBe(1);
-    expect(saves).toBe(0);
-  } finally {
-    window.emit("closed");
-    unregisterIpcHandlers();
-    fetchMock.mockRestore();
-  }
-});
+  },
+);
 
 test("desktop saves the server's own name, at sign-in and when an administrator renames it", async () => {
   const user = account("admin");
@@ -294,7 +312,7 @@ for (const change of [
         await invoke("accounts:discover-server", origin);
         await invoke("accounts:connect", {
           origin,
-         
+
           username: replacing.username,
           password: "password",
         });

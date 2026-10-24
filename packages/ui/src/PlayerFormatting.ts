@@ -1,4 +1,4 @@
-import type { Dimensions, PlaybackInfo, PlayableStream } from "@lumen/contracts";
+import type { Dimensions, PlayableStream, PlaybackInfo } from "@lumen/contracts";
 
 const languageNames = new Intl.DisplayNames(undefined, { type: "language" });
 
@@ -80,7 +80,10 @@ export const formatPlayerTime = (seconds: number): string => {
     : `${minutes}:${secondsPart}`;
 };
 
-const clockTimeFormatter = new Intl.DateTimeFormat(undefined, { hour: "numeric", minute: "2-digit" });
+const clockTimeFormatter = new Intl.DateTimeFormat(undefined, {
+  hour: "numeric",
+  minute: "2-digit",
+});
 
 /** The wall-clock time playback would finish if it ran uninterrupted from now, e.g. "Ends at 9:56 PM". */
 export const formatEndsAt = (remainingSeconds: number, nowMs: number): string =>

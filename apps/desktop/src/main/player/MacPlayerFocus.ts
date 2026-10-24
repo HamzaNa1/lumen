@@ -1,4 +1,4 @@
-import { load, type LibraryHandle } from "koffi";
+import { type LibraryHandle, load } from "koffi";
 
 // Cocoa separates the main document window from the key window that receives
 // keyboard input. Keep the app main while the controls receive keys, just as

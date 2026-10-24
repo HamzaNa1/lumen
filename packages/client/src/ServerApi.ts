@@ -1,12 +1,6 @@
 import {
-  type ArtworkRef,
-  TrackPreferences,
-  TrackMemory,
-  type TrackPreferencesPatch,
-  type TrackChoiceInput,
-} from "@lumen/contracts";
-import {
   AdjacentEpisodes,
+  type ArtworkRef,
   BROWSER_CSRF_HEADER,
   BrowserSession,
   type CatalogItem,
@@ -14,13 +8,13 @@ import {
   type CatalogItemPage,
   EpisodeOrderOptions,
   type EpisodeOrderSelection,
-  MetadataMatchOptions,
-  type MetadataMatchSelection,
   HomeContent,
   JobLogEntry,
   type LibraryAccess,
   type LibrarySummary,
   ManagedUser,
+  MetadataMatchOptions,
+  type MetadataMatchSelection,
   PlayableMedia,
   PlayableStream,
   type PlayerSession,
@@ -28,6 +22,10 @@ import {
   type ScanRun,
   type ServerDiscovery,
   ServerInfo,
+  type TrackChoiceInput,
+  TrackMemory,
+  TrackPreferences,
+  type TrackPreferencesPatch,
   User,
   UserRole,
 } from "@lumen/contracts";
@@ -57,6 +55,7 @@ export interface AccountSession {
  * and "session" also reports a rejected session to the owner of this client.
  */
 type RequestAuth = "none" | "credentials" | "session";
+
 export type { UserRole };
 export type LibraryKind = LibrarySummary["kind"];
 export type ScanMode = ScanRun["mode"];

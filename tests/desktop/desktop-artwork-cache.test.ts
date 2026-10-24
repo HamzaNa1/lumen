@@ -35,7 +35,8 @@ const artworkServer = () => {
   let answer: (request: ServerRequest) => Promise<Response> | Response = (request) => {
     const url = new URL(request.url);
     const bytes = images.get(url.pathname.split("/").at(-1) ?? "");
-    if (bytes === undefined) return Response.json({ message: "Artwork not found" }, { status: 404 });
+    if (bytes === undefined)
+      return Response.json({ message: "Artwork not found" }, { status: 404 });
     return new Response(bytes, {
       headers: {
         "content-type": "image/png",
@@ -238,9 +239,9 @@ test("an image replaced under the same artwork ID is fetched again under its new
   server.images.set(id, replacement);
   expect(await app.artwork({ id, revision: sha256(replacement) })).toBe(dataUrl(replacement));
   expect(await app.artwork({ id, revision: sha256(replacement) })).toBe(dataUrl(replacement));
-  expect(server.requests.map((request) => new URL(request.url).searchParams.get("revision"))).toEqual(
-    [sha256(poster), sha256(replacement)],
-  );
+  expect(
+    server.requests.map((request) => new URL(request.url).searchParams.get("revision")),
+  ).toEqual([sha256(poster), sha256(replacement)]);
 });
 
 test("artwork the server did not vouch for is asked for on every use", async () => {
@@ -366,10 +367,14 @@ test("unavailable, mistyped and unreachable artwork is reported without being ke
 
   // Once the image is there, nothing from the failures stands in its way.
   server.images.set(artwork.id, poster);
-  server.answerWith((request) =>
-    new Response(server.images.get(new URL(request.url).pathname.split("/").at(-1) ?? ""), {
-      headers: { "content-type": "image/png", "cache-control": "private, max-age=31536000, immutable" },
-    }),
+  server.answerWith(
+    (request) =>
+      new Response(server.images.get(new URL(request.url).pathname.split("/").at(-1) ?? ""), {
+        headers: {
+          "content-type": "image/png",
+          "cache-control": "private, max-age=31536000, immutable",
+        },
+      }),
   );
   expect(await app.artwork(artwork)).toBe(dataUrl(poster));
   expect(server.requests).toHaveLength(4);

@@ -1,7 +1,6 @@
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { WatchAction } from "../../packages/contracts/src/index.ts";
 import { startServer } from "../../apps/server/src/Runtime";
 import {
   bearerCredentials,
@@ -9,8 +8,9 @@ import {
   type WatchConnection,
   WatchGroupClient,
 } from "../../packages/client/src/index.ts";
-import { seedPlaybackFixture } from "./playback";
+import type { WatchAction } from "../../packages/contracts/src/index.ts";
 import { eventually } from "./eventually";
+import { seedPlaybackFixture } from "./playback";
 
 export const watchFixture = async (progress: (stage: string) => void = () => {}) => {
   progress("creating fixture directory");

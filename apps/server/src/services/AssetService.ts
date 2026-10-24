@@ -1,3 +1,4 @@
+import { lstat } from "node:fs/promises";
 import {
   artwork as artworkTable,
   Database,
@@ -8,12 +9,11 @@ import {
 } from "@lumen/database";
 import { eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
+import type { ServerConfig } from "../config/Config";
 import { notFound } from "../core/Errors";
 import { canonicalPath, isPathWithin } from "../core/Paths";
 import { AccessControl } from "../services/AccessControl";
 import type { AuthPrincipal } from "../services/AuthService";
-import type { ServerConfig } from "../config/Config";
-import { lstat } from "node:fs/promises";
 
 export interface AssetFile {
   readonly path: string;

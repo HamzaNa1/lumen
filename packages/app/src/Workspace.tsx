@@ -78,7 +78,10 @@ export const itemPage = (item: Pick<CatalogItem, "id" | "kind">) => {
 
 export const useLibraries = (scope: readonly unknown[]) => {
   const runtime = useRuntime();
-  return useQuery({ queryKey: [...scope, "libraries"], queryFn: () => runtime.catalog.libraries() });
+  return useQuery({
+    queryKey: [...scope, "libraries"],
+    queryFn: () => runtime.catalog.libraries(),
+  });
 };
 
 /** How much of an item has been watched, from 0 to 1; null when it has not been started. */

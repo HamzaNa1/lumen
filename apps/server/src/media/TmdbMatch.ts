@@ -7,8 +7,8 @@ import {
   object,
   str,
   TmdbHttpError,
-  tmdbImageUrl,
   type TmdbObject,
+  tmdbImageUrl,
 } from "./TmdbClient";
 
 type TitleKind = "movie" | "tv";

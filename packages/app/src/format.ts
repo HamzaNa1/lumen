@@ -26,7 +26,8 @@ const filesystemErrors: ReadonlyArray<readonly [RegExp, (path: string) => string
 ];
 
 // Node's fetch reports an unreachable host as "fetch failed" (or a raw socket error code).
-const networkError = /^fetch failed$|\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT)\b/;
+const networkError =
+  /^fetch failed$|\b(?:ECONNREFUSED|ECONNRESET|ENOTFOUND|EHOSTUNREACH|ETIMEDOUT)\b/;
 
 export const errorMessage = (cause: unknown, fallback: string): string => {
   if (!(cause instanceof Error)) return fallback;

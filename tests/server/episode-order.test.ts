@@ -1,15 +1,12 @@
-import { Message } from "../../apps/server/src/http/Schemas";
-import { afterEach, expect, test } from "bun:test";
 import { Database as SqliteDatabase } from "bun:sqlite";
-import { Database, sql } from "../../packages/database/src/index.ts";
-import { Effect, Schema } from "../../packages/database/node_modules/effect/dist/index.js";
+import { afterEach, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
-import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
-
+import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
+import { Message } from "../../apps/server/src/http/Schemas";
+import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
 import {
   CatalogItemDetails,
   CatalogItemPage,
@@ -20,6 +17,8 @@ import {
   ScanRun,
   Uuid,
 } from "../../packages/contracts/src/index.ts";
+import { Effect, Schema } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Database, sql } from "../../packages/database/src/index.ts";
 import { responseJson } from "../helpers/http";
 
 const refreshResponse = Schema.Struct({ runId: Uuid });

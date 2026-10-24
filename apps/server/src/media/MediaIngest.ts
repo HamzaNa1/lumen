@@ -1,4 +1,6 @@
-import { ServerLogger } from "../core/Logger";
+import { createHash } from "node:crypto";
+import { lstat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import {
   albums,
   artists,
@@ -6,8 +8,8 @@ import {
   catalogItemArtwork,
   catalogItemMetadata,
   catalogItemOrigins,
-  catalogItems,
   catalogItemSources,
+  catalogItems,
   Database,
   libraryProfiles,
   mediaSources,
@@ -18,17 +20,15 @@ import {
 } from "@lumen/database";
 import { and, count, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
-import { newUuid } from "../core/Security";
+import { readLocalFile } from "../core/BoundedInput";
 import { mapRepositoryError } from "../core/Cause";
+import { ServerLogger } from "../core/Logger";
+import { newUuid } from "../core/Security";
 import { Ffprobe, type FfprobeResult } from "../media/Ffprobe";
-import { parseVideoPath } from "./VideoPaths";
+import { imageInfo } from "./ImageInfo";
 import { readLocalNfo } from "./LocalMetadata";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
-import { readLocalFile } from "../core/BoundedInput";
-import { imageInfo } from "./ImageInfo";
+import { parseVideoPath } from "./VideoPaths";
 
 const probedStreamValues = (stream: FfprobeResult["streams"][number], isDefault: boolean) => ({
   kind: stream.kind,

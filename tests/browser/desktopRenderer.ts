@@ -9,8 +9,8 @@ import {
   expect,
   type Locator,
   type Page,
-  test,
   type TestInfo,
+  test,
 } from "@playwright/test";
 import type { ParityScenario } from "./desktopBridgeShim";
 

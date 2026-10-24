@@ -11,7 +11,8 @@ export const makeServerConfig = (
 ): Effect.Effect<ServerConfig, Error> =>
   Effect.try({
     try: () => ({ ...decodeConfig(process.env), ...overrides }),
-    catch: (cause) => cause instanceof Error ? cause : new Error("Invalid configuration", { cause }),
+    catch: (cause) =>
+      cause instanceof Error ? cause : new Error("Invalid configuration", { cause }),
   });
 
 export const ServerConfigLive = (

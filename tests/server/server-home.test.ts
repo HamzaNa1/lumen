@@ -1,19 +1,19 @@
-import { HomeContent } from "../../packages/contracts/src/index.ts";
-import { responseJson } from "../helpers/http";
 import { afterEach, expect, test } from "bun:test";
-import { Database, sql } from "../../packages/database/src/index.ts";
-import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
-import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
+import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
+import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
 import type {
   CatalogItem,
   CatalogItemDetails,
   CatalogItemPage,
 } from "../../packages/contracts/src/index.ts";
+import { HomeContent } from "../../packages/contracts/src/index.ts";
+import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Database, sql } from "../../packages/database/src/index.ts";
+import { responseJson } from "../helpers/http";
 
 const paths: string[] = [];
 const servers: RunningServer[] = [];

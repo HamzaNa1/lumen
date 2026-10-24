@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { parseProduct } from "../../scripts/lib/products";
 import {
   assertCanPromote,
   isReleaseVersion,
   latestStableTag,
   planRelease,
-  releaseTag,
   releasePaths,
+  releaseTag,
 } from "../../scripts/lib/releases";
-import { parseProduct } from "../../scripts/lib/products";
 
 describe("independent release policy", () => {
   test("validates product names and versions before using them in commands or paths", () => {

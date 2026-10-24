@@ -3,8 +3,8 @@ import { and, asc, eq, exists, or, sql } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import type { DatabaseClient } from "../Database";
 import { buildFtsMatch } from "../Fts";
-import { albums, artists, tracks } from "../tables/schema";
 import { catalogFts } from "../tables/SearchSchema";
+import { albums, artists, tracks } from "../tables/schema";
 import { boundary, guard } from "./Boundary";
 
 interface SearchRow {

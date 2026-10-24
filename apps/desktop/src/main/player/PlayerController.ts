@@ -1,32 +1,32 @@
-import { resolveTrackSelection, type TrackKind } from "@lumen/contracts";
 import { EventEmitter } from "node:events";
 import { release } from "node:os";
-import type {
-  AudioOutput,
-  PlaybackInfo,
-  PlayerSession,
-  PlayerState,
-  IpcPlayerSurfaceBounds,
-} from "@lumen/contracts";
 import {
   describePlayback,
   measuredSize,
   PlaybackDiagnostics,
-  TrackSelectionController,
   PlaybackSessionReporter,
   type PlayerBuffer,
-  type WatchPlayer,
+  TrackSelectionController,
   type WatchPlaybackSample,
+  type WatchPlayer,
 } from "@lumen/client";
+import type {
+  AudioOutput,
+  IpcPlayerSurfaceBounds,
+  PlaybackInfo,
+  PlayerSession,
+  PlayerState,
+} from "@lumen/contracts";
+import { resolveTrackSelection, type TrackKind } from "@lumen/contracts";
 import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
-import { sampleMpvPlayback } from "./MpvSynchronization";
 import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
+import { sampleMpvPlayback } from "./MpvSynchronization";
 import type { PlaybackBridge } from "./PlaybackBridge";
 
 export interface PlayerControllerOptions {

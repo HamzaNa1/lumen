@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { PlaybackInfo, PlayableStream } from "../../packages/contracts/src/index.ts";
+import type { PlayableStream, PlaybackInfo } from "../../packages/contracts/src/index.ts";
 import {
   formatEndsAt,
   formatPlayerTime,
@@ -39,11 +39,17 @@ describe("streamLabels", () => {
   });
 
   test("names distinguishing roles and channels even when titles are missing", () => {
-    expect(streamLabels([
-      stream({ language: "eng", commentary: true, channels: 6, codec: "aac" }),
-      stream({ kind: "subtitle", language: "eng", forced: true }),
-      stream({ kind: "subtitle", language: "eng", hearingImpaired: true }),
-    ])).toEqual(["English · Commentary · AAC · 6 channels", "English · Forced", "English · Hearing impaired"]);
+    expect(
+      streamLabels([
+        stream({ language: "eng", commentary: true, channels: 6, codec: "aac" }),
+        stream({ kind: "subtitle", language: "eng", forced: true }),
+        stream({ kind: "subtitle", language: "eng", hearingImpaired: true }),
+      ]),
+    ).toEqual([
+      "English · Commentary · AAC · 6 channels",
+      "English · Forced",
+      "English · Hearing impaired",
+    ]);
   });
 
   test("numbers tracks that would otherwise share a label", () => {

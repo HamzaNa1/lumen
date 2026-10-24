@@ -3,8 +3,8 @@ import {
   accessSync,
   constants,
   existsSync,
-  readFileSync,
   readdirSync,
+  readFileSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, relative, sep } from "node:path";

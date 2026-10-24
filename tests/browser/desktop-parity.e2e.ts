@@ -1,12 +1,12 @@
-import { type Page, expect, test } from "@playwright/test";
+import { expect, type Page, test } from "@playwright/test";
 import {
-  setupDesktopRenderer,
   desktopBuild,
-  gotoDesktop,
-  STILL,
   expectAlike,
-  signedInBuilds,
+  gotoDesktop,
   playing,
+  STILL,
+  setupDesktopRenderer,
+  signedInBuilds,
 } from "./desktopRenderer";
 import { desktopScenarios } from "./desktopScenarios";
 import { waitUntilPlaying } from "./playback";

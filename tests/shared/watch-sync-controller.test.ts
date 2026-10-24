@@ -1,13 +1,13 @@
 import { expect, spyOn, test } from "bun:test";
-import {
-  WatchPlaybackController,
-  PlaybackDiagnostics,
-  type WatchPlayer,
-  type WatchServer,
-  type WatchPlayerState,
-  type WatchPlaybackSample,
-} from "../../packages/client/src/index.ts";
 import type { PlayerBuffer } from "../../packages/client/src/index.ts";
+import {
+  PlaybackDiagnostics,
+  WatchPlaybackController,
+  type WatchPlaybackSample,
+  type WatchPlayer,
+  type WatchPlayerState,
+  type WatchServer,
+} from "../../packages/client/src/index.ts";
 import type { WatchAction, WatchGroup } from "../../packages/contracts/src/index.ts";
 
 /** Drive the actual controller without network or wall-clock timers. */

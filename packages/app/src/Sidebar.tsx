@@ -1,4 +1,3 @@
-import { WatchGroups } from "./WatchGroups";
 import type { AccountSummary, LibrarySummary } from "@lumen/contracts";
 import { AccountMenu } from "@lumen/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
@@ -16,6 +15,7 @@ import {
 import type { ReactNode } from "react";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
+import { WatchGroups } from "./WatchGroups";
 import { useLibraries } from "./Workspace";
 
 export const libraryIcon = (kind: LibrarySummary["kind"]): LucideIcon =>

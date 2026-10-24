@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
 import { ShowDrawer, ShowDrawerButton, usePlayingShow, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
-import { useWatchStatus, waitingSummary, WatchGroups } from "./WatchGroups";
+import { useWatchStatus, WatchGroups, waitingSummary } from "./WatchGroups";
 import { useArtwork } from "./Workspace";
 import "./player.css";
 
@@ -165,9 +165,7 @@ export const PlayerView = ({
                 setPlayer(await nativeAudio.output(player.sessionId, output));
               }
         }
-        onPlaybackInfo={
-          player === null ? undefined : () => runtime.playback.info(player.sessionId)
-        }
+        onPlaybackInfo={player === null ? undefined : () => runtime.playback.info(player.sessionId)}
         buffering={player?.buffering === true || waiting !== undefined}
         {...(waiting === undefined ? {} : { bufferingMessage: waiting })}
         awaitingInteraction={player?.awaitingInteraction === true}

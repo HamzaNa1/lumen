@@ -1,11 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  Database,
-  Repositories,
-  RepositoriesLive,
-  sql,
-} from "../../packages/database/src/index.ts";
-import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdir, mkdtemp, rename, rm, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,8 +6,15 @@ import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { Ffprobe } from "../../apps/server/src/media/Ffprobe";
 import { MediaIngest, MediaIngestLive } from "../../apps/server/src/media/MediaIngest";
-import { ScanService, ScanServiceLive } from "../../apps/server/src/services/ScanService";
 import { Scanner, ScannerLive } from "../../apps/server/src/services/Scanner";
+import { ScanService, ScanServiceLive } from "../../apps/server/src/services/ScanService";
+import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import {
+  Database,
+  Repositories,
+  RepositoriesLive,
+  sql,
+} from "../../packages/database/src/index.ts";
 
 type Mode = "full" | "incremental";
 

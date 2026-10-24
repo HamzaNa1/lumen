@@ -15,7 +15,6 @@ import {
   screen,
 } from "electron";
 import { load, out, pointer, struct } from "koffi";
-import { initialWatchStatus } from "../../packages/contracts/src/index";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import type { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
@@ -25,6 +24,7 @@ import { PlayerController } from "../../apps/desktop/src/main/player/PlayerContr
 import { PlayerOverlayWindow } from "../../apps/desktop/src/main/player/PlayerOverlayWindow";
 import { broadcastPlayerFullscreen } from "../../apps/desktop/src/main/player/PlayerWindowState";
 import { createMainWindow } from "../../apps/desktop/src/main/windows";
+import { initialWatchStatus } from "../../packages/contracts/src/index";
 
 const root = resolve("apps/desktop");
 const scale = process.env.LUMEN_SMOKE_SCALE ?? "1";

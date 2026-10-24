@@ -1,10 +1,10 @@
 import { expect, test } from "bun:test";
-import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import type { WatchStatus } from "@lumen/contracts";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
-import { WatchGroupClient } from "../../packages/client/src/index.ts";
+import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { forbidden } from "../../apps/server/src/core/Errors";
 import { WatchGroups, type WatchSocketData } from "../../apps/server/src/watch-groups/WatchGroups";
+import { WatchGroupClient } from "../../packages/client/src/index.ts";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
 
@@ -75,7 +75,10 @@ test("visibility is checked for existing members, late joins, and revoked librar
       });
     await putGrant(["library:read"]);
     await discovery.action({ type: "list" });
-    expect(discovery.status.groups.find((group) => group.id === groupId)?.playback).toMatchObject({ itemId: fixture.itemId, positionSeconds: 2 });
+    expect(discovery.status.groups.find((group) => group.id === groupId)?.playback).toMatchObject({
+      itemId: fixture.itemId,
+      positionSeconds: 2,
+    });
     await guest.action({ type: "ping", sentAtMs: Date.now() });
     await eventually(() => guest.status.group?.playback?.positionSeconds === 2);
     expect(guest.status.group?.playback).toMatchObject({
@@ -88,7 +91,9 @@ test("visibility is checked for existing members, late joins, and revoked librar
     const revision = guest.status.group?.revision;
     await putGrant([]);
     await discovery.action({ type: "ping", sentAtMs: Date.now() });
-    await eventually(() => discovery.status.groups.find((group) => group.id === groupId)?.playback === null);
+    await eventually(
+      () => discovery.status.groups.find((group) => group.id === groupId)?.playback === null,
+    );
     expect(discovery.status.groups.find((group) => group.id === groupId)?.playback).toBeNull();
     await guest.action({ type: "ping", sentAtMs: Date.now() });
     await eventually(() => guest.status.group?.playback === null);
@@ -100,7 +105,9 @@ test("visibility is checked for existing members, late joins, and revoked librar
     expect(guest.status.group?.playback).toBeNull();
     await putGrant(["library:read", "playback:control"]);
     await discovery.action({ type: "list" });
-    expect(discovery.status.groups.find((group) => group.id === groupId)?.playback?.positionSeconds).toBe(7);
+    expect(
+      discovery.status.groups.find((group) => group.id === groupId)?.playback?.positionSeconds,
+    ).toBe(7);
     await guest.action({ type: "ping", sentAtMs: Date.now() });
     await eventually(() => guest.status.group?.playback?.positionSeconds === 7);
     expect(guest.status.group?.playback?.positionSeconds).toBe(7);
@@ -184,7 +191,10 @@ test("a rejected group switch preserves membership and stale media commands do n
     ).rejects.toThrow();
     expect(viewer.status.group?.playback?.positionSeconds).toBe(2);
     await viewer.action({ type: "list" });
-    expect(viewer.status.groups.find((group) => group.id === groupId)?.playback).toMatchObject({ itemId: fixture.itemId, positionSeconds: 2 });
+    expect(viewer.status.groups.find((group) => group.id === groupId)?.playback).toMatchObject({
+      itemId: fixture.itemId,
+      positionSeconds: 2,
+    });
   } finally {
     await fixture.close();
   }
@@ -319,7 +329,8 @@ test("slow recipient visibility checks coalesce state and cannot publish an olde
       lastGroup = status.group;
       if (status.groups !== lastDirectory) {
         const group = status.groups.find((group) => group.playback !== null);
-        if (group !== undefined && directories.at(-1) !== group.revision) directories.push(group.revision);
+        if (group !== undefined && directories.at(-1) !== group.revision)
+          directories.push(group.revision);
       }
       lastDirectory = status.groups;
     });
@@ -349,12 +360,16 @@ test("slow recipient visibility checks coalesce state and cannot publish an olde
   }
 });
 
-
 test("discovery publishes playback changes only to viewers with current media access", async () => {
   const fixture = await watchFixture();
   try {
     const admin = await fixture.login();
-    await admin.createUser({ username: "guest", displayName: "Guest", password: "correct horse battery staple", role: "user" });
+    await admin.createUser({
+      username: "guest",
+      displayName: "Guest",
+      password: "correct horse battery staple",
+      role: "user",
+    });
     const owner = await fixture.connect(admin);
     const viewer = await fixture.connect(await fixture.login());
     const guest = await fixture.connect(await fixture.login("guest"));
@@ -372,7 +387,12 @@ test("discovery publishes playback changes only to viewers with current media ac
     await eventually(() => playback()?.paused === true && playback()?.positionSeconds === 3);
     await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 8 });
     await eventually(() => playback()?.positionSeconds === 8);
-    await owner.action({ type: "pause", itemId: fixture.itemId, positionSeconds: 8, paused: false });
+    await owner.action({
+      type: "pause",
+      itemId: fixture.itemId,
+      positionSeconds: 8,
+      paused: false,
+    });
     await eventually(() => playback()?.paused === false);
     await owner.action({ type: "stop", itemId: fixture.itemId });
     await eventually(() => playback() === null);
@@ -381,137 +401,168 @@ test("discovery publishes playback changes only to viewers with current media ac
   }
 });
 
-
-test.each([true, false])("slow discovery progresses under sustained updates without blocking authentication or heartbeat (media readable: %s)", async (readable) => {
-  const fixture = await watchFixture();
-  const admin = await fixture.login();
-  const user = await admin.me();
-  const details = await admin.itemDetails(fixture.itemId);
-  const otherItemId = crypto.randomUUID();
-  const principal = { user, sessionId: crypto.randomUUID(), deviceId: crypto.randomUUID() };
-  const guestPrincipal = { ...principal, user: { ...user, id: crypto.randomUUID(), role: "user" as const } };
-  let gate = Promise.withResolvers<void>();
-  let gated = true;
-  let waiting = false;
-  let activeChecks = 0;
-  let maximumChecks = 0;
-  const checkedItems: string[] = [];
-  const groups = new WatchGroups({
-    auth: { authenticate: (token) => Effect.succeed(token === "guest" ? guestPrincipal : principal) },
-    catalog: {
-      itemDetails: (viewer, itemId) => {
-        const itemDetails = itemId === fixture.itemId
-          ? details
-          : { ...details, item: { ...details.item, id: otherItemId, title: "Restricted movie" } };
-        if (viewer.user.role !== "user") return Effect.succeed(itemDetails);
-        return Effect.promise(async () => {
-          activeChecks += 1;
-          maximumChecks = Math.max(maximumChecks, activeChecks);
-          checkedItems.push(itemId);
-          try {
-            if (gated) {
-              waiting = true;
-              await gate.promise;
-            } else await Bun.sleep(150);
-            return readable && itemId === fixture.itemId;
-          } finally {
-            activeChecks -= 1;
-          }
-        }).pipe(Effect.flatMap((allowed) => allowed ? Effect.succeed(itemDetails) : Effect.fail(forbidden())));
+test.each([true, false])(
+  "slow discovery progresses under sustained updates without blocking authentication or heartbeat (media readable: %s)",
+  async (readable) => {
+    const fixture = await watchFixture();
+    const admin = await fixture.login();
+    const user = await admin.me();
+    const details = await admin.itemDetails(fixture.itemId);
+    const otherItemId = crypto.randomUUID();
+    const principal = { user, sessionId: crypto.randomUUID(), deviceId: crypto.randomUUID() };
+    const guestPrincipal = {
+      ...principal,
+      user: { ...user, id: crypto.randomUUID(), role: "user" as const },
+    };
+    let gate = Promise.withResolvers<void>();
+    let gated = true;
+    let waiting = false;
+    let activeChecks = 0;
+    let maximumChecks = 0;
+    const checkedItems: string[] = [];
+    const groups = new WatchGroups({
+      auth: {
+        authenticate: (token) => Effect.succeed(token === "guest" ? guestPrincipal : principal),
       },
-    },
-    access: { requireLibrary: () => Effect.void },
-  });
-  const server = Bun.serve<WatchSocketData>({
-    hostname: "127.0.0.1",
-    port: 0,
-    fetch: (request, server) => groups.upgrade(request, server),
-    websocket: groups.websocket,
-  });
-  const clients: WatchGroupClient[] = [];
-  const observedRevisions: number[] = [];
-  let lastDirectory: WatchStatus["groups"] = [];
-  let leaked = false;
-  let watchedGroupId = "";
-  const connect = async (token: string) => {
-    const client = new ServerClient({ origin: server.url.toString() });
-    const session = admin.currentSession;
-    if (session === null) throw new Error("No test session");
-    client.setSession({ ...session, accessToken: token });
-    const watch = new WatchGroupClient(client, (status) => {
-      if (token !== "guest" || status.groups === lastDirectory) return;
-      lastDirectory = status.groups;
-      const group = status.groups.find((group) => group.id === watchedGroupId);
-      if (group !== undefined) observedRevisions.push(group.revision);
-      if (group?.playback != null && (!readable || group.playback.itemId !== fixture.itemId)) leaked = true;
+      catalog: {
+        itemDetails: (viewer, itemId) => {
+          const itemDetails =
+            itemId === fixture.itemId
+              ? details
+              : {
+                  ...details,
+                  item: { ...details.item, id: otherItemId, title: "Restricted movie" },
+                };
+          if (viewer.user.role !== "user") return Effect.succeed(itemDetails);
+          return Effect.promise(async () => {
+            activeChecks += 1;
+            maximumChecks = Math.max(maximumChecks, activeChecks);
+            checkedItems.push(itemId);
+            try {
+              if (gated) {
+                waiting = true;
+                await gate.promise;
+              } else await Bun.sleep(150);
+              return readable && itemId === fixture.itemId;
+            } finally {
+              activeChecks -= 1;
+            }
+          }).pipe(
+            Effect.flatMap((allowed) =>
+              allowed ? Effect.succeed(itemDetails) : Effect.fail(forbidden()),
+            ),
+          );
+        },
+      },
+      access: { requireLibrary: () => Effect.void },
     });
-    clients.push(watch);
-    watch.connect();
-    await eventually(() => watch.status.connection === "connected");
-    return watch;
-  };
-  try {
-    const owner = await connect("owner");
-    await owner.action({ type: "create", name: "Movie night", password: "" });
-    watchedGroupId = owner.status.group?.id ?? "";
-    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
-    const otherOwner = await connect("other-owner");
-    await otherOwner.action({ type: "create", name: "Other group", password: "" });
-    const guest = await connect("guest");
-    await eventually(() => waiting);
-    let pingFinished = false;
-    void guest.action({ type: "ping", sentAtMs: Date.now() }).then(() => { pingFinished = true; });
-    await eventually(() => pingFinished, 1000);
-    let joined = false;
-    void guest.action({ type: "join", groupId: otherOwner.status.group?.id ?? "", password: "" }).then(() => { joined = true; });
-    await eventually(() => joined, 1000);
-    expect(checkedItems).toEqual([fixture.itemId]);
-    let listed = false;
-    const listing = guest.action({ type: "list" }).then(() => { listed = true; });
-    gated = false;
-    gate.resolve();
-    let updating = true;
-    const updates = (async () => {
-      for (let position = 3; position < 23; position += 1) {
-        await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: position });
-        await Bun.sleep(40);
-      }
-      updating = false;
-    })();
-    await eventually(() => listed, 1000);
-    expect(updating).toBe(true);
-    await eventually(() => observedRevisions.length >= 2, 1000);
-    expect(updating).toBe(true);
-    await Promise.all([updates, listing]);
-    await eventually(() => guest.status.groups.find((group) => group.id === watchedGroupId)?.revision === owner.status.group?.revision);
-    const playback = guest.status.groups.find((group) => group.id === watchedGroupId)?.playback;
-    if (readable) expect(playback).toMatchObject({ itemId: fixture.itemId, positionSeconds: 22 });
-    else expect(playback).toBeNull();
+    const server = Bun.serve<WatchSocketData>({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch: (request, server) => groups.upgrade(request, server),
+      websocket: groups.websocket,
+    });
+    const clients: WatchGroupClient[] = [];
+    const observedRevisions: number[] = [];
+    let lastDirectory: WatchStatus["groups"] = [];
+    let leaked = false;
+    let watchedGroupId = "";
+    const connect = async (token: string) => {
+      const client = new ServerClient({ origin: server.url.toString() });
+      const session = admin.currentSession;
+      if (session === null) throw new Error("No test session");
+      client.setSession({ ...session, accessToken: token });
+      const watch = new WatchGroupClient(client, (status) => {
+        if (token !== "guest" || status.groups === lastDirectory) return;
+        lastDirectory = status.groups;
+        const group = status.groups.find((group) => group.id === watchedGroupId);
+        if (group !== undefined) observedRevisions.push(group.revision);
+        if (group?.playback != null && (!readable || group.playback.itemId !== fixture.itemId))
+          leaked = true;
+      });
+      clients.push(watch);
+      watch.connect();
+      await eventually(() => watch.status.connection === "connected");
+      return watch;
+    };
+    try {
+      const owner = await connect("owner");
+      await owner.action({ type: "create", name: "Movie night", password: "" });
+      watchedGroupId = owner.status.group?.id ?? "";
+      await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 2 });
+      const otherOwner = await connect("other-owner");
+      await otherOwner.action({ type: "create", name: "Other group", password: "" });
+      const guest = await connect("guest");
+      await eventually(() => waiting);
+      let pingFinished = false;
+      void guest.action({ type: "ping", sentAtMs: Date.now() }).then(() => {
+        pingFinished = true;
+      });
+      await eventually(() => pingFinished, 1000);
+      let joined = false;
+      void guest
+        .action({ type: "join", groupId: otherOwner.status.group?.id ?? "", password: "" })
+        .then(() => {
+          joined = true;
+        });
+      await eventually(() => joined, 1000);
+      expect(checkedItems).toEqual([fixture.itemId]);
+      let listed = false;
+      const listing = guest.action({ type: "list" }).then(() => {
+        listed = true;
+      });
+      gated = false;
+      gate.resolve();
+      let updating = true;
+      const updates = (async () => {
+        for (let position = 3; position < 23; position += 1) {
+          await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: position });
+          await Bun.sleep(40);
+        }
+        updating = false;
+      })();
+      await eventually(() => listed, 1000);
+      expect(updating).toBe(true);
+      await eventually(() => observedRevisions.length >= 2, 1000);
+      expect(updating).toBe(true);
+      await Promise.all([updates, listing]);
+      await eventually(
+        () =>
+          guest.status.groups.find((group) => group.id === watchedGroupId)?.revision ===
+          owner.status.group?.revision,
+      );
+      const playback = guest.status.groups.find((group) => group.id === watchedGroupId)?.playback;
+      if (readable) expect(playback).toMatchObject({ itemId: fixture.itemId, positionSeconds: 22 });
+      else expect(playback).toBeNull();
 
-    await eventually(() => activeChecks === 0);
-    gate = Promise.withResolvers<void>();
-    gated = true;
-    waiting = false;
-    await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 24 });
-    await eventually(() => waiting);
-    await owner.action({ type: "play", itemId: otherItemId, positionSeconds: 0 });
-    gated = false;
-    gate.resolve();
-    await eventually(() => checkedItems.includes(otherItemId));
-    await guest.action({ type: "list" });
-    expect(guest.status.groups.find((group) => group.id === watchedGroupId)).toMatchObject({ revision: owner.status.group?.revision, playback: null });
-    expect(leaked).toBe(false);
-    expect(maximumChecks).toBe(1);
-    expect(guest.status.connection).toBe("connected");
-    expect(observedRevisions).toEqual([...observedRevisions].sort((left, right) => left - right));
-  } finally {
-    gate.resolve();
-    for (const client of clients) client.close();
-    groups.close();
-    await server.stop(true);
-    await fixture.close();
-  }
-});
+      await eventually(() => activeChecks === 0);
+      gate = Promise.withResolvers<void>();
+      gated = true;
+      waiting = false;
+      await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 24 });
+      await eventually(() => waiting);
+      await owner.action({ type: "play", itemId: otherItemId, positionSeconds: 0 });
+      gated = false;
+      gate.resolve();
+      await eventually(() => checkedItems.includes(otherItemId));
+      await guest.action({ type: "list" });
+      expect(guest.status.groups.find((group) => group.id === watchedGroupId)).toMatchObject({
+        revision: owner.status.group?.revision,
+        playback: null,
+      });
+      expect(leaked).toBe(false);
+      expect(maximumChecks).toBe(1);
+      expect(guest.status.connection).toBe("connected");
+      expect(observedRevisions).toEqual([...observedRevisions].sort((left, right) => left - right));
+    } finally {
+      gate.resolve();
+      for (const client of clients) client.close();
+      groups.close();
+      await server.stop(true);
+      await fixture.close();
+    }
+  },
+);
 
 test("a group waits for a member for as long as it takes to report ready", async () => {
   const fixture = await watchFixture();
@@ -589,7 +640,12 @@ test("a group waits for a member for as long as it takes to report ready", async
     await stuck.action({ type: "buffering", revision: paused });
     expect(owner.status.group?.revision).toBe(paused);
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
-    await owner.action({ type: "pause", itemId: fixture.itemId, paused: false, positionSeconds: 4 });
+    await owner.action({
+      type: "pause",
+      itemId: fixture.itemId,
+      paused: false,
+      positionSeconds: 4,
+    });
 
     // Without anyone to wait for, the group plays at once.
     await stuck.action({ type: "leave" });

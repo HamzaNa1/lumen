@@ -5,5 +5,10 @@
     "jsx": "react-jsx",
     "types": ["vite/client"]
   },
-  "include": ["../../apps/desktop/src/renderer", "../../apps/desktop/src/preload", "../../packages/contracts/src", "../../packages/ui/src"]
+  "include": [
+    "../../apps/desktop/src/renderer",
+    "../../apps/desktop/src/preload",
+    "../../packages/contracts/src",
+    "../../packages/ui/src"
+  ]
 }

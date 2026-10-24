@@ -20,7 +20,9 @@ export const makeServerName = Effect.gen(function* () {
       .get()
       .pipe(
         Effect.flatMap((row) =>
-          row == null ? Effect.fail(new Error("Server identity is missing")) : Effect.succeed(row.name),
+          row == null
+            ? Effect.fail(new Error("Server identity is missing"))
+            : Effect.succeed(row.name),
         ),
       );
   const rename: ServerNameShape["rename"] = (next, nowMs) =>

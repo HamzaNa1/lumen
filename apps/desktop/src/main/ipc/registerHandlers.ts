@@ -2,16 +2,16 @@ import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
   ArtworkRef,
   AudioOutput,
-  TrackPreferencesPatch,
-  TrackKind,
   ConnectionInput,
   EpisodeOrderSelection,
-  MetadataMatchSelection,
   IpcPlayerSurfaceBounds,
   LibraryAccess,
+  MetadataMatchSelection,
   PlayerAction,
   PlayerDisplay,
   type ServerDiscovery,
+  TrackKind,
+  TrackPreferencesPatch,
   UserRole,
   WatchAction,
 } from "@lumen/contracts";
@@ -19,7 +19,7 @@ import { Schema } from "effect";
 import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
-import { ServerClient, ServerHttpError, type AccountSession } from "../api/ServerClient";
+import { type AccountSession, ServerClient, ServerHttpError } from "../api/ServerClient";
 import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";

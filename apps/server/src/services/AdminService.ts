@@ -27,14 +27,14 @@ import {
   or,
   sql,
 } from "drizzle-orm";
+import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
+import { mapRepositoryError } from "../core/Cause";
 import { badRequest, conflict, notFound } from "../core/Errors";
 import { hashPassword, newUuid } from "../core/Security";
-import { mapRepositoryError } from "../core/Cause";
+import type { CreateUserBody, UpdateUserBody } from "../http/Schemas";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
-import type { CreateUserBody, UpdateUserBody } from "../http/Schemas";
-import type { Schema } from "effect";
 
 type CreateUserInput = Schema.Schema.Type<typeof CreateUserBody>;
 type UpdateUserInput = Schema.Schema.Type<typeof UpdateUserBody>;

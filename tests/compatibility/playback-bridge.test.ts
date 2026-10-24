@@ -1,19 +1,16 @@
 import { expect, test } from "bun:test";
-import {
-  request as httpRequest,
-  type IncomingMessage,
-} from "node:http";
 import { existsSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { request as httpRequest, type IncomingMessage } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
 import { decodeConfig } from "../../apps/server/src/config/Config";
 import { createLogger } from "../../apps/server/src/core/Logger";
 import type { RequestContext } from "../../apps/server/src/http/ClientIdentity";
-import { makeHttpHandler, type HttpServices } from "../../apps/server/src/http/HttpApp";
+import { type HttpServices, makeHttpHandler } from "../../apps/server/src/http/HttpApp";
 import { serveFile } from "../../apps/server/src/http/ServeFile";
 
 const transportModule = join(import.meta.dir, "../../apps/server/src/http/HttpServer.ts");
@@ -56,7 +53,6 @@ const open = (url: string): Promise<IncomingMessage> =>
     request.on("error", reject);
     request.end();
   });
-
 
 test("forwards byte-exact full, bounded, open and suffix ranges with the server's framing, and HEAD/conditional responses", async () => {
   const workspace = await mkdtemp(join(tmpdir(), "bridge-range-"));

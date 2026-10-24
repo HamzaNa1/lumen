@@ -1,20 +1,20 @@
-import { desktopScenarios } from "./desktopScenarios";
 import { expect, type Page, test } from "@playwright/test";
 import type { ParityScenario } from "./desktopBridgeShim";
 import {
-  setupDesktopRenderer,
   desktopBuild,
-  hasBaseline,
-  signIn,
-  openDesktop,
+  expectDesktopUnchanged,
+  filmDisplay,
   gotoDesktop,
+  hasBaseline,
+  openDesktop,
+  playing,
   STILL,
   settled,
-  expectDesktopUnchanged,
+  setupDesktopRenderer,
   signedInBuilds,
-  filmDisplay,
-  playing,
+  signIn,
 } from "./desktopRenderer";
+import { desktopScenarios } from "./desktopScenarios";
 
 setupDesktopRenderer();
 desktopScenarios({ includeWeb: false });
@@ -158,12 +158,10 @@ test("a downloaded update offers a restart that installs it", async ({ context, 
  * within its track, which also moves where the fill ends.
  */
 const withEvenPlayerActions = async (page: Page): Promise<void> => {
-  const { value, thumb } = await page
-    .locator(".volume-slider")
-    .evaluate((slider) => ({
-      value: Number(slider.querySelector("input")?.value) / 100,
-      thumb: slider.querySelector(".media-slider-thumb")?.getBoundingClientRect().width ?? 0,
-    }));
+  const { value, thumb } = await page.locator(".volume-slider").evaluate((slider) => ({
+    value: Number(slider.querySelector("input")?.value) / 100,
+    thumb: slider.querySelector(".media-slider-thumb")?.getBoundingClientRect().width ?? 0,
+  }));
   const position = `calc(${thumb / 2}px + (100% - ${thumb}px) * ${value})`;
   await page.addStyleTag({
     content: `

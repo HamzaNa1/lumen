@@ -10,10 +10,12 @@ const directories: string[] = [];
 const running: RunningServer[] = [];
 afterEach(async () => {
   for (const server of running.splice(0)) await server.stop();
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0))
+    await rm(directory, { recursive: true, force: true });
 });
 
-const PAGE = '<!doctype html><title>Lumen</title><script type="module" src="/web/assets/index-abc123.js"></script>';
+const PAGE =
+  '<!doctype html><title>Lumen</title><script type="module" src="/web/assets/index-abc123.js"></script>';
 
 const build = async () => {
   const root = await mkdtemp(join(tmpdir(), "lumen-static-web-"));
@@ -49,25 +51,28 @@ describe("static web app", () => {
     expect(response.headers.get("location")).toBe("/web/?from=bookmark");
   });
 
-  test.each(["/web/", "/web/library/7c1d", "/web/item/abc", "/web/admin/users", "/web/search?q=a.b"])(
-    "%s serves the application page for client-side navigation",
-    async (path) => {
-      const { get } = await handler();
-      const response = await get(path);
-      expect(response.status).toBe(200);
-      expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
-      expect(await response.text()).toBe(PAGE);
-      // Revalidated on every visit so an upgraded server takes effect immediately.
-      expect(response.headers.get("cache-control")).toBe("no-cache");
-      const policy = response.headers.get("content-security-policy") ?? "";
-      expect(policy).toContain("default-src 'self'");
-      expect(policy).toContain("script-src 'self'");
-      expect(policy).toContain("frame-ancestors 'none'");
-      expect(policy).toContain("connect-src 'self' ws://lumen.test;");
-      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
-      expect(response.headers.get("x-content-type-options")).toBe("nosniff");
-    },
-  );
+  test.each([
+    "/web/",
+    "/web/library/7c1d",
+    "/web/item/abc",
+    "/web/admin/users",
+    "/web/search?q=a.b",
+  ])("%s serves the application page for client-side navigation", async (path) => {
+    const { get } = await handler();
+    const response = await get(path);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(await response.text()).toBe(PAGE);
+    // Revalidated on every visit so an upgraded server takes effect immediately.
+    expect(response.headers.get("cache-control")).toBe("no-cache");
+    const policy = response.headers.get("content-security-policy") ?? "";
+    expect(policy).toContain("default-src 'self'");
+    expect(policy).toContain("script-src 'self'");
+    expect(policy).toContain("frame-ancestors 'none'");
+    expect(policy).toContain("connect-src 'self' ws://lumen.test;");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("x-content-type-options")).toBe("nosniff");
+  });
 
   test("a forged forwarded host cannot rewrite the page's policy", async () => {
     const { get } = await handler();
@@ -143,7 +148,9 @@ describe("static web app", () => {
     expect(await head.text()).toBe("");
     const etag = head.headers.get("etag") ?? "";
     expect(etag).not.toBe("");
-    const unchanged = await get("/web/assets/index-abc123.js", { headers: { "if-none-match": etag } });
+    const unchanged = await get("/web/assets/index-abc123.js", {
+      headers: { "if-none-match": etag },
+    });
     expect(unchanged.status).toBe(304);
     const page = await get("/web/");
     const revalidated = await get("/web/", {
@@ -178,7 +185,8 @@ describe("static web app", () => {
     expect((await fetch(`${origin}/api/v1/server`)).status).toBe(200);
     // The static handler has its own, bounded allowance.
     const statuses: number[] = [];
-    for (let index = 0; index < 8; index += 1) statuses.push((await fetch(`${origin}/web/`)).status);
+    for (let index = 0; index < 8; index += 1)
+      statuses.push((await fetch(`${origin}/web/`)).status);
     expect(statuses).toContain(429);
   });
 

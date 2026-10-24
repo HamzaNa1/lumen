@@ -12,19 +12,15 @@ if (product !== "server") {
   run(process.execPath, ["tests/browser/buildDesktopBaseline.ts"]);
 }
 const verify = (workspace: string) => {
-  execFileSync(
-    process.execPath,
-    ["run", "playwright", "test", ...process.argv.slice(3)],
-    {
-      cwd: workspace,
-      stdio: "inherit",
-      env: {
-        ...process.env,
-        LUMEN_BROWSER_PRODUCT: product ?? "source",
-        LUMEN_BROWSER_ARTIFACT_ROOT: repositoryRoot,
-      },
+  execFileSync(process.execPath, ["run", "playwright", "test", ...process.argv.slice(3)], {
+    cwd: workspace,
+    stdio: "inherit",
+    env: {
+      ...process.env,
+      LUMEN_BROWSER_PRODUCT: product ?? "source",
+      LUMEN_BROWSER_ARTIFACT_ROOT: repositoryRoot,
     },
-  );
+  });
 };
 if (product === "desktop") withReleasedCounterpart(product, verify);
 else verify(repositoryRoot);

@@ -5,14 +5,10 @@ import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import type { ServerClient } from "./api/ServerClient";
 import { ArtworkCache } from "./artwork/ArtworkCache";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
-import {
-  openMainWindowState,
-  placeMainWindow,
-  rememberMainWindowState,
-} from "./MainWindowState";
+import { openMainWindowState, placeMainWindow, rememberMainWindowState } from "./MainWindowState";
+import { AudioSettingsStore } from "./player/AudioSettingsStore";
 import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
-import { AudioSettingsStore } from "./player/AudioSettingsStore";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
 import { broadcastPlayerFullscreen } from "./player/PlayerWindowState";

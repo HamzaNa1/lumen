@@ -3,9 +3,15 @@
 // API client and watch-group client, but signs in with the test server's cookie session.
 // Native playback is not reproduced: the page's address says what the player should report, so
 // the controls can be drawn in a chosen state.
-import { cookieCredentials, ServerApi, WatchGroupClient } from "../../packages/client/src/index.ts";
-import type { ArtworkRef, PlayerDisplay, PlayerState, WatchStatus } from "../../packages/contracts/src/index.ts";
+
 import type { DesktopBridge } from "../../apps/desktop/src/shared/bridge";
+import { cookieCredentials, ServerApi, WatchGroupClient } from "../../packages/client/src/index.ts";
+import type {
+  ArtworkRef,
+  PlayerDisplay,
+  PlayerState,
+  WatchStatus,
+} from "../../packages/contracts/src/index.ts";
 
 /** What the stand-in reports, given as JSON in the page's `scenario` query parameter. */
 export interface ParityScenario {
@@ -61,7 +67,10 @@ const accounts = async () => {
 };
 
 const bridge: DesktopBridge = {
-  trackSettings: { read: () => api.trackPreferences(), update: (input) => api.updateTrackPreferences(input) },
+  trackSettings: {
+    read: () => api.trackPreferences(),
+    update: (input) => api.updateTrackPreferences(input),
+  },
   watch: {
     state: async () => {
       watchClient.connect();

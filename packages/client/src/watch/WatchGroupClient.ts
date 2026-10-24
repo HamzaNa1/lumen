@@ -1,10 +1,10 @@
 import {
   initialWatchStatus,
-  WatchMessage,
   WATCH_CONNECTION_REPLACED,
   WATCH_HEARTBEAT_INTERVAL_MS,
   type WatchAction,
   type WatchGroup,
+  WatchMessage,
   type WatchStatus,
 } from "@lumen/contracts";
 import { Schema } from "effect";

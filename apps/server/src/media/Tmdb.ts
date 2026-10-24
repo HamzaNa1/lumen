@@ -1,15 +1,6 @@
-import {
-  artwork as artworkTable,
-  catalogItemArtwork,
-  catalogItemMetadata,
-  catalogItemOrigins,
-  catalogItems,
-  catalogItemSources,
-  Database,
-  providerRecords,
-  Repositories,
-  seriesEpisodeOrders,
-} from "@lumen/database";
+import { createHash } from "node:crypto";
+import { mkdir, utimes, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import {
   coveredEpisodeNumbers,
   type EpisodeOrderOptions,
@@ -17,18 +8,27 @@ import {
   type MetadataMatchOptions,
   type MetadataMatchSelection,
 } from "@lumen/contracts";
-import { badRequest, ServerError } from "../core/Errors";
+import {
+  artwork as artworkTable,
+  catalogItemArtwork,
+  catalogItemMetadata,
+  catalogItemOrigins,
+  catalogItemSources,
+  catalogItems,
+  Database,
+  providerRecords,
+  Repositories,
+  seriesEpisodeOrders,
+} from "@lumen/database";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { createHash } from "node:crypto";
-import { mkdir, utimes, writeFile } from "node:fs/promises";
-import { join } from "node:path";
 import type { ServerConfig } from "../config/Config";
-import { newUuid } from "../core/Security";
 import { readResponseBytes } from "../core/BoundedInput";
+import { badRequest, ServerError } from "../core/Errors";
+import { newUuid } from "../core/Security";
+import { MetadataSettings } from "../services/MetadataSettings";
 import { generatedArtworkDir } from "./GeneratedArtwork";
 import { imageInfo } from "./ImageInfo";
-import { MetadataSettings } from "../services/MetadataSettings";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
 import {
   fetchTmdb,
@@ -36,8 +36,8 @@ import {
   object,
   str,
   TmdbHttpError,
-  tmdbImageUrl,
   type TmdbObject,
+  tmdbImageUrl,
 } from "./TmdbClient";
 import { tmdbEpisodeCoordinates, tmdbEpisodeOrders } from "./TmdbEpisodeOrder";
 import { tmdbMatchCandidates, tmdbTitleExists } from "./TmdbMatch";
@@ -237,8 +237,7 @@ const combinedEpisode = (episodes: ReadonlyArray<TmdbObject>): TmdbObject => {
     vote_average:
       ratings.length === 0
         ? null
-        : Math.round((ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length) * 10) /
-          10,
+        : Math.round((ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length) * 10) / 10,
     still_path:
       episodes.map((episode) => episode.still_path).find((path) => tmdbImageUrl("w780", path)) ??
       null,

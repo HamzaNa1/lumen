@@ -5,21 +5,21 @@ import {
   WATCH_HEARTBEAT_INTERVAL_MS,
   WATCH_MEMBER_TIMEOUT_MS,
   WatchConnect,
-  WatchRequest,
-  watchPosition,
   type WatchGroup,
   type WatchMemberBuffer,
   type WatchMessage,
   type WatchPlayback,
+  WatchRequest,
+  watchPosition,
 } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
-import type { HttpSocket, HttpSocketHandler, HttpUpgrade } from "../http/HttpServer";
-import type { HttpServices } from "../http/HttpApp";
-import type { AuthPrincipal } from "../services/AuthService";
-import type { Logger } from "../core/Logger";
 import { RequestLimiter } from "../core/Limits";
+import type { Logger } from "../core/Logger";
 import { hashPassword, verifyPassword } from "../core/Security";
 import { requestOrigin, sessionCookieToken } from "../http/BrowserSession";
+import type { HttpServices } from "../http/HttpApp";
+import type { HttpSocket, HttpSocketHandler, HttpUpgrade } from "../http/HttpServer";
+import type { AuthPrincipal } from "../services/AuthService";
 
 export interface WatchSocketData {
   readonly id: string;
@@ -312,9 +312,7 @@ export class WatchGroups {
     return delivery.promise;
   }
 
-  private async authenticate(
-    socket: HttpSocket<WatchSocketData>,
-  ): Promise<AuthPrincipal | null> {
+  private async authenticate(socket: HttpSocket<WatchSocketData>): Promise<AuthPrincipal | null> {
     const token = socket.data.token;
     if (token === null || socket.data.closed) return null;
     try {

@@ -1,4 +1,4 @@
-import type { HomeContent, CatalogItem, LibrarySummary } from "@lumen/contracts";
+import type { CatalogItem, HomeContent, LibrarySummary } from "@lumen/contracts";
 import { Database, libraries, libraryProfiles } from "@lumen/database";
 import { asc, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";

@@ -1,12 +1,12 @@
+import { stat } from "node:fs/promises";
 import {
   Database,
-  libraries as libraryTable,
   libraryRoots,
+  libraries as libraryTable,
   serverLibraryWatchState,
 } from "@lumen/database";
 import { and, asc, eq } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { stat } from "node:fs/promises";
 import { ServerError } from "../core/Errors";
 import { LibraryService } from "../services/LibraryService";
 

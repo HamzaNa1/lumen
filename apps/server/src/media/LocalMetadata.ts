@@ -13,17 +13,29 @@ export interface LocalMetadata {
   readonly externalIds?: Record<string, string>;
 }
 
-const decode = (value: string): string => value
-  .replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, (entity) => {
-    const names: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
-    if (names[entity] !== undefined) return names[entity];
-    const radix = entity.startsWith("&#x") ? 16 : 10;
-    const value = Number.parseInt(entity.slice(radix === 16 ? 3 : 2, -1), radix);
-    return Number.isFinite(value) && value > 0 && value <= 0x10ffff ? String.fromCodePoint(value) : "";
-  }).trim();
+const decode = (value: string): string =>
+  value
+    .replace(/&(?:amp|lt|gt|quot|apos|#\d+|#x[\da-f]+);/giu, (entity) => {
+      const names: Record<string, string> = {
+        "&amp;": "&",
+        "&lt;": "<",
+        "&gt;": ">",
+        "&quot;": '"',
+        "&apos;": "'",
+      };
+      if (names[entity] !== undefined) return names[entity];
+      const radix = entity.startsWith("&#x") ? 16 : 10;
+      const value = Number.parseInt(entity.slice(radix === 16 ? 3 : 2, -1), radix);
+      return Number.isFinite(value) && value > 0 && value <= 0x10ffff
+        ? String.fromCodePoint(value)
+        : "";
+    })
+    .trim();
 
-const values = (xml: string, tag: string): string[] => [...xml.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "giu"))]
-  .map((match) => decode((match[1] ?? "").replace(/<[^>]*>/gu, ""))).filter(Boolean);
+const values = (xml: string, tag: string): string[] =>
+  [...xml.matchAll(new RegExp(`<${tag}(?:\\s[^>]*)?>([\\s\\S]*?)<\\/${tag}>`, "giu"))]
+    .map((match) => decode((match[1] ?? "").replace(/<[^>]*>/gu, "")))
+    .filter(Boolean);
 
 export const readLocalNfo = async (path: string): Promise<LocalMetadata | null> => {
   try {
@@ -35,18 +47,24 @@ export const readLocalNfo = async (path: string): Promise<LocalMetadata | null> 
     const year = Number(first("year") ?? first("premiered")?.slice(0, 4));
     const rating = Number(first("rating"));
     const externalIds: Record<string, string> = {};
-    for (const match of xml.matchAll(/<uniqueid\s+type=["']([^"']+)["'][^>]*>([^<]+)<\/uniqueid>/giu)) {
+    for (const match of xml.matchAll(
+      /<uniqueid\s+type=["']([^"']+)["'][^>]*>([^<]+)<\/uniqueid>/giu,
+    )) {
       if (match[1] && match[2]) externalIds[match[1].toLowerCase()] = decode(match[2]);
     }
     const tmdb = first("tmdbid");
     if (tmdb) externalIds.tmdb = tmdb;
     return {
-      title: first("title"), overview: first("plot") ?? first("outline"),
+      title: first("title"),
+      overview: first("plot") ?? first("outline"),
       year: Number.isInteger(year) && year >= 1800 && year <= 9999 ? year : undefined,
       releaseDate: first("premiered") ?? first("releasedate"),
       contentRating: first("mpaa") ?? first("contentrating"),
       communityRating: Number.isFinite(rating) && rating >= 0 && rating <= 10 ? rating : undefined,
-      genres: values(xml, "genre"), studios: values(xml, "studio"), tags: values(xml, "tag"), externalIds,
+      genres: values(xml, "genre"),
+      studios: values(xml, "studio"),
+      tags: values(xml, "tag"),
+      externalIds,
     };
   } catch {
     return null;

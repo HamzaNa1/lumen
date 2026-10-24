@@ -1,3 +1,4 @@
+import type { ScanRunStats } from "@lumen/contracts";
 import {
   Database,
   libraries,
@@ -7,7 +8,6 @@ import {
   serverScanSeen,
 } from "@lumen/database";
 import { and, asc, count, desc, eq, notExists, sql } from "drizzle-orm";
-import type { ScanRunStats } from "@lumen/contracts";
 import { Context, Effect, Layer } from "effect";
 import { notFound } from "../core/Errors";
 

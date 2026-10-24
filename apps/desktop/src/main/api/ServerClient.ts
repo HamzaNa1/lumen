@@ -1,14 +1,14 @@
-import type { ArtworkRef } from "@lumen/contracts";
 import {
-  type AccountSession as TokenSession,
   bearerCredentials,
   type CredentialsInput,
   type DeviceDescription,
   type FetchLike,
   ServerApi,
+  type AccountSession as TokenSession,
   type WatchAuthentication,
   type WatchServer,
 } from "@lumen/client";
+import type { ArtworkRef } from "@lumen/contracts";
 
 export { ServerHttpError } from "@lumen/client";
 

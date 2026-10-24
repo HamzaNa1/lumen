@@ -1,9 +1,9 @@
-import { appendFileSync } from "node:fs";
 import { execFileSync } from "node:child_process";
-import { assertCanPromote, git, planRelease, remoteTags } from "./lib/releases";
-import { verifyVersion } from "./version";
+import { appendFileSync } from "node:fs";
 import { parseProduct } from "./lib/products";
 import { generateReleaseNotes } from "./lib/release-notes";
+import { assertCanPromote, git, planRelease, remoteTags } from "./lib/releases";
+import { verifyVersion } from "./version";
 
 const [command, target, version, previousTag = ""] = process.argv.slice(2);
 const product = parseProduct(target);

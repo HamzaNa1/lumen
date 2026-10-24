@@ -1,6 +1,6 @@
-import { semver } from "bun";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { semver } from "bun";
 import { type Product, productWorkspaces } from "./products";
 
 export const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
