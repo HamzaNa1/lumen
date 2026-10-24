@@ -11,16 +11,7 @@ runs:
         if ($LASTEXITCODE -ne 0) { throw "Desktop typecheck failed" }
         bun run typecheck:tests
         if ($LASTEXITCODE -ne 0) { throw "E2E typecheck failed" }
-    - name: Bundle MPV
-      shell: pwsh
-      run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
-    - name: Seal and verify native MPV files
-      shell: pwsh
-      run: |
-        bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
-        if ($LASTEXITCODE -ne 0) { throw "Native manifest creation failed" }
-        bun apps/desktop/scripts/verify-native-binaries.ts
-        if ($LASTEXITCODE -ne 0) { throw "Native manifest verification failed" }
+    - uses: ./.github/actions/bundle-mpv
     - name: Real Electron lifecycle, playback and audio
       shell: pwsh
       run: bun scripts/test-e2e.ts source --project native --no-deps

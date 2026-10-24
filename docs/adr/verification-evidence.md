@@ -12,6 +12,10 @@ Retain the existing per-workspace uncovered-line budgets from the previous 697-t
 
 Run release scenarios with the candidate product and the latest stable counterpart in separate dependency trees. Copy the candidate tests into that combined workspace so relative fixture imports cannot accidentally resolve the unreleased counterpart. Keep release packaging and publication gated on same-commit verification. Retain HTML, JSON, JUnit, coverage and failure traces/screenshots for 14 days, including failed checks.
 
+Use ten logical PR jobs: Linux server, Chromium/Firefox/WebKit on Linux, native desktop on macOS/Windows/Linux, quality, released-counterpart compatibility, and packaging. Reusable client, compatibility and packaging workflows share implementation with scheduled verification and releases. Twenty-run WebKit flakiness checks run weekly or manually instead of duplicating the PR matrix. Desktop tests retain isolated local servers on their runner OS; a remote Linux server would add fixture provisioning and lifecycle coordination without improving most HTTP/WebSocket assertions.
+
+Collect coverage separately in the Linux API and four client jobs, then union their line hits in the quality job. Require all five successful shards from the same commit and identical source inventory; missing shards and mismatched sources fail closed. Tooling runs in quality without contributing synthetic fixture sources to production coverage. The local `bun run check` still runs the entire suite in one process tree. The stable required `check` gate also requires every other logical job to succeed, including all compatibility and packaging matrix children, so failed or skipped dependencies cannot appear green. Retire the former individual required-check names when applying the updated ruleset at rollout; preserve unrelated required checks.
+
 ## Alternatives
 
 - Retaining unit suites alongside E2E would violate the requested replacement and preserve duplicate test architecture.

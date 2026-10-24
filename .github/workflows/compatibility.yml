@@ -3,11 +3,22 @@ on:
   workflow_dispatch:
   schedule:
     - cron: "17 3 * * 1"
+permissions:
+  contents: read
 jobs:
+  release-compatibility:
+    uses: ./.github/workflows/release-compatibility.yml
   native-desktop:
-    uses: ./.github/workflows/native-desktop.yml
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-26, windows-latest]
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      runner: ${{ matrix.runner }}
+      project: native
   portable-tests:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -15,12 +26,8 @@ jobs:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
       - uses: ./.github/actions/e2e-runtime
-      - run: xvfb-run -a bash scripts/with-window-manager.sh bun run test:e2e
-      - uses: actions/upload-artifact@v4
+      - run: bun scripts/test-e2e.ts source --project api --project tooling --project chromium --project firefox --project webkit
+      - uses: ./.github/actions/e2e-artifacts
         if: ${{ !cancelled() }}
         with:
-          name: compatibility-e2e
-          path: |
-            test-results/
-            playwright-report/
-          if-no-files-found: error
+          name: scheduled-portable

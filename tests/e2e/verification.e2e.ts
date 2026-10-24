@@ -99,6 +99,61 @@ process.exitCode = process.env.E2E_FORCE_FAILURE === "1" ? 1 : 0;
   expect(failed.status).toBe(1);
   expect(summary().testsExitCode).toBe(1);
   expect(summary().regressions).toEqual([]);
+  const collected = workspace.script("e2e-coverage", ["collect", "api"]);
+  expect(collected.status, collected.stderr).toBe(0);
+  const shard = JSON.parse(readFileSync(join(workspace.root, "coverage/shards/api.json"), "utf8"));
+  expect(shard).toMatchObject({
+    project: "api",
+    revision: workspace.git("rev-parse", "HEAD"),
+    testsExitCode: 0,
+  });
+  expect(shard.covered["apps/server/src/visible.ts"]).not.toHaveLength(0);
+  expect(workspace.script("e2e-coverage", ["collect", "missing-project"]).status).not.toBe(0);
+});
+
+test("coverage merging requires every successful same-revision shard and unions hits without relaxing budgets", async ({
+  workspace,
+}) => {
+  const projects = ["api", "chromium", "firefox", "webkit", "native"];
+  const source = "apps/server/src/example.ts";
+  const shard = {
+    revision: workspace.git("rev-parse", "HEAD"),
+    sourceHash: "matching-production-source",
+    testsExitCode: 0,
+    inventory: { [source]: { lines: [1, 2, 3], statementLines: { 0: 1, 1: 2, 2: 3 } } },
+  };
+  workspace.write("coverage-baseline.json", { "apps/server": 0 });
+  const save = (project: string, overrides = {}) =>
+    workspace.write(`coverage/shards/${project}.json`, {
+      ...shard,
+      project,
+      covered: { [source]: project === "api" ? [1, 2] : [2, 3] },
+      ...overrides,
+    });
+  const merge = () => workspace.script("e2e-coverage", ["merge"]);
+  for (const project of projects.slice(0, -1)) save(project);
+  expect(merge().status).not.toBe(0);
+  save("native");
+  expect(merge().status).toBe(0);
+  const summary = JSON.parse(readFileSync(join(workspace.root, "coverage/summary.json"), "utf8"));
+  expect(summary.workspaces["apps/server"]).toEqual({ total: 3, covered: 3, uncovered: 0 });
+  for (const invalid of [
+    { testsExitCode: 1 },
+    { revision: "old-commit" },
+    { project: "api" },
+    { sourceHash: "different-source" },
+    { inventory: { [source]: { lines: [1], statementLines: { 0: 1 } } } },
+    { covered: {} },
+    { covered: { [source]: [99] } },
+  ]) {
+    save("native", invalid);
+    expect(merge().status).not.toBe(0);
+  }
+  for (const project of projects) save(project, { covered: { [source]: [1] } });
+  expect(merge().status).not.toBe(0);
+  expect(
+    JSON.parse(readFileSync(join(workspace.root, "coverage/summary.json"), "utf8")).regressions,
+  ).toEqual(["apps/server: 2 uncovered lines exceeds baseline 0"]);
 });
 
 test("the enforced Biome command rejects test delays and permits observable waits and application timers", async ({

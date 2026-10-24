@@ -1,15 +1,10 @@
 name: WebKit playback verification
 on:
   workflow_dispatch:
-  pull_request:
-    paths:
-      - .github/workflows/webkit-playback.yml
-      - tests/fixtures/playback.webm
-      - tests/e2e/**
-      - apps/web/src/HtmlMediaPlayer.ts
-      - apps/server/src/http/**
-      - apps/server/package.json
-      - bun.lock
+  schedule:
+    - cron: "17 3 * * 2"
+permissions:
+  contents: read
 jobs:
   playback:
     runs-on: ubuntu-latest
