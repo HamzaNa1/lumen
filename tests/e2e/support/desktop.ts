@@ -7,11 +7,13 @@ import { test as base, expect, password, repository, type Server } from "./serve
 
 const require = createRequire(join(repository, "apps/desktop/package.json"));
 export const test = base.extend<{
+  mpvFaults: boolean;
   desktop: { app: ElectronApplication; page: Page; profile: string };
 }>({
-  desktop: async ({ server }, use, testInfo) => {
+  mpvFaults: [false, { option: true }],
+  desktop: async ({ server, mpvFaults }, use, testInfo) => {
     const profile = join(server.root, "desktop-profile");
-    const app = await launchDesktop(profile);
+    const app = await launchDesktop(profile, mpvFaults);
     const child = app.process();
     const flush = await collectBrowserCoverage(app.context());
     const logs: string[] = [];
@@ -76,7 +78,7 @@ export const test = base.extend<{
     }
   },
 });
-export async function launchDesktop(profile: string) {
+export async function launchDesktop(profile: string, mpvFaults = false) {
   const environment = Object.fromEntries(
     Object.entries(process.env).filter(
       ([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined,
@@ -86,7 +88,7 @@ export async function launchDesktop(profile: string) {
     executablePath: require("electron") as string,
     args: [join(repository, "tests/e2e/support/electron-entry.mjs"), "--no-sandbox"],
     cwd: join(repository, "apps/desktop"),
-    env: { ...environment, LUMEN_E2E_PROFILE: profile },
+    env: { ...environment, LUMEN_E2E_PROFILE: profile, LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "" },
   });
 }
 export async function connectDesktop(

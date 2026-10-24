@@ -170,41 +170,39 @@ export const makeScanningRepository = (database: DatabaseClient) => {
   const claimNextJob = Effect.fn("ScanningRepository.claimNextJob")(function* (input: unknown) {
     const value = yield* boundary(ClaimJob, input, "scanning.claimNextJob");
     const row = yield* guard(
-      database.transaction((transaction) =>
-        Effect.gen(function* () {
-          const candidates = yield* transaction
-            .select({ id: scanJobs.id })
-            .from(scanJobs)
-            .where(
-              and(
-                eq(scanJobs.status, "queued"),
-                lte(scanJobs.availableAtMs, value.nowMs),
-                value.operations.length === 0
-                  ? sql`1 = 1`
-                  : inArray(scanJobs.operation, value.operations),
-              ),
-            )
-            .orderBy(desc(scanJobs.priority), asc(scanJobs.availableAtMs), asc(scanJobs.id))
-            .limit(1);
-          const candidate = candidates[0];
-          if (candidate === undefined) return null;
-          const [claimed] = yield* transaction
-            .update(scanJobs)
-            .set({
-              status: "running",
-              attempts: sql`${scanJobs.attempts} + 1`,
-              lockedAtMs: value.nowMs,
-              lockedBy: value.workerId,
-              startedAtMs: value.nowMs,
-            })
-            .where(and(eq(scanJobs.id, candidate.id), eq(scanJobs.status, "queued")))
-            .returning(jobSelection);
-          return claimed ?? null;
-        }),
-      ),
+      database
+        .update(scanJobs)
+        .set({
+          status: "running",
+          attempts: sql`${scanJobs.attempts} + 1`,
+          lockedAtMs: value.nowMs,
+          lockedBy: value.workerId,
+          startedAtMs: value.nowMs,
+        })
+        .where(
+          inArray(
+            scanJobs.id,
+            database
+              .select({ id: scanJobs.id })
+              .from(scanJobs)
+              .where(
+                and(
+                  eq(scanJobs.status, "queued"),
+                  lte(scanJobs.availableAtMs, value.nowMs),
+                  value.operations.length === 0
+                    ? sql`1 = 1`
+                    : inArray(scanJobs.operation, value.operations),
+                ),
+              )
+              .orderBy(desc(scanJobs.priority), asc(scanJobs.availableAtMs), asc(scanJobs.id))
+              .limit(1),
+          ),
+        )
+        .returning(jobSelection)
+        .get(),
       "scanning.claimNextJob",
     );
-    return yield* boundary(Schema.NullOr(ScanJob), row, "scanning.claimNextJob.result");
+    return yield* boundary(Schema.NullOr(ScanJob), row ?? null, "scanning.claimNextJob.result");
   });
 
   const enqueueOutbox = Effect.fn("ScanningRepository.enqueueOutbox")(function* (input: unknown) {

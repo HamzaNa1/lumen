@@ -111,6 +111,14 @@ export class Server {
     await this.stop();
     await this.start(this.environment);
   }
+  async advanceTime(advanceMs: number) {
+    const child = this.child;
+    if (!child?.connected) throw new Error("Server is not connected");
+    const id = crypto.randomUUID();
+    const acknowledged = once(child, "message", { signal: AbortSignal.timeout(5000) });
+    child.send({ id, advanceMs });
+    expect((await acknowledged)[0]).toEqual({ id });
+  }
   request(path: string, init: RequestInit = {}) {
     return fetch(new URL(path, this.origin), {
       ...init,

@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, request, type ServerResponse } from "node:http";
 import type { Socket } from "node:net";
+import type { Duplex } from "node:stream";
 
 /** Faults at the network boundary; all unaffected traffic goes to the real server. */
 export class NetworkProxy {
@@ -8,6 +9,8 @@ export class NetworkProxy {
   intercept: (request: IncomingMessage, response: ServerResponse) => Promise<boolean> = async () =>
     false;
   private readonly sockets = new Set<Socket>();
+  private readonly watchSockets = new Set<Duplex>();
+  watchAvailable = true;
   private readonly http = createServer((incoming, response) => {
     this.requests.push({ method: incoming.method ?? "GET", path: incoming.url ?? "/" });
     void this.forward(incoming, response).catch((error) => {
@@ -21,6 +24,12 @@ export class NetworkProxy {
       socket.on("close", () => this.sockets.delete(socket));
     });
     this.http.on("upgrade", (incoming, socket, head) => {
+      if (!this.watchAvailable) {
+        socket.destroy();
+        return;
+      }
+      this.watchSockets.add(socket);
+      socket.on("close", () => this.watchSockets.delete(socket));
       const outbound = request(new URL(incoming.url ?? "/", this.upstream), {
         headers: incoming.headers,
       });
@@ -63,6 +72,10 @@ export class NetworkProxy {
     if (!address || typeof address === "string") throw new Error("Proxy did not listen");
     this.origin = `http://127.0.0.1:${address.port}/`;
     return this;
+  }
+  disconnectWatch() {
+    this.watchAvailable = false;
+    for (const socket of this.watchSockets) socket.destroy();
   }
   async close() {
     for (const socket of this.sockets) socket.destroy();
