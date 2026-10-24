@@ -93,7 +93,8 @@ export class Server {
     const child = this.child;
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
     const exited = once(child, "exit");
-    child.kill("SIGTERM");
+    // Closing IPC invokes the entrypoint's graceful shutdown on Windows as well as POSIX.
+    child.disconnect();
     const deadline = AbortSignal.timeout(15_000);
     const kill = () => child.kill("SIGKILL");
     deadline.addEventListener("abort", kill, { once: true });

@@ -10,7 +10,7 @@ import {
   sampleMpvPlayback,
 } from "../../apps/desktop/src/main/player/MpvSynchronization";
 import { analyzeAudioTransition } from "./support/audio-transition";
-import { expect, test } from "./support/server";
+import { expect, repository, test } from "./support/server";
 
 for (const codec of ["eac3", "ac3", "dca"])
   test(`MPV decodes 5.1 ${codec} and preserves every channel and pitch through watch synchronization speed corrections`, async ({
@@ -53,7 +53,9 @@ for (const codec of ["eac3", "ac3", "dca"])
     );
     expect(encoded.status, encoded.stderr.toString()).toBe(0);
     const child = spawn(
-      "mpv",
+      process.platform === "win32"
+        ? join(repository, "apps/desktop/resources/native/mpv.exe")
+        : "mpv",
       [
         "--no-config",
         "--load-scripts=no",
@@ -138,6 +140,15 @@ for (const codec of ["eac3", "ac3", "dca"])
         contentType: "application/json",
       });
       await testInfo.attach("MPV log", { path: log });
+    } catch (cause) {
+      if (await stat(pcm).catch(() => null))
+        await testInfo.attach("failed PCM capture", { path: pcm });
+      if (await stat(log).catch(() => null)) await testInfo.attach("failed MPV log", { path: log });
+      await testInfo.attach("capture windows", {
+        body: JSON.stringify(captures),
+        contentType: "application/json",
+      });
+      throw cause;
     } finally {
       ipc.close();
       if (child.exitCode === null) {

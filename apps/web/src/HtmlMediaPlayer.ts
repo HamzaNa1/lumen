@@ -385,7 +385,8 @@ export class HtmlMediaPlayer {
         !active.buffering &&
         !active.suspended &&
         !active.awaitingInteraction &&
-        this.element.readyState >= HAVE_FUTURE_DATA,
+        (this.element.readyState >= HAVE_FUTURE_DATA ||
+          this.bufferedAhead() === Number.POSITIVE_INFINITY),
     };
   }
 
@@ -725,6 +726,12 @@ export class HtmlMediaPlayer {
       if (active.buffering) record("browser_recovery");
       buffering(false)();
     };
+    const onSeeked = (): void => {
+      // WebKit can keep HAVE_CURRENT_DATA after seeking in a fully downloaded file,
+      // even while its clock advances. No further canplay/playing event is guaranteed.
+      if (this.bufferedAhead() > 0) active.buffering = false;
+      update();
+    };
     const onError = (): void => {
       record("browser_error");
       if (this.active === active) void this.recover(active, this.element.error?.code);
@@ -739,7 +746,7 @@ export class HtmlMediaPlayer {
       ["progress", update],
       ["play", update],
       ["pause", update],
-      ["seeked", update],
+      ["seeked", onSeeked],
       ["volumechange", update],
       ["waiting", onWaiting],
       ["stalled", () => record("browser_stalled")],

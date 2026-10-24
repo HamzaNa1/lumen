@@ -19,16 +19,23 @@ test("desktop connects through real IPC, persists its account and window, and ne
   );
   expect(await page.evaluate(() => window.lumen.library.list())).toHaveLength(1);
   const desktopWindow = await app.browserWindow(page);
-  await desktopWindow.evaluate((window) =>
-    window.setBounds({ x: 50, y: 50, width: 1100, height: 750 }),
-  );
+  const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+  const size = {
+    width: Math.max(1024, Math.min(1100, area.width)),
+    height: Math.max(680, Math.min(750, area.height)),
+  };
+  await desktopWindow.evaluate((window, bounds) => window.setBounds(bounds), {
+    x: area.x,
+    y: area.y,
+    ...size,
+  });
   await expect
     .poll(async () =>
       JSON.parse(
         await readFile(join(profile, "main-window-state.json"), "utf8").catch(() => "null"),
       ),
     )
-    .toMatchObject({ bounds: { width: 1100, height: 750 } });
+    .toMatchObject({ bounds: size });
   await app.close();
   const reopened = await launchDesktop(profile);
   try {
@@ -38,10 +45,7 @@ test("desktop connects through real IPC, persists its account and window, and ne
       activeConnectionId: accounts.activeConnectionId,
     });
     const desktopWindow = await reopened.browserWindow(restored);
-    expect(await desktopWindow.evaluate((window) => window.getBounds())).toMatchObject({
-      width: 1100,
-      height: 750,
-    });
+    expect(await desktopWindow.evaluate((window) => window.getBounds())).toMatchObject(size);
   } finally {
     await reopened.close();
   }

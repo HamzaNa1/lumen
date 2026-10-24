@@ -74,7 +74,8 @@ export const withReleasedCounterpart = (
     verify(workspace);
   } finally {
     try {
-      if (added) run("git", ["worktree", "remove", "--force", released]);
+      if (added)
+        run("git", ["-c", "core.longpaths=true", "worktree", "remove", "--force", released]);
     } finally {
       rmSync(temporary, { recursive: true, force: true });
     }
