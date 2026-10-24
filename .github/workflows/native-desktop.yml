@@ -14,37 +14,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
-      # The existing lifecycle suite imports server/database fixture helpers.
       - run: bun install --frozen-lockfile
-      - name: macOS lifecycle regressions (mocked Electron/libmpv)
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          mkdir -p native-evidence
-          bun test tests/compatibility/desktop-mpv-window-lifecycle.test.ts \
-            --reporter=junit --reporter-outfile=native-evidence/lifecycle.xml \
-            2>&1 | tee native-evidence/lifecycle.log
-      - name: Install audio runtime
-        shell: bash
-        run: |
-          # Exercise Homebrew's current CLI runtime; this is not bundled macOS libmpv playback.
-          brew install mpv ffmpeg
-          mpv --version | tee native-evidence/mpv-version.txt
-          ffmpeg -version > native-evidence/ffmpeg-version.txt
-      - name: Real MPV E-AC-3 PCM and speed synchronization
-        timeout-minutes: 3
-        shell: bash
-        run: |
-          # A short path keeps the Unix IPC socket below macOS's path length limit.
-          audio_evidence="$(mktemp -d /tmp/lumen-audio.XXXXXX)"
-          trap 'mv "$audio_evidence" native-evidence/audio' EXIT
-          bun tests/native/mpv-watch-audio.ts "$audio_evidence" 2>&1 | tee native-evidence/audio.log
+      - uses: ./.github/actions/e2e-runtime
+      - name: Real Electron lifecycle, mixed playback and MPV audio
+        run: bun scripts/test-e2e.ts source --project native --no-deps
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: ${{ !cancelled() }}
         with:
           name: macos-native-regression-${{ github.sha }}
-          path: native-evidence/
-          if-no-files-found: warn
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: error
           retention-days: 14
   windows:
     name: Windows Electron and MPV playback

@@ -8,11 +8,13 @@ Lumen is a Bun-based direct-play media server with an Electron desktop client an
 bun install
 bun run typecheck
 bun run lint
-bun test
+bun run test:e2e
 bun run dev:server
 bun run dev:desktop
 bun run dev:web
 ```
+
+The E2E suite requires FFmpeg, MPV, Electron and the Playwright browsers (`bunx playwright install --with-deps`). Run `bun run check` for formatting, types, builds and instrumented E2E coverage. Native checks need an unlocked graphical session; Linux CI uses Xvfb with Openbox.
 
 ## Web app
 

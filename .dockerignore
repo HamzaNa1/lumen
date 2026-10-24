@@ -6,7 +6,6 @@
 **/.DS_Store
 apps/desktop
 packages/config
-packages/testkit
 data
 media
 scripts

@@ -27,7 +27,6 @@ export const createVerificationWorkspace = ({
   const paths = new Set([
     ...owned,
     ...counterpartWorkspaces,
-    "packages/testkit",
     "packages/config",
     "package.json",
     "node_modules",

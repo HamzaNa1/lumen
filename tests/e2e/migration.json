@@ -1,0 +1,574 @@
+{
+  "baseCommit": "9668285422494dd8e19162dd7700a63d10999874",
+  "decision": "Replace implementation-level mocks and historical renderer shims with process, HTTP, filesystem, browser, Electron and MPV scenarios. Related former suites share end-to-end journeys; the unchanged workspace uncovered-line budgets remain enforced.",
+  "suites": [
+    {
+      "removedSuite": "tests/browser/artwork-cache.e2e.ts",
+      "replacementSuites": [
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/desktop-artwork.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/browser/desktop-parity.e2e.ts",
+      "replacementSuites": [
+        "tests/e2e/mixed-playback.e2e.ts",
+        "tests/e2e/desktop.e2e.ts",
+        "tests/e2e/desktop-lifecycle.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/browser/desktop-renderer.e2e.ts",
+      "replacementSuites": [
+        "tests/e2e/mixed-playback.e2e.ts",
+        "tests/e2e/desktop.e2e.ts",
+        "tests/e2e/desktop-lifecycle.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/browser/web-app.e2e.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-failures.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/compatibility/desktop-mpv-window-lifecycle.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/compatibility/mixed-watch-groups.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/compatibility/playback-bridge.test.ts",
+      "replacementSuites": [
+        "tests/e2e/transport.e2e.ts",
+        "tests/e2e/media-delivery.e2e.ts",
+        "tests/e2e/client-boundaries.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/compatibility/releases.test.ts",
+      "replacementSuites": ["tests/e2e/release-tooling.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/compatibility/server-watch-groups.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/compatibility/watch-group-client.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/compatibility/watch-playback.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/click-gesture.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-account-ipc.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-app-updates.test.ts",
+      "replacementSuites": ["tests/e2e/desktop-updates.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-artwork-cache.test.ts",
+      "replacementSuites": [
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/desktop-artwork.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-audio-diagnostics.test.ts",
+      "replacementSuites": [
+        "tests/e2e/native-audio.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts",
+        "tests/e2e/desktop.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-audio-settings-store.test.ts",
+      "replacementSuites": [
+        "tests/e2e/desktop.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-fullscreen.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-main-window-state.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-mpv-cache.test.ts",
+      "replacementSuites": [
+        "tests/e2e/native-audio.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts",
+        "tests/e2e/desktop.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-mpv-ipc.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-mpv-process.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-mpv-synchronization.test.ts",
+      "replacementSuites": [
+        "tests/e2e/native-audio.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts",
+        "tests/e2e/desktop.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-playback-bridge.test.ts",
+      "replacementSuites": [
+        "tests/e2e/transport.e2e.ts",
+        "tests/e2e/media-delivery.e2e.ts",
+        "tests/e2e/client-boundaries.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-server-client.test.ts",
+      "replacementSuites": [
+        "tests/e2e/transport.e2e.ts",
+        "tests/e2e/media-delivery.e2e.ts",
+        "tests/e2e/client-boundaries.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/desktop-token-storage-policy.test.ts",
+      "replacementSuites": ["tests/e2e/desktop.e2e.ts", "tests/e2e/desktop-lifecycle.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/desktop/mpv-watch-audio-analysis.test.ts",
+      "replacementSuites": [
+        "tests/e2e/native-audio.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts",
+        "tests/e2e/desktop.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/playback-info-panel.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/player-formatting.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/desktop/throttle.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/auth-session-token.test.ts",
+      "replacementSuites": [
+        "tests/e2e/authentication.e2e.ts",
+        "tests/e2e/administration.e2e.ts",
+        "tests/e2e/session-expiry.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/combined-episodes.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/database.test.ts",
+      "replacementSuites": [
+        "tests/e2e/database-storage.e2e.ts",
+        "tests/e2e/database-upgrade.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/episode-order.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/episode-sequence.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/ffprobe-track-metadata.test.ts",
+      "replacementSuites": [
+        "tests/e2e/playback-state.e2e.ts",
+        "tests/e2e/session-expiry.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/http-server.test.ts",
+      "replacementSuites": ["tests/e2e/media-delivery.e2e.ts", "tests/e2e/transport.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/media-ingest-renumber.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/media-ingest.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/media-reconciliation.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/scan-recovery.e2e.ts",
+        "tests/e2e/home-music.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/range-policy.test.ts",
+      "replacementSuites": ["tests/e2e/media-delivery.e2e.ts", "tests/e2e/transport.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/scan-run-recovery.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/scan-recovery.e2e.ts",
+        "tests/e2e/home-music.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/serve-artwork.test.ts",
+      "replacementSuites": [
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/desktop-artwork.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/server-auth.test.ts",
+      "replacementSuites": [
+        "tests/e2e/authentication.e2e.ts",
+        "tests/e2e/administration.e2e.ts",
+        "tests/e2e/session-expiry.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/server-browser-session.test.ts",
+      "replacementSuites": [
+        "tests/e2e/authentication.e2e.ts",
+        "tests/e2e/administration.e2e.ts",
+        "tests/e2e/session-expiry.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/server-config.test.ts",
+      "replacementSuites": ["tests/e2e/server-failures.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-home.test.ts",
+      "replacementSuites": ["tests/e2e/home-music.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-incremental-scan.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/scan-recovery.e2e.ts",
+        "tests/e2e/home-music.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/server-jobs.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/scan-recovery.e2e.ts",
+        "tests/e2e/home-music.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/server-log-formatting.test.ts",
+      "replacementSuites": ["tests/e2e/server-failures.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-logging.test.ts",
+      "replacementSuites": ["tests/e2e/server-failures.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-media-admission.test.ts",
+      "replacementSuites": ["tests/e2e/media-admission.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-playback.test.ts",
+      "replacementSuites": [
+        "tests/e2e/playback-state.e2e.ts",
+        "tests/e2e/session-expiry.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/server-range.test.ts",
+      "replacementSuites": ["tests/e2e/media-delivery.e2e.ts", "tests/e2e/transport.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-request-limits.test.ts",
+      "replacementSuites": ["tests/e2e/server-failures.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/server-static-web.test.ts",
+      "replacementSuites": ["tests/e2e/media-delivery.e2e.ts", "tests/e2e/transport.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/server/video-catalog.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/video-paths.test.ts",
+      "replacementSuites": [
+        "tests/e2e/catalog.e2e.ts",
+        "tests/e2e/catalog-metadata.e2e.ts",
+        "tests/e2e/metadata-provider.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/server/watch-group-lifecycle.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/client-api.test.ts",
+      "replacementSuites": [
+        "tests/e2e/transport.e2e.ts",
+        "tests/e2e/media-delivery.e2e.ts",
+        "tests/e2e/client-boundaries.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/contracts.test.ts",
+      "replacementSuites": [
+        "tests/e2e/transport.e2e.ts",
+        "tests/e2e/media-delivery.e2e.ts",
+        "tests/e2e/client-boundaries.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/playback-info.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/random-id.test.ts",
+      "replacementSuites": [
+        "tests/e2e/transport.e2e.ts",
+        "tests/e2e/media-delivery.e2e.ts",
+        "tests/e2e/client-boundaries.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/track-memory.test.ts",
+      "replacementSuites": [
+        "tests/e2e/playback-state.e2e.ts",
+        "tests/e2e/session-expiry.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/viewer-playback.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/volume-memory.test.ts",
+      "replacementSuites": [
+        "tests/e2e/desktop.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/watch-playback-prediction.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/watch-prediction.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/watch-sync-controller.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/shared/watch-synchronization.test.ts",
+      "replacementSuites": [
+        "tests/e2e/watch-groups.e2e.ts",
+        "tests/e2e/watch-recovery.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/mixed-playback.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/tooling/check-products.test.ts",
+      "replacementSuites": ["tests/e2e/verification.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/coverage.test.ts",
+      "replacementSuites": ["tests/e2e/verification.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/main-protection.test.ts",
+      "replacementSuites": ["tests/e2e/protection.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/release-notes.test.ts",
+      "replacementSuites": ["tests/e2e/release-notes.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/release-version.test.ts",
+      "replacementSuites": ["tests/e2e/release-tooling.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/releases.test.ts",
+      "replacementSuites": ["tests/e2e/release-tooling.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/test-delay-lint.test.ts",
+      "replacementSuites": ["tests/e2e/verification.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/tooling/verification.test.ts",
+      "replacementSuites": ["tests/e2e/verification.e2e.ts"]
+    },
+    {
+      "removedSuite": "tests/web/browser-accounts.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-accounts.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/web/episode-context.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/web/html-media-player.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-failures.e2e.ts",
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-groups.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts"
+      ]
+    },
+    {
+      "removedSuite": "tests/web/show-episodes.test.ts",
+      "replacementSuites": [
+        "tests/e2e/browser-controls.e2e.ts",
+        "tests/e2e/browser-journeys.e2e.ts",
+        "tests/e2e/desktop-tracks.e2e.ts"
+      ]
+    }
+  ]
+}

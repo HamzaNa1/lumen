@@ -1,10 +1,18 @@
-import { parseProduct, productCompatibilityTests } from "./lib/products";
-import { repositoryRoot, run } from "./lib/releases";
-import { verifyTestOwnership } from "./lib/verification";
-import { withReleasedCounterpart } from "./lib/verification-workspace";
+import { execFileSync } from "node:child_process";
+import { parseProduct } from "./lib/products";
 
+// A built desktop and web app exercise the actual released counterpart, including its dependencies.
 const product = parseProduct(process.argv[2]);
-verifyTestOwnership(repositoryRoot);
-withReleasedCounterpart(product, (workspace) => {
-  run(process.execPath, ["test", ...productCompatibilityTests(product)], workspace);
-});
+execFileSync(
+  process.execPath,
+  [
+    "scripts/test-e2e.ts",
+    product,
+    "--project",
+    "native",
+    "--no-deps",
+    "--grep",
+    "real browser and Electron",
+  ],
+  { stdio: "inherit" },
+);

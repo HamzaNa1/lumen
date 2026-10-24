@@ -18,6 +18,7 @@ import { createMainWindow } from "./windows";
 let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
+let surface: MpvSurface | null = null;
 let quitting = false;
 let closingPlayback: Promise<void> | null = null;
 
@@ -72,9 +73,10 @@ const bootstrap = async (): Promise<void> => {
   });
   rememberMainWindowState(mainWindow, windowState);
   const overlay = new PlayerOverlayWindow(mainWindow, preloadPath);
+  surface = new MpvSurface(mainWindow, overlay);
   player = new PlayerController({
     bridge,
-    surface: new MpvSurface(mainWindow, overlay),
+    surface,
     audioSettings,
     onState: (state) => {
       mainWindow?.webContents.send("player:state", state);
@@ -141,6 +143,8 @@ app.on("before-quit", (event) => {
     void stopPlayerBeforeClose().finally(() => app.quit());
     return;
   }
+  surface?.dispose();
+  surface = null;
   unregisterIpcHandlers();
   void player?.stop().catch((cause: unknown) => console.error("Failed to stop playback", cause));
   void bridge?.close();

@@ -1,8 +1,0 @@
-{
-  "extends": "../../packages/client/tsconfig.json",
-  "compilerOptions": {
-    "types": ["bun"],
-    "jsx": "react-jsx"
-  },
-  "include": ["**/*.ts", "**/*.tsx"]
-}

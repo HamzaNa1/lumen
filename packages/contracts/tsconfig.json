@@ -4,9 +4,5 @@
     "lib": ["ES2023"],
     "types": ["bun"]
   },
-  "include": [
-    "src/**/*.ts",
-    "../../packages/contracts/src/**/*.ts",
-    "../../packages/testkit/src/**/*.ts"
-  ]
+  "include": ["src/**/*.ts"]
 }

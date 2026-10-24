@@ -1,15 +1,19 @@
-import { checkWorkspaces, parseProduct, productTests, workspaceFilters } from "./lib/products";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { checkWorkspaces, parseProduct, workspaceFilters } from "./lib/products";
 import { run } from "./lib/releases";
+import { suites } from "./lib/verification";
+import { withReleasedCounterpart } from "./lib/verification-workspace";
 
 const product = parseProduct(process.argv[2]);
 const workspaces = checkWorkspaces(product);
-const tests = productTests(product);
+const tests = ["tests/e2e"];
 const steps = {
   lint: () =>
     run(process.execPath, [
       "run",
       "biome",
-      "lint",
+      "check",
       ...workspaces,
       ...tests,
       "packages/config",
@@ -18,21 +22,32 @@ const steps = {
       "biome.json",
       "tsconfig.base.json",
       "tsconfig.scripts.json",
-      ...(product === "desktop" ? ["tests/native"] : []),
     ]),
   typecheck: () => {
     run(process.execPath, ["run", ...workspaceFilters(workspaces), "typecheck"]);
     run(process.execPath, ["run", "scripts/typecheck.ts", "-p", "tsconfig.scripts.json"]);
-    for (const directory of tests)
-      run(process.execPath, ["run", "scripts/typecheck.ts", "-p", directory]);
+    withReleasedCounterpart(product, (workspace) => {
+      const config = "tests/e2e/tsconfig.product.json";
+      writeFileSync(
+        join(workspace, config),
+        JSON.stringify({
+          extends: "./tsconfig.json",
+          include: Object.entries(suites)
+            .filter(([, suite]) => suite.products.includes(product))
+            .map(([path]) => path),
+        }),
+      );
+      run(process.execPath, ["run", "scripts/typecheck.ts", "-p", config], workspace);
+    });
   },
-  test: () => run(process.execPath, ["test", ...tests]),
+
   // One workspace at a time, in the product's declared order: packages before the apps that
   // bundle them, and the web app before the server that ships it.
   build: () => {
     for (const workspace of workspaces)
       run(process.execPath, ["run", ...workspaceFilters([workspace]), "build"]);
   },
+  test: () => run(process.execPath, ["scripts/test-e2e.ts", product]),
 };
 
 const step = process.argv[3];

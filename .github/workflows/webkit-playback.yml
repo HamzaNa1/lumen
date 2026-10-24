@@ -5,7 +5,7 @@ on:
     paths:
       - .github/workflows/webkit-playback.yml
       - tests/fixtures/playback.webm
-      - tests/browser/playback.ts
+      - tests/e2e/**
       - apps/web/src/HtmlMediaPlayer.ts
       - apps/server/src/http/**
       - apps/server/package.json
@@ -25,7 +25,7 @@ jobs:
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium firefox webkit
+      - uses: ./.github/actions/e2e-runtime
       - name: Repeat each affected scenario twenty times without retries
         env:
           DELIVERY: ${{ matrix.delivery }}
@@ -38,8 +38,8 @@ jobs:
           # Each repetition seeds a fresh server, so saved progress never carries between them.
           failed=0
           for iteration in $(seq 1 20); do
-            bun scripts/test-browser.ts "$DELIVERY" web-app.e2e.ts --project webkit \
-              --grep "supported media plays|each show and film|double-clicking|the player moves between" \
+            bun scripts/test-browser.ts "$DELIVERY" browser-journeys.e2e.ts browser-controls.e2e.ts --project webkit \
+              --grep "real playback|each title|video gestures|episode drawer" \
               --retries 0 --trace on 2>&1 | tee "proof/repetition-$iteration.log" || failed=$((failed + 1))
             mkdir -p "proof/repetition-$iteration"
             mv test-results playwright-report "proof/repetition-$iteration/"
