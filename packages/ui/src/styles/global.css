@@ -1,5 +1,13 @@
 @import "./tokens.css";
 
-html, body, #root { height: 100%; }
-body { overflow: auto; }
-#root { min-height: 100%; }
+html,
+body,
+#root {
+  height: 100%;
+}
+body {
+  overflow: auto;
+}
+#root {
+  min-height: 100%;
+}

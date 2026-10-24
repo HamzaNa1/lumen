@@ -1,25 +1,11 @@
-import { createLogger, ServerLogger } from "../../apps/server/src/core/Logger";
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  Database,
-  type DatabaseClient,
-  Repositories,
-  RepositoriesLive,
-  sql,
-} from "../../packages/database/src/index.ts";
-import {
-  Deferred,
-  Effect,
-  Fiber,
-  Layer,
-} from "../../packages/database/node_modules/effect/dist/index.js";
-import { TestClock } from "../../packages/database/node_modules/effect/dist/testing/index.js";
 import { mkdir, mkdtemp, rm, stat, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { ServerConfig } from "../../apps/server/src/config/Config";
+import { createLogger, ServerLogger } from "../../apps/server/src/core/Logger";
 import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
-import type { ServerConfig } from "../../apps/server/src/config/Config";
 import {
   JobService,
   JobServiceLive,
@@ -37,6 +23,20 @@ import {
 } from "../../apps/server/src/services/LibraryService";
 import { MetadataSettingsLive } from "../../apps/server/src/services/MetadataSettings";
 import { Scanner, ScannerLive, scanRoot } from "../../apps/server/src/services/Scanner";
+import {
+  Deferred,
+  Effect,
+  Fiber,
+  Layer,
+} from "../../packages/database/node_modules/effect/dist/index.js";
+import { TestClock } from "../../packages/database/node_modules/effect/dist/testing/index.js";
+import {
+  Database,
+  type DatabaseClient,
+  Repositories,
+  RepositoriesLive,
+  sql,
+} from "../../packages/database/src/index.ts";
 
 const paths: string[] = [];
 
@@ -302,9 +302,10 @@ describe("library watcher reconciliation", () => {
     ["movies", "replacement"],
   ] as const)("queues a scan for a %s library's nested media %s", async (kind, change) => {
     const { root, databasePath } = await makeWatcherWorkspace();
-    const folder = kind === "shows"
-      ? join(root, "Example Show", "Season 1")
-      : join(root, "Example Movie (2026)");
+    const folder =
+      kind === "shows"
+        ? join(root, "Example Show", "Season 1")
+        : join(root, "Example Movie (2026)");
     const existing = join(folder, kind === "shows" ? "Example Show S01E01.mkv" : "movie.mkv");
     await mkdir(folder, { recursive: true });
     await Bun.write(existing, "original media");

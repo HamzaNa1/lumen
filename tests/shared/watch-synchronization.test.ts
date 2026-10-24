@@ -1,8 +1,8 @@
 import { expect, test } from "bun:test";
 import {
   WatchDriftCorrection,
-  watchSamplePosition,
   type WatchPlaybackSample,
+  watchSamplePosition,
 } from "../../packages/client/src/index.ts";
 
 const sample: WatchPlaybackSample = {

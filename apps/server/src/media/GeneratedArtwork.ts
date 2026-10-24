@@ -1,9 +1,9 @@
-import { ServerLogger } from "../core/Logger";
+import { lstat, readdir, unlink } from "node:fs/promises";
+import { join } from "node:path";
 import { artwork, type DatabaseClient, serverScheduledJobs } from "@lumen/database";
 import { like, sql } from "drizzle-orm";
 import { Effect } from "effect";
-import { lstat, readdir, unlink } from "node:fs/promises";
-import { join } from "node:path";
+import { ServerLogger } from "../core/Logger";
 
 // Artwork downloaded from metadata providers is stored once per content hash
 // and may be shared by several libraries, so files are only removed once no

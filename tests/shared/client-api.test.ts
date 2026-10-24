@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
+import { errorMessage } from "../../packages/app/src/format.ts";
 import {
   bearerCredentials,
   cookieCredentials,
   IncompatibleServerError,
-  parseRetryAfterSeconds,
   PlaybackSessionReporter,
+  parseRetryAfterSeconds,
   RequestCancelledError,
   ServerApi,
   ServerHttpError,
@@ -12,7 +13,6 @@ import {
   TrackSelectionController,
 } from "../../packages/client/src/index.ts";
 import { defaultTrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
-import { errorMessage } from "../../packages/app/src/format.ts";
 
 const deferred = <T>() => {
   let resolve: (value: T) => void = () => undefined;
@@ -26,30 +26,39 @@ describe("HTTP retry feedback", () => {
   const input = { username: "admin", password: "password" };
   const device = { deviceId: "test", deviceName: "Test", platform: "web" as const };
 
-  test.each(["tokenLogin", "tokenRegister", "browserLogin", "browserRegister", "migrateLegacyToken"] as const)(
-    "%s exposes retry timing without retrying authentication",
-    async (method) => {
-      let attempts = 0;
-      const api = new ServerApi({
-        origin: "https://media.example",
-        credentials: cookieCredentials(),
-        fetchImpl: async () => {
-          attempts += 1;
-          return Response.json({ message: "Rate limit exceeded" }, {
-            status: 429, headers: { "retry-after": "42" },
-          });
-        },
-      });
-      const failure = await (method === "migrateLegacyToken"
-        ? api[method]("legacy-token")
-        : api[method](input, device)).catch((cause: unknown) => cause);
-      expect(failure).toBeInstanceOf(ServerHttpError);
-      expect(failure).toMatchObject({ status: 429, retryAfterSeconds: 42 });
-      expect(errorMessage(failure, "Could not sign in"))
-        .toBe("Rate limit exceeded Try again in 42 seconds.");
-      expect(attempts).toBe(1);
-    },
-  );
+  test.each([
+    "tokenLogin",
+    "tokenRegister",
+    "browserLogin",
+    "browserRegister",
+    "migrateLegacyToken",
+  ] as const)("%s exposes retry timing without retrying authentication", async (method) => {
+    let attempts = 0;
+    const api = new ServerApi({
+      origin: "https://media.example",
+      credentials: cookieCredentials(),
+      fetchImpl: async () => {
+        attempts += 1;
+        return Response.json(
+          { message: "Rate limit exceeded" },
+          {
+            status: 429,
+            headers: { "retry-after": "42" },
+          },
+        );
+      },
+    });
+    const failure = await (method === "migrateLegacyToken"
+      ? api[method]("legacy-token")
+      : api[method](input, device)
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ServerHttpError);
+    expect(failure).toMatchObject({ status: 429, retryAfterSeconds: 42 });
+    expect(errorMessage(failure, "Could not sign in")).toBe(
+      "Rate limit exceeded Try again in 42 seconds.",
+    );
+    expect(attempts).toBe(1);
+  });
 
   test("HTTP dates are relative to the response time, rounded up and never negative", () => {
     const nowMs = Date.parse("Mon, 05 Oct 2026 12:00:00 GMT") + 100;
@@ -66,7 +75,11 @@ describe("HTTP retry feedback", () => {
     ["America/New_York", 240],
   ] as const)("asctime retry dates use UTC when the client timezone is %s", (timezone, offset) => {
     const errorsModule = new URL("../../packages/client/src/errors.ts", import.meta.url).href;
-    const result = Bun.spawnSync([process.execPath, "--eval", `
+    const result = Bun.spawnSync(
+      [
+        process.execPath,
+        "--eval",
+        `
       import { parseRetryAfterSeconds, ServerHttpError } from ${JSON.stringify(errorsModule)};
       const nowMs = Date.parse("2026-10-05T12:00:00.100Z");
       const retryAfterSeconds = parseRetryAfterSeconds("Mon Oct  5 12:00:42 2026", nowMs);
@@ -75,7 +88,10 @@ describe("HTTP retry feedback", () => {
         retryAfterSeconds,
         message: new ServerHttpError("Rate limit exceeded", 429, retryAfterSeconds).message,
       }));
-    `], { env: { ...process.env, TZ: timezone } });
+    `,
+      ],
+      { env: { ...process.env, TZ: timezone } },
+    );
     expect(result.exitCode).toBe(0);
     expect(JSON.parse(result.stdout.toString())).toEqual({
       offset,
@@ -90,9 +106,14 @@ describe("HTTP retry feedback", () => {
       const api = new ServerApi({
         origin: "https://media.example",
         credentials: cookieCredentials(),
-        fetchImpl: async () => Response.json({ message: "Rate limit exceeded" }, {
-          status: 429, headers: header === null ? {} : { "retry-after": header },
-        }),
+        fetchImpl: async () =>
+          Response.json(
+            { message: "Rate limit exceeded" },
+            {
+              status: 429,
+              headers: header === null ? {} : { "retry-after": header },
+            },
+          ),
       });
       const failure = await api.browserLogin(input, device).catch((cause: unknown) => cause);
       expect(failure).toMatchObject({ retryAfterSeconds: null, message: "Rate limit exceeded" });
@@ -103,12 +124,15 @@ describe("HTTP retry feedback", () => {
     const api = new ServerApi({
       origin: "https://media.example",
       credentials: cookieCredentials(),
-      fetchImpl: async () => new Response("Too many requests", {
-        status: 429, headers: { "retry-after": "10" },
-      }),
+      fetchImpl: async () =>
+        new Response("Too many requests", {
+          status: 429,
+          headers: { "retry-after": "10" },
+        }),
     });
-    await expect(api.browserLogin(input, device)).rejects
-      .toThrow("Server request failed (429) Try again in 10 seconds.");
+    await expect(api.browserLogin(input, device)).rejects.toThrow(
+      "Server request failed (429) Try again in 10 seconds.",
+    );
   });
 });
 
@@ -144,7 +168,10 @@ describe("ServerApi sessions", () => {
     const pending = Promise.allSettled([api.home(), api.libraries()]);
     api.cancelPending();
     for (const outcome of await pending)
-      expect(outcome).toMatchObject({ status: "rejected", reason: expect.any(RequestCancelledError) });
+      expect(outcome).toMatchObject({
+        status: "rejected",
+        reason: expect.any(RequestCancelledError),
+      });
     expect(signals.every((signal) => signal.aborted)).toBe(true);
     // The next session's requests are unaffected.
     const next = new ServerApi({
@@ -174,7 +201,8 @@ describe("ServerApi sessions", () => {
     const api = new ServerApi({
       origin: "https://media.example",
       credentials: cookieCredentials(),
-      fetchImpl: async () => Response.json({ serverId: "s", displayName: "Lumen", apiVersion: "2.0.0" }),
+      fetchImpl: async () =>
+        Response.json({ serverId: "s", displayName: "Lumen", apiVersion: "2.0.0" }),
     });
     const failure = await api.identity().catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(IncompatibleServerError);
@@ -182,7 +210,12 @@ describe("ServerApi sessions", () => {
   });
 
   test("a browser session sends the cookie and a CSRF header only on mutations", async () => {
-    const seen: { method: string; csrf: string | null; credentials: unknown; auth: string | null }[] = [];
+    const seen: {
+      method: string;
+      csrf: string | null;
+      credentials: unknown;
+      auth: string | null;
+    }[] = [];
     const api = new ServerApi({
       origin: "https://media.example",
       credentials: cookieCredentials(),
@@ -213,7 +246,8 @@ describe("ServerApi sessions", () => {
       onUnauthorized: () => {
         rejected += 1;
       },
-      fetchImpl: async () => Response.json({ message: "Invalid username or password" }, { status: 401 }),
+      fetchImpl: async () =>
+        Response.json({ message: "Invalid username or password" }, { status: 401 }),
     });
     const device = { deviceId: "d", deviceName: "Browser", platform: "web" as const };
     await expect(api.browserLogin({ username: "a", password: "b" }, device)).rejects.toThrow(
@@ -237,24 +271,45 @@ describe("track memory capability", () => {
         fetchImpl: async (url) => {
           requests.push(url.pathname);
           return url.pathname === "/api/v1/server"
-            ? Response.json({ serverId: "s", displayName: "Old server", apiVersion: "1.0.0", capabilities })
+            ? Response.json({
+                serverId: "s",
+                displayName: "Old server",
+                apiVersion: "1.0.0",
+                capabilities,
+              })
             : Response.json({ message: "Not found" }, { status: 404 });
         },
       });
       await api.identity();
       expect(await api.trackPreferences()).toBeNull();
-      await expect(api.updateTrackPreferences({ audioLanguage: "ja" })).rejects.toThrow("does not support");
+      await expect(api.updateTrackPreferences({ audioLanguage: "ja" })).rejects.toThrow(
+        "does not support",
+      );
       expect(await api.saveTrackChoice("session", { kind: "audio", choice: "audio" })).toBeNull();
 
       const applied: (string | null)[] = [];
       const errors: (string | null)[] = [];
       const controller = new TrackSelectionController({
         sourceId: "file",
-        streams: [{ id: "audio", kind: "audio", ordinal: 1, language: "ja", title: null, codec: "aac", isDefault: false }],
+        streams: [
+          {
+            id: "audio",
+            kind: "audio",
+            ordinal: 1,
+            language: "ja",
+            title: null,
+            codec: "aac",
+            isDefault: false,
+          },
+        ],
         assertActive: () => undefined,
-        apply: async (_kind, id) => { applied.push(id); },
+        apply: async (_kind, id) => {
+          applied.push(id);
+        },
         save: (input) => api.saveTrackChoice("session", input),
-        onError: (message) => { errors.push(message); },
+        onError: (message) => {
+          errors.push(message);
+        },
       });
       await controller.select("audio", "audio");
       await controller.select("subtitle", null);
@@ -276,15 +331,24 @@ describe("track memory capability", () => {
       fetchImpl: async (url, init) => {
         requests.push(`${init.method ?? "GET"} ${url.pathname}`);
         if (url.pathname === "/api/v1/server")
-          return Response.json({ serverId: "s", displayName: "Server", apiVersion: "1.0.0", capabilities: { trackMemory: enabled } });
+          return Response.json({
+            serverId: "s",
+            displayName: "Server",
+            apiVersion: "1.0.0",
+            capabilities: { trackMemory: enabled },
+          });
         if (url.pathname.endsWith("track-preferences")) return Response.json(memory.preferences);
         return Response.json(memory);
       },
     });
     await api.identity();
     expect(await api.trackPreferences()).toEqual(memory.preferences);
-    expect(await api.updateTrackPreferences({ subtitleLanguage: "en" })).toEqual(memory.preferences);
-    expect(await api.saveTrackChoice("session", { kind: "subtitle", choice: "off" })).toEqual(memory);
+    expect(await api.updateTrackPreferences({ subtitleLanguage: "en" })).toEqual(
+      memory.preferences,
+    );
+    expect(await api.saveTrackChoice("session", { kind: "subtitle", choice: "off" })).toEqual(
+      memory,
+    );
     enabled = false;
     await api.identity();
     expect(await api.trackPreferences()).toBeNull();
@@ -332,7 +396,9 @@ describe("playback session reporting", () => {
     heartbeat.resolve();
     await third;
     for (let tick = 0; tick < 3; tick += 1) await reporter.tick(state);
-    const sequences = calls.filter((call) => call.startsWith("progress")).map((call) => Number(call.split(" ")[1]));
+    const sequences = calls
+      .filter((call) => call.startsWith("progress"))
+      .map((call) => Number(call.split(" ")[1]));
     expect(sequences).toEqual([4, 7]);
     expect(calls.filter((call) => call === "heartbeat")).toHaveLength(2);
   });
@@ -354,7 +420,11 @@ describe("playback session reporting", () => {
     expect(errors).toEqual([]);
   });
   test("a newer save replaces one the server has not answered, and only its outcome is reported", async () => {
-    const requests: { sequence: number; signal: AbortSignal; answer: ReturnType<typeof Promise.withResolvers<void>> }[] = [];
+    const requests: {
+      sequence: number;
+      signal: AbortSignal;
+      answer: ReturnType<typeof Promise.withResolvers<void>>;
+    }[] = [];
     const errors: unknown[] = [];
     const reporter = new PlaybackSessionReporter(
       {

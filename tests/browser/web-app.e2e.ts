@@ -57,7 +57,9 @@ test("the page names its own icon, so the browser never asks the API for one", a
 
 test("every route survives direct navigation and refresh", async ({ page }) => {
   await signIn(page);
-  const libraryPath = await page.getByRole("link", { name: "Movies", exact: true }).getAttribute("href");
+  const libraryPath = await page
+    .getByRole("link", { name: "Movies", exact: true })
+    .getAttribute("href");
   for (const path of [
     "/web/search",
     "/web/settings",
@@ -68,7 +70,9 @@ test("every route survives direct navigation and refresh", async ({ page }) => {
   ]) {
     await page.goto(path);
     // /library resolves to the viewer's first library, whose ID belongs to this fixture server.
-    await expect(page).toHaveURL((url) => url.pathname === (path === "/web/library" ? libraryPath : path));
+    await expect(page).toHaveURL(
+      (url) => url.pathname === (path === "/web/library" ? libraryPath : path),
+    );
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     await page.reload();
     await expect(page.locator(".page").first()).toBeVisible();
@@ -85,7 +89,10 @@ test("an administrator renames the server from settings", async ({ page }, testI
   const rename = async (name: string): Promise<void> => {
     await server.getByRole("button", { name: "Rename…" }).click();
     await page.getByLabel("Server name").fill(name);
-    await testInfo.attach("rename server", { body: await page.screenshot(), contentType: "image/png" });
+    await testInfo.attach("rename server", {
+      body: await page.screenshot(),
+      contentType: "image/png",
+    });
     await page.getByRole("button", { name: "Rename", exact: true }).click();
     await expect(server).toContainText(name);
   };
@@ -215,7 +222,10 @@ test("a file the browser cannot play says so instead of loading forever", async 
 
 /** Starts a fixture title from a page that lists it, and waits until it is really playing. */
 const play = async (page: Page, title: string): Promise<void> => {
-  await page.getByRole("button", { name: `Play ${title}` }).first().click({ force: true });
+  await page
+    .getByRole("button", { name: `Play ${title}` })
+    .first()
+    .click({ force: true });
   await waitUntilPlaying(page);
 };
 const playFilm = (page: Page): Promise<void> => play(page, "Film");
@@ -224,15 +234,20 @@ test("supported media plays under the shared controls", async ({ page }, testInf
   await signIn(page);
   await page.goto("/web/library");
   // Linux WebKit reports a synthetic status-zero response before its media backend's HTTP request.
-  const stream = page.waitForResponse((response) =>
-    new URL(response.url()).pathname.startsWith("/api/v1/media/") && response.status() !== 0,
+  const stream = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname.startsWith("/api/v1/media/") && response.status() !== 0,
   );
   await playFilm(page);
   const response = await stream;
   expect([200, 206]).toContain(response.status());
-  expect(response.headers()["content-type"]).toBe(testInfo.project.name === "chromium" ? "video/mp4" : "video/webm");
+  expect(response.headers()["content-type"]).toBe(
+    testInfo.project.name === "chromium" ? "video/mp4" : "video/webm",
+  );
   // A film has no show to place it in, so only the year it came out sits under its title.
-  await expect(page.getByRole("region", { name: "Media player" }).getByText("(2019)")).toBeVisible();
+  await expect(
+    page.getByRole("region", { name: "Media player" }).getByText("(2019)"),
+  ).toBeVisible();
   await testInfo.attach("player on a film", {
     body: await page.screenshot(),
     contentType: "image/png",
@@ -262,7 +277,10 @@ test("supported media plays under the shared controls", async ({ page }, testInf
   // A film has nothing after it, but can still be taken back to its start.
   await expect(page.getByRole("button", { name: "Previous", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next episode" })).toHaveCount(0);
-  await testInfo.attach("player ends at", { body: await page.screenshot(), contentType: "image/png" });
+  await testInfo.attach("player ends at", {
+    body: await page.screenshot(),
+    contentType: "image/png",
+  });
   await page.mouse.move(320, 320);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
@@ -278,7 +296,10 @@ test("each show and film keeps its own volume, across all of a show's episodes",
   const playEpisode = async (season: string, episode: string): Promise<void> => {
     await page.goto("/web/library");
     await page.getByRole("button", { name: "Play Serial" }).first().click({ force: true });
-    await page.getByRole("button", { name: `Play ${season}` }).first().click({ force: true });
+    await page
+      .getByRole("button", { name: `Play ${season}` })
+      .first()
+      .click({ force: true });
     await play(page, episode);
   };
   const playFilmFromLibrary = async (): Promise<void> => {
@@ -381,9 +402,7 @@ test("the player moves between a show's episodes", async ({ page }, testInfo) =>
   });
 });
 
-test("an episode that plays through is followed by the next", async ({
-  page,
-}, testInfo) => {
+test("an episode that plays through is followed by the next", async ({ page }, testInfo) => {
   test.setTimeout(60_000);
   await signIn(page);
   await page.goto("/web/library");
@@ -428,10 +447,7 @@ test("an episode that plays through is followed by the next", async ({
   await expect(upNext).toHaveCount(0);
 });
 
-test("a watch group moves on to the next episode together", async ({
-  page,
-  browser,
-}, testInfo) => {
+test("a watch group moves on to the next episode together", async ({ page, browser }, testInfo) => {
   test.setTimeout(90_000);
   await signIn(page);
   await page.locator(".watch-group-trigger").click();
@@ -493,9 +509,7 @@ test("a watch group moves on to the next episode together", async ({
   await guestContext.close();
 });
 
-test("clicking the video toggles playback without taking focus", async ({
-  page,
-}, testInfo) => {
+test("clicking the video toggles playback without taking focus", async ({ page }, testInfo) => {
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
@@ -519,9 +533,7 @@ test("clicking the video toggles playback without taking focus", async ({
   });
 });
 
-test("double-clicking the video toggles fullscreen without pausing", async ({
-  page,
-}) => {
+test("double-clicking the video toggles fullscreen without pausing", async ({ page }) => {
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
@@ -569,7 +581,9 @@ test("the show drawer opens at the playing episode and plays another", async ({
   await expect(current).toContainText("Signal Fire");
   await expect(current).toContainText("S1 E5 · Now playing");
   await expect(current).toBeInViewport({ ratio: 1 });
-  expect(await drawer.locator(".show-drawer-body").evaluate((body) => body.scrollTop)).toBeGreaterThan(0);
+  expect(
+    await drawer.locator(".show-drawer-body").evaluate((body) => body.scrollTop),
+  ).toBeGreaterThan(0);
   await testInfo.attach("show drawer", { body: await page.screenshot(), contentType: "image/png" });
 
   // The controls stay for as long as the drawer is open.
@@ -634,9 +648,7 @@ test("a film's player has no show drawer", async ({ page }) => {
   await expect(page.getByRole("button", { name: "Episodes", exact: true })).toHaveCount(0);
 });
 
-test("the player controls hide once the viewer is done with the settings", async ({
-  page,
-}) => {
+test("the player controls hide once the viewer is done with the settings", async ({ page }) => {
   await signIn(page);
   await page.goto("/web/library");
   await playFilm(page);
@@ -680,7 +692,9 @@ test("playback info opens from the settings and stays over the video at the top 
   await expect(info).toContainText("Video resolution");
   const box = await info.boundingBox();
   const viewport = page.viewportSize();
-  expect(box !== null && viewport !== null && box.x < viewport.width / 4 && box.y < viewport.height / 4).toBe(true);
+  expect(
+    box !== null && viewport !== null && box.x < viewport.width / 4 && box.y < viewport.height / 4,
+  ).toBe(true);
 
   // Still there to read once the controls have hidden.
   await page.mouse.move(320, 320);
@@ -716,7 +730,9 @@ test("a watch group's film starts playing in the browser", async ({ page }) => {
   });
 });
 
-test("older servers keep settings usable without requesting unsupported track memory endpoints", async ({ page }) => {
+test("older servers keep settings usable without requesting unsupported track memory endpoints", async ({
+  page,
+}) => {
   const unsupportedRequests: string[] = [];
   await page.route("**/api/v1/server", async (route) => {
     const response = await route.fetch();
@@ -724,20 +740,27 @@ test("older servers keep settings usable without requesting unsupported track me
     delete identity.capabilities.trackMemory;
     await route.fulfill({ response, json: identity });
   });
-  for (const path of ["**/api/v1/me/track-preferences", "**/api/v1/playback/sessions/*/track-choice"])
+  for (const path of [
+    "**/api/v1/me/track-preferences",
+    "**/api/v1/playback/sessions/*/track-choice",
+  ])
     await page.route(path, async (route) => {
       unsupportedRequests.push(new URL(route.request().url()).pathname);
       await route.fulfill({ status: 404, json: { message: "Not found" } });
     });
   await signIn(page);
   await page.goto("/web/settings");
-  await expect(page.getByText("This server does not support saved audio and subtitle settings.")).toBeVisible();
+  await expect(
+    page.getByText("This server does not support saved audio and subtitle settings."),
+  ).toBeVisible();
   await expect(page.getByRole("combobox", { name: "Preferred audio language" })).toHaveCount(0);
   await expect(page.getByRole("combobox", { name: "Preferred subtitles" })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Server" })).toBeVisible();
   await expect(page.getByRole("alert")).toHaveCount(0);
   await page.reload();
-  await expect(page.getByText("This server does not support saved audio and subtitle settings.")).toBeVisible();
+  await expect(
+    page.getByText("This server does not support saved audio and subtitle settings."),
+  ).toBeVisible();
   expect(unsupportedRequests).toEqual([]);
 });
 
@@ -758,9 +781,11 @@ test("audio and subtitle settings persist after reload", async ({ page }) => {
   await expect(audio).toContainText("Japanese");
   await expect(subtitles).toContainText("English");
   // Restore the shared fixture's preferences for the next browser project.
-  await audio.click(); await page.getByRole("option", { name: "English", exact: true }).click();
+  await audio.click();
+  await page.getByRole("option", { name: "English", exact: true }).click();
   await expect(audio).toContainText("English");
-  await subtitles.click(); await page.getByRole("option", { name: "Off", exact: true }).click();
+  await subtitles.click();
+  await page.getByRole("option", { name: "Off", exact: true }).click();
   await expect(subtitles).toContainText("Off");
 });
 

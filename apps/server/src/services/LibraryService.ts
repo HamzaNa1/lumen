@@ -1,29 +1,34 @@
-import { ServerLogger } from "../core/Logger";
+import { lstat } from "node:fs/promises";
 import type { Library, LibraryGrant, LibraryRoot } from "@lumen/contracts";
 import {
   catalogItems,
   Database,
   libraries,
   libraryProfiles,
-  libraryRoots,
   libraryRootStates,
+  libraryRoots,
   mediaSources,
   Repositories,
   scanRuns,
   serverLibraryWatchState,
 } from "@lumen/database";
 import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
-import { lstat } from "node:fs/promises";
+import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
 import { mapRepositoryError } from "../core/Cause";
 import { conflict, notFound } from "../core/Errors";
+import { ServerLogger } from "../core/Logger";
 import { assertNoRootOverlap, canonicalPath } from "../core/Paths";
 import { newUuid } from "../core/Security";
+import type {
+  CreateGrantBody,
+  CreateLibraryBody,
+  CreateRootBody,
+  StartScanBody,
+  UpdateLibraryBody,
+} from "../http/Schemas";
 import { insertScanRun } from "../jobs/ScanJobs";
 import { purgeLibrary, purgeSources } from "./CatalogPurge";
-import type { CreateLibraryBody, CreateRootBody, UpdateLibraryBody } from "../http/Schemas";
-import type { Schema } from "effect";
-import type { CreateGrantBody, StartScanBody } from "../http/Schemas";
 
 type LibraryInput = Schema.Schema.Type<typeof CreateLibraryBody>;
 type UpdateLibraryInput = Schema.Schema.Type<typeof UpdateLibraryBody>;
@@ -158,7 +163,9 @@ export const makeLibraryService = Effect.gen(function* () {
         .transaction((transaction) => purgeLibrary(transaction, libraryId))
         .pipe(
           Effect.tapError((cause) =>
-            Effect.sync(() => logger.error("library_deleted", { libraryId, result: "failed" }, cause)),
+            Effect.sync(() =>
+              logger.error("library_deleted", { libraryId, result: "failed" }, cause),
+            ),
           ),
         );
       logger.info("library_deleted", {
@@ -266,7 +273,9 @@ export const makeLibraryService = Effect.gen(function* () {
         )
         .pipe(
           Effect.tapError((cause) =>
-            Effect.sync(() => logger.error("library_root_deleted", { rootId, result: "failed" }, cause)),
+            Effect.sync(() =>
+              logger.error("library_root_deleted", { rootId, result: "failed" }, cause),
+            ),
           ),
         );
       logger.info("library_root_deleted", { rootId, result: "succeeded", ...counts });
@@ -350,7 +359,10 @@ export const makeLibraryService = Effect.gen(function* () {
       }),
     );
     logger.info("scan_run_queued", {
-      runId, libraryId: input.libraryId, mode: input.mode, roots: enabledRoots.length,
+      runId,
+      libraryId: input.libraryId,
+      mode: input.mode,
+      roots: enabledRoots.length,
     });
     return { runId };
   });

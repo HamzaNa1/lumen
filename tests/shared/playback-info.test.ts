@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import type { PlayableStream, PlayerSession } from "../../packages/contracts/src/index.ts";
 import { describePlayback, measuredSize } from "../../packages/client/src/index.ts";
+import type { PlayableStream, PlayerSession } from "../../packages/contracts/src/index.ts";
 
 const stream = (id: string, overrides: Partial<PlayableStream> = {}): PlayableStream => ({
   id,

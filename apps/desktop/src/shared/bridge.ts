@@ -1,20 +1,20 @@
 import type {
   AccountsRuntime,
-  TrackSettingsRuntime,
   AdminRuntime,
   ArtworkRuntime,
   CatalogRuntime,
+  TrackSettingsRuntime,
   Unsubscribe,
   WatchRuntime,
 } from "@lumen/client/runtime";
 import type {
   AudioOutput,
-  TrackKind,
   IpcPlayerSurfaceBounds,
   PlaybackInfo,
   PlayerAction,
   PlayerDisplay,
   PlayerState,
+  TrackKind,
 } from "@lumen/contracts";
 
 /**

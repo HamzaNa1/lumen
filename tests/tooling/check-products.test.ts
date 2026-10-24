@@ -26,7 +26,13 @@ const fixture = () => {
     mkdirSync(dirname(join(root, path)), { recursive: true });
     writeFileSync(join(root, path), content);
   };
-  for (const path of ["scripts", ".github", "biome.json", "tsconfig.base.json", "tsconfig.scripts.json"])
+  for (const path of [
+    "scripts",
+    ".github",
+    "biome.json",
+    "tsconfig.base.json",
+    "tsconfig.scripts.json",
+  ])
     cpSync(join(repository, path), join(root, path), { recursive: true });
   const manifest = JSON.parse(readFileSync(join(repository, "package.json"), "utf8"));
   write("package.json", JSON.stringify(manifest));

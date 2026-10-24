@@ -13,7 +13,12 @@ describe("RangePolicy", () => {
   });
 
   test("parses overflow-scale headers without numeric overflow", () => {
-    expect(decideRange("bytes=-999999999999999999999", 10)).toEqual({ kind: "partial", start: 0, end: 9, size: 10 });
+    expect(decideRange("bytes=-999999999999999999999", 10)).toEqual({
+      kind: "partial",
+      start: 0,
+      end: 9,
+      size: 10,
+    });
     expect(decideRange("bytes=999999999999999999999-", 10)).toEqual({ kind: "unsatisfiable" });
   });
 
@@ -47,8 +52,16 @@ describe("RangePolicy", () => {
       nowMs: 0,
     };
     expect(decideConditional({ ...base, ifNoneMatch: '"abc"' })).toBe("not_modified");
-    expect(decideConditional({ ...base, ifNoneMatch: '"other"', ifModifiedSince: "Thu, 02 Jan 2025 00:00:00 GMT" })).toBe("ok");
+    expect(
+      decideConditional({
+        ...base,
+        ifNoneMatch: '"other"',
+        ifModifiedSince: "Thu, 02 Jan 2025 00:00:00 GMT",
+      }),
+    ).toBe("ok");
     expect(decideConditional({ ...base, ifMatch: '"other"' })).toBe("precondition_failed");
-    expect(decideConditional({ ...base, ifUnmodifiedSince: "Tue, 31 Dec 2024 00:00:00 GMT" })).toBe("precondition_failed");
+    expect(decideConditional({ ...base, ifUnmodifiedSince: "Tue, 31 Dec 2024 00:00:00 GMT" })).toBe(
+      "precondition_failed",
+    );
   });
 });

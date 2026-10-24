@@ -2,8 +2,8 @@ import type { LumenRuntime } from "@lumen/client/runtime";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { RouterProvider } from "@tanstack/react-router";
 import { type ReactNode, useState } from "react";
-import { type AppRouterOptions, createAppRouter } from "./router";
 import { RuntimeProvider } from "./Runtime";
+import { type AppRouterOptions, createAppRouter } from "./router";
 
 /**
  * Reads may be retried once; a request cancelled because its session ended is never repeated.

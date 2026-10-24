@@ -103,17 +103,20 @@ export const ConnectPage = ({
       .then(() => onChanged?.())
       .catch((cause) => setError(errorMessage(cause, "Could not remove server")));
   };
-  const signInAgain = useCallback(async (account: AccountSummary): Promise<void> => {
-    setOrigin(account.origin);
-    setUsername(account.username);
-    setError(null);
-    try {
-      setServer(await runtime.accounts.discoverServer(account.origin));
-      setShowAddServer(true);
-    } catch (cause) {
-      setError(errorMessage(cause, "Could not reach that server"));
-    }
-  }, [runtime]);
+  const signInAgain = useCallback(
+    async (account: AccountSummary): Promise<void> => {
+      setOrigin(account.origin);
+      setUsername(account.username);
+      setError(null);
+      try {
+        setServer(await runtime.accounts.discoverServer(account.origin));
+        setShowAddServer(true);
+      } catch (cause) {
+        setError(errorMessage(cause, "Could not reach that server"));
+      }
+    },
+    [runtime],
+  );
   useEffect(() => {
     if (initialSignInAccount != null) void signInAgain(initialSignInAccount);
   }, [initialSignInAccount, signInAgain]);

@@ -1,9 +1,9 @@
-import { app } from "electron";
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import type { AccountSummary, AccountList, UserRole } from "@lumen/contracts";
-import { createTokenVault, writePrivateJson, type VaultValue } from "./TokenVault";
+import type { AccountList, AccountSummary, UserRole } from "@lumen/contracts";
+import { app } from "electron";
 import type { AccountSession } from "../api/ServerClient";
+import { createTokenVault, type VaultValue, writePrivateJson } from "./TokenVault";
 
 interface StoredAccount {
   readonly connectionId: string;
@@ -65,15 +65,22 @@ export class AccountRegistry {
   }
 
   async list(): Promise<AccountList> {
-    const accounts = await Promise.all(this.data.accounts.map(async (account): Promise<AccountSummary> => ({
-      ...account,
-      secureStorageAvailable: (await this.vaultFor(account.connectionId)).available,
-    })));
+    const accounts = await Promise.all(
+      this.data.accounts.map(
+        async (account): Promise<AccountSummary> => ({
+          ...account,
+          secureStorageAvailable: (await this.vaultFor(account.connectionId)).available,
+        }),
+      ),
+    );
     return { activeConnectionId: this.data.activeConnectionId, accounts };
   }
 
   active(): StoredAccount | null {
-    return this.data.accounts.find((account) => account.connectionId === this.data.activeConnectionId) ?? null;
+    return (
+      this.data.accounts.find((account) => account.connectionId === this.data.activeConnectionId) ??
+      null
+    );
   }
 
   find(connectionId: string): StoredAccount | null {
@@ -104,16 +111,21 @@ export class AccountRegistry {
     };
     const next: RegistryData = {
       activeConnectionId: input.connectionId,
-      accounts: [...this.data.accounts.filter((account) => account.connectionId !== input.connectionId), record],
+      accounts: [
+        ...this.data.accounts.filter((account) => account.connectionId !== input.connectionId),
+        record,
+      ],
     };
     const vault = await this.vaultFor(input.connectionId);
-    await vault.write(JSON.stringify({
-      userId: input.userId,
-      role: input.role,
-      sessionId: input.sessionId,
-      accessToken: input.accessToken,
-      accessExpiresAtMs: input.accessExpiresAtMs,
-    }));
+    await vault.write(
+      JSON.stringify({
+        userId: input.userId,
+        role: input.role,
+        sessionId: input.sessionId,
+        accessToken: input.accessToken,
+        accessExpiresAtMs: input.accessExpiresAtMs,
+      }),
+    );
     await writePrivateJson(this.path, next);
     this.data = next;
   }
@@ -128,17 +140,26 @@ export class AccountRegistry {
     if (this.find(connectionId) === null) throw new Error("Connection not found");
     this.data = {
       ...this.data,
-      accounts: this.data.accounts.map((account) => account.connectionId === connectionId ? { ...account, role } : account),
+      accounts: this.data.accounts.map((account) =>
+        account.connectionId === connectionId ? { ...account, role } : account,
+      ),
     };
     await writePrivateJson(this.path, this.data);
   }
 
   /** Records what a server now calls itself on every account that connects to it. */
   async updateServerName(serverId: string, serverName: string): Promise<void> {
-    if (this.data.accounts.every((account) => account.serverId !== serverId || account.serverName === serverName)) return;
+    if (
+      this.data.accounts.every(
+        (account) => account.serverId !== serverId || account.serverName === serverName,
+      )
+    )
+      return;
     this.data = {
       ...this.data,
-      accounts: this.data.accounts.map((account) => account.serverId === serverId ? { ...account, serverName } : account),
+      accounts: this.data.accounts.map((account) =>
+        account.serverId === serverId ? { ...account, serverName } : account,
+      ),
     };
     await writePrivateJson(this.path, this.data);
   }
@@ -164,7 +185,8 @@ export class AccountRegistry {
     await vault.clear();
     this.vaults.delete(connectionId);
     this.data = {
-      activeConnectionId: this.data.activeConnectionId === connectionId ? null : this.data.activeConnectionId,
+      activeConnectionId:
+        this.data.activeConnectionId === connectionId ? null : this.data.activeConnectionId,
       accounts: this.data.accounts.filter((account) => account.connectionId !== connectionId),
     };
     await writePrivateJson(this.path, this.data);

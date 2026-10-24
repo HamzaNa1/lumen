@@ -1,7 +1,6 @@
-import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { expect, test } from "bun:test";
 import type { PlayerState } from "@lumen/contracts";
-import { watchPosition } from "../../packages/contracts/src/watch-groups";
+import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import {
   type PlayerBuffer,
   type ServerApi,
@@ -9,6 +8,7 @@ import {
   type WatchPlayer,
   type WatchServer,
 } from "../../packages/client/src/index.ts";
+import { watchPosition } from "../../packages/contracts/src/watch-groups";
 import { eventually } from "../helpers/eventually";
 import { watchFixture, watchProxy } from "../helpers/watch-groups";
 
@@ -54,10 +54,14 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
       this.samplesSkipped += 1;
       return null;
     }
-    return this.state === null ? null : {
-      ...this.state, sampledAtMs: performance.now(), speed: this.rate,
-      advancing: !this.state.paused && !this.starved,
-    };
+    return this.state === null
+      ? null
+      : {
+          ...this.state,
+          sampledAtMs: performance.now(),
+          speed: this.rate,
+          advancing: !this.state.paused && !this.starved,
+        };
   }
   seeks = 0;
   async seek(_sessionId: string, positionSeconds: number) {
@@ -90,7 +94,9 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
     this.bufferGate = null;
     if (gate === null && performance.now() < this.seekingUntil)
       return { aheadSeconds: 0, starved: false, settled: false };
-    return gate ?? { aheadSeconds: this.aheadSeconds, starved: this.starved, settled: this.settled };
+    return (
+      gate ?? { aheadSeconds: this.aheadSeconds, starved: this.starved, settled: this.settled }
+    );
   }
 }
 
@@ -466,58 +472,67 @@ const groupViewer = async (
   return { native, playback };
 };
 
-test.each([false, true])("a late join buffers before the group plays on (already held: %s)", async (held) => {
-  const fixture = await watchFixture();
-  const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
-  try {
-    const owner = await fixture.connect(await fixture.login());
-    await owner.action({ type: "create", name: "Movie night", password: "" });
-    const groupId = owner.status.group?.id ?? "";
-    const existing = await groupViewer(fixture, groupId, "existing");
-    viewers.push(existing.playback);
-    existing.native.aheadSeconds = held ? 0 : 5;
-    await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
-    await eventually(() => existing.native.state?.paused === held && existing.native.seeks > 0);
-    const revision = owner.status.group?.revision;
-    const seeks = existing.native.seeks;
+test.each([false, true])(
+  "a late join buffers before the group plays on (already held: %s)",
+  async (held) => {
+    const fixture = await watchFixture();
+    const viewers: WatchPlaybackController<ServerApi & WatchServer>[] = [];
+    try {
+      const owner = await fixture.connect(await fixture.login());
+      await owner.action({ type: "create", name: "Movie night", password: "" });
+      const groupId = owner.status.group?.id ?? "";
+      const existing = await groupViewer(fixture, groupId, "existing");
+      viewers.push(existing.playback);
+      existing.native.aheadSeconds = held ? 0 : 5;
+      await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
+      await eventually(() => existing.native.state?.paused === held && existing.native.seeks > 0);
+      const revision = owner.status.group?.revision;
+      const seeks = existing.native.seeks;
 
-    const native = new NativePlayback();
-    native.aheadSeconds = 1;
-    const late = await groupViewer(fixture, groupId, "late", native);
-    viewers.push(late.playback);
-    await eventually(
-      () =>
-        owner.status.group?.playback?.waitingFor?.includes(late.playback.status.memberId ?? "") ===
-        true,
-    );
-    await eventually(() => native.state?.paused === true);
-    if (held) {
-      expect(owner.status.group?.revision).toBe(revision);
-      expect(existing.native.seeks).toBe(seeks);
+      const native = new NativePlayback();
+      native.aheadSeconds = 1;
+      const late = await groupViewer(fixture, groupId, "late", native);
+      viewers.push(late.playback);
+      await eventually(
+        () =>
+          owner.status.group?.playback?.waitingFor?.includes(
+            late.playback.status.memberId ?? "",
+          ) === true,
+      );
+      await eventually(() => native.state?.paused === true);
+      if (held) {
+        expect(owner.status.group?.revision).toBe(revision);
+        expect(existing.native.seeks).toBe(seeks);
+      }
+      existing.native.aheadSeconds = 5;
+      await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
+      expect(owner.status.group?.playback?.waitingFor).toEqual([
+        late.playback.status.memberId ?? expect.unreachable(),
+      ]);
+      const position = owner.status.group?.playback?.positionSeconds;
+      expect(position).toBeGreaterThanOrEqual(3);
+
+      native.aheadSeconds = 4.9;
+      await Bun.sleep(700);
+      expect(owner.status.group?.playback?.paused).toBe(true);
+      expect(existing.native.state?.paused).toBe(true);
+      expect(native.state).toMatchObject({ paused: true, positionSeconds: position });
+
+      native.aheadSeconds = 5;
+      await eventually(
+        () => existing.native.state?.paused === false && native.state?.paused === false,
+      );
+      expect(owner.status.group?.playback).toMatchObject({
+        paused: false,
+        positionSeconds: position,
+      });
+      expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
+    } finally {
+      for (const viewer of viewers) viewer.close();
+      await fixture.close();
     }
-    existing.native.aheadSeconds = 5;
-    await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
-    expect(owner.status.group?.playback?.waitingFor).toEqual([late.playback.status.memberId ?? expect.unreachable()]);
-    const position = owner.status.group?.playback?.positionSeconds;
-    expect(position).toBeGreaterThanOrEqual(3);
-
-    native.aheadSeconds = 4.9;
-    await Bun.sleep(700);
-    expect(owner.status.group?.playback?.paused).toBe(true);
-    expect(existing.native.state?.paused).toBe(true);
-    expect(native.state).toMatchObject({ paused: true, positionSeconds: position });
-
-    native.aheadSeconds = 5;
-    await eventually(
-      () => existing.native.state?.paused === false && native.state?.paused === false,
-    );
-    expect(owner.status.group?.playback).toMatchObject({ paused: false, positionSeconds: position });
-    expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
-  } finally {
-    for (const viewer of viewers) viewer.close();
-    await fixture.close();
-  }
-});
+  },
+);
 
 test("a member that rejoins a held group reports readiness again at the same revision", async () => {
   const fixture = await watchFixture();
@@ -532,7 +547,9 @@ test("a member that rejoins a held group reports readiness again at the same rev
     slow.native.aheadSeconds = 0;
     await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 3 });
     await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
-    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId ?? expect.unreachable()]);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([
+      slow.playback.status.memberId ?? expect.unreachable(),
+    ]);
     const revision = owner.status.group?.revision;
 
     await fast.playback.action({ type: "leave" });
@@ -542,9 +559,13 @@ test("a member that rejoins a held group reports readiness again at the same rev
     expect(owner.status.group?.revision).toBe(revision);
     fast.native.aheadSeconds = 5;
     await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
-    expect(owner.status.group?.playback?.waitingFor).toEqual([slow.playback.status.memberId ?? expect.unreachable()]);
+    expect(owner.status.group?.playback?.waitingFor).toEqual([
+      slow.playback.status.memberId ?? expect.unreachable(),
+    ]);
     slow.native.aheadSeconds = 5;
-    await eventually(() => fast.native.state?.paused === false && slow.native.state?.paused === false);
+    await eventually(
+      () => fast.native.state?.paused === false && slow.native.state?.paused === false,
+    );
   } finally {
     for (const viewer of viewers) viewer.close();
     await fixture.close();
@@ -580,7 +601,9 @@ test("a group holds until a slow viewer has loaded, without making that viewer s
     expect(slow.native.seeks).toBe(seeks);
 
     slow.native.aheadSeconds = 5;
-    await eventually(() => fast.native.state?.paused === false && slow.native.state?.paused === false);
+    await eventually(
+      () => fast.native.state?.paused === false && slow.native.state?.paused === false,
+    );
     expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 3, paused: false });
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
     // Playback starts from where both players were already waiting.
@@ -612,7 +635,12 @@ test("a held group can be paused, and stops waiting for a viewer who leaves", as
     expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 40, paused: true });
 
     // Pausing ends the wait: the group is simply paused, whoever loads afterwards.
-    await owner.action({ type: "pause", itemId: fixture.itemId, paused: true, positionSeconds: 40 });
+    await owner.action({
+      type: "pause",
+      itemId: fixture.itemId,
+      paused: true,
+      positionSeconds: 40,
+    });
     expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 40, paused: true });
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
     slow.native.aheadSeconds = 5;
@@ -621,10 +649,20 @@ test("a held group can be paused, and stops waiting for a viewer who leaves", as
 
     // Resuming holds again, and asking once more to play does not cut the wait short.
     slow.native.aheadSeconds = 4.9;
-    await owner.action({ type: "pause", itemId: fixture.itemId, paused: false, positionSeconds: 40 });
+    await owner.action({
+      type: "pause",
+      itemId: fixture.itemId,
+      paused: false,
+      positionSeconds: 40,
+    });
     await eventually(() => owner.status.group?.playback?.waitingFor?.length === 1);
     const held = owner.status.group?.revision;
-    await owner.action({ type: "pause", itemId: fixture.itemId, paused: false, positionSeconds: 40 });
+    await owner.action({
+      type: "pause",
+      itemId: fixture.itemId,
+      paused: false,
+      positionSeconds: 40,
+    });
     expect(owner.status.group?.revision).toBe(held);
     expect(owner.status.group?.playback?.paused).toBe(true);
 
@@ -663,7 +701,9 @@ test("readiness answered after the viewer changed groups does not release the ne
     });
     await second.action({ type: "play", itemId: fixture.itemId, positionSeconds: 50 });
     expect(second.status.group?.revision).toBe(held);
-    expect(second.status.group?.playback?.waitingFor).toEqual([viewer.playback.status.memberId ?? expect.unreachable()]);
+    expect(second.status.group?.playback?.waitingFor).toEqual([
+      viewer.playback.status.memberId ?? expect.unreachable(),
+    ]);
 
     viewer.native.aheadSeconds = 0;
     answer.resolve({ aheadSeconds: 5, starved: false, settled: false });
@@ -821,7 +861,9 @@ test("members are told how much each other's players have buffered, for as long 
     await thin.playback.action({ type: "leave" });
     expect(thin.playback.status.buffers).toEqual([]);
     await eventually(() => owner.status.buffers.length === 1);
-    expect(owner.status.buffers[0]?.memberId).toBe(ample.playback.status.memberId ?? expect.unreachable());
+    expect(owner.status.buffers[0]?.memberId).toBe(
+      ample.playback.status.memberId ?? expect.unreachable(),
+    );
 
     // Nothing is buffered for a group with nothing on.
     await owner.action({ type: "stop", itemId: fixture.itemId });

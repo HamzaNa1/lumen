@@ -5,9 +5,9 @@ import {
   type IncomingMessage,
   type ServerResponse,
 } from "node:http";
-import { PlaybackDiagnostics } from "../../packages/client/src/playback/PlaybackDiagnostics";
-import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
+import { PlaybackDiagnostics } from "../../packages/client/src/playback/PlaybackDiagnostics";
 
 const waitFor = async (condition: () => boolean): Promise<void> => {
   for (let attempt = 0; attempt < 200 && !condition(); attempt += 1)

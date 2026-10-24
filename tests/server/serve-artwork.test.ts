@@ -7,7 +7,8 @@ import { serveArtwork } from "../../apps/server/src/http/ServeArtwork";
 
 const directories: string[] = [];
 afterEach(async () => {
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0))
+    await rm(directory, { recursive: true, force: true });
 });
 
 const artwork = async () => {

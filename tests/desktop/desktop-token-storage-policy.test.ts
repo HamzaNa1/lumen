@@ -8,7 +8,17 @@ describe("desktop token storage availability", () => {
 
   test("uses private file storage when the Linux backend is unknown or basic text", () => {
     expect(canEncryptTokens({ isEncryptionAvailable: () => true }, "linux")).toBe(false);
-    expect(canEncryptTokens({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "basic_text" }, "linux")).toBe(false);
-    expect(canEncryptTokens({ isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "kwallet" }, "linux")).toBe(true);
+    expect(
+      canEncryptTokens(
+        { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "basic_text" },
+        "linux",
+      ),
+    ).toBe(false);
+    expect(
+      canEncryptTokens(
+        { isEncryptionAvailable: () => true, getSelectedStorageBackend: () => "kwallet" },
+        "linux",
+      ),
+    ).toBe(true);
   });
 });

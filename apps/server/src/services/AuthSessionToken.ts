@@ -7,7 +7,11 @@ export const sessionVerificationIntervalMs = 60 * 60 * 1000;
 export const createSessionToken = (): { id: string; token: string; secretHash: string } => {
   const id = crypto.randomUUID();
   const secret = crypto.getRandomValues(new Uint8Array(32));
-  return { id, token: `${id}.${Buffer.from(secret).toString("base64url")}`, secretHash: hashSecret(secret) };
+  return {
+    id,
+    token: `${id}.${Buffer.from(secret).toString("base64url")}`,
+    secretHash: hashSecret(secret),
+  };
 };
 
 const hashSecret = (secret: Uint8Array): string =>
@@ -29,5 +33,8 @@ export const verifySessionToken = (token: string, id: string, storedHash: string
 export const sessionIdFromToken = (token: string): string | null => {
   if (token.length !== 80) return null;
   const parts = token.split(".");
-  return parts.length === 2 && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(parts[0]) ? parts[0] : null;
+  return parts.length === 2 &&
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u.test(parts[0])
+    ? parts[0]
+    : null;
 };

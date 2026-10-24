@@ -59,13 +59,19 @@ class FullscreenWindow extends EventEmitter {
 test("each toggle changes fullscreen once when Windows emits events before updating its state", async () => {
   const parent = new FullscreenWindow(true);
   const overlay = new FullscreenWindow();
-  const stopBroadcast = broadcastPlayerFullscreen(parent.asBrowserWindow(), overlay.asBrowserWindow());
+  const stopBroadcast = broadcastPlayerFullscreen(
+    parent.asBrowserWindow(),
+    overlay.asBrowserWindow(),
+  );
   const states = [[], []] as [boolean[], boolean[]];
   const unsubscribe = [parent, overlay].map((window, index) =>
-    observeFullscreenState({
-      fullscreenState: async () => parent.isFullScreen(),
-      onFullscreenChange: window.onFullscreenChange,
-    }, (value) => states[index]?.push(value)),
+    observeFullscreenState(
+      {
+        fullscreenState: async () => parent.isFullScreen(),
+        onFullscreenChange: window.onFullscreenChange,
+      },
+      (value) => states[index]?.push(value),
+    ),
   );
   await Promise.resolve();
 
@@ -91,23 +97,35 @@ test("each toggle changes fullscreen once when Windows emits events before updat
 test("both renderers follow fullscreen changes, including exiting playback and reusing the controls", async () => {
   const parent = new FullscreenWindow();
   const overlay = new FullscreenWindow();
-  const stopBroadcast = broadcastPlayerFullscreen(parent.asBrowserWindow(), overlay.asBrowserWindow());
+  const stopBroadcast = broadcastPlayerFullscreen(
+    parent.asBrowserWindow(),
+    overlay.asBrowserWindow(),
+  );
   const states = [[], []] as [boolean[], boolean[]];
   const unsubscribe = [parent, overlay].map((window, index) =>
-    observeFullscreenState({
-      fullscreenState: async () => parent.isFullScreen(),
-      onFullscreenChange: window.onFullscreenChange,
-    }, (value) => states[index]?.push(value)),
+    observeFullscreenState(
+      {
+        fullscreenState: async () => parent.isFullScreen(),
+        onFullscreenChange: window.onFullscreenChange,
+      },
+      (value) => states[index]?.push(value),
+    ),
   );
   await Promise.resolve();
 
   parent.setFullScreen(true);
   // Back exits fullscreen from the main renderer; the controls stay mounted between videos.
   parent.setFullScreen(false);
-  expect(states).toEqual([[false, true, false], [false, true, false]]);
+  expect(states).toEqual([
+    [false, true, false],
+    [false, true, false],
+  ]);
   // The next click enters fullscreen instead of using the previous video's stale state.
   parent.setFullScreen(!states[1].at(-1));
-  expect(states).toEqual([[false, true, false, true], [false, true, false, true]]);
+  expect(states).toEqual([
+    [false, true, false, true],
+    [false, true, false, true],
+  ]);
 
   for (const dispose of unsubscribe) dispose();
   stopBroadcast();
@@ -131,10 +149,13 @@ test("a late initial fullscreen reply cannot overwrite newer window events", asy
   const window = new FullscreenWindow();
   const snapshot = Promise.withResolvers<boolean>();
   const states: boolean[] = [];
-  const dispose = observeFullscreenState({
-    fullscreenState: () => snapshot.promise,
-    onFullscreenChange: window.onFullscreenChange,
-  }, (value) => states.push(value));
+  const dispose = observeFullscreenState(
+    {
+      fullscreenState: () => snapshot.promise,
+      onFullscreenChange: window.onFullscreenChange,
+    },
+    (value) => states.push(value),
+  );
   window.webContents.send("player:fullscreen-state", true);
   window.webContents.send("player:fullscreen-state", false);
   snapshot.resolve(true);
@@ -147,10 +168,13 @@ test("an unmounted fullscreen observer ignores pending replies and unsubscribes"
   const window = new FullscreenWindow();
   const snapshot = Promise.withResolvers<boolean>();
   const states: boolean[] = [];
-  const dispose = observeFullscreenState({
-    fullscreenState: () => snapshot.promise,
-    onFullscreenChange: window.onFullscreenChange,
-  }, (value) => states.push(value));
+  const dispose = observeFullscreenState(
+    {
+      fullscreenState: () => snapshot.promise,
+      onFullscreenChange: window.onFullscreenChange,
+    },
+    (value) => states.push(value),
+  );
   dispose();
   snapshot.resolve(true);
   window.webContents.send("player:fullscreen-state", true);
@@ -163,10 +187,13 @@ test("fullscreen events still update the controls if the initial state request f
   const window = new FullscreenWindow();
   const snapshot = Promise.reject(new Error("Window is starting"));
   const states: boolean[] = [];
-  const dispose = observeFullscreenState({
-    fullscreenState: () => snapshot,
-    onFullscreenChange: window.onFullscreenChange,
-  }, (value) => states.push(value));
+  const dispose = observeFullscreenState(
+    {
+      fullscreenState: () => snapshot,
+      onFullscreenChange: window.onFullscreenChange,
+    },
+    (value) => states.push(value),
+  );
   await snapshot.catch(() => undefined);
   window.webContents.send("player:fullscreen-state", true);
   expect(states).toEqual([true]);

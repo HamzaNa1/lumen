@@ -25,6 +25,7 @@ import {
 import { and, asc, eq, inArray, isNull } from "drizzle-orm";
 import { Effect, Schema } from "effect";
 import type { DatabaseClient } from "../Database";
+import { catalogItems } from "../tables/ServerSchema";
 import {
   albums,
   artists,
@@ -38,7 +39,6 @@ import {
   trackMetadata,
   tracks,
 } from "../tables/schema";
-import { catalogItems } from "../tables/ServerSchema";
 import { boundary, encodeJson, guard } from "./Boundary";
 
 const sourceSelection = {

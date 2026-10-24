@@ -7,8 +7,7 @@ type CookiePolicy = Pick<ServerConfig, "cookieSecure">;
 
 const HOST = /^(?:[A-Za-z0-9.-]+|\[[0-9A-Fa-f:.]+\])(?::\d{1,5})?$/u;
 
-const firstValue = (header: string | null): string | null =>
-  header?.split(",")[0]?.trim() || null;
+const firstValue = (header: string | null): string | null => header?.split(",")[0]?.trim() || null;
 
 /**
  * The origin the client used to reach this server. Behind a TLS-terminating proxy the request
@@ -83,8 +82,7 @@ export const sessionCookie = (
   token: string,
   expiresAtMs: number,
   nowMs: number,
-): string =>
-  cookie(request, policy, token, Math.max(0, Math.floor((expiresAtMs - nowMs) / 1000)));
+): string => cookie(request, policy, token, Math.max(0, Math.floor((expiresAtMs - nowMs) / 1000)));
 
 export const clearedSessionCookie = (request: Request, policy: CookiePolicy): string =>
   cookie(request, policy, "", 0);

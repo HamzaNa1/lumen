@@ -1,9 +1,9 @@
-import { createLogger } from "../core/Logger";
-import { DatabaseWithMigrationsLive } from "@lumen/database";
-import { Effect } from "effect";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
+import { DatabaseWithMigrationsLive } from "@lumen/database";
+import { Effect } from "effect";
 import { makeServerConfig } from "../config/ServerConfig";
+import { createLogger } from "../core/Logger";
 
 let logger = createLogger().child({ component: "database" });
 

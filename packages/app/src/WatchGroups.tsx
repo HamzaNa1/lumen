@@ -228,40 +228,40 @@ const CreateGroupForm = ({
   readonly onCreate: (name: string, password: string) => void;
   readonly onCancel: () => void;
 }): React.ReactElement => (
-    <form
-      className="watch-group-form"
-      onSubmit={(event) => {
-        event.preventDefault();
-        onCreate(name.trim(), password);
-      }}
-    >
-      <TextField
-        label="Name"
-        placeholder="Movie night"
-        autoFocus
-        required
-        maxLength={80}
-        value={name}
-        onValueChange={(name) => onDraft({ name, password })}
-      />
-      <TextField
-        label="Password"
-        description="Optional. Leave empty to let anyone join."
-        type="password"
-        autoComplete="new-password"
-        maxLength={128}
-        value={password}
-        onValueChange={(password) => onDraft({ name, password })}
-      />
-      <div className="dialog-actions">
-        <Button variant="ghost" onClick={onCancel}>
-          Cancel
-        </Button>
-        <Button type="submit" variant="primary" disabled={disabled || name.trim() === ""}>
-          Create group
-        </Button>
-      </div>
-    </form>
+  <form
+    className="watch-group-form"
+    onSubmit={(event) => {
+      event.preventDefault();
+      onCreate(name.trim(), password);
+    }}
+  >
+    <TextField
+      label="Name"
+      placeholder="Movie night"
+      autoFocus
+      required
+      maxLength={80}
+      value={name}
+      onValueChange={(name) => onDraft({ name, password })}
+    />
+    <TextField
+      label="Password"
+      description="Optional. Leave empty to let anyone join."
+      type="password"
+      autoComplete="new-password"
+      maxLength={128}
+      value={password}
+      onValueChange={(password) => onDraft({ name, password })}
+    />
+    <div className="dialog-actions">
+      <Button variant="ghost" onClick={onCancel}>
+        Cancel
+      </Button>
+      <Button type="submit" variant="primary" disabled={disabled || name.trim() === ""}>
+        Create group
+      </Button>
+    </div>
+  </form>
 );
 
 const ActiveGroup = ({

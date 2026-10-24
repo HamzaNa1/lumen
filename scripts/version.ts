@@ -1,12 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import {
-  isReleaseVersion,
-  repositoryRoot,
-  run,
-} from "./lib/releases";
-import { parseProduct, products, type Product } from "./lib/products";
+import { type Product, parseProduct, products } from "./lib/products";
+import { isReleaseVersion, repositoryRoot, run } from "./lib/releases";
 
 export const verifyVersion = (product: Product, version: string, root = repositoryRoot): void => {
   if (!isReleaseVersion(version)) throw new Error(`Invalid release version: ${version}`);

@@ -26,7 +26,6 @@ import {
   type WorkspaceValue,
 } from "./Workspace";
 
-
 export const App = (): React.ReactElement => {
   const runtime = useRuntime();
   const presentation = runtime.playback.presentation;
@@ -46,7 +45,9 @@ export const App = (): React.ReactElement => {
   const [player, setPlayer] = useState<PlayerState | null>(null);
   const [playbackLoading, setPlaybackLoading] = useState(false);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
-  const [connectionsView, setConnectionsView] = useState<"starting" | "saved" | "add" | null>("starting");
+  const [connectionsView, setConnectionsView] = useState<"starting" | "saved" | "add" | null>(
+    "starting",
+  );
   const [startupError, setStartupError] = useState<string | null>(null);
   const startupAttempted = useRef(false);
   const [signInAccount, setSignInAccount] = useState<AccountSummary | null>(null);
@@ -67,31 +68,52 @@ export const App = (): React.ReactElement => {
     setPlayer(state);
   }, []);
 
-  useEffect(() => runtime.watch.onState((status) => {
-    const previous = watchRef.current;
-    watchRef.current = status;
-    setWatchStatus(status);
-    if (status.group?.playback == null || status.group.id !== previous?.group?.id || status.group.revision !== previous?.group?.revision) leavingWatch.current = false;
-    if (status.group?.playback != null && status.connection === "connected" && !leavingWatch.current) {
-      setPlayingItem(null);
-      if (status.error !== null) {
-        setPlaybackError(status.error);
-        setPlaybackLoading(false);
-      } else if (activePlayer.current?.itemId !== status.group.playback.itemId) setPlaybackLoading(true);
-      if (activePlayer.current?.itemId !== status.group.playback.itemId) updatePlayer(null);
-      if (!onPlayerRouteRef.current) {
-        returnTo.current = router.state.location.href;
-        void router.navigate({ to: "/player" });
-      }
-    }
-    if (status.group !== null && status.group.playback === null && status.group.revision > 0 && onPlayerRouteRef.current) {
-      void router.navigate({ href: returnTo.current, replace: true });
-    }
-  }), [router, updatePlayer, runtime]);
+  useEffect(
+    () =>
+      runtime.watch.onState((status) => {
+        const previous = watchRef.current;
+        watchRef.current = status;
+        setWatchStatus(status);
+        if (
+          status.group?.playback == null ||
+          status.group.id !== previous?.group?.id ||
+          status.group.revision !== previous?.group?.revision
+        )
+          leavingWatch.current = false;
+        if (
+          status.group?.playback != null &&
+          status.connection === "connected" &&
+          !leavingWatch.current
+        ) {
+          setPlayingItem(null);
+          if (status.error !== null) {
+            setPlaybackError(status.error);
+            setPlaybackLoading(false);
+          } else if (activePlayer.current?.itemId !== status.group.playback.itemId)
+            setPlaybackLoading(true);
+          if (activePlayer.current?.itemId !== status.group.playback.itemId) updatePlayer(null);
+          if (!onPlayerRouteRef.current) {
+            returnTo.current = router.state.location.href;
+            void router.navigate({ to: "/player" });
+          }
+        }
+        if (
+          status.group !== null &&
+          status.group.playback === null &&
+          status.group.revision > 0 &&
+          onPlayerRouteRef.current
+        ) {
+          void router.navigate({ href: returnTo.current, replace: true });
+        }
+      }),
+    [router, updatePlayer, runtime],
+  );
 
   useEffect(
     () =>
-      runtime.accounts.onChange(() => void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY })),
+      runtime.accounts.onChange(
+        () => void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY }),
+      ),
     [queryClient, runtime],
   );
 
@@ -108,7 +130,8 @@ export const App = (): React.ReactElement => {
   useEffect(() => {
     const receivePlayer = (state: PlayerState | null): void => {
       const sharedPlayback = watchRef.current?.group?.playback;
-      if (sharedPlayback != null && state !== null && state.itemId !== sharedPlayback.itemId) return;
+      if (sharedPlayback != null && state !== null && state.itemId !== sharedPlayback.itemId)
+        return;
       if (state !== null && watchRef.current?.group?.playback?.itemId === state.itemId) {
         setPlayingItem(null);
         setPlaybackLoading(false);
@@ -191,7 +214,8 @@ export const App = (): React.ReactElement => {
     accounts.find((account) => account.connectionId === accountsQuery.data?.activeConnectionId) ??
     null;
   useEffect(() => {
-    if (!accountsQuery.isSuccess || connectionsView !== "starting" || startupAttempted.current) return;
+    if (!accountsQuery.isSuccess || connectionsView !== "starting" || startupAttempted.current)
+      return;
     startupAttempted.current = true;
     if (active === null) {
       setConnectionsView("saved");
@@ -416,10 +440,14 @@ export const App = (): React.ReactElement => {
         initialError={startupError ?? undefined}
         initialShowAddServer={connectionsView === "add"}
         initialSignInAccount={signInAccount}
-        onClose={startupError === null ? () => {
-          setSignInAccount(null);
-          setConnectionsView(null);
-        } : undefined}
+        onClose={
+          startupError === null
+            ? () => {
+                setSignInAccount(null);
+                setConnectionsView(null);
+              }
+            : undefined
+        }
         onChanged={() => {
           setStartupError(null);
           setSignInAccount(null);

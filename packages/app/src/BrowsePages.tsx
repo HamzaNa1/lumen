@@ -32,6 +32,7 @@ import {
   useState,
 } from "react";
 import { episodeCode, kindLabel, libraryCount, plural, resumeLabel } from "./format";
+import { useRuntime } from "./Runtime";
 import {
   CatalogCard,
   PageHeader,
@@ -40,9 +41,9 @@ import {
   useLibraries,
   useWorkspace,
 } from "./Workspace";
-import { useRuntime } from "./Runtime";
 
-const yearOf = (item: CatalogItem): string | null => (item.year === null ? null : String(item.year));
+const yearOf = (item: CatalogItem): string | null =>
+  item.year === null ? null : String(item.year);
 
 const NoLibraries = (): React.ReactElement => {
   const { account } = useWorkspace();
@@ -201,7 +202,9 @@ const LibraryTile = ({
           ) : (
             <PosterFallback
               title={library.name}
-              kind={library.kind === "shows" ? "show" : library.kind === "music" ? "album" : "movie"}
+              kind={
+                library.kind === "shows" ? "show" : library.kind === "music" ? "album" : "movie"
+              }
             />
           )}
         </span>

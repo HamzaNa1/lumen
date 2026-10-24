@@ -65,7 +65,12 @@ test("an episode too short to have a runtime is described by its code alone", ()
 });
 
 test("a file holding several episodes is labelled by its whole range everywhere", () => {
-  const combined = { seriesTitle: "The Office", seasonNumber: 3, indexNumber: 10, indexNumberEnd: 11 };
+  const combined = {
+    seriesTitle: "The Office",
+    seasonNumber: 3,
+    indexNumber: 10,
+    indexNumberEnd: 11,
+  };
   expect(episodeContext(combined)).toBe("The Office · S03E10–E11");
   expect(playingContext({ ...combined, kind: "episode", year: 2006, seasonYear: 2006 })).toBe(
     "The Office (2006) · S03E10–E11",

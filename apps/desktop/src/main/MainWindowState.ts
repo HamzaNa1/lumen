@@ -1,5 +1,5 @@
-import type { BrowserWindow, Rectangle } from "electron";
 import { Schema } from "effect";
+import type { BrowserWindow, Rectangle } from "electron";
 import { JsonFileStore } from "./storage/JsonFileStore";
 
 export const mainWindowDefaultSize = { width: 1440, height: 920 } as const;

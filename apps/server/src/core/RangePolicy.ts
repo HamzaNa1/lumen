@@ -1,6 +1,11 @@
 export type RangeDecision =
   | { readonly kind: "full"; readonly start: number; readonly end: number; readonly size: number }
-  | { readonly kind: "partial"; readonly start: number; readonly end: number; readonly size: number }
+  | {
+      readonly kind: "partial";
+      readonly start: number;
+      readonly end: number;
+      readonly size: number;
+    }
   | { readonly kind: "unsatisfiable" }
   | { readonly kind: "ignored" };
 
@@ -15,7 +20,11 @@ const parseRange = (header: string, size: number): RangeDecision => {
   const startText = match[1] ?? "";
   const endText = match[2] ?? "";
   if (startText === "" && endText === "") return { kind: "ignored" };
-  if (startText !== "" && !integerPattern.test(startText) || endText !== "" && !integerPattern.test(endText)) return { kind: "ignored" };
+  if (
+    (startText !== "" && !integerPattern.test(startText)) ||
+    (endText !== "" && !integerPattern.test(endText))
+  )
+    return { kind: "ignored" };
   const total = BigInt(size);
   if (startText === "") {
     const suffixLength = BigInt(endText);
@@ -33,7 +42,8 @@ const parseRange = (header: string, size: number): RangeDecision => {
 };
 
 export const decideRange = (header: string | null, size: number): RangeDecision => {
-  if (header === null || header.trim() === "") return { kind: "full", start: 0, end: size - 1, size };
+  if (header === null || header.trim() === "")
+    return { kind: "full", start: 0, end: size - 1, size };
   if (header.includes(",")) return { kind: "ignored" };
   return parseRange(header, size);
 };
@@ -51,17 +61,30 @@ export const decideConditional = (options: {
   readonly nowMs: number;
 }): ConditionalDecision => {
   if (options.method === "GET" || options.method === "HEAD") {
-    if (options.ifMatch !== null && options.ifMatch !== "*" && !options.ifMatch.split(",").some((v) => v.trim() === options.etag)) {
+    if (
+      options.ifMatch !== null &&
+      options.ifMatch !== "*" &&
+      !options.ifMatch.split(",").some((v) => v.trim() === options.etag)
+    ) {
       return "precondition_failed";
     }
-    if (options.ifUnmodifiedSince !== null && Date.parse(options.ifUnmodifiedSince) < Date.parse(options.lastModified)) {
+    if (
+      options.ifUnmodifiedSince !== null &&
+      Date.parse(options.ifUnmodifiedSince) < Date.parse(options.lastModified)
+    ) {
       return "precondition_failed";
     }
     if (options.ifNoneMatch !== null) {
-      if (options.ifNoneMatch === "*" || options.ifNoneMatch.split(",").some((v) => v.trim() === options.etag)) {
+      if (
+        options.ifNoneMatch === "*" ||
+        options.ifNoneMatch.split(",").some((v) => v.trim() === options.etag)
+      ) {
         return "not_modified";
       }
-    } else if (options.ifModifiedSince !== null && Date.parse(options.ifModifiedSince) >= Date.parse(options.lastModified)) {
+    } else if (
+      options.ifModifiedSince !== null &&
+      Date.parse(options.ifModifiedSince) >= Date.parse(options.lastModified)
+    ) {
       return "not_modified";
     }
   }

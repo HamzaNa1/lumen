@@ -31,17 +31,32 @@ test("audio diagnostics survive failed output initialization without reading pri
 });
 
 test("pitch/filter diagnostics expose only bounded safe scaletempo2 metrics", async () => {
-  const report = await collectAudioDiagnostics({ command: async (args) => {
-    switch (args[1]) {
-      case "speed": return 0.99;
-      case "audio-pitch-correction": return true;
-      case "af": return [
-        { name: "scaletempo2", enabled: true, label: "/private/path", params: { "search-interval": "40", "window-size": "12", url: "https://private/?token=secret" } },
-        { name: "lavfi", label: "secret", params: { graph: "amovie=/private/file" } },
-      ];
-      default: return null;
-    }
-  } });
+  const report = await collectAudioDiagnostics({
+    command: async (args) => {
+      switch (args[1]) {
+        case "speed":
+          return 0.99;
+        case "audio-pitch-correction":
+          return true;
+        case "af":
+          return [
+            {
+              name: "scaletempo2",
+              enabled: true,
+              label: "/private/path",
+              params: {
+                "search-interval": "40",
+                "window-size": "12",
+                url: "https://private/?token=secret",
+              },
+            },
+            { name: "lavfi", label: "secret", params: { graph: "amovie=/private/file" } },
+          ];
+        default:
+          return null;
+      }
+    },
+  });
   expect(report.speed).toBe(0.99);
   expect(report["audio-pitch-correction"]).toBe(true);
   expect(report.af).toEqual([

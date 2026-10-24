@@ -1,17 +1,17 @@
 import { afterEach, expect, test } from "bun:test";
-import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
-import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readdir, rename, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createHash } from "node:crypto";
-import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
-import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
-import { makeMediaIngest } from "../../apps/server/src/media/MediaIngest";
 import { readLocalFile, readResponseBytes } from "../../apps/server/src/core/BoundedInput";
+import { hashPassword, newUuid } from "../../apps/server/src/core/Security";
+import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { Ffprobe } from "../../apps/server/src/media/Ffprobe";
+import { makeMediaIngest } from "../../apps/server/src/media/MediaIngest";
+import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
 import { makeScanner } from "../../apps/server/src/services/Scanner";
-import { startServer, type RunningServer } from "../../apps/server/src/Runtime";
+import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
 
 const must = <T>(value: T | null | undefined): T => {
   if (value == null) throw new Error("Expected a catalog entry");
@@ -369,9 +369,9 @@ test("video folders browse as series, seasons, episodes and movies without requi
   expect(await adjacent(must(episodeIds[2]))).toEqual([must(episodeIds[1]), null]);
   expect(await adjacent(must(movies.items[0]).id)).toEqual([null, null]);
   expect(await adjacent(showId)).toEqual([null, null]);
-  expect(
-    (await get(`/api/v1/items/${must(episodeIds[0])}/adjacent-episodes`, viewer)).status,
-  ).toBe(403);
+  expect((await get(`/api/v1/items/${must(episodeIds[0])}/adjacent-episodes`, viewer)).status).toBe(
+    403,
+  );
   const denied = await get(`/api/v1/items/${showId}`, viewer);
   expect(denied.status).toBe(403);
   const grant = await fetch(new URL(`/api/v1/libraries/${ids.showsId}/grants`, base), {

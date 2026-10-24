@@ -23,6 +23,7 @@ import {
   runtimeOf,
 } from "./format";
 import { ItemSettings } from "./ItemSettings";
+import { useRuntime } from "./Runtime";
 import {
   CatalogCard,
   itemDetailsQuery,
@@ -32,7 +33,6 @@ import {
   useWorkspace,
   WatchedButton,
 } from "./Workspace";
-import { useRuntime } from "./Runtime";
 
 const playableKinds = new Set(["movie", "episode", "track"]);
 

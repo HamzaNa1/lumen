@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
-import { createLogger } from "../../apps/server/src/core/Logger";
-import { backgroundTask } from "../../apps/server/src/jobs/JobLogging";
 import { decodeConfig } from "../../apps/server/src/config/Config";
 import { formatTextLog } from "../../apps/server/src/core/LogFormatting";
+import { createLogger } from "../../apps/server/src/core/Logger";
+import { backgroundTask } from "../../apps/server/src/jobs/JobLogging";
 
 describe("production logger", () => {
   test("defaults to readable local-time lines with short levels and source names", () => {

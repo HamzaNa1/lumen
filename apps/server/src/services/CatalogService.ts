@@ -4,12 +4,12 @@ import {
   artwork,
   artworkAssignments,
   buildFtsMatch,
+  catalogFts,
   catalogItemArtwork,
   catalogItemFts,
   catalogItemMetadata,
-  catalogItems,
   catalogItemSources,
-  catalogFts,
+  catalogItems,
   Database,
   itemFavorites,
   itemWatchStates,
@@ -22,10 +22,6 @@ import { and, asc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer, type Schema } from "effect";
 import { badRequest, forbidden, notFound } from "../core/Errors";
-import { AccessControl } from "./AccessControl";
-import { firstUnwatchedEpisode, nextEpisode, previousEpisode } from "./EpisodeSequence";
-import { decodeMetadataList, decodeMetadataMap } from "../media/MetadataJson";
-import type { AuthPrincipal } from "./AuthService";
 import type {
   FavoriteBody,
   ItemMetadataBody,
@@ -34,6 +30,10 @@ import type {
   SearchQuery,
   WatchStateBody,
 } from "../http/Schemas";
+import { decodeMetadataList, decodeMetadataMap } from "../media/MetadataJson";
+import { AccessControl } from "./AccessControl";
+import type { AuthPrincipal } from "./AuthService";
+import { firstUnwatchedEpisode, nextEpisode, previousEpisode } from "./EpisodeSequence";
 
 type WatchInput = Schema.Schema.Type<typeof WatchStateBody>;
 type FavoriteInput = Schema.Schema.Type<typeof FavoriteBody>;
@@ -71,7 +71,8 @@ const resumePositionSeconds = sql<
 
 // A season is watched only when it has episodes and every episode is watched.
 // Derive it from children so new episodes and individual undo actions stay accurate.
-const completedFor = (userId: string) => sql<boolean>`case
+const completedFor = (userId: string) =>
+  sql<boolean>`case
   when ${catalogItems.kind} = 'season' then
     exists (select 1 from catalog_items e where e.parent_id = ${catalogItems.id}
       and e.library_id = ${catalogItems.libraryId} and e.kind = 'episode')

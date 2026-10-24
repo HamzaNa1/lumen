@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
+import { TrackSelectionController } from "../../packages/client/src/index.ts";
 import {
   defaultTrackMemory,
   describeTrack,
   normalizeTrackLanguage,
-  resolveTrackSelection,
   type PlayableStream,
+  resolveTrackSelection,
   type TrackMemory,
 } from "../../packages/contracts/src/index.ts";
-import { TrackSelectionController } from "../../packages/client/src/index.ts";
 
 const track = (id: string, patch: Partial<PlayableStream> = {}): PlayableStream => ({
   id,

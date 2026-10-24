@@ -1,10 +1,11 @@
-import { ServerLogger } from "../core/Logger";
+import { readdir, stat } from "node:fs/promises";
+import { join, relative } from "node:path";
 import {
   catalogItemOrigins,
   catalogItemSources,
   Database,
-  libraryRoots,
   libraryRootStates,
+  libraryRoots,
   mediaSourceAvailability,
   mediaSources,
   scanJobs,
@@ -15,10 +16,9 @@ import {
 } from "@lumen/database";
 import { and, eq, exists, inArray, isNull, notExists, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { readdir, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
-import { newUuid } from "../core/Security";
+import { ServerLogger } from "../core/Logger";
 import { safePath } from "../core/Paths";
+import { newUuid } from "../core/Security";
 import { purgeSources, type SourcePurgeCounts } from "./CatalogPurge";
 
 const mediaExtensions = new Set([

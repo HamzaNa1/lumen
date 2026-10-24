@@ -1,17 +1,24 @@
-import type { MpvProcess as MpvProcessInstance } from "../../apps/desktop/src/main/player/MpvProcess";
 import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
-import { defaultTrackMemory, describeTrack, type PlayerSession, type TrackChoiceInput, type TrackMemory, type PlayerState } from "../../packages/contracts/src/index.ts";
 import type { BrowserWindow } from "electron";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
+import type { MpvProcess as MpvProcessInstance } from "../../apps/desktop/src/main/player/MpvProcess";
 import {
   PlaybackSessionReporter,
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
+import {
+  defaultTrackMemory,
+  describeTrack,
+  type PlayerSession,
+  type PlayerState,
+  type TrackChoiceInput,
+  type TrackMemory,
+} from "../../packages/contracts/src/index.ts";
+import { electronTestExports } from "../helpers/electron";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
-import { electronTestExports } from "../helpers/electron";
-import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
 
 const events: string[] = [];
 
@@ -92,8 +99,12 @@ mock.module("electron", () => ({
   BrowserWindow: FakeOverlayWindow,
 }));
 const { MpvSurface } = await import("../../apps/desktop/src/main/player/MpvSurface");
-const { PlayerOverlayWindow } = await import("../../apps/desktop/src/main/player/PlayerOverlayWindow");
-const { PlayerController, startNativePlayer, watchPlayerFor } = await import("../../apps/desktop/src/main/player/PlayerController");
+const { PlayerOverlayWindow } = await import(
+  "../../apps/desktop/src/main/player/PlayerOverlayWindow"
+);
+const { PlayerController, startNativePlayer, watchPlayerFor } = await import(
+  "../../apps/desktop/src/main/player/PlayerController"
+);
 const { MpvIpc, MpvIpcFailure } = await import("../../apps/desktop/src/main/player/MpvIpc");
 const { MpvProcess } = await import("../../apps/desktop/src/main/player/MpvProcess");
 
@@ -122,7 +133,9 @@ const withPlayback = async (
     exits.push(() => options.onExit?.(1));
     return { stop: stopProcess } as unknown as MpvProcessInstance;
   });
-  const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async function (this: InstanceType<typeof MpvIpc>) {
+  const connect = spyOn(MpvIpc.prototype, "connect").mockImplementation(async function (
+    this: InstanceType<typeof MpvIpc>,
+  ) {
     connections.push(this);
   });
   const properties = new Map<string, unknown>([
@@ -135,7 +148,15 @@ const withPlayback = async (
     ["seeking", false],
     ["speed", 1],
   ]);
-  if (trackOptions !== undefined) properties.set("track-list", trackOptions.streams.map((stream) => ({ id: stream.ordinal + 10, type: stream.kind === "audio" ? "audio" : "sub", "ff-index": stream.ordinal })));
+  if (trackOptions !== undefined)
+    properties.set(
+      "track-list",
+      trackOptions.streams.map((stream) => ({
+        id: stream.ordinal + 10,
+        type: stream.kind === "audio" ? "audio" : "sub",
+        "ff-index": stream.ordinal,
+      })),
+    );
   let failLoad = false;
   let disconnectStart = false;
   const command = spyOn(MpvIpc.prototype, "command").mockImplementation(function (
@@ -148,24 +169,36 @@ const withPlayback = async (
       return Promise.reject(new MpvIpcFailure("MPV IPC closed"));
     }
     if (args[0] === "loadfile") {
-      queueMicrotask(() => this.emit(failLoad ? "end-file" : "file-loaded", { reason: "error", file_error: "network failure" }));
+      queueMicrotask(() =>
+        this.emit(failLoad ? "end-file" : "file-loaded", {
+          reason: "error",
+          file_error: "network failure",
+        }),
+      );
     }
     if (args[0] === "expand-text") {
       const sample = properties.get("watch-sample");
       if (sample instanceof Promise) return sample;
-      return Promise.resolve(String(args[1]).replace(/\$\{=([^}]+)\}/g, (_match, property) => {
-        const value = properties.get(property);
-        return typeof value === "boolean" ? value ? "yes" : "no" : String(value);
-      }));
+      return Promise.resolve(
+        String(args[1]).replace(/\$\{=([^}]+)\}/g, (_match, property) => {
+          const value = properties.get(property);
+          return typeof value === "boolean" ? (value ? "yes" : "no") : String(value);
+        }),
+      );
     }
     if (args[0] === "seek") properties.set("time-pos", args[1]);
     if (args[0] === "set_property")
-      properties.set(String(args[1]), args[2] === "yes" ? true : args[2] === "no" ? false : args[2]);
+      properties.set(
+        String(args[1]),
+        args[2] === "yes" ? true : args[2] === "no" ? false : args[2],
+      );
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
     if (value instanceof Promise)
       return Promise.race([
         value,
-        new Promise((_, reject) => setTimeout(() => reject(new Error("MPV command timed out")), timeoutMs)),
+        new Promise((_, reject) =>
+          setTimeout(() => reject(new Error("MPV command timed out")), timeoutMs),
+        ),
       ]);
     return Promise.resolve(value);
   });
@@ -176,8 +209,19 @@ const withPlayback = async (
   let memory = trackOptions?.memory ?? defaultTrackMemory();
   const saveChoice = mock(async (_id: string, input: TrackChoiceInput) => {
     const stream = trackOptions?.streams.find((candidate) => candidate.id === input.choice);
-    if (input.choice !== null && input.choice !== "off" && stream === undefined) throw new Error("Missing test stream");
-    memory = { ...memory, [input.kind]: input.choice === null ? null : input.choice === "off" ? "off" : stream === undefined ? null : describeTrack("source", stream) };
+    if (input.choice !== null && input.choice !== "off" && stream === undefined)
+      throw new Error("Missing test stream");
+    memory = {
+      ...memory,
+      [input.kind]:
+        input.choice === null
+          ? null
+          : input.choice === "off"
+            ? "off"
+            : stream === undefined
+              ? null
+              : describeTrack("source", stream),
+    };
     return memory;
   });
   let sessionNumber = 0;
@@ -212,12 +256,35 @@ const withPlayback = async (
     onState: (state: PlayerState) => states.push(state),
   } as unknown as ConstructorParameters<typeof PlayerController>[0]);
   try {
-    await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
+    await controller.start({
+      client,
+      connectionId: "connection-1",
+      itemId: "item-1",
+    } as unknown as Parameters<typeof controller.start>[0]);
     states.length = 0;
-    await run({ controller, states, properties, heartbeat, progress, request, stopProcess, saveChoice, connections, exits,
-      restart: () => controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]),
-      failNextLoad: () => { failLoad = true; },
-      disconnectNextStart: () => { disconnectStart = true; },
+    await run({
+      controller,
+      states,
+      properties,
+      heartbeat,
+      progress,
+      request,
+      stopProcess,
+      saveChoice,
+      connections,
+      exits,
+      restart: () =>
+        controller.start({
+          client,
+          connectionId: "connection-1",
+          itemId: "item-1",
+        } as unknown as Parameters<typeof controller.start>[0]),
+      failNextLoad: () => {
+        failLoad = true;
+      },
+      disconnectNextStart: () => {
+        disconnectStart = true;
+      },
     });
   } finally {
     await controller.stop();
@@ -263,9 +330,17 @@ test("MPV reports how far it has read ahead, and when it has run out", async () 
     properties.set("demuxer-cache-state", { "cache-duration": 12, eof: false });
     properties.set("paused-for-cache", true);
     // What MPV holds describes the position it is leaving until the seek is over.
-    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 0, starved: false, settled: false });
+    expect(await controller.buffer("session-1")).toEqual({
+      aheadSeconds: 0,
+      starved: false,
+      settled: false,
+    });
     properties.set("seeking", false);
-    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 12, starved: true, settled: false });
+    expect(await controller.buffer("session-1")).toEqual({
+      aheadSeconds: 12,
+      starved: true,
+      settled: false,
+    });
     properties.set("paused-for-cache", false);
     properties.set("demuxer-cache-state", { "cache-duration": 2.5, eof: true });
     expect(await controller.buffer("session-1")).toEqual({
@@ -274,7 +349,11 @@ test("MPV reports how far it has read ahead, and when it has run out", async () 
       settled: false,
     });
     properties.set("demuxer-cache-state", null);
-    expect(await controller.buffer("session-1")).toEqual({ aheadSeconds: 0, starved: false, settled: false });
+    expect(await controller.buffer("session-1")).toEqual({
+      aheadSeconds: 0,
+      starved: false,
+      settled: false,
+    });
   });
 });
 
@@ -390,7 +469,11 @@ describe("playback progress updates", () => {
           await controller.pause("session-1", false);
         }
         expect(saves.map(({ sequence, positionSeconds }) => [sequence, positionSeconds])).toEqual([
-          [1, 10], [2, 20], [3, 30], [4, 40], [5, 50],
+          [1, 10],
+          [2, 20],
+          [3, 30],
+          [4, 40],
+          [5, 50],
         ]);
         expect(saves.map(({ signal }) => signal.aborted)).toEqual([true, true, true, true, false]);
       } finally {
@@ -406,14 +489,18 @@ describe("playback progress updates", () => {
       const pending = Promise.withResolvers<void>();
       let pauseSave: AbortSignal | null = null;
       controller.on("error", (cause: Error) => errors.push(cause));
-      progress.mockImplementationOnce((_id: string, _state: PlayerState, _sequence: number, init: { signal: AbortSignal }) => {
-        pauseSave = init.signal;
-        return pending.promise;
-      });
+      progress.mockImplementationOnce(
+        (_id: string, _state: PlayerState, _sequence: number, init: { signal: AbortSignal }) => {
+          pauseSave = init.signal;
+          return pending.promise;
+        },
+      );
       progress.mockImplementation(async (_id: string, state: PlayerState, sequence: number) => {
         calls.push(`progress @${state.positionSeconds} #${sequence}`);
       });
-      request.mockImplementation(async () => { calls.push("delete"); });
+      request.mockImplementation(async () => {
+        calls.push("delete");
+      });
       properties.set("time-pos", 27.5);
       await controller.pause("session-1", true);
       properties.set("time-pos", 41.75);
@@ -489,8 +576,12 @@ describe("playback progress updates", () => {
   test("leaving the player saves its last position before closing the server session", async () => {
     await withPlayback(async ({ controller, properties, progress, request }) => {
       const calls: string[] = [];
-      progress.mockImplementation(async () => { calls.push("progress"); });
-      request.mockImplementation(async () => { calls.push("delete"); });
+      progress.mockImplementation(async () => {
+        calls.push("progress");
+      });
+      request.mockImplementation(async () => {
+        calls.push("delete");
+      });
       properties.set("time-pos", 41.75);
       await controller.stop();
       expect(progress).toHaveBeenCalledWith(
@@ -508,7 +599,9 @@ describe("playback progress updates", () => {
       const pending = Promise.withResolvers<void>();
       const saved = Promise.withResolvers<void>();
       stopProcess.mockImplementation(() => pending.promise);
-      progress.mockImplementation(async () => { saved.resolve(); });
+      progress.mockImplementation(async () => {
+        saved.resolve();
+      });
       const stopping = controller.stop();
       try {
         await saved.promise;
@@ -545,7 +638,9 @@ describe("playback progress updates", () => {
         started.resolve();
         return pending.promise;
       });
-      progress.mockImplementation(async () => { saved.resolve(); });
+      progress.mockImplementation(async () => {
+        saved.resolve();
+      });
       for (let tick = 0; tick < 5; tick++) await controller.tick();
       const reporting = controller.tick();
       await started.promise;
@@ -675,11 +770,14 @@ describe("Windows player surface visibility", () => {
       isDestroyed: () => false,
       isFocused: () => state.overlayFocused,
     });
-    const surface = new MpvSurface(parent as unknown as BrowserWindow, {
-      window: overlayWindow,
-      moveAboveVideo: () => undefined,
-      syncBounds: () => undefined,
-    } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
+    const surface = new MpvSurface(
+      parent as unknown as BrowserWindow,
+      {
+        window: overlayWindow,
+        moveAboveVideo: () => undefined,
+        syncBounds: () => undefined,
+      } as unknown as ConstructorParameters<typeof MpvSurface>[1],
+    );
     const host = new FakeBaseWindow();
     // Exercise the Windows surface policy on any OS without loading user32.dll.
     Reflect.set(surface, "host", host);
@@ -879,7 +977,9 @@ describe("player surface shutdown", () => {
   for (const stopped of [false, true]) {
     test(`queued focus work cannot access a closed window (${stopped ? "after Back" : "during playback"})`, () => {
       const callbacks: Array<() => void> = [];
-      const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((callback: () => void) => {
+      const schedule = spyOn(globalThis, "setTimeout").mockImplementation(((
+        callback: () => void,
+      ) => {
         callbacks.push(callback);
         return 123;
       }) as unknown as typeof setTimeout);
@@ -894,11 +994,17 @@ describe("player surface shutdown", () => {
         },
       });
       const overlayWindow = new EventEmitter();
-      Object.assign(overlayWindow, { isDestroyed: () => true, isFocused: () => {
-        throw new TypeError("Object has been destroyed");
-      } });
+      Object.assign(overlayWindow, {
+        isDestroyed: () => true,
+        isFocused: () => {
+          throw new TypeError("Object has been destroyed");
+        },
+      });
       try {
-        const surface = new MpvSurface(parent as BrowserWindow, { window: overlayWindow } as unknown as ConstructorParameters<typeof MpvSurface>[1]);
+        const surface = new MpvSurface(
+          parent as BrowserWindow,
+          { window: overlayWindow } as unknown as ConstructorParameters<typeof MpvSurface>[1],
+        );
         Reflect.set(surface, "playbackVisible", true);
         if (stopped) surface.hide();
         parent.emit("blur");
@@ -929,8 +1035,12 @@ describe("player surface shutdown", () => {
 describe("macOS MPV window lifecycle", () => {
   const platform = process.platform;
   // Electron, Cocoa, MPV, and IPC are fakes here: exercise the macOS policy on every host.
-  beforeEach(() => { Object.defineProperty(process, "platform", { value: "darwin" }); });
-  afterEach(() => { Object.defineProperty(process, "platform", { value: platform }); });
+  beforeEach(() => {
+    Object.defineProperty(process, "platform", { value: "darwin" });
+  });
+  afterEach(() => {
+    Object.defineProperty(process, "platform", { value: platform });
+  });
   test("play, Back, and immediate replay attach and detach once per session", () => {
     events.length = 0;
     const parent = {
@@ -1093,7 +1203,8 @@ describe("macOS MPV window lifecycle", () => {
       args: ReadonlyArray<string | number>,
     ): Promise<unknown> {
       if (args[0] === "loadfile") queueMicrotask(() => this.emit("file-loaded"));
-      if (args[0] === "get_property" && args[1] === "window-id") return Promise.resolve(++windowNumber);
+      if (args[0] === "get_property" && args[1] === "window-id")
+        return Promise.resolve(++windowNumber);
       return Promise.resolve(null);
     });
     const close = spyOn(MpvIpc.prototype, "close").mockImplementation(() => {
@@ -1132,12 +1243,22 @@ describe("macOS MPV window lifecycle", () => {
         stopPlayback: async () => calls.push("session:delete"),
       };
 
-      await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
+      await controller.start({
+        client,
+        connectionId: "connection-1",
+        itemId: "item-1",
+      } as unknown as Parameters<typeof controller.start>[0]);
       await controller.stop(); // Back
-      await controller.start({ client, connectionId: "connection-1", itemId: "item-1" } as unknown as Parameters<typeof controller.start>[0]);
+      await controller.start({
+        client,
+        connectionId: "connection-1",
+        itemId: "item-1",
+      } as unknown as Parameters<typeof controller.start>[0]);
       await controller.stop();
 
-      expect(calls.filter((call) => call.startsWith("surface:") || call.startsWith("process:"))).toEqual([
+      expect(
+        calls.filter((call) => call.startsWith("surface:") || call.startsWith("process:")),
+      ).toEqual([
         "surface:hide",
         "surface:prepare",
         "process:start",
@@ -1163,7 +1284,6 @@ describe("macOS MPV window lifecycle", () => {
   });
 });
 
-
 describe("native playback failure recovery", () => {
   test("a failure during media loading tears down that startup exactly once", async () => {
     await withPlayback(async ({ controller, failNextLoad, restart, stopProcess, request }) => {
@@ -1179,16 +1299,18 @@ describe("native playback failure recovery", () => {
   });
 
   test("a disconnect during initialization consumes the load failure and tears down once", async () => {
-    await withPlayback(async ({ controller, disconnectNextStart, restart, stopProcess, request }) => {
-      await controller.stop();
-      stopProcess.mockClear();
-      request.mockClear();
-      disconnectNextStart();
-      await expect(restart()).rejects.toThrow("MPV IPC closed");
-      expect(controller.getState()).toBeNull();
-      expect(stopProcess).toHaveBeenCalledTimes(1);
-      expect(request).toHaveBeenCalledTimes(1);
-    });
+    await withPlayback(
+      async ({ controller, disconnectNextStart, restart, stopProcess, request }) => {
+        await controller.stop();
+        stopProcess.mockClear();
+        request.mockClear();
+        disconnectNextStart();
+        await expect(restart()).rejects.toThrow("MPV IPC closed");
+        expect(controller.getState()).toBeNull();
+        expect(stopProcess).toHaveBeenCalledTimes(1);
+        expect(request).toHaveBeenCalledTimes(1);
+      },
+    );
   });
 
   test("a stalled IPC query invalidates playback while transient unavailable properties retain it", async () => {
@@ -1203,18 +1325,20 @@ describe("native playback failure recovery", () => {
   });
 
   test("an exited process invalidates its session and late failure callbacks cannot clear its replacement", async () => {
-    await withPlayback(async ({ controller, exits, connections, restart, stopProcess, request }) => {
-      exits[0]?.();
-      expect(controller.getState()).toBeNull();
-      await restart();
-      expect(controller.getState()?.sessionId).toBe("session-2");
-      expect(stopProcess).toHaveBeenCalledTimes(1);
-      expect(request).toHaveBeenCalledTimes(1);
-      exits[0]?.();
-      connections[0]?.emit("disconnected", new Error("old IPC closed"));
-      expect(controller.getState()?.sessionId).toBe("session-2");
-      expect(stopProcess).toHaveBeenCalledTimes(1);
-    });
+    await withPlayback(
+      async ({ controller, exits, connections, restart, stopProcess, request }) => {
+        exits[0]?.();
+        expect(controller.getState()).toBeNull();
+        await restart();
+        expect(controller.getState()?.sessionId).toBe("session-2");
+        expect(stopProcess).toHaveBeenCalledTimes(1);
+        expect(request).toHaveBeenCalledTimes(1);
+        exits[0]?.();
+        connections[0]?.emit("disconnected", new Error("old IPC closed"));
+        expect(controller.getState()?.sessionId).toBe("session-2");
+        expect(stopProcess).toHaveBeenCalledTimes(1);
+      },
+    );
   });
 
   test("an established IPC failure restarts shared playback at the group position after its surface is ready", async () => {
@@ -1226,7 +1350,12 @@ describe("native playback failure recovery", () => {
           const owner = await fixture.connect(await fixture.login());
           await owner.action({ type: "create", name: "Movie night", password: "" });
           await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 7 });
-          await owner.action({ type: "pause", itemId: fixture.itemId, positionSeconds: 7, paused: true });
+          await owner.action({
+            type: "pause",
+            itemId: fixture.itemId,
+            positionSeconds: 7,
+            paused: true,
+          });
           const viewer = new ServerClient({ origin: fixture.running.server.url.origin });
           await viewer.identity();
           viewer.setSession((await fixture.login()).currentSession);
@@ -1234,7 +1363,11 @@ describe("native playback failure recovery", () => {
           watch.setSurfaceReady(true);
           await eventually(() => watch.status.connection === "connected");
           await watch.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
-          await eventually(() => controller.getState()?.itemId === fixture.itemId && controller.getState()?.paused === true);
+          await eventually(
+            () =>
+              controller.getState()?.itemId === fixture.itemId &&
+              controller.getState()?.paused === true,
+          );
           const failedSession = controller.getState()?.sessionId;
           const started = connections.length;
           watch.setSurfaceReady(false);
@@ -1244,7 +1377,11 @@ describe("native playback failure recovery", () => {
           expect(connections).toHaveLength(started);
           watch.setSurfaceReady(true);
           await eventually(() => controller.getState() !== null);
-          expect(controller.getState()).toMatchObject({ itemId: fixture.itemId, paused: true, positionSeconds: 7 });
+          expect(controller.getState()).toMatchObject({
+            itemId: fixture.itemId,
+            paused: true,
+            positionSeconds: 7,
+          });
           expect(controller.getState()?.sessionId).not.toBe(failedSession);
           connections.at(-1)?.emit("disconnected", new Error("MPV IPC closed"));
           const beforeStop = connections.length;
@@ -1387,20 +1524,33 @@ test("desktop export retains runtime and startup failure diagnostics without a l
     await controller.stop();
     expect(controller.getState()).toBeNull();
     const failed = await controller.audioDiagnostics("");
-    expect(JSON.parse(failed).playbackTimeline.map((event: { kind: string }) => event.kind)).toContain("playback_failure");
+    expect(
+      JSON.parse(failed).playbackTimeline.map((event: { kind: string }) => event.kind),
+    ).toContain("playback_failure");
     expect(failed).not.toContain("private-path");
     failNextLoad();
     await expect(restart()).rejects.toBeDefined();
     const startup = JSON.parse(await controller.audioDiagnostics(""));
-    expect(startup.playbackTimeline.some((event: { fields: { stage?: string } }) => event.fields.stage === "startup")).toBe(true);
-    expect(startup.playbackTimeline.some((event: { fields: { stage?: string } }) => event.fields.stage === "runtime")).toBe(false);
+    expect(
+      startup.playbackTimeline.some(
+        (event: { fields: { stage?: string } }) => event.fields.stage === "startup",
+      ),
+    ).toBe(true);
+    expect(
+      startup.playbackTimeline.some(
+        (event: { fields: { stage?: string } }) => event.fields.stage === "runtime",
+      ),
+    ).toBe(false);
   });
 });
 
-
 test("native watch samples are invalidated by pause, seek, speed and replacement during IPC", async () => {
   await withPlayback(async ({ controller, properties, restart }) => {
-    expect(await controller.sample("session-1")).toMatchObject({ positionSeconds: 12.25, speed: 1, advancing: true });
+    expect(await controller.sample("session-1")).toMatchObject({
+      positionSeconds: 12.25,
+      speed: 1,
+      advancing: true,
+    });
     for (const motion of [
       () => controller.pause("session-1", true),
       () => controller.seek("session-1", 20),
@@ -1408,7 +1558,12 @@ test("native watch samples are invalidated by pause, seek, speed and replacement
       restart,
     ]) {
       let release = (_value: string) => {};
-      properties.set("watch-sample", new Promise<string>((resolve) => { release = resolve; }));
+      properties.set(
+        "watch-sample",
+        new Promise<string>((resolve) => {
+          release = resolve;
+        }),
+      );
       const pending = controller.sample("session-1");
       await motion();
       release("12.25\tno\tno\tno\tno\t1");
@@ -1422,41 +1577,94 @@ test("native watch samples are invalidated by pause, seek, speed and replacement
   });
 });
 
-
 describe("native track memory", () => {
   const streams = [
-    { id: "fr", kind: "audio", ordinal: 1, codec: "aac", language: "fr", title: null, isDefault: true },
-    { id: "en-first", kind: "audio", ordinal: 2, codec: "aac", language: "eng", title: "Commentary", isDefault: false },
-    { id: "en-last", kind: "audio", ordinal: 3, codec: "aac", language: "en", title: null, isDefault: false },
-    { id: "sub", kind: "subtitle", ordinal: 4, codec: "subrip", language: "en", title: null, isDefault: true },
+    {
+      id: "fr",
+      kind: "audio",
+      ordinal: 1,
+      codec: "aac",
+      language: "fr",
+      title: null,
+      isDefault: true,
+    },
+    {
+      id: "en-first",
+      kind: "audio",
+      ordinal: 2,
+      codec: "aac",
+      language: "eng",
+      title: "Commentary",
+      isDefault: false,
+    },
+    {
+      id: "en-last",
+      kind: "audio",
+      ordinal: 3,
+      codec: "aac",
+      language: "en",
+      title: null,
+      isDefault: false,
+    },
+    {
+      id: "sub",
+      kind: "subtitle",
+      ordinal: 4,
+      codec: "subrip",
+      language: "en",
+      title: null,
+      isDefault: true,
+    },
   ] as const satisfies PlayerSession["streams"];
   test("startup maps resolved file tracks to MPV IDs, defaults subtitles Off, and never saves", async () => {
-    await withPlayback(async ({ controller, properties, saveChoice }) => {
-      expect(controller.getState()).toMatchObject({ selectedAudioStreamId: "en-first", selectedSubtitleStreamId: null });
-      expect(properties.get("aid")).toBe(12); expect(properties.get("sid")).toBe(false);
-      expect(saveChoice).not.toHaveBeenCalled();
-      await controller.selectAudioStream("session-1", "en-last");
-      expect(properties.get("aid")).toBe(13);
-      expect(saveChoice).toHaveBeenCalledWith("session-1", { kind: "audio", choice: "en-last" });
-      await controller.selectSubtitleStream("session-1", null);
-      expect(saveChoice).toHaveBeenCalledWith("session-1", { kind: "subtitle", choice: "off" });
-      await controller.resetTrack("session-1", "audio");
-      expect(controller.getState()?.selectedAudioStreamId).toBe("en-first");
-    }, { streams });
+    await withPlayback(
+      async ({ controller, properties, saveChoice }) => {
+        expect(controller.getState()).toMatchObject({
+          selectedAudioStreamId: "en-first",
+          selectedSubtitleStreamId: null,
+        });
+        expect(properties.get("aid")).toBe(12);
+        expect(properties.get("sid")).toBe(false);
+        expect(saveChoice).not.toHaveBeenCalled();
+        await controller.selectAudioStream("session-1", "en-last");
+        expect(properties.get("aid")).toBe(13);
+        expect(saveChoice).toHaveBeenCalledWith("session-1", { kind: "audio", choice: "en-last" });
+        await controller.selectSubtitleStream("session-1", null);
+        expect(saveChoice).toHaveBeenCalledWith("session-1", { kind: "subtitle", choice: "off" });
+        await controller.resetTrack("session-1", "audio");
+        expect(controller.getState()?.selectedAudioStreamId).toBe("en-first");
+      },
+      { streams },
+    );
   });
   test("revisits honor exact overrides; a failed save leaves playback active and can be retried", async () => {
-    await withPlayback(async ({ controller, properties, saveChoice, restart }) => {
-      expect(properties.get("aid")).toBe(13); expect(properties.get("sid")).toBe(14);
-      saveChoice.mockRejectedValueOnce(new Error("offline"));
-      const result = await controller.selectAudioStream("session-1", "fr");
-      expect(result.selectedAudioStreamId).toBe("fr"); expect(result.trackMemoryError).toContain("Retry");
-      await controller.retryTrackMemory("session-1");
-      expect(controller.getState()?.trackMemoryError).toBeNull();
-      saveChoice.mockRejectedValueOnce(new Error("offline"));
-      expect((await controller.selectAudioStream("session-1", "fr")).trackMemoryError).toContain("Retry");
-      const dismissed = await controller.dismissTrackMemoryError("session-1");
-      expect(dismissed).toMatchObject({ selectedAudioStreamId: "fr", trackMemoryError: null });
-      await restart(); expect(controller.getState()?.selectedAudioStreamId).toBe("fr");
-    }, { streams, memory: { ...defaultTrackMemory(), audio: describeTrack("source", streams[2]), subtitle: describeTrack("source", streams[3]) } });
+    await withPlayback(
+      async ({ controller, properties, saveChoice, restart }) => {
+        expect(properties.get("aid")).toBe(13);
+        expect(properties.get("sid")).toBe(14);
+        saveChoice.mockRejectedValueOnce(new Error("offline"));
+        const result = await controller.selectAudioStream("session-1", "fr");
+        expect(result.selectedAudioStreamId).toBe("fr");
+        expect(result.trackMemoryError).toContain("Retry");
+        await controller.retryTrackMemory("session-1");
+        expect(controller.getState()?.trackMemoryError).toBeNull();
+        saveChoice.mockRejectedValueOnce(new Error("offline"));
+        expect((await controller.selectAudioStream("session-1", "fr")).trackMemoryError).toContain(
+          "Retry",
+        );
+        const dismissed = await controller.dismissTrackMemoryError("session-1");
+        expect(dismissed).toMatchObject({ selectedAudioStreamId: "fr", trackMemoryError: null });
+        await restart();
+        expect(controller.getState()?.selectedAudioStreamId).toBe("fr");
+      },
+      {
+        streams,
+        memory: {
+          ...defaultTrackMemory(),
+          audio: describeTrack("source", streams[2]),
+          subtitle: describeTrack("source", streams[3]),
+        },
+      },
+    );
   });
 });

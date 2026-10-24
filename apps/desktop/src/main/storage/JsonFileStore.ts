@@ -1,6 +1,6 @@
-import { Schema } from "effect";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { Schema } from "effect";
 
 /** A plain JSON value kept in a file between launches, falling back to defaults when it cannot be read. */
 export class JsonFileStore<A> {

@@ -10,9 +10,17 @@ import {
   ServerHttpError,
   WatchPlaybackController,
 } from "../../packages/client/src/index.ts";
+import {
+  defaultTrackMemory,
+  describeTrack,
+  type PlayerSession,
+  type PlayerState,
+  type TrackChoiceInput,
+  type TrackMemory,
+  type VolumeMemory,
+} from "../../packages/contracts/src/index.ts";
 import { eventually } from "../helpers/eventually";
 import { watchFixture, watchProxy } from "../helpers/watch-groups";
-import { defaultTrackMemory, describeTrack, type TrackChoiceInput, type TrackMemory, type PlayerSession, type PlayerState, type VolumeMemory } from "../../packages/contracts/src/index.ts";
 
 type Listener = () => void;
 
@@ -139,10 +147,7 @@ const nextMediaEvent = (element: FakeMedia, type: string): Promise<void> =>
     element.addEventListener(type, listener);
   });
 
-const setup = (
-  streams: PlayerSession["streams"] = [],
-  volumeMemory?: VolumeMemoryStorage,
-) => {
+const setup = (streams: PlayerSession["streams"] = [], volumeMemory?: VolumeMemoryStorage) => {
   const element = new FakeMedia();
   const calls: string[] = [];
   const states: (PlayerState | null)[] = [];
@@ -159,8 +164,19 @@ const setup = (
       api.saves.push(input);
       if (api.saveFailure) throw new Error("offline");
       const stream = streams.find((candidate) => candidate.id === input.choice);
-      if (input.choice !== null && input.choice !== "off" && stream === undefined) throw new Error("Missing test stream");
-      api.memory = { ...api.memory, [input.kind]: input.choice === null ? null : input.choice === "off" ? "off" : stream === undefined ? null : describeTrack("source", stream) };
+      if (input.choice !== null && input.choice !== "off" && stream === undefined)
+        throw new Error("Missing test stream");
+      api.memory = {
+        ...api.memory,
+        [input.kind]:
+          input.choice === null
+            ? null
+            : input.choice === "off"
+              ? "off"
+              : stream === undefined
+                ? null
+                : describeTrack("source", stream),
+      };
       return api.memory;
     },
     heartbeatFailure: null as Error | null,
@@ -234,7 +250,7 @@ describe("browser volume", () => {
   test("each show and movie keeps its own volume, across all of a show's episodes", async () => {
     const storage = keptVolumes();
     const { api, element, player } = setup([], storage);
-    api.titles = { "s1e1": "show", "s2e5": "show", "film": "movie", "other": "other-movie" };
+    api.titles = { s1e1: "show", s2e5: "show", film: "movie", other: "other-movie" };
     const playAt = async (itemId: string) => {
       await player.start({ itemId });
       const { sessionId, volume, muted } = player.getState() ?? expect.unreachable();
@@ -278,7 +294,7 @@ describe("browser volume", () => {
 
   test("the single volume kept before titles were remembered is where every title starts", async () => {
     const { api, player } = setup([], keptVolumes({ volume: 45, muted: true }));
-    api.titles = { "s1e1": "show" };
+    api.titles = { s1e1: "show" };
     await player.start({ itemId: "s1e1" });
     expect(player.getState()).toMatchObject({ volume: 45, muted: true });
   });
@@ -393,7 +409,8 @@ describe("browser playback lifecycle", () => {
     element.loadOutcome = "hang";
     const loading = nextMediaEvent(element, "loadstart");
     let settled = false;
-    const starting = player.start({ itemId: "item-1" })
+    const starting = player
+      .start({ itemId: "item-1" })
       .catch((cause: unknown) => cause)
       .finally(() => {
         settled = true;
@@ -413,7 +430,15 @@ describe("browser playback lifecycle", () => {
 
   test("audio the browser cannot decode is refused before anything plays silently", async () => {
     const { element, player } = setup([
-      { id: "a", kind: "audio", ordinal: 1, codec: "ac3", language: "eng", title: null, isDefault: true },
+      {
+        id: "a",
+        kind: "audio",
+        ordinal: 1,
+        codec: "ac3",
+        language: "eng",
+        title: null,
+        isDefault: true,
+      },
     ]);
     const failure = await player.start({ itemId: "item-1" }).catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(PlaybackUnsupportedError);
@@ -477,7 +502,9 @@ describe("browser playback lifecycle", () => {
     await third;
     expect(player.getState()?.itemId).toBe("item-3");
     expect(element.src).toContain("/api/v1/media/item-3");
-    const started = calls.filter((call) => call.startsWith("start")).map((call) => call.split(" ")[1]);
+    const started = calls
+      .filter((call) => call.startsWith("start"))
+      .map((call) => call.split(" ")[1]);
     const live = player.getState()?.sessionId;
     for (const session of started.filter((id) => id !== live))
       expect(calls).toContain(`stop ${session}`);
@@ -491,7 +518,8 @@ describe("browser playback lifecycle", () => {
     element.loadOutcome = "hang";
     const firstLoading = nextMediaEvent(element, "loadstart");
     let cancelled = false;
-    const first = player.start({ itemId: "item-1" })
+    const first = player
+      .start({ itemId: "item-1" })
       .catch((cause: unknown) => cause)
       .finally(() => {
         cancelled = true;
@@ -539,10 +567,9 @@ describe("browser playback lifecycle", () => {
       expect(calls.some((call) => call.startsWith("progress"))).toBe(false);
       // Replacing the session saves its final position without waiting for the unanswered one.
       await player.start({ itemId: "item-2" });
-      expect(calls.filter((call) => call.startsWith("progress") || call.startsWith("stop"))).toEqual([
-        "progress session-1 @0 #2",
-        "stop session-1",
-      ]);
+      expect(
+        calls.filter((call) => call.startsWith("progress") || call.startsWith("stop")),
+      ).toEqual(["progress session-1 @0 #2", "stop session-1"]);
       expect(player.getState()).toMatchObject({ sessionId: "session-2", itemId: "item-2" });
     } finally {
       answer();
@@ -604,7 +631,8 @@ describe("browser playback lifecycle", () => {
       await nextTurn();
     }
     expect(calls.filter((call) => call.startsWith("heartbeat"))).toEqual([
-      "heartbeat session-1", "heartbeat session-1",
+      "heartbeat session-1",
+      "heartbeat session-1",
     ]);
     expect(calls).toContain("progress session-1 @42 #6");
 
@@ -626,10 +654,17 @@ describe("browser playback lifecycle", () => {
     element.currentTime = 15;
     player.leave();
     await eventually(() => calls.at(-1) === "stop session-1 keepalive");
-    expect(calls.slice(-2)).toEqual(["progress session-1 @15 #2 keepalive", "stop session-1 keepalive"]);
+    expect(calls.slice(-2)).toEqual([
+      "progress session-1 @15 #2 keepalive",
+      "stop session-1 keepalive",
+    ]);
     // Restored from the back/forward cache: the ended session is replaced before resuming.
     await player.reconcile();
-    expect(player.getState()).toMatchObject({ sessionId: "session-2", positionSeconds: 15, paused: false });
+    expect(player.getState()).toMatchObject({
+      sessionId: "session-2",
+      positionSeconds: 15,
+      paused: false,
+    });
   });
 
   test("a lost connection is retried a bounded number of times, then reported", async () => {
@@ -773,7 +808,8 @@ const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefin
   let bufferChecks = 0;
   const viewer = new WatchPlaybackController(
     {
-      start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
+      start: ({ itemId, startAtSeconds, paused }) =>
+        player.start({ itemId, startAtSeconds, paused }),
       stop: () => player.stop(),
       getState: () => player.getState(),
       sample: (sessionId) => player.sample(sessionId),
@@ -806,11 +842,14 @@ const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefin
     const owner = await fixture.connect(await fixture.login());
     await owner.action({ type: "create", name: "Movie night", password: "" });
     const account = await fixture.login();
-    viewer.connect({
-      serverOrigin: proxy.origin,
-      watchAuthentication: account.watchAuthentication,
-      supportsWatchGroups: account.supportsWatchGroups,
-    }, "browser");
+    viewer.connect(
+      {
+        serverOrigin: proxy.origin,
+        watchAuthentication: account.watchAuthentication,
+        supportsWatchGroups: account.supportsWatchGroups,
+      },
+      "browser",
+    );
     viewer.setSurfaceReady(true);
     await eventually(() => viewer.status.connection === "connected");
     await viewer.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
@@ -855,7 +894,9 @@ test("a browser that holds playback back for a click joins the group's playback 
     // The group has moved on while autoplay is blocked; clicking must catch up to it.
     await eventually(() => {
       const playback = owner.status.group?.playback;
-      return playback !== undefined && playback !== null && Date.now() - playback.updatedAtMs > 1200;
+      return (
+        playback !== undefined && playback !== null && Date.now() - playback.updatedAtMs > 1200
+      );
     });
     expect(element.paused).toBe(true);
 
@@ -965,7 +1006,9 @@ test("browser failure diagnostics export after teardown and isolate the next pla
   element.fail(3);
   await eventually(() => player.getState() === null);
   const failed = JSON.parse(player.playbackDiagnostics());
-  expect(failed.playbackTimeline.map((event: { kind: string }) => event.kind)).toContain("browser_error");
+  expect(failed.playbackTimeline.map((event: { kind: string }) => event.kind)).toContain(
+    "browser_error",
+  );
   expect(JSON.stringify(failed)).not.toContain("private-title");
   element.error = null;
   await player.start({ itemId: "other-title" });
@@ -979,7 +1022,11 @@ test("browser synchronization samples fresh positions and halts projection acros
   const sessionId = player.getState()?.sessionId ?? "";
   element.currentTime = 17;
   await player.speed(sessionId, 0.99);
-  expect(player.sample(sessionId)).toMatchObject({ positionSeconds: 17, speed: 0.99, advancing: true });
+  expect(player.sample(sessionId)).toMatchObject({
+    positionSeconds: 17,
+    speed: 0.99,
+    advancing: true,
+  });
   element.seeking = true;
   expect(player.sample(sessionId).advancing).toBe(false);
   element.seeking = false;
@@ -1000,12 +1047,35 @@ test("browser synchronization samples fresh positions and halts projection acros
   expect(() => player.sample(sessionId)).toThrow();
 });
 
-
 describe("browser track memory", () => {
   const streams = [
-    { id: "fr", kind: "audio", ordinal: 1, codec: "aac", language: "fra", title: null, isDefault: true },
-    { id: "en", kind: "audio", ordinal: 2, codec: "aac", language: "eng", title: null, isDefault: false },
-    { id: "sub", kind: "subtitle", ordinal: 3, codec: "subrip", language: "eng", title: null, isDefault: true },
+    {
+      id: "fr",
+      kind: "audio",
+      ordinal: 1,
+      codec: "aac",
+      language: "fra",
+      title: null,
+      isDefault: true,
+    },
+    {
+      id: "en",
+      kind: "audio",
+      ordinal: 2,
+      codec: "aac",
+      language: "eng",
+      title: null,
+      isDefault: false,
+    },
+    {
+      id: "sub",
+      kind: "subtitle",
+      ordinal: 3,
+      codec: "subrip",
+      language: "eng",
+      title: null,
+      isDefault: true,
+    },
   ] as const satisfies PlayerSession["streams"];
   test("supported audio is selected before play, and startup never saves", async () => {
     const f = setup(streams);
@@ -1024,16 +1094,23 @@ describe("browser track memory", () => {
   });
   test("unsupported subtitle and audio choices survive startup and reopening", async () => {
     const f = setup(streams);
-    f.api.memory = { ...defaultTrackMemory(), audio: describeTrack("source", streams[1]), subtitle: describeTrack("source", streams[2]) };
+    f.api.memory = {
+      ...defaultTrackMemory(),
+      audio: describeTrack("source", streams[1]),
+      subtitle: describeTrack("source", streams[2]),
+    };
     await f.player.start({ itemId: "movie" });
     expect(f.player.getState()?.streams).toEqual([]);
     expect(f.player.getState()?.selectedSubtitleStreamId).toBeNull();
     expect(f.api.saves).toEqual([]);
-    f.player.leave(); await f.player.reconcile();
-    expect(f.api.memory.subtitle).not.toBeNull(); expect(f.api.memory.audio?.streamId).toBe("en");
+    f.player.leave();
+    await f.player.reconcile();
+    expect(f.api.memory.subtitle).not.toBeNull();
+    expect(f.api.memory.audio?.streamId).toBe("en");
     // An explicit reset can still clear an unsupported choice on the server.
     await f.player.resetTrack("session-2", "subtitle");
-    expect(f.api.memory.subtitle).toBeNull(); expect(f.api.memory.audio?.streamId).toBe("en");
+    expect(f.api.memory.subtitle).toBeNull();
+    expect(f.api.memory.audio?.streamId).toBe("en");
     await f.player.stop();
   });
   test("mismatched browser track counts do not guess track identity", async () => {
@@ -1042,32 +1119,43 @@ describe("browser track memory", () => {
     await f.player.start({ itemId: "movie" });
     expect(f.player.getState()?.streams).toEqual([]);
     await expect(f.player.selectAudioStream("session-1", "en")).rejects.toThrow("unavailable");
-    expect(f.api.saves).toEqual([]); await f.player.stop();
+    expect(f.api.saves).toEqual([]);
+    await f.player.stop();
   });
   test("a codec the browser cannot decode is not selected or saved", async () => {
-    const f = setup(streams.map((stream) => stream.id === "fr" ? { ...stream, codec: "ac3" } : stream));
+    const f = setup(
+      streams.map((stream) => (stream.id === "fr" ? { ...stream, codec: "ac3" } : stream)),
+    );
     f.element.audioTracks = { length: 2, 0: { enabled: false }, 1: { enabled: true } };
     await f.player.start({ itemId: "movie" });
     await expect(f.player.selectAudioStream("session-1", "fr")).rejects.toThrow("AC3 audio");
-    expect(f.api.saves).toEqual([]); expect(f.element.audioTracks[1]?.enabled).toBe(true);
+    expect(f.api.saves).toEqual([]);
+    expect(f.element.audioTracks[1]?.enabled).toBe(true);
     await f.player.stop();
   });
   test("save failures leave audio playing with a retryable error", async () => {
     const f = setup(streams);
     f.element.audioTracks = { length: 2, 0: { enabled: true }, 1: { enabled: false } };
-    await f.player.start({ itemId: "movie" }); f.api.saveFailure = true;
+    await f.player.start({ itemId: "movie" });
+    f.api.saveFailure = true;
     const state = await f.player.selectAudioStream("session-1", "fr");
     expect(state).toMatchObject({ selectedAudioStreamId: "fr", paused: false });
-    expect(state.trackMemoryError).toContain("Retry"); expect(f.failures).toEqual([]);
-    f.api.saveFailure = false; await f.player.retryTrackMemory("session-1");
-    expect(f.api.memory.audio?.streamId).toBe("fr"); expect(f.player.getState()?.trackMemoryError).toBeNull();
+    expect(state.trackMemoryError).toContain("Retry");
+    expect(f.failures).toEqual([]);
+    f.api.saveFailure = false;
+    await f.player.retryTrackMemory("session-1");
+    expect(f.api.memory.audio?.streamId).toBe("fr");
+    expect(f.player.getState()?.trackMemoryError).toBeNull();
     await f.player.stop();
   });
   test("dismissing a save failure clears the error and keeps the chosen audio playing", async () => {
     const f = setup(streams);
     f.element.audioTracks = { length: 2, 0: { enabled: true }, 1: { enabled: false } };
-    await f.player.start({ itemId: "movie" }); f.api.saveFailure = true;
-    expect((await f.player.selectAudioStream("session-1", "fr")).trackMemoryError).toContain("Retry");
+    await f.player.start({ itemId: "movie" });
+    f.api.saveFailure = true;
+    expect((await f.player.selectAudioStream("session-1", "fr")).trackMemoryError).toContain(
+      "Retry",
+    );
     const state = await f.player.dismissTrackMemoryError("session-1");
     expect(state).toMatchObject({ selectedAudioStreamId: "fr", trackMemoryError: null });
     await f.player.stop();

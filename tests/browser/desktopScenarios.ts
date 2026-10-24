@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test";
 import {
-  repaint,
-  newSignedOutPage,
-  gotoDesktop,
-  settled,
   expectAlike,
   expectDesktopUnchanged,
+  gotoDesktop,
+  newSignedOutPage,
+  repaint,
+  settled,
   signedInBuilds,
 } from "./desktopRenderer";
 

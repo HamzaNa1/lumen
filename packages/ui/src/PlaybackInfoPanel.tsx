@@ -2,8 +2,8 @@ import type { PlaybackInfo } from "@lumen/contracts";
 import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "./Button";
-import { type PlaybackInfoContent, pollPlaybackInfo } from "./playbackInfoPolling";
 import { playbackInfoSections } from "./PlayerFormatting";
+import { type PlaybackInfoContent, pollPlaybackInfo } from "./playbackInfoPolling";
 
 /** How often the panel asks the player again while it is open. */
 const refreshIntervalMs = 1_000;

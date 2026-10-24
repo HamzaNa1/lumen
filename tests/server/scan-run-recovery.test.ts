@@ -1,15 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  Database,
-  type DatabaseClient,
-  type DatabaseTransaction,
-  Repositories,
-  RepositoriesLive,
-  scanJobs,
-  scanRuns,
-  sql,
-} from "../../packages/database/src/index.ts";
-import { Effect, Exit, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -24,6 +13,17 @@ import { TmdbProvider } from "../../apps/server/src/media/Tmdb";
 import { LibraryService, LibraryServiceLive } from "../../apps/server/src/services/LibraryService";
 import { MetadataSettings } from "../../apps/server/src/services/MetadataSettings";
 import { ScannerLive } from "../../apps/server/src/services/Scanner";
+import { Effect, Exit, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import {
+  Database,
+  type DatabaseClient,
+  type DatabaseTransaction,
+  Repositories,
+  RepositoriesLive,
+  scanJobs,
+  scanRuns,
+  sql,
+} from "../../packages/database/src/index.ts";
 
 const leaseMs = 300_000;
 // Discovery stamps probe jobs with the wall clock. Tests that run the scanner keep

@@ -2,8 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
 import { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
+import type { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
 
 const createIpc = (): { readonly ipc: MpvIpc; readonly requestId: () => number } => {
   const ipc = new MpvIpc();
@@ -25,10 +25,14 @@ const createIpc = (): { readonly ipc: MpvIpc; readonly requestId: () => number }
 };
 
 const respond = (ipc: MpvIpc, requestId: number, error?: string, data?: unknown): void => {
-  const response: { request_id: number; error?: string; data?: unknown } = { request_id: requestId };
+  const response: { request_id: number; error?: string; data?: unknown } = {
+    request_id: requestId,
+  };
   if (error !== undefined) response.error = error;
   if (data !== undefined) response.data = data;
-  Reflect.apply((ipc as unknown as { handle: (line: string) => void }).handle, ipc, [JSON.stringify(response)]);
+  Reflect.apply((ipc as unknown as { handle: (line: string) => void }).handle, ipc, [
+    JSON.stringify(response),
+  ]);
 };
 
 describe("MpvIpc command responses", () => {
@@ -73,13 +77,13 @@ describe("MpvIpc command responses", () => {
   });
 });
 
-
 test("a real IPC socket disconnect rejects pending and subsequent commands and reports failure once", async () => {
   const connected = Promise.withResolvers<Socket>();
   const server = createServer((socket) => connected.resolve(socket));
-  const socketPath = process.platform === "win32"
-    ? `\\\\.\\pipe\\lumen-test-${crypto.randomUUID()}`
-    : join(tmpdir(), `lumen-test-${crypto.randomUUID()}.sock`);
+  const socketPath =
+    process.platform === "win32"
+      ? `\\\\.\\pipe\\lumen-test-${crypto.randomUUID()}`
+      : join(tmpdir(), `lumen-test-${crypto.randomUUID()}.sock`);
   const ipc = new MpvIpc();
   let failures = 0;
   const disconnected = Promise.withResolvers<void>();
@@ -95,7 +99,9 @@ test("a real IPC socket disconnect rejects pending and subsequent commands and r
     await ipc.connect({ socketPath } as MpvProcess);
     const socket = await connected.promise;
     socket.once("data", () => socket.destroy());
-    const pending = expect(ipc.command(["get_property", "time-pos"])).rejects.toThrow("MPV IPC closed");
+    const pending = expect(ipc.command(["get_property", "time-pos"])).rejects.toThrow(
+      "MPV IPC closed",
+    );
     await disconnected.promise;
     await pending;
     await expect(ipc.command(["get_property", "time-pos"])).rejects.toThrow("not connected");

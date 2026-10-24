@@ -1,16 +1,16 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { once } from "node:events";
-import { analyzeAudioTransition } from "../helpers/audio-transition";
 import { MpvIpc } from "../../apps/desktop/src/main/player/MpvIpc";
 import type { MpvProcess } from "../../apps/desktop/src/main/player/MpvProcess";
 import {
   mpvPitchArguments,
   sampleMpvPlayback,
 } from "../../apps/desktop/src/main/player/MpvSynchronization";
+import { analyzeAudioTransition } from "../helpers/audio-transition";
 
 // Standalone real-MPV check: bun tests/native/mpv-watch-audio.ts [evidence-directory].
 // Requires mpv and ffmpeg on PATH; captures PCM, without relying on a speaker/device driver.

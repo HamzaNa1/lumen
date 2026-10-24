@@ -53,7 +53,9 @@ test("resolutions, codecs and numeric titles after an episode are not ranges", (
   expect(parseVideoPath("shows", "Show/Season 3/Show.S03E10-11-1080p.WEB.mkv").title).toBe(
     "1080p WEB",
   );
-  expect(parseVideoPath("shows", "Show/Season 3/Show S03E10 - 24 Hours.mkv").title).toBe("24 Hours");
+  expect(parseVideoPath("shows", "Show/Season 3/Show S03E10 - 24 Hours.mkv").title).toBe(
+    "24 Hours",
+  );
 });
 
 test("reversed, repeated, gapped and implausibly long ranges fall back to the first episode", () => {
@@ -73,7 +75,9 @@ test("reversed, repeated, gapped and implausibly long ranges fall back to the fi
   expect(episode("Show S03E10E1000.mkv")).toEqual([10, null, "episode_range_invalid"]);
   expect(episode("Show S03E10-1000.mkv")).toEqual([10, null, "episode_range_invalid"]);
   expect(episode("Show S03E10-E11-E12x.mkv")).toEqual([10, null, "episode_range_invalid"]);
-  expect(parseVideoPath("shows", "Show/Season 3/Show S03E10-E11-E1000.mkv").title).toBe("Episode 10");
+  expect(parseVideoPath("shows", "Show/Season 3/Show S03E10-E11-E1000.mkv").title).toBe(
+    "Episode 10",
+  );
   expect(episode("Show S03E01-E10.mkv")).toEqual([1, 10, null]);
 });
 

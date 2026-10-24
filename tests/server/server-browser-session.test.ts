@@ -8,7 +8,8 @@ const running: RunningServer[] = [];
 const directories: string[] = [];
 afterEach(async () => {
   for (const server of running.splice(0)) await server.stop();
-  for (const directory of directories.splice(0)) await rm(directory, { recursive: true, force: true });
+  for (const directory of directories.splice(0))
+    await rm(directory, { recursive: true, force: true });
 });
 
 const start = async (overrides: Parameters<typeof startServer>[0] = {}) => {
@@ -48,7 +49,9 @@ const start = async (overrides: Parameters<typeof startServer>[0] = {}) => {
 };
 
 const sessionCookie = (response: Response): string => {
-  const cookie = response.headers.getSetCookie().find((value) => value.startsWith("lumen_session="));
+  const cookie = response.headers
+    .getSetCookie()
+    .find((value) => value.startsWith("lumen_session="));
   if (cookie === undefined) throw new Error("No session cookie was set");
   return cookie;
 };
@@ -138,16 +141,28 @@ describe("browser sessions", () => {
       fetch(new URL("/api/v1/libraries", origin), {
         method: "POST",
         headers: { "content-type": "application/json", cookie, ...headers },
-        body: JSON.stringify({ id: crypto.randomUUID(), name: "Movies", slug: "movies", kind: "movies" }),
+        body: JSON.stringify({
+          id: crypto.randomUUID(),
+          name: "Movies",
+          slug: "movies",
+          kind: "movies",
+        }),
       });
     expect((await mutate({})).status).toBe(403);
-    expect((await mutate({ origin: "https://evil.example", "x-lumen-csrf": "1" })).status).toBe(403);
+    expect((await mutate({ origin: "https://evil.example", "x-lumen-csrf": "1" })).status).toBe(
+      403,
+    );
     expect((await mutate({ origin })).status).toBe(403);
     expect((await mutate({ origin, "x-lumen-csrf": "1" })).status).toBe(201);
 
     const logout = await fetch(new URL("/api/v1/auth/browser/logout", origin), {
       method: "POST",
-      headers: { "content-type": "application/json", cookie, origin: "https://evil.example", "x-lumen-csrf": "1" },
+      headers: {
+        "content-type": "application/json",
+        cookie,
+        origin: "https://evil.example",
+        "x-lumen-csrf": "1",
+      },
       body: "{}",
     });
     expect(logout.status).toBe(403);
@@ -155,11 +170,17 @@ describe("browser sessions", () => {
   });
 
   test("an origin a proxy presents the app on can be allowed explicitly", async () => {
-    const { register, account, origin } = await start({ allowedOrigins: ["https://media.example"] });
+    const { register, account, origin } = await start({
+      allowedOrigins: ["https://media.example"],
+    });
     await register();
     const login = await fetch(new URL("/api/v1/auth/browser/login", origin), {
       method: "POST",
-      headers: { "content-type": "application/json", origin: "https://media.example", "x-lumen-csrf": "1" },
+      headers: {
+        "content-type": "application/json",
+        origin: "https://media.example",
+        "x-lumen-csrf": "1",
+      },
       body: JSON.stringify(account),
     });
     expect(login.status).toBe(200);
@@ -168,7 +189,11 @@ describe("browser sessions", () => {
   test("signing out revokes the session and clears the cookie", async () => {
     const { register, browser } = await start();
     const cookie = cookiePair(await register());
-    const logout = await browser("/api/v1/auth/browser/logout", { method: "POST", body: "{}", cookie });
+    const logout = await browser("/api/v1/auth/browser/logout", {
+      method: "POST",
+      body: "{}",
+      cookie,
+    });
     expect(logout.status).toBe(200);
     expect(sessionCookie(logout)).toContain("Max-Age=0");
     expect((await browser("/api/v1/auth/browser/session", { cookie })).status).toBe(401);
@@ -227,7 +252,12 @@ describe("browser sessions", () => {
     const created = await browser("/api/v1/users", {
       method: "POST",
       cookie: admin,
-      body: JSON.stringify({ username: "viewer", displayName: "Viewer", password: "another long password", role: "user" }),
+      body: JSON.stringify({
+        username: "viewer",
+        displayName: "Viewer",
+        password: "another long password",
+        role: "user",
+      }),
     });
     expect(created.status).toBe(201);
     const viewer = cookiePair(

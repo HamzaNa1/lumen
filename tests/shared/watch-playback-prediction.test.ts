@@ -59,7 +59,10 @@ const fixture = async (group: WatchGroup) => {
       state = null;
     },
     getState: () => state,
-    sample: () => state === null ? null : { ...state, sampledAtMs: performance.now(), speed: 1, advancing: !state.paused },
+    sample: () =>
+      state === null
+        ? null
+        : { ...state, sampledAtMs: performance.now(), speed: 1, advancing: !state.paused },
     seek: async (_sessionId, positionSeconds) => {
       seeks += 1;
       if (state !== null) state = { ...state, positionSeconds };

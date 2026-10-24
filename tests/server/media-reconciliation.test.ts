@@ -1,11 +1,4 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import {
-  Database,
-  Repositories,
-  RepositoriesLive,
-  sql,
-} from "../../packages/database/src/index.ts";
-import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { chmod, mkdir, mkdtemp, readdir, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -13,6 +6,7 @@ import { newUuid } from "../../apps/server/src/core/Security";
 import { makeDatabaseLayers } from "../../apps/server/src/database/DatabaseLayer";
 import { JobService, JobServiceLive } from "../../apps/server/src/jobs/JobService";
 import { LibraryWatcherLive } from "../../apps/server/src/jobs/LibraryWatcher";
+import { cleanupParkedAtMs, insertScanRun } from "../../apps/server/src/jobs/ScanJobs";
 import {
   ScheduledJobService,
   ScheduledJobServiceLiveWithConfig,
@@ -25,7 +19,13 @@ import { CatalogService, CatalogServiceLive } from "../../apps/server/src/servic
 import { LibraryService, LibraryServiceLive } from "../../apps/server/src/services/LibraryService";
 import { MetadataSettingsLive } from "../../apps/server/src/services/MetadataSettings";
 import { Scanner, ScannerLive } from "../../apps/server/src/services/Scanner";
-import { cleanupParkedAtMs, insertScanRun } from "../../apps/server/src/jobs/ScanJobs";
+import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
+import {
+  Database,
+  Repositories,
+  RepositoriesLive,
+  sql,
+} from "../../packages/database/src/index.ts";
 import { finishScan } from "./helpers/scan";
 
 const paths: string[] = [];

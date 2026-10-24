@@ -1,5 +1,9 @@
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import type { ServerWebSocket } from "bun";
+import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
+import type { AuthPrincipal } from "../../apps/server/src/services/AuthService";
+import { WatchGroups, type WatchSocketData } from "../../apps/server/src/watch-groups/WatchGroups";
+import { WatchGroupClient } from "../../packages/client/src/watch/WatchGroupClient";
 import {
   WATCH_CONNECTION_REPLACED,
   WATCH_MEMBER_TIMEOUT_MS,
@@ -7,10 +11,6 @@ import {
   type WatchGroup,
   type WatchMessage,
 } from "../../packages/contracts/src/watch-groups.ts";
-import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
-import type { AuthPrincipal } from "../../apps/server/src/services/AuthService";
-import { WatchGroups, type WatchSocketData } from "../../apps/server/src/watch-groups/WatchGroups";
-import { WatchGroupClient } from "../../packages/client/src/watch/WatchGroupClient";
 import { eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
 

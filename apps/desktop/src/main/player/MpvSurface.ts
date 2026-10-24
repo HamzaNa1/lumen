@@ -99,10 +99,7 @@ export class MpvSurface {
   show(): void {
     if (this.disposed || this.parent.isDestroyed() || this.bounds === null || !this.playbackVisible)
       return;
-    if (
-      process.platform === "win32" &&
-      (this.parent.isMinimized() || !this.parent.isVisible())
-    )
+    if (process.platform === "win32" && (this.parent.isMinimized() || !this.parent.isVisible()))
       return;
     this.syncHostBounds();
     if (this.host !== null && !this.host.isDestroyed()) this.host.showInactive();

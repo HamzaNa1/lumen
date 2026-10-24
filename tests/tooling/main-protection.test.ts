@@ -163,12 +163,12 @@ test("apply adds product checks to active main protection without changing any u
   write(before);
   const expected = structuredClone(before);
   delete expected.id;
-  expected.rules.find(
-    (rule: { type: string }) => rule.type === "required_status_checks",
-  ).parameters.required_status_checks.push(
-    { context: "product-verification (server)", integration_id: 15368 },
-    { context: "product-verification (desktop)", integration_id: 15368 },
-  );
+  expected.rules
+    .find((rule: { type: string }) => rule.type === "required_status_checks")
+    .parameters.required_status_checks.push(
+      { context: "product-verification (server)", integration_id: 15368 },
+      { context: "product-verification (desktop)", integration_id: 15368 },
+    );
   const plan = await run("plan");
   expect(plan.exitCode, plan.stderr).toBe(0);
   expect(JSON.parse(plan.stdout)).toEqual(expected);

@@ -3,8 +3,14 @@ interface SafeStorageAvailability {
   readonly getSelectedStorageBackend?: () => string;
 }
 
-export const canEncryptTokens = (storage: SafeStorageAvailability, platform: NodeJS.Platform): boolean => {
+export const canEncryptTokens = (
+  storage: SafeStorageAvailability,
+  platform: NodeJS.Platform,
+): boolean => {
   if (!storage.isEncryptionAvailable()) return false;
   if (platform !== "linux") return true;
-  return typeof storage.getSelectedStorageBackend === "function" && storage.getSelectedStorageBackend() !== "basic_text";
+  return (
+    typeof storage.getSelectedStorageBackend === "function" &&
+    storage.getSelectedStorageBackend() !== "basic_text"
+  );
 };

@@ -33,7 +33,12 @@ const catalogOf = (nodes: ReadonlyArray<Node>) => {
 const show = { id: "show", kind: "show", parentId: null, title: "House" };
 const season1 = { id: "s1", kind: "season", parentId: "show", title: "Season 1" };
 const season2 = { id: "s2", kind: "season", parentId: "show", title: "Season 2" };
-const episode = (id: string, parentId: string): Node => ({ id, kind: "episode", parentId, title: id });
+const episode = (id: string, parentId: string): Node => ({
+  id,
+  kind: "episode",
+  parentId,
+  title: id,
+});
 
 test("an episode's show is found through its season, or directly above it", async () => {
   const { catalog } = catalogOf([show, season1, episode("e1", "s1"), episode("special", "show")]);

@@ -1,16 +1,21 @@
-import { serveHttp, type HttpServer } from "./http/HttpServer";
-import { WatchGroups, type WatchSocketData } from "./watch-groups/WatchGroups";
-import { createLogger, ServerLogger, type Logger } from "./core/Logger";
+import { chmod, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { Database, RepositoriesLive, serverIdentity } from "@lumen/database";
+import { sql } from "drizzle-orm";
 import { Cause, Effect, Exit, Fiber, Layer } from "effect";
-import { makeServerConfig } from "./config/ServerConfig";
 import type { ServerConfig } from "./config/Config";
+import { makeServerConfig } from "./config/ServerConfig";
+import { createLogger, type Logger, ServerLogger } from "./core/Logger";
 import { makeDatabaseLayers } from "./database/DatabaseLayer";
 import {
+  type ServerIdentity,
   ServerIdentityLive,
   ServerIdentityService,
-  type ServerIdentity,
 } from "./database/Identity";
+import { isTrustedOrigin } from "./http/BrowserSession";
+import { type HttpServices, makeHttpHandler } from "./http/HttpApp";
+import { type HttpServer, serveHttp } from "./http/HttpServer";
+import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
 import { LibraryWatcherLive } from "./jobs/LibraryWatcher";
 import {
@@ -22,28 +27,23 @@ import { FfprobeLive } from "./media/Ffprobe";
 import { MediaIngestLive } from "./media/MediaIngest";
 import { TmdbProvider, TmdbProviderLive } from "./media/Tmdb";
 import { AccessControl, AccessControlLive } from "./services/AccessControl";
-import { AssetService, AssetServiceLiveWithConfig } from "./services/AssetService";
 import { AdminService, AdminServiceLive } from "./services/AdminService";
+import { AssetService, AssetServiceLiveWithConfig } from "./services/AssetService";
 import { AuthService, AuthServiceLive } from "./services/AuthService";
 import { CatalogService, CatalogServiceLive } from "./services/CatalogService";
-import { HomeService, HomeServiceLive } from "./services/HomeService";
 import { EventService, EventServiceLive } from "./services/EventService";
+import { HomeService, HomeServiceLive } from "./services/HomeService";
 import { LibraryService, LibraryServiceLive } from "./services/LibraryService";
-import { ScanService, ScanServiceLive } from "./services/ScanService";
-import { PlaybackService, PlaybackServiceLive } from "./services/PlaybackService";
-import { ScannerLive } from "./services/Scanner";
 import {
   MetadataSettings,
   MetadataSettingsLive,
   type MetadataSettingsShape,
 } from "./services/MetadataSettings";
+import { PlaybackService, PlaybackServiceLive } from "./services/PlaybackService";
+import { ScannerLive } from "./services/Scanner";
+import { ScanService, ScanServiceLive } from "./services/ScanService";
 import { ServerName, ServerNameLive, type ServerNameShape } from "./services/ServerName";
-import { isTrustedOrigin } from "./http/BrowserSession";
-import { makeHttpHandler, type HttpServices } from "./http/HttpApp";
-import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
-import { sql } from "drizzle-orm";
-import { chmod, mkdir } from "node:fs/promises";
-import { dirname } from "node:path";
+import { WatchGroups, type WatchSocketData } from "./watch-groups/WatchGroups";
 
 export interface ServerServices {
   readonly auth: AuthService["Service"];
@@ -252,8 +252,9 @@ const startConfiguredServer = async (
     };
     const handler = makeHttpHandler(httpServices, config, logger);
     const web = makeStaticWebHandler(config, logger);
-    const watchGroups = new WatchGroups(httpServices, (request, origin) =>
-      isTrustedOrigin(request, origin, config),
+    const watchGroups = new WatchGroups(
+      httpServices,
+      (request, origin) => isTrustedOrigin(request, origin, config),
       { logger: logger.child({ component: "watch-groups" }) },
     );
     const listeningServer = await serveHttp<WatchSocketData>({
