@@ -486,7 +486,7 @@ describe("library watcher background job", () => {
 
   test("a failing watcher is retried with backoff from its failure time and then recorded as failed", async () => {
     const { root, databasePath } = await makeWatcherWorkspace();
-    // Each attempt takes real time, so backoff measured from the claim time would
+    // Each attempt advances the test clock, so backoff measured from claim time would
     // make the retry due before its delay has passed.
     const records: Array<Record<string, unknown>> = [];
     const logger = createLogger({
@@ -500,7 +500,7 @@ describe("library watcher background job", () => {
     });
     const slowFailingWatcher = Layer.succeed(LibraryWatcher, {
       check: () =>
-        Effect.sleep(20).pipe(Effect.andThen(Effect.fail(new Error("Media share is offline")))),
+        TestClock.adjust(20).pipe(Effect.andThen(Effect.fail(new Error("Media share is offline")))),
     });
 
     const result = await Effect.runPromise(
@@ -513,6 +513,7 @@ describe("library watcher background job", () => {
         let dueAtMs = 1_000;
         for (let attempt = 1; attempt <= 3; attempt += 1) {
           const early = yield* jobService.runOne(dueAtMs - 1);
+          yield* TestClock.setTime(dueAtMs);
           const ran = yield* jobService.runOne(dueAtMs);
           const [job] = yield* listWatcherJobs;
           if (job === undefined) throw new Error("Missing watcher job");
@@ -527,6 +528,7 @@ describe("library watcher background job", () => {
             Layer.provide(Layer.succeed(ServerLogger, logger)),
           ),
         ),
+        Effect.provide(TestClock.layer()),
       ),
     );
 
@@ -569,7 +571,8 @@ describe("library watcher background job", () => {
     for (const record of outcomes) {
       expect(record.jobId).toBeString();
       expect(record.operation).toBe("library-watcher");
-      expect(record.durationMs).toBeGreaterThanOrEqual(20);
+      // Log duration uses the real monotonic clock; retry timestamps above use TestClock.
+      expect(record.durationMs).toBeGreaterThanOrEqual(0);
       expect(record.error).toMatchObject({ type: "Error" });
     }
     expect(JSON.stringify(records)).not.toContain("Media share is offline");
@@ -639,6 +642,7 @@ describe("library watcher background job", () => {
       const leaseMs = 400;
       const cutoffMs = 360;
       const claimStarted = Effect.runSync(Deferred.make<void>());
+      const releaseClaim = Effect.runSync(Deferred.make<void>());
       const watcherStarted = Effect.runSync(Deferred.make<void>());
       let checks = 0;
       let interrupted = false;
@@ -664,7 +668,7 @@ describe("library watcher background job", () => {
             key === "transaction"
               ? (...args: Parameters<DatabaseClient["transaction"]>) =>
                   Deferred.succeed(claimStarted, undefined).pipe(
-                    Effect.andThen(Effect.sleep(claimDelayMs)),
+                    Effect.andThen(Deferred.await(releaseClaim)),
                     Effect.andThen(target.transaction(...args)),
                   )
               : Reflect.get(target, key, receiver),
@@ -680,6 +684,7 @@ describe("library watcher background job", () => {
           const worker = yield* Effect.forkChild(jobService.runOne(1_000));
           yield* Deferred.await(claimStarted);
           yield* TestClock.adjust(claimDelayMs);
+          yield* Deferred.succeed(releaseClaim, undefined);
           if (claimDelayMs < cutoffMs) {
             yield* Deferred.await(watcherStarted);
             // Work is still running just before the cutoff, then is interrupted

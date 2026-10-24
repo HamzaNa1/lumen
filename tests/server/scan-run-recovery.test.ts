@@ -521,6 +521,7 @@ describe("scan run reconciliation", () => {
         yield* scan(shows.libraryId, startedAtMs);
         yield* watcher.check(startedAtMs);
         const [existing] = yield* sourceIds(shows.libraryId);
+        if (existing === undefined) throw new Error("Missing seeded source");
         // The state production was found in: the job exhausted its attempts under
         // an earlier release, which failed it without ending its run.
         const stuckRunId = yield* seedRun(shows.libraryId, startedAtMs, [

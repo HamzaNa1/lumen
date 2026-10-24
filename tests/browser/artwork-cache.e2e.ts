@@ -9,7 +9,7 @@ test("artwork caching respects logout and account changes", async ({ page, brows
       fetch(path, {
         method: "POST",
         headers: { "content-type": "application/json", "x-lumen-csrf": "1" },
-        body: body === undefined ? undefined : JSON.stringify(body),
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
     const login = (username: string) =>
       mutate("/api/v1/auth/browser/login", {

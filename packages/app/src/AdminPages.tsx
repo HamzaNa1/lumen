@@ -672,7 +672,7 @@ const UserDialog = ({
         await runtime.admin.updateUser({
           userId: user.id,
           displayName,
-          password: password === "" ? undefined : password,
+          ...(password === "" ? {} : { password }),
           role,
           libraryAccess,
           isActive,

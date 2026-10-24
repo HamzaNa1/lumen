@@ -1,12 +1,12 @@
 import { readLocalFile } from "../core/BoundedInput";
 
 export interface LocalMetadata {
-  readonly title?: string;
-  readonly overview?: string;
-  readonly year?: number;
-  readonly releaseDate?: string;
-  readonly contentRating?: string;
-  readonly communityRating?: number;
+  readonly title?: string | undefined;
+  readonly overview?: string | undefined;
+  readonly year?: number | undefined;
+  readonly releaseDate?: string | undefined;
+  readonly contentRating?: string | undefined;
+  readonly communityRating?: number | undefined;
   readonly genres?: string[];
   readonly studios?: string[];
   readonly tags?: string[];

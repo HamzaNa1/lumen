@@ -221,8 +221,8 @@ export const expectAlike = async (
   const matches = async (): Promise<boolean> => {
     await Promise.all([before(first.page), before(second.page)]);
     shots = await Promise.all([
-      locate(first.page, region).screenshot({ style }),
-      locate(second.page, region).screenshot({ style }),
+      locate(first.page, region).screenshot(style === undefined ? {} : { style }),
+      locate(second.page, region).screenshot(style === undefined ? {} : { style }),
     ]);
     return (
       shots[0].equals(shots[1]) ||

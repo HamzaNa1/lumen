@@ -20,18 +20,20 @@ export function decideByteRange(header: string | null, size: number): RangeDecis
   if (header === null || header.length > 1024) return full;
 
   const match = /^bytes=(\d*)-(\d*)$/i.exec(header.trim());
-  if (!match || (match[1] === "" && match[2] === "")) return full;
+  if (!match) return full;
+  const [, first = "", lastByte = ""] = match;
+  if (first === "" && lastByte === "") return full;
 
   const total = BigInt(size);
-  if (match[1] === "") {
-    const suffixLength = BigInt(match[2]);
+  if (first === "") {
+    const suffixLength = BigInt(lastByte);
     if (suffixLength === 0n || total === 0n) return unsatisfiable;
     const start = suffixLength >= total ? 0n : total - suffixLength;
     return { _tag: "Partial", start: Number(start), endInclusive: size - 1 };
   }
 
-  const start = BigInt(match[1]);
-  const suppliedEnd = match[2] === "" ? null : BigInt(match[2]);
+  const start = BigInt(first);
+  const suppliedEnd = lastByte === "" ? null : BigInt(lastByte);
   if (suppliedEnd !== null && suppliedEnd < start) return full;
   if (start >= total) return unsatisfiable;
   const last = total - 1n;

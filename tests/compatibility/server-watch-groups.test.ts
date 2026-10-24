@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { setImmediate } from "node:timers/promises";
 import type { WatchStatus } from "@lumen/contracts";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { Effect } from "../../apps/server/node_modules/effect/dist/index.js";
@@ -416,6 +417,8 @@ test.each([true, false])(
     };
     let gate = Promise.withResolvers<void>();
     let gated = true;
+    let releaseCheck = Promise.withResolvers<void>();
+    let holdChecks = true;
     let waiting = false;
     let activeChecks = 0;
     let maximumChecks = 0;
@@ -442,7 +445,7 @@ test.each([true, false])(
               if (gated) {
                 waiting = true;
                 await gate.promise;
-              } else await Bun.sleep(150);
+              } else if (holdChecks) await releaseCheck.promise;
               return readable && itemId === fixture.itemId;
             } finally {
               activeChecks -= 1;
@@ -513,19 +516,22 @@ test.each([true, false])(
       });
       gated = false;
       gate.resolve();
-      let updating = true;
-      const updates = (async () => {
-        for (let position = 3; position < 23; position += 1) {
-          await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: position });
-          await Bun.sleep(40);
+      // Hold each visibility lookup while new revisions arrive, then release it.
+      // A directory snapshot must make progress before the stream of updates ends.
+      for (let position = 3; position < 23; position += 1) {
+        await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: position });
+        if (position === 10 || position === 18) {
+          const previous = observedRevisions.length;
+          releaseCheck.resolve();
+          releaseCheck = Promise.withResolvers<void>();
+          await eventually(() => observedRevisions.length > previous);
+          expect(position).toBeLessThan(22);
         }
-        updating = false;
-      })();
-      await eventually(() => listed, 1000);
-      expect(updating).toBe(true);
-      await eventually(() => observedRevisions.length >= 2, 1000);
-      expect(updating).toBe(true);
-      await Promise.all([updates, listing]);
+      }
+      holdChecks = false;
+      releaseCheck.resolve();
+      await listing;
+      expect(listed).toBe(true);
       await eventually(
         () =>
           guest.status.groups.find((group) => group.id === watchedGroupId)?.revision ===
@@ -556,6 +562,7 @@ test.each([true, false])(
       expect(observedRevisions).toEqual([...observedRevisions].sort((left, right) => left - right));
     } finally {
       gate.resolve();
+      releaseCheck.resolve();
       for (const client of clients) client.close();
       groups.close();
       await server.stop(true);
@@ -610,8 +617,9 @@ test("a group waits for a member for as long as it takes to report ready", async
     await stuck.action({ type: "ready", revision: (owner.status.group?.revision ?? 0) - 1 });
     expect(owner.status.group?.playback?.paused).toBe(true);
 
-    // No amount of waiting starts the group without that member.
-    await Bun.sleep(500);
+    // Processing another action cannot release the group without that member.
+    await stuck.action({ type: "ping", sentAtMs: Date.now() });
+    await setImmediate();
     expect(owner.status.group?.playback).toMatchObject({
       paused: true,
       waitingFor: [stuck.status.memberId],

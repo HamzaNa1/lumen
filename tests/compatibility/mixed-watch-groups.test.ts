@@ -7,7 +7,7 @@ import {
   type WatchPlayer,
   type WatchServer,
 } from "../../packages/client/src/index.ts";
-import { eventually } from "../helpers/eventually";
+import { afterNextObservation, eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
 
 // Includes server startup, two authentication flows, shared playback, and teardown.
@@ -98,7 +98,9 @@ class BrowserPlayer implements WatchPlayer<WatchServer> {
   async stop() {
     this.state = null;
   }
+  inspections = 0;
   getState() {
+    this.inspections += 1;
     return this.state;
   }
   sample() {
@@ -219,7 +221,7 @@ test(
       progress("unsupported playback reported");
       expect(browser.status.error).toContain("can’t play this file’s format");
       // Trying again cannot help, so the player is not started over and over.
-      await Bun.sleep(1_300);
+      await afterNextObservation(() => player.inspections);
       expect(player.starts).toBe(1);
       // Joining holds the group, then the failed viewer releases it without retrying the file.
       expect(desktop.status.group?.revision).toBe((before?.revision ?? 0) + 2);
@@ -238,7 +240,7 @@ test(
       await browser.stop();
       progress("stopping browser playback");
       await browser.stop();
-      await Bun.sleep(200);
+      await afterNextObservation(() => player.inspections);
       expect(desktop.status.group?.revision).toBe(released?.revision);
       expect(desktop.status.group?.playback).toEqual(released?.playback ?? null);
 
@@ -296,7 +298,7 @@ test(
       await browser.stop();
       progress("stopping browser playback");
       await browser.stop();
-      await Bun.sleep(700);
+      await afterNextObservation(() => player.inspections);
       expect(desktop.status.group?.revision).toBe(before?.revision);
       expect(desktop.status.group?.playback).toEqual(before?.playback ?? null);
       expect(player.starts).toBe(starts);
@@ -314,7 +316,7 @@ test(
       await eventually(() => desktop.status.group?.playback?.paused === false);
       const changed = desktop.status.group;
       expect(changed?.playback).toMatchObject({ positionSeconds: 30, paused: false });
-      await Bun.sleep(200);
+      await afterNextObservation(() => player.inspections);
       expect(desktop.status.group?.revision).toBe(changed?.revision);
       expect(desktop.status.group?.playback).toEqual(changed?.playback ?? null);
       expect(player.starts).toBe(starts);
@@ -417,7 +419,9 @@ test(
       // This origin, but no session.
       browserSockets({ origin });
       const anonymous = connect(cookieServer(origin));
-      await Bun.sleep(700);
+      await eventually(() =>
+        [foreign, headless, anonymous].every((client) => client.status.connection === "offline"),
+      );
       for (const client of [foreign, headless, anonymous])
         expect(client.status.connection).not.toBe("connected");
       for (const client of clients.splice(0)) client.close();

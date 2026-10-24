@@ -25,11 +25,11 @@ export const ConnectPage = ({
   onChanged,
 }: {
   readonly accounts?: ReadonlyArray<AccountSummary>;
-  readonly activeConnectionId?: string;
-  readonly initialError?: string;
+  readonly activeConnectionId?: string | undefined;
+  readonly initialError?: string | undefined;
   readonly initialShowAddServer?: boolean;
   readonly initialSignInAccount?: AccountSummary | null;
-  readonly onClose?: () => void;
+  readonly onClose?: (() => void) | undefined;
   readonly onChanged?: () => void;
 }): React.ReactElement => {
   const runtime = useRuntime();

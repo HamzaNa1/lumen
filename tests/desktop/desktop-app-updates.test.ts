@@ -1,4 +1,5 @@
 import { expect, jest, test } from "bun:test";
+import { setImmediate } from "node:timers/promises";
 import {
   AppUpdates,
   supportsAutoUpdates,
@@ -66,7 +67,7 @@ test("a failed download is handled like a failed check", async () => {
     const failure = new Error("connection lost");
     const { source } = fakeSource(async () => ({ downloadPromise: Promise.reject(failure) }));
     new AppUpdates(() => undefined).start(source)();
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await setImmediate();
     expect(unhandled).toEqual([]);
     expect(errors).toHaveBeenCalledWith("Failed to update", failure);
   } finally {

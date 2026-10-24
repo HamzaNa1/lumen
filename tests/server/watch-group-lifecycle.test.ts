@@ -53,7 +53,7 @@ const lifecycle = (overrides: Partial<Services> = {}) => {
       },
     } as unknown as Bun.Server<WatchSocketData>);
     const messages: WatchMessage[] = [];
-    const closes: { code?: number; reason?: string }[] = [];
+    const closes: { code?: number | undefined; reason?: string | undefined }[] = [];
     const socket = {
       data,
       send: (raw: string) => {

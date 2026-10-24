@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { BrowserAccounts } from "../../apps/web/src/BrowserAccounts";
 import { errorMessage } from "../../packages/app/src/format";
 import { cookieCredentials, ServerApi } from "../../packages/client/src/index.ts";
+import { eventually } from "../helpers/eventually";
 
 test.each([false, true])(
   "browser sign-in exposes retry feedback (setup=%s)",
@@ -263,7 +264,7 @@ test("revalidating the same account disturbs nothing, and a lost session signs o
     expect(events).toEqual([]);
     signOut();
     await accounts.revalidate();
-    await Bun.sleep(1);
+    await eventually(() => events.length === 3);
     expect(events).toEqual(["cancel requests", "changed", "end activity"]);
     expect((await accounts.list()).accounts).toEqual([]);
   } finally {

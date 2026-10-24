@@ -110,7 +110,7 @@ describe("production logger", () => {
     expect(lines[0]).toContain("\\u202e");
     expect(lines[0]).not.toContain("private-");
     expect(lines[0]).not.toContain("spoofed");
-    expect(lines[0].split("\n")).toHaveLength(2);
+    expect((lines[0] ?? expect.unreachable()).split("\n")).toHaveLength(2);
     const broken = createLogger({
       destination: {
         write: () => {
@@ -186,7 +186,7 @@ describe("production logger", () => {
     expect(lines[0]).not.toContain("hunter2");
     expect(lines[0]).not.toContain("SELECT");
     expect(lines[0]).not.toContain("private");
-    expect(JSON.parse(lines[0]).error).toEqual({
+    expect(JSON.parse(lines[0] ?? expect.unreachable()).error).toEqual({
       type: "Error",
       frames: ["HttpApp.ts:12:34"],
       cause: { type: "Error", code: "SQLITE_BUSY", frames: ["Database.ts:10:20"] },
@@ -209,7 +209,7 @@ describe("production logger", () => {
     const fields: { long: string; circular?: object } = { long: "x".repeat(100_000) };
     fields.circular = fields;
     logger.error("bounded", fields as never, cause);
-    expect(lines[0].length).toBeLessThan(4_000);
+    expect((lines[0] ?? expect.unreachable()).length).toBeLessThan(4_000);
     expect(lines[0]).toContain("TRUNCATED");
     const broken = createLogger({
       level: "info",

@@ -103,10 +103,12 @@ export const makeLibraryService = Effect.gen(function* () {
             kind: input.kind ?? "movies",
             scanMode: input.kind === "music" ? "incremental" : "full",
           });
+          if (created === undefined)
+            return yield* Effect.die(new Error("Library insert returned no row"));
           return created;
         }),
       );
-      return { ...row, kind: input.kind ?? "movies" } as Library;
+      return { ...row, kind: input.kind ?? "movies" };
     },
   );
 
@@ -223,6 +225,8 @@ export const makeLibraryService = Effect.gen(function* () {
             scanGeneration: 0,
             updatedAtMs: nowMs,
           });
+          if (created === undefined)
+            return yield* Effect.die(new Error("Root insert returned no row"));
           return created;
         }),
       );

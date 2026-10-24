@@ -98,7 +98,7 @@ const PanelHeader = ({
   connection,
 }: {
   readonly title: string;
-  readonly locked?: boolean;
+  readonly locked?: boolean | undefined;
   readonly connection: WatchStatus["connection"];
 }): React.ReactElement => (
   <header className="watch-group-header">

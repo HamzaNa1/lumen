@@ -1,5 +1,6 @@
-import { afterEach, beforeEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, mock, spyOn, test } from "bun:test";
 import { EventEmitter } from "node:events";
+import { setImmediate } from "node:timers/promises";
 import type { BrowserWindow } from "electron";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { MacMpvWindow } from "../../apps/desktop/src/main/player/MacMpvWindow";
@@ -16,8 +17,9 @@ import {
   type TrackChoiceInput,
   type TrackMemory,
 } from "../../packages/contracts/src/index.ts";
+import { withDeadline } from "../helpers/deadline";
 import { electronTestExports } from "../helpers/electron";
-import { eventually } from "../helpers/eventually";
+import { afterNextObservation, eventually } from "../helpers/eventually";
 import { watchFixture } from "../helpers/watch-groups";
 
 const events: string[] = [];
@@ -193,13 +195,7 @@ const withPlayback = async (
         args[2] === "yes" ? true : args[2] === "no" ? false : args[2],
       );
     const value = args[0] === "get_property" ? properties.get(String(args[1])) : null;
-    if (value instanceof Promise)
-      return Promise.race([
-        value,
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error("MPV command timed out")), timeoutMs),
-        ),
-      ]);
+    if (value instanceof Promise) return withDeadline(value, timeoutMs, "MPV command timed out");
     return Promise.resolve(value);
   });
   const states: PlayerState[] = [];
@@ -509,7 +505,7 @@ describe("playback progress updates", () => {
       expect((pauseSave as AbortSignal | null)?.aborted).toBe(true);
       // Whatever becomes of the replaced request, it is no longer this player's failure.
       pending.reject(new Error("aborted"));
-      await Bun.sleep(0);
+      await setImmediate();
       expect(errors).toEqual([]);
     });
   });
@@ -519,11 +515,11 @@ describe("playback progress updates", () => {
       await controller.refreshState();
       properties.set("time-pos", new Promise(() => undefined));
       const pausing = controller.pause("session-1", true).catch((cause: unknown) => cause);
-      await Bun.sleep(0);
+      await setImmediate();
       expect(controller.getState()?.paused).toBe(true);
       await controller.stop();
       expect(await pausing).toBeInstanceOf(Error);
-      await Bun.sleep(200);
+      await setImmediate();
       expect(progress).toHaveBeenCalledTimes(1);
       expect(progress).toHaveBeenCalledWith(
         "session-1",
@@ -665,15 +661,20 @@ describe("playback progress updates", () => {
 
   test("publishes multiple position samples within one second without server requests", async () => {
     await withPlayback(async ({ controller, states, heartbeat, progress }) => {
+      jest.useFakeTimers();
       const stopUpdates = startNativePlayer(controller);
       try {
-        await Bun.sleep(950);
+        for (let tick = 0; tick < 4; tick++) {
+          jest.advanceTimersByTime(250);
+          await setImmediate();
+        }
         expect(states.length).toBeGreaterThanOrEqual(3);
         expect(states.at(-1)?.positionSeconds).toBe(12.25);
         expect(heartbeat).not.toHaveBeenCalled();
         expect(progress).not.toHaveBeenCalled();
       } finally {
         stopUpdates();
+        jest.useRealTimers();
       }
     });
   });
@@ -746,6 +747,12 @@ describe("playback progress updates", () => {
 });
 
 describe("Windows player surface visibility", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
   const withSurface = async (
     run: (fixture: {
       surface: InstanceType<typeof MpvSurface>;
@@ -799,7 +806,7 @@ describe("Windows player surface visibility", () => {
       state.overlayFocused = true;
       parent.emit("blur");
       overlayWindow.emit("focus");
-      await Bun.sleep(10);
+      jest.advanceTimersByTime(10);
       expect(host.isVisible()).toBe(true);
 
       const show = spyOn(host, "showInactive");
@@ -807,7 +814,7 @@ describe("Windows player surface visibility", () => {
       try {
         state.overlayFocused = false;
         overlayWindow.emit("blur");
-        await Bun.sleep(10);
+        jest.advanceTimersByTime(10);
         expect(host.isVisible()).toBe(true);
         expect(hide).not.toHaveBeenCalled();
         // Do not raise the video over the newly focused app either.
@@ -815,7 +822,7 @@ describe("Windows player surface visibility", () => {
 
         state.focused = true;
         parent.emit("focus");
-        await Bun.sleep(10);
+        jest.advanceTimersByTime(10);
         expect(host.isVisible()).toBe(true);
         expect(show).toHaveBeenCalledTimes(1);
       } finally {
@@ -835,7 +842,7 @@ describe("Windows player surface visibility", () => {
         surface.show();
         surface.setBounds({ x: 0, y: 0, width: 800, height: 600 });
         overlayWindow.emit("focus");
-        await Bun.sleep(10);
+        jest.advanceTimersByTime(10);
         expect(host.isVisible()).toBe(false);
         surface.hide();
         surface.prepare();
@@ -868,6 +875,12 @@ describe("Windows player surface visibility", () => {
 });
 
 describe("player activation geometry", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
   test("repeated fullscreen activation keeps both windows on the complete monitor viewport", async () => {
     const platform = Object.getOwnPropertyDescriptor(process, "platform");
     Object.defineProperty(process, "platform", { value: "win32" });
@@ -902,14 +915,14 @@ describe("player activation geometry", () => {
         focused = false;
         parent.emit("blur");
         nativeBounds = { ...monitor, height: monitor.height - 1 };
-        await Bun.sleep(10);
+        jest.advanceTimersByTime(10);
 
         // Parent focus arrives before Chromium restores its bounds. No resize
         // event follows this restoration, so synchronous copies stay short.
         focused = true;
         parent.emit("focus");
         nativeBounds = { ...monitor };
-        await Bun.sleep(10);
+        jest.advanceTimersByTime(10);
         expect(controls.getBounds()).toEqual(monitor);
         expect(setBounds).toHaveBeenLastCalledWith(monitor);
 
@@ -920,7 +933,7 @@ describe("player activation geometry", () => {
         controls.focused = true;
         controls.emit("focus");
         nativeBounds = { ...monitor, height: monitor.height - 1 };
-        await Bun.sleep(10);
+        jest.advanceTimersByTime(10);
         expect(controls.getBounds()).toEqual(monitor);
         expect(setBounds).toHaveBeenLastCalledWith(monitor);
         controls.focused = false;
@@ -961,11 +974,11 @@ async function withDeferredWindowedActivation(): Promise<void> {
     overlay.setVisible(true);
     parent.emit("focus");
     bounds = { ...bounds, height: 600 };
-    await Bun.sleep(10);
+    jest.advanceTimersByTime(10);
     expect(overlay.window.getBounds()).toEqual(bounds);
     parent.emit("focus");
     overlay.window.destroy();
-    await Bun.sleep(10);
+    jest.advanceTimersByTime(10);
     expect(parent.listenerCount("focus")).toBe(0);
   } finally {
     if (!overlay.window.isDestroyed()) overlay.window.destroy();
@@ -1285,6 +1298,11 @@ describe("macOS MPV window lifecycle", () => {
 });
 
 describe("native playback failure recovery", () => {
+  const seededTrackList = [
+    { id: 1, type: "audio", "ff-index": 1 },
+    { id: 2, type: "sub", "ff-index": 2 },
+  ];
+
   test("a failure during media loading tears down that startup exactly once", async () => {
     await withPlayback(async ({ controller, failNextLoad, restart, stopProcess, request }) => {
       await controller.stop();
@@ -1344,7 +1362,8 @@ describe("native playback failure recovery", () => {
   test("an established IPC failure restarts shared playback at the group position after its surface is ready", async () => {
     const fixture = await watchFixture();
     try {
-      await withPlayback(async ({ controller, connections }) => {
+      await withPlayback(async ({ controller, connections, properties }) => {
+        properties.set("track-list", seededTrackList);
         const watch = new WatchPlaybackController(watchPlayerFor(controller), () => undefined);
         try {
           const owner = await fixture.connect(await fixture.login());
@@ -1373,7 +1392,12 @@ describe("native playback failure recovery", () => {
           watch.setSurfaceReady(false);
           connections.at(-1)?.emit("disconnected", new Error("MPV IPC closed"));
           expect(controller.getState()).toBeNull();
-          await Bun.sleep(600);
+          const inspect = spyOn(controller, "getState");
+          try {
+            await afterNextObservation(() => inspect.mock.calls.length);
+          } finally {
+            inspect.mockRestore();
+          }
           expect(connections).toHaveLength(started);
           watch.setSurfaceReady(true);
           await eventually(() => controller.getState() !== null);
@@ -1387,7 +1411,9 @@ describe("native playback failure recovery", () => {
           const beforeStop = connections.length;
           await watch.stop();
           watch.retry();
-          await Bun.sleep(1100);
+          await watch.action({ type: "ping", sentAtMs: Date.now() });
+          await eventually(() => watch.status.group?.playback === null);
+          await setImmediate();
           expect(controller.getState()).toBeNull();
           expect(connections).toHaveLength(beforeStop);
           expect(watch.status.group?.playback).toBeNull();
@@ -1404,6 +1430,7 @@ describe("native playback failure recovery", () => {
     const fixture = await watchFixture();
     try {
       await withPlayback(async ({ controller, properties }) => {
+        properties.set("track-list", seededTrackList);
         properties.set("demuxer-cache-state", { "cache-duration": 60, eof: false });
         const watch = new WatchPlaybackController(watchPlayerFor(controller), () => undefined);
         const unanswered = Promise.withResolvers<void>();
@@ -1422,7 +1449,10 @@ describe("native playback failure recovery", () => {
           await eventually(() => watch.status.connection === "connected");
           await watch.action({ type: "join", groupId, password: "" });
           await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 7 });
-          await eventually(() => owner.status.group?.playback?.waitingFor !== undefined);
+          await eventually(() => {
+            const waitingFor = owner.status.group?.playback?.waitingFor;
+            return waitingFor?.length === 1 && waitingFor[0] === starving.status.memberId;
+          });
           await starving.action({ type: "ready", revision: owner.status.group?.revision ?? 0 });
           await eventually(
             () =>
@@ -1616,6 +1646,33 @@ describe("native track memory", () => {
       isDefault: true,
     },
   ] as const satisfies PlayerSession["streams"];
+  test("startup discovers tracks that appear after the file loads", async () => {
+    await withPlayback(
+      async ({ controller, properties, restart }) => {
+        await controller.stop();
+        const trackList = properties.get("track-list");
+        properties.delete("track-list");
+        jest.useFakeTimers();
+        try {
+          const starting = restart();
+          await setImmediate();
+          expect(controller.getState()).toBeNull();
+          properties.set("track-list", trackList);
+          jest.advanceTimersByTime(50);
+          await starting;
+          expect(controller.getState()).toMatchObject({
+            selectedAudioStreamId: "en-first",
+            streams,
+          });
+          expect(properties.get("aid")).toBe(12);
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+      { streams },
+    );
+  });
+
   test("startup maps resolved file tracks to MPV IDs, defaults subtitles Off, and never saves", async () => {
     await withPlayback(
       async ({ controller, properties, saveChoice }) => {

@@ -8,6 +8,7 @@ import {
   artworkPartition,
 } from "../../apps/desktop/src/main/artwork/ArtworkCache";
 import { electronTestExports, ipcHandlers } from "../helpers/electron";
+import { eventually } from "../helpers/eventually";
 
 mock.module("electron", () => electronTestExports);
 const { registerIpcHandlers, unregisterIpcHandlers } = await import(
@@ -300,7 +301,7 @@ test("artwork still loading when the account changes never reaches the next acco
   server.answerWith(() => late.promise);
   const app = start(disk, [first, second], first);
   const pending = app.artwork(artwork).catch((cause: unknown) => cause);
-  await Bun.sleep(0);
+  await eventually(() => server.requests.length > 0);
 
   await app.invoke("accounts:activate", second.connectionId);
   expect(server.requests[0]?.signal?.aborted).toBe(true);

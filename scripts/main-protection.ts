@@ -45,7 +45,7 @@ const editableRuleset = (current: Ruleset): Ruleset => ({
   target: current.target,
   enforcement: current.enforcement,
   conditions: current.conditions,
-  bypass_actors: current.bypass_actors,
+  ...(current.bypass_actors === undefined ? {} : { bypass_actors: current.bypass_actors }),
   rules: current.rules,
 });
 

@@ -80,6 +80,8 @@ export const generateReleaseNotes = (
   const changes: string[] = [];
   for (const entry of history === "" ? [] : history.split("\n")) {
     const [commit, subject, authorName] = entry.split("\0");
+    if (commit === undefined || subject === undefined || authorName === undefined)
+      throw new Error("Invalid git history entry");
     const pullRequests = github
       .pullRequests(commit)
       .filter(

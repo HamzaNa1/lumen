@@ -120,7 +120,7 @@ describe("HTTP and lifecycle logging", () => {
       ["warn", 429],
       ["warn", 400],
     ]);
-    expect(logging.records[0].route).toBe("/api/v1/media/:id");
+    expect(logging.records[0]?.route).toBe("/api/v1/media/:id");
     expect(JSON.stringify(logging.records)).not.toContain("private-");
   });
 
@@ -149,7 +149,7 @@ describe("HTTP and lifecycle logging", () => {
     expect(JSON.stringify(logging.records)).not.toContain("private-");
     const debug = capture("debug");
     await handler(debug)(new Request("http://localhost/health/live"));
-    expect(debug.records[0].level).toBe("debug");
+    expect(debug.records[0]?.level).toBe("debug");
   });
 
   test("logs streaming response setup without reading or buffering the stream", async () => {

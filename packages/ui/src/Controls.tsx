@@ -13,7 +13,7 @@ export const Form = BaseForm;
 
 interface TextFieldProps extends Omit<Input.Props, "className" | "onChange"> {
   readonly label: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   readonly className?: string;
   readonly hideLabel?: boolean;
 }
@@ -130,7 +130,7 @@ export const SwitchField = ({
   disabled = false,
 }: {
   readonly label: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   readonly checked: boolean;
   readonly onCheckedChange: (checked: boolean) => void;
   readonly disabled?: boolean;
@@ -154,7 +154,7 @@ interface ModalProps {
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly title: string;
-  readonly description?: string;
+  readonly description?: string | undefined;
   readonly children: ReactNode;
   readonly className?: string;
   /** Keeps the title for assistive technology but lets the content draw its own header. */

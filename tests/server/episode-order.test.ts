@@ -19,6 +19,7 @@ import {
 } from "../../packages/contracts/src/index.ts";
 import { Effect, Schema } from "../../packages/database/node_modules/effect/dist/index.js";
 import { Database, sql } from "../../packages/database/src/index.ts";
+import { eventually } from "../helpers/eventually";
 import { responseJson } from "../helpers/http";
 
 const refreshResponse = Schema.Struct({ runId: Uuid });
@@ -225,12 +226,19 @@ const fixture = async (episodes: number | ReadonlyArray<Numbering> = 2) => {
   const waitForRun = async (response: Response) => {
     expect(response.status).toBe(200);
     const { runId } = await responseJson(refreshResponse, response);
-    for (let i = 0; i < 200; i++) {
-      const status = await responseJson(ScanRun, request(`scans/${runId}`));
-      if (!["queued", "running"].includes(status.status)) return status;
-      await Bun.sleep(100);
-    }
-    throw new Error("Metadata refresh did not finish");
+    let completed: typeof ScanRun.Type | undefined;
+    await eventually(
+      async () => {
+        const status = await responseJson(ScanRun, request(`scans/${runId}`));
+        if (["queued", "running"].includes(status.status)) return false;
+        completed = status;
+        return true;
+      },
+      20_000,
+      100,
+    );
+    if (completed === undefined) throw new Error("Metadata refresh did not finish");
+    return completed;
   };
   const restart = async () => {
     await running?.stop();

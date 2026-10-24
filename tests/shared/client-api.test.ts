@@ -469,7 +469,7 @@ describe("ServerApi artwork", () => {
     new ServerApi({
       origin: "https://media.example",
       credentials: bearerCredentials(() => "token"),
-      fetchImpl,
+      ...(fetchImpl === undefined ? {} : { fetchImpl }),
     });
 
   test("an image is addressed by its revision when the server gave one", () => {

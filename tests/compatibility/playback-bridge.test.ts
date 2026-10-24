@@ -12,6 +12,7 @@ import { createLogger } from "../../apps/server/src/core/Logger";
 import type { RequestContext } from "../../apps/server/src/http/ClientIdentity";
 import { type HttpServices, makeHttpHandler } from "../../apps/server/src/http/HttpApp";
 import { serveFile } from "../../apps/server/src/http/ServeFile";
+import { withDeadline } from "../helpers/deadline";
 
 const transportModule = join(import.meta.dir, "../../apps/server/src/http/HttpServer.ts");
 
@@ -177,7 +178,6 @@ test("authorized media survives a downstream pause longer than the server's defa
     stderr: "pipe",
   });
   const output = child.stdout.getReader();
-  let startupDeadline: ReturnType<typeof setTimeout> | undefined;
   let downstream: IncomingMessage | undefined;
   try {
     let url: string;
@@ -192,17 +192,8 @@ test("authorized media survives a downstream pause longer than the server's defa
         }
         return JSON.parse(text);
       };
-      url = await Promise.race([
-        listening(),
-        new Promise<never>((_, reject) => {
-          startupDeadline = setTimeout(
-            () => reject(new Error("Native Node bridge did not start")),
-            3000,
-          );
-        }),
-      ]);
+      url = await withDeadline(listening(), 3000, "Native Node bridge did not start");
     } finally {
-      clearTimeout(startupDeadline);
       output.releaseLock();
     }
 
@@ -213,6 +204,7 @@ test("authorized media survives a downstream pause longer than the server's defa
     expect(exemptions).toBe(1);
     downstream.on("error", () => undefined);
     downstream.pause();
+    // biome-ignore lint/plugin: This integration regression must exceed the real native HTTP idle timeout; fake JS timers do not advance Node socket timeouts.
     await new Promise((resolve) => setTimeout(resolve, 12_000));
     let read = 0;
     const ended = new Promise<void>((resolve, reject) => {
@@ -230,11 +222,11 @@ test("authorized media survives a downstream pause longer than the server's defa
     downstream?.destroy();
     child.stdin.write("close\n");
     child.stdin.end();
-    const forcedExit = setTimeout(() => child.kill(), 1000);
     try {
+      await withDeadline(child.exited, 1000, "Native bridge did not exit");
+    } catch {
+      child.kill();
       await child.exited;
-    } finally {
-      clearTimeout(forcedExit);
     }
     await upstream.stop(true);
     await rm(workspace, { recursive: true, force: true });
