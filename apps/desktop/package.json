@@ -11,7 +11,7 @@
     "package": "electron-builder --publish never",
     "preview": "electron-vite preview",
     "typecheck": "bun ../../scripts/typecheck.ts -p tsconfig.main.json --noEmit && bun ../../scripts/typecheck.ts -p tsconfig.renderer.json --noEmit",
-    "test": "bun test ../../tests/desktop ../../tests/shared"
+    "test": "bun ../../scripts/test-e2e.ts desktop"
   },
   "dependencies": {
     "koffi": "3.3.1"

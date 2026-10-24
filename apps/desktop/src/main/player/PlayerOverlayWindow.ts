@@ -19,6 +19,7 @@ export class PlayerOverlayWindow {
       hasShadow: false,
       roundedCorners: false,
       resizable: false,
+      fullscreenable: false,
       movable: false,
       backgroundColor: "#00000000",
       webPreferences: {
@@ -45,9 +46,11 @@ export class PlayerOverlayWindow {
     parent.on("resize", () => this.sync());
     parent.on("enter-full-screen", () => this.sync());
     parent.on("leave-full-screen", () => this.sync());
-    parent.on("minimize", () => {
+    const hide = () => {
       if (!this.window.isDestroyed()) this.window.hide();
-    });
+    };
+    parent.on("minimize", hide);
+    parent.on("hide", hide);
     parent.on("restore", () => this.show());
     const stopObservingFocus = observePlayerFocus(parent, this.window, (focused) => {
       if (focused) this.show();

@@ -94,7 +94,11 @@ export const makeAuthRepository = (database: DatabaseClient) => {
         .get(),
       "auth.getCredentialsByUsername",
     );
-    return yield* boundary(UserCredentials, row, "auth.getCredentialsByUsername.result");
+    return yield* boundary(
+      UserCredentials,
+      row === undefined ? undefined : { user: row, passwordHash: row.passwordHash },
+      "auth.getCredentialsByUsername.result",
+    );
   });
 
   const createDevice = Effect.fn("AuthRepository.createDevice")(function* (input: unknown) {

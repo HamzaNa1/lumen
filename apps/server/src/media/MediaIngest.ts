@@ -251,7 +251,7 @@ export const makeMediaIngest = Effect.gen(function* () {
       .where(eq(libraryProfiles.libraryId, source.libraryId))
       .get();
     const libraryKind = (profile?.kind ?? "movies") as "movies" | "shows" | "music";
-    const parts = source.relativePath.split("/").filter(Boolean);
+    const parts = source.relativePath.split(/[\\/]/u).filter(Boolean);
     const filename = parts.at(-1) ?? "Untitled";
     const video = libraryKind === "music" ? null : parseVideoPath(libraryKind, source.relativePath);
     if (video?.warning)
@@ -621,7 +621,6 @@ export const makeMediaIngest = Effect.gen(function* () {
     }
     let primaryStreamId: string | null = existingTrack?.primaryStreamId ?? null;
     if (existingTrack == null) {
-      const parts = source.relativePath.split("/").filter(Boolean);
       const filename = parts.at(-1) ?? "Track";
       const title =
         basename(filename, extname(filename))

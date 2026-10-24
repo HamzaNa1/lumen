@@ -392,9 +392,21 @@ export const makeHttpHandler = (
       await call(services.auth.logout(principal, input.sessionId, Date.now()));
       return ack();
     }
-    if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "users")
+    if (
+      method === "GET" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "users" &&
+      parts.length === 3
+    )
       return unknownJson(await call(services.admin.listUsers(principal, Date.now())));
-    if (method === "POST" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "users")
+    if (
+      method === "POST" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "users" &&
+      parts.length === 3
+    )
       return unknownJson(
         await call(
           services.admin.createUser(
@@ -1009,7 +1021,7 @@ export const makeHttpHandler = (
       );
 
     if (method === "GET" && parts[0] === "api" && parts[1] === "v1" && parts[2] === "events") {
-      const after = queryNumber(url, "after", 0);
+      const { after } = decode(S.EventsQuery, { after: queryNumber(url, "after", 0) });
       return new Response(services.events.stream(after, principal.user.id, request.signal), {
         headers: {
           "content-type": "text/event-stream",

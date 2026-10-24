@@ -1,8 +1,0 @@
-{
-  "extends": "../../apps/desktop/tsconfig.main.json",
-  "compilerOptions": {
-    "lib": ["ES2023", "DOM", "DOM.Iterable"],
-    "types": ["bun"]
-  },
-  "include": ["**/*.ts", "**/*.tsx"]
-}

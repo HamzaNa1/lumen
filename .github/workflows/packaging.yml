@@ -1,0 +1,71 @@
+name: Packaging
+on:
+  workflow_call:
+    inputs:
+      product:
+        type: string
+        default: all
+      artifact-prefix:
+        type: string
+        default: pr-package
+  workflow_dispatch:
+    inputs:
+      product:
+        type: choice
+        options: [all, server, desktop]
+        default: all
+      artifact-prefix:
+        type: string
+        default: manual-package
+permissions:
+  contents: read
+jobs:
+  server:
+    name: Server image
+    if: ${{ inputs.product == 'all' || inputs.product == 'server' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: docker build --file apps/server/Dockerfile --tag lumen-server:check .
+      - run: bun scripts/smoke-server-image.ts lumen-server:check
+  desktop:
+    name: Desktop / ${{ matrix.runner }}
+    if: ${{ inputs.product == 'all' || inputs.product == 'desktop' }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-24.04, macos-26, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun scripts/install-product.ts desktop
+      - run: bun run check:desktop typecheck
+      - uses: ./.github/actions/bundle-mpv
+      - run: bun run --cwd apps/desktop build
+      - run: bun run --cwd apps/desktop package
+      - name: Verify the update feed (Windows)
+        if: runner.os == 'Windows'
+        run: bun apps/desktop/scripts/verify-update-feed.ts
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.artifact-prefix }}-${{ matrix.runner }}
+          path: |
+            apps/desktop/release/*.AppImage
+            apps/desktop/release/*.deb
+            apps/desktop/release/*.dmg
+            apps/desktop/release/*.zip
+            apps/desktop/release/*.exe
+            apps/desktop/release/*.exe.blockmap
+            apps/desktop/release/latest.yml
+          if-no-files-found: error
+          retention-days: 14

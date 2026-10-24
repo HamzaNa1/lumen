@@ -101,8 +101,7 @@ export class MpvSurface {
   show(): void {
     if (this.disposed || this.parent.isDestroyed() || this.bounds === null || !this.playbackVisible)
       return;
-    if (process.platform === "win32" && (this.parent.isMinimized() || !this.parent.isVisible()))
-      return;
+    if (this.parent.isMinimized() || !this.parent.isVisible()) return;
     this.syncHostBounds();
     if (this.host !== null && !this.host.isDestroyed()) this.host.showInactive();
     this.macWindow?.show();
@@ -154,6 +153,7 @@ export class MpvSurface {
       show: false,
       focusable: false,
       resizable: false,
+      fullscreenable: false,
       movable: false,
       minimizable: false,
       maximizable: false,

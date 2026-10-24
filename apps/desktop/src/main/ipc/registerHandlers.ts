@@ -24,6 +24,7 @@ import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
+import { playerFullscreen } from "../player/PlayerWindowState";
 import type { AppUpdates } from "../updates/AppUpdates";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
@@ -83,6 +84,7 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 };
 
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
+  const fullscreen = playerFullscreen(dependencies.window);
   const watch = new WatchPlaybackController(watchPlayerFor(dependencies.player), (status) => {
     for (const window of [dependencies.window, dependencies.overlay.window]) {
       if (!window.isDestroyed()) window.webContents.send("watch:state", status);
@@ -512,10 +514,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const action = decode(PlayerAction, raw);
     dependencies.window.webContents.send("player:overlay-action", action);
   });
-  handle("player:fullscreen", async (_event, raw) => {
-    dependencies.window.setFullScreen(decode(Schema.Boolean, raw));
-    return dependencies.window.isFullScreen();
-  });
+  handle("player:fullscreen", async (_event, raw) => fullscreen(decode(Schema.Boolean, raw)));
   handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
     await watch.stop();

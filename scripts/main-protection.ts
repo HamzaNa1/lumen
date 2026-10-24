@@ -16,6 +16,15 @@ type Ruleset = {
   rules: Rule[];
 };
 
+// Retire only the checks replaced by the aggregate checks.yml gate; retain unrelated checks.
+const retiredChecks = new Set([
+  "browser",
+  "server-image",
+  "native-desktop / macOS lifecycle and MPV audio",
+  "native-desktop / Windows Electron and MPV playback",
+  "product-verification (server)",
+  "product-verification (desktop)",
+]);
 const endpoint = "repos/HamzaNa1/lumen/rulesets/24072516";
 const api = (body?: Ruleset): Ruleset =>
   JSON.parse(
@@ -64,7 +73,9 @@ const desiredRuleset = (current: Ruleset): Ruleset => {
     if (!existing) {
       rules.push(required);
     } else if (required.type === "required_status_checks") {
-      const checks = existing.parameters?.required_status_checks ?? [];
+      const checks = (existing.parameters?.required_status_checks ?? []).filter(
+        (check) => !retiredChecks.has(check.context),
+      );
       for (const check of required.parameters?.required_status_checks ?? []) {
         const index = checks.findIndex((entry) => entry.context === check.context);
         if (index === -1) checks.push(check);

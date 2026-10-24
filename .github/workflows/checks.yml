@@ -3,101 +3,118 @@ on:
   push:
     branches: [main]
   pull_request:
+permissions:
+  contents: read
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: true
 jobs:
-  native-desktop:
-    uses: ./.github/workflows/native-desktop.yml
-  check:
-    runs-on: ubuntu-latest
+  server:
+    name: Server / Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
       - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/e2e-runtime
+      - run: bun scripts/e2e-coverage.ts collect api
+      - uses: ./.github/actions/e2e-artifacts
+        if: ${{ !cancelled() }}
+        with:
+          name: server-linux
+          coverage-project: api
+  chromium:
+    name: Chromium / Linux
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: chromium
+      runner: ubuntu-24.04
+      coverage: true
+  firefox:
+    name: Firefox / Linux
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: firefox
+      runner: ubuntu-24.04
+      coverage: true
+  webkit:
+    name: WebKit / Linux
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: webkit
+      runner: ubuntu-24.04
+      coverage: true
+  desktop-macos:
+    name: Desktop / macOS
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: native
+      runner: macos-26
+  desktop-windows:
+    name: Desktop / Windows
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: native
+      runner: windows-latest
+  desktop-linux:
+    name: Desktop / Linux
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: native
+      runner: ubuntu-24.04
+      coverage: true
+  release-compatibility:
+    name: Release compatibility
+    uses: ./.github/workflows/release-compatibility.yml
+  packaging:
+    name: Packaging
+    uses: ./.github/workflows/packaging.yml
+  quality:
+    # Preserve a stable required check; a skipped or failed dependency must fail this gate.
+    name: check
+    if: ${{ !cancelled() }}
+    needs: [server, chromium, firefox, webkit, desktop-macos, desktop-windows, desktop-linux, release-compatibility, packaging]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/e2e-runtime
       - run: bun run lint
       - run: bun run typecheck
-      - run: bun run test:coverage
+      - run: bun run build
+      - name: Tooling E2E
+        run: bun scripts/test-e2e.ts source --project tooling --no-deps --no-build
+      - name: Download Linux coverage shards
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage/shards
+          merge-multiple: true
+      - name: Enforce complete-suite coverage budgets
+        run: bun scripts/e2e-coverage.ts merge
+      - name: Require all nine verification jobs
+        if: ${{ !cancelled() }}
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: bun -e 'for (const [job, result] of Object.entries(JSON.parse(process.env.RESULTS))) if (result.result !== "success") throw new Error(`${job} ${result.result}`)'
+      - uses: ./.github/actions/e2e-artifacts
+        if: ${{ !cancelled() }}
+        with:
+          name: quality
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
           name: production-coverage
-          path: coverage/
-          retention-days: 14
-          if-no-files-found: error
-      - run: bun run build
-  browser:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
-      - run: bunx playwright install --with-deps chromium firefox webkit
-      - run: bun run test:browser
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: browser-test-results
           path: |
-            test-results/
-            playwright-report/
+            coverage/summary.json
+            coverage/lcov.info
+            coverage/shards/
           retention-days: 14
           if-no-files-found: error
-  product-verification:
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        product: [server, desktop]
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
-      - name: Verify compatibility with the released counterpart
-        id: compatibility
-        env:
-          RELEASE_PRODUCT: ${{ matrix.product }}
-        run: |
-          set -o pipefail
-          mkdir -p compatibility-results
-          bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT" 2>&1 | tee "compatibility-results/$RELEASE_PRODUCT.log"
-      - name: Upload compatibility diagnostics
-        uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && (steps.compatibility.outcome == 'success' || steps.compatibility.outcome == 'failure') }}
-        with:
-          name: ${{ matrix.product }}-compatibility-results
-          path: compatibility-results/${{ matrix.product }}.log
-          retention-days: 14
-          if-no-files-found: error
-      - run: bunx playwright install --with-deps chromium firefox webkit
-      - name: Verify product browsers
-        id: product_browsers
-        env:
-          RELEASE_PRODUCT: ${{ matrix.product }}
-          LUMEN_BROWSER_TEST_PORT: '3279'
-        run: bun scripts/test-browser.ts "$RELEASE_PRODUCT"
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() && (steps.product_browsers.outcome == 'success' || steps.product_browsers.outcome == 'failure') }}
-        with:
-          name: ${{ matrix.product }}-browser-test-results
-          path: |
-            test-results/${{ matrix.product }}/
-            playwright-report/${{ matrix.product }}/
-          retention-days: 14
-          if-no-files-found: error
-  server-image:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-      - run: docker build --file apps/server/Dockerfile --tag lumen-server:check .
-      - run: bun scripts/smoke-server-image.ts lumen-server:check

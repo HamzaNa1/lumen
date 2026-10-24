@@ -1,0 +1,52 @@
+name: Bundle MPV
+description: Bundle and verify the native MPV files used in desktop packages.
+runs:
+  using: composite
+  steps:
+    - name: Bundle MPV (Linux)
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        sudo apt-get update
+        sudo apt-get install --yes 'mpv=0.37.0-1ubuntu4'
+        echo 'LUMEN_MPV_VERSION=0.37.0-1ubuntu4' >> "$GITHUB_ENV"
+        native_dir="apps/desktop/resources/native"
+        mkdir -p "$native_dir/bin" "$native_dir/lib"
+        cp "$(command -v mpv)" "$native_dir/bin/mpv"
+        ldd "$(command -v mpv)" | awk '/=> \// { print $3 }' | while read -r library; do
+          case "$(basename "$library")" in
+            libc.so.*|libdl.so.*|libm.so.*|libpthread.so.*|librt.so.*) ;;
+            *) cp -L "$library" "$native_dir/lib/" ;;
+          esac
+        done
+        install -m 755 /dev/stdin "$native_dir/mpv" <<'EOF'
+        #!/bin/sh
+        native_dir=$(dirname "$0")
+        export LD_LIBRARY_PATH="$native_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+        exec "$native_dir/bin/mpv" "$@"
+        EOF
+    - name: Bundle MPV (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      run: |
+        if [[ "$(uname -m)" != 'arm64' ]]; then
+          echo 'macOS releases require an Apple Silicon runner.' >&2
+          exit 1
+        fi
+        brew install mpv dylibbundler
+        mpv_version="$(brew list --versions mpv | awk '{ print $2 }')"
+        test "${mpv_version%%_*}" = '0.41.0'
+        echo 'LUMEN_MPV_VERSION=0.41.0' >> "$GITHUB_ENV"
+        native_dir="apps/desktop/resources/native"
+        mkdir -p "$native_dir/lib"
+        cp "$(brew --prefix mpv)/lib/libmpv.dylib" "$native_dir/libmpv.dylib"
+        dylibbundler -od -b -x "$native_dir/libmpv.dylib" -d "$native_dir/lib" -p '@loader_path/lib/'
+    - name: Bundle MPV (Windows)
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
+    - name: Seal and verify native MPV files
+      shell: bash
+      run: |
+        bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
+        bun apps/desktop/scripts/verify-native-binaries.ts

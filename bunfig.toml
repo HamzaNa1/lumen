@@ -2,11 +2,3 @@
 exact = true
 peer = true
 registry = "https://registry.npmjs.org"
-
-[test]
-# Full-source coverage and its regression gate live in `bun run test:coverage`.
-# Plain `bun test` stays useful for focused runs without claiming whole-project coverage.
-coverageReporter = ["lcov"]
-coverageDir = "coverage/raw"
-coverageSkipTestFiles = true
-coveragePathIgnorePatterns = ["**/dist/**", "**/out/**", "coverage/**", "tests/**", "packages/testkit/**", "scripts/**", "**/*.d.ts", "**/*.generated.ts", "**/generated/**"]

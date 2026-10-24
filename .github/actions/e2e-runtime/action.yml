@@ -1,0 +1,21 @@
+name: E2E runtime
+description: Install the real browser and media runtimes used by the E2E suite.
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    - if: runner.os == 'Linux'
+      shell: bash
+      run: sudo apt-get update && sudo apt-get install -y ffmpeg mpv xvfb openbox x11-utils
+    - if: runner.os == 'macOS'
+      shell: bash
+      run: brew install ffmpeg mpv
+    - if: runner.os == 'Windows'
+      shell: pwsh
+      run: choco install ffmpeg mpv -y --no-progress
+    - shell: bash
+      run: bunx playwright install --with-deps chromium firefox webkit
+    - shell: bash
+      run: bun apps/desktop/node_modules/electron/install.js

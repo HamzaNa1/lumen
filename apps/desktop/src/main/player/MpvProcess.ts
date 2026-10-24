@@ -76,6 +76,7 @@ export class MpvProcess {
             "--vo=gpu",
             "--force-window=yes",
             "--border=no",
+            "--native-fs=no",
             "--auto-window-resize=no",
             "--window-dragging=no",
             "--input-cursor-passthrough=yes",

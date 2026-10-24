@@ -1,0 +1,27 @@
+name: E2E artifacts
+description: Retain reports and isolated coverage shards, including failed runs.
+inputs:
+  name:
+    required: true
+    description: Unique report artifact name.
+  coverage-project:
+    default: ''
+    description: Playwright project whose coverage shard should be retained.
+runs:
+  using: composite
+  steps:
+    - uses: actions/upload-artifact@v4
+      with:
+        name: e2e-${{ inputs.name }}
+        path: |
+          test-results/
+          playwright-report/
+        retention-days: 14
+        if-no-files-found: error
+    - uses: actions/upload-artifact@v4
+      if: ${{ !cancelled() && inputs.coverage-project != '' }}
+      with:
+        name: coverage-${{ inputs.coverage-project }}
+        path: coverage/shards/${{ inputs.coverage-project }}.json
+        retention-days: 14
+        if-no-files-found: error
