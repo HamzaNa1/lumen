@@ -3,11 +3,10 @@ import { expect, test } from "./support/server";
 
 test("browser sign-in protects cookies, restores routes and propagates logout across tabs", async ({
   server,
-  admin,
+  admin: _admin,
   page,
   context,
 }) => {
-  await server.library(admin.accessToken, "movies", ["Film.mp4"]);
   await signIn(page, server);
   const cookie = (await context.cookies()).find((cookie) => cookie.name === "lumen_session");
   expect(cookie).toMatchObject({ httpOnly: true, sameSite: "Strict", path: "/api" });

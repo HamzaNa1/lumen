@@ -177,11 +177,18 @@ export class Server {
       },
     });
   }
-  async library(token: string, kind: "movies" | "shows" | "music", files: readonly string[]) {
+  async library(
+    token: string,
+    kind: "movies" | "shows" | "music",
+    files: readonly string[],
+    fixtures: Readonly<Record<string, string>> = {},
+  ) {
     const id = crypto.randomUUID();
     const path = join(this.root, id);
     await mkdir(path);
     for (const name of files) await this.media(path, name);
+    for (const [name, fixture] of Object.entries(fixtures))
+      await this.copyFixture(path, name, fixture);
     await this.api("/libraries", { token, body: { id, name: kind, slug: id, kind } });
     const rootId = crypto.randomUUID();
     await this.api(`/libraries/${id}/roots`, {
@@ -192,12 +199,16 @@ export class Server {
     return { id, path, rootId };
   }
   async media(root: string, name: string) {
-    const destination = join(
+    return this.copyFixture(
       root,
       this.mediaFormat === "webm" ? name.replace(/\.(mp4|mkv)$/i, ".webm") : name,
+      `playback.${this.mediaFormat}`,
     );
+  }
+  private async copyFixture(root: string, name: string, fixture: string) {
+    const destination = join(root, name);
     await mkdir(dirname(destination), { recursive: true });
-    await copyFile(join(repository, `tests/fixtures/playback.${this.mediaFormat}`), destination);
+    await copyFile(join(repository, "tests/fixtures", fixture), destination);
     return destination;
   }
   async scan(token: string, libraryId: string, mode = "incremental") {
@@ -223,50 +234,52 @@ export class Server {
   }
 }
 
-export const test = base.extend<{ server: Server; admin: Account }, { processCoverage: undefined }>(
-  {
-    processCoverage: [
-      async ({ playwright: _playwright }, use) => {
-        await use(undefined);
-        if (process.env.LUMEN_COVERAGE_DIR)
-          await writeFile(
-            join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),
-            JSON.stringify(
-              (globalThis as typeof globalThis & { __coverage__?: unknown }).__coverage__ ?? {},
-            ),
-          );
-      },
-      { scope: "worker", auto: true },
-    ],
-    context: async ({ context }, use) => {
-      const errors = await collectBrowserErrors(context);
-      const flush = await collectBrowserCoverage(context);
-      try {
-        await use(context);
-      } finally {
-        await flush();
-        expect(errors, "Uncaught browser errors").toEqual([]);
-      }
+export const test = base.extend<
+  { server: Server; admin: Account; serverEnvironment: NodeJS.ProcessEnv },
+  { processCoverage: undefined }
+>({
+  serverEnvironment: [{}, { option: true }],
+  processCoverage: [
+    async ({ playwright: _playwright }, use) => {
+      await use(undefined);
+      if (process.env.LUMEN_COVERAGE_DIR)
+        await writeFile(
+          join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),
+          JSON.stringify(
+            (globalThis as typeof globalThis & { __coverage__?: unknown }).__coverage__ ?? {},
+          ),
+        );
     },
-    server: async ({ playwright: _playwright }, use, testInfo) => {
-      const server = new Server(
-        await mkdtemp(join(tmpdir(), "lumen-e2e-")),
-        ["firefox", "webkit"].includes(testInfo.project.name) ? "webm" : "mp4",
-      );
-      try {
-        await server.start();
-        await use(server);
-      } finally {
-        await server.stop();
-        const path = testInfo.outputPath("server.log");
-        await writeFile(path, server.log.join(""));
-        await testInfo.attach("server log", { path, contentType: "text/plain" });
-        await rm(server.root, { recursive: true, force: true });
-      }
-    },
-    admin: async ({ server }, use) => {
-      await use(await server.register());
-    },
+    { scope: "worker", auto: true },
+  ],
+  context: async ({ context }, use) => {
+    const errors = await collectBrowserErrors(context);
+    const flush = await collectBrowserCoverage(context);
+    try {
+      await use(context);
+    } finally {
+      await flush();
+      expect(errors, "Uncaught browser errors").toEqual([]);
+    }
   },
-);
+  server: async ({ playwright: _playwright, serverEnvironment }, use, testInfo) => {
+    const server = new Server(
+      await mkdtemp(join(tmpdir(), "lumen-e2e-")),
+      ["firefox", "webkit"].includes(testInfo.project.name) ? "webm" : "mp4",
+    );
+    try {
+      await server.start(serverEnvironment);
+      await use(server);
+    } finally {
+      await server.stop();
+      const path = testInfo.outputPath("server.log");
+      await writeFile(path, server.log.join(""));
+      await testInfo.attach("server log", { path, contentType: "text/plain" });
+      await rm(server.root, { recursive: true, force: true });
+    }
+  },
+  admin: async ({ server }, use) => {
+    await use(await server.register());
+  },
+});
 export { expect } from "@playwright/test";

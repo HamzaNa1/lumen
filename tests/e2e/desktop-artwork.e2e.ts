@@ -1,18 +1,17 @@
-import { copyFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { connectDesktop, expect, launchDesktop, test } from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
-import { password, repository } from "./support/server";
+import { password } from "./support/server";
 
 test("account artwork partitions reject late responses and removing one account clears only its cache", async ({
   server,
   admin,
   desktop,
 }) => {
-  const library = await server.library(admin.accessToken, "movies", ["Film/Film.mp4"]);
-  const poster = join(library.path, "Film/poster.png");
-  await copyFile(join(repository, "tests/fixtures/still.png"), poster);
-  await server.scan(admin.accessToken, library.id, "full");
+  const library = await server.library(admin.accessToken, "movies", ["Film/Film.mp4"], {
+    "Film/poster.png": "still.png",
+  });
   await server.api("/users", {
     token: admin.accessToken,
     body: { username: "viewer", displayName: "Viewer", password, libraryAccess: { scope: "all" } },
@@ -109,10 +108,10 @@ test("native artwork cache persists by account and revision, rejects arbitrary U
   desktop,
 }) => {
   const token = admin.accessToken;
-  const library = await server.library(token, "movies", ["Film/Film.mp4"]);
+  const library = await server.library(token, "movies", ["Film/Film.mp4"], {
+    "Film/poster.png": "still.png",
+  });
   const poster = join(library.path, "Film/poster.png");
-  await copyFile(join(repository, "tests/fixtures/still.png"), poster);
-  await server.scan(token, library.id, "full");
   const item = (await server.items(token, library.id))[0];
   const artwork = async () => {
     const { item: details } = await server.api<{

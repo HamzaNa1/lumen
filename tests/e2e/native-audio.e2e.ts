@@ -1,4 +1,5 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { once } from "node:events";
 import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -12,46 +13,26 @@ import {
 import { analyzeAudioTransition } from "./support/audio-transition";
 import { expect, repository, test } from "./support/server";
 
-for (const codec of ["eac3", "ac3", "dca"])
+for (const codec of ["eac3", "ac3", "dca"] as const)
   test(`MPV decodes 5.1 ${codec} and preserves every channel and pitch through watch synchronization speed corrections`, async ({
     playwright: _playwright,
   }, testInfo) => {
+    const audioFixtures: Record<typeof codec, string> = JSON.parse(
+      await readFile(join(repository, "tests/fixtures/surround-audio.json"), "utf8"),
+    );
+    const clip = join(repository, `tests/fixtures/surround-${codec}.mkv`);
+    expect(
+      createHash("sha256")
+        .update(await readFile(clip))
+        .digest("hex"),
+    ).toBe(audioFixtures[codec]);
     const root = await mkdtemp(join(tmpdir(), "lumen-pcm-"));
-    const clip = join(root, "tone.mkv");
     const pcm = join(root, "audio.pcm");
     const log = join(root, "mpv.log");
     const socket =
       process.platform === "win32"
         ? `\\\\.\\pipe\\lumen-audio-${process.pid}`
         : join(root, "mpv.sock");
-    const encoded = spawnSync(
-      "ffmpeg",
-      [
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-y",
-        "-f",
-        "lavfi",
-        "-i",
-        `aevalsrc=${[440, 440, 440, 80, 440, 440].map((f) => `0.15*sin(2*PI*${f}*t)`).join("|")}:s=48000:d=30:c=5.1`,
-        "-f",
-        "lavfi",
-        "-i",
-        "color=c=black:s=64x64:r=24:d=30",
-        "-c:v",
-        "mpeg4",
-        "-c:a",
-        codec,
-        "-strict",
-        "-2",
-        "-b:a",
-        codec === "dca" ? "768k" : "640k",
-        clip,
-      ],
-      { timeout: 15000 },
-    );
-    expect(encoded.status, encoded.stderr.toString()).toBe(0);
     const child = spawn(
       process.platform === "win32"
         ? join(repository, "apps/desktop/resources/native/mpv.exe")
