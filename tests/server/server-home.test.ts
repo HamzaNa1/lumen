@@ -149,7 +149,7 @@ test("Home selects newest available movies across the catalog within the user's 
   const data = await responseJson(HomeContent, response);
   expect(data.libraries.map((library: { id: string }) => library.id)).toEqual([libraryId]);
   expect(data.latest).toHaveLength(1);
-  expect(data.latest[0].items.map((item: { id: string }) => item.id)).toEqual([newest, old]);
+  expect(data.latest[0]?.items.map((item: { id: string }) => item.id)).toEqual([newest, old]);
 });
 
 test("Continue rows include nested episodes and movies beyond the first browse page, ordered by activity", async () => {
@@ -424,13 +424,13 @@ test("Latest TV groups episode batches into seasons or shows and ranks by episod
   const home = await fixture(items, [libraryId]);
   const data = await responseJson(HomeContent, home.request("/api/v1/home"));
   expect(data.latest).toHaveLength(1);
-  expect(data.latest[0].items.map((item: { id: string }) => item.id)).toEqual([
-    single.episodeIds[0]?.[1],
-    season.seasonIds[1],
+  expect(data.latest[0]?.items.map((item: { id: string }) => item.id)).toEqual([
+    single.episodeIds[0]?.[1] ?? expect.unreachable(),
+    season.seasonIds[1] ?? expect.unreachable(),
     whole.id,
     oneSeason.id,
   ]);
-  expect(data.latest[0].items[1]).toMatchObject({ kind: "season", seriesTitle: "New season" });
+  expect(data.latest[0]?.items[1]).toMatchObject({ kind: "season", seriesTitle: "New season" });
 });
 
 test("Home returns account-specific content and handles no library access", async () => {
@@ -504,19 +504,19 @@ test("Home applies default row limits after filtering and includes watched music
   const home = await fixture(items, [moviesId, musicId, showsId]);
   const data = await responseJson(HomeContent, home.request("/api/v1/home"));
   expect(data.continueWatching).toHaveLength(12);
-  expect(data.continueWatching[0].title).toBe("Movie 35");
-  expect(data.continueWatching[11].title).toBe("Movie 24");
+  expect(data.continueWatching[0]?.title).toBe("Movie 35");
+  expect(data.continueWatching[11]?.title).toBe("Movie 24");
   expect(data.nextUp).toHaveLength(24);
-  expect(data.nextUp[0].title).toBe("Next 35");
-  expect(data.nextUp[23].title).toBe("Next 12");
+  expect(data.nextUp[0]?.title).toBe("Next 35");
+  expect(data.nextUp[23]?.title).toBe("Next 12");
   const movies = data.latest.find((row: { libraryId: string }) => row.libraryId === moviesId);
   const music = data.latest.find((row: { libraryId: string }) => row.libraryId === musicId);
   if (movies === undefined || music === undefined)
     throw new Error("Expected both libraries on Home");
   expect(movies.items).toHaveLength(16);
-  expect(movies.items[0].title).toBe("Movie 35");
+  expect(movies.items[0]?.title).toBe("Movie 35");
   expect(music.items).toHaveLength(30);
-  expect(music.items[0].title).toBe("Track 35");
+  expect(music.items[0]?.title).toBe("Track 35");
 });
 
 test("watch-state requests update whole seasons, clear resume, and preserve library access", async () => {

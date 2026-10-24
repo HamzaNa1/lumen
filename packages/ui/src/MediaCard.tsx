@@ -23,7 +23,7 @@ export const PosterFallback = ({
   className,
 }: {
   readonly title: string;
-  readonly kind?: string;
+  readonly kind?: string | undefined;
   readonly className?: string;
 }): React.ReactElement => {
   const Icon = kindIcon(kind);
@@ -53,11 +53,11 @@ export const MediaCard = ({
 }: {
   readonly action?: ReactNode;
   readonly title: string;
-  readonly subtitle?: string | null;
+  readonly subtitle?: string | null | undefined;
   /** A second line under the subtitle. */
-  readonly detail?: string | null;
+  readonly detail?: string | null | undefined;
   readonly imageUrl?: string | null;
-  readonly kind?: string;
+  readonly kind?: string | undefined;
   /** 16:9 artwork, such as an episode still, instead of a 2:3 poster. */
   readonly landscape?: boolean;
   /** Watched fraction between 0 and 1. */

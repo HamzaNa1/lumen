@@ -512,7 +512,8 @@ export const makeHttpHandler = (
       parts[0] === "api" &&
       parts[1] === "v1" &&
       parts[2] === "libraries" &&
-      parts.length === 4
+      parts.length === 4 &&
+      parts[3] !== undefined
     ) {
       await call(services.access.requireAdmin(principal));
       return unknownJson(
@@ -530,7 +531,8 @@ export const makeHttpHandler = (
       parts[0] === "api" &&
       parts[1] === "v1" &&
       parts[2] === "libraries" &&
-      parts.length === 4
+      parts.length === 4 &&
+      parts[3] !== undefined
     ) {
       await call(services.access.requireAdmin(principal));
       await call(services.libraries.remove(parts[3]));

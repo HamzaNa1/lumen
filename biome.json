@@ -34,5 +34,11 @@
       "semicolons": "always",
       "trailingCommas": "all"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["tests/**"],
+      "plugins": ["./tooling/biome/no-test-delays.grit"]
+    }
+  ]
 }

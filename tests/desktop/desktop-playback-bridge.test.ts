@@ -8,12 +8,7 @@ import {
 import type { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { PlaybackBridge } from "../../apps/desktop/src/main/player/PlaybackBridge";
 import { PlaybackDiagnostics } from "../../packages/client/src/playback/PlaybackDiagnostics";
-
-const waitFor = async (condition: () => boolean): Promise<void> => {
-  for (let attempt = 0; attempt < 200 && !condition(); attempt += 1)
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  expect(condition()).toBe(true);
-};
+import { eventually as waitFor } from "../helpers/eventually";
 
 const fixture = async (respond: (request: IncomingMessage, response: ServerResponse) => void) => {
   const upstream = createServer(respond);
@@ -86,6 +81,7 @@ describe("real HTTP playback bridge", () => {
       test(`${action} cancels an in-flight ${backpressure ? "backpressured" : "stalled read"} transfer`, async () => {
         let upstreamClosed = false;
         let writes = 0;
+        let backpressured = false;
         const setup = await fixture((_request, response) => {
           response.on("close", () => {
             upstreamClosed = true;
@@ -98,6 +94,7 @@ describe("real HTTP playback bridge", () => {
               while (!response.destroyed && writes < 100_000) {
                 writes += 1;
                 if (!response.write(chunk)) {
+                  backpressured = true;
                   response.once("drain", pump);
                   return;
                 }
@@ -112,7 +109,7 @@ describe("real HTTP playback bridge", () => {
           downstream.on("error", () => undefined);
           downstream.pause();
           if (backpressure) {
-            await new Promise((resolve) => setTimeout(resolve, 100));
+            await waitFor(() => backpressured);
             expect(writes).toBeLessThan(1024);
           }
           if (action === "disconnect") downstream.destroy();
@@ -130,6 +127,7 @@ describe("real HTTP playback bridge", () => {
   }
 
   test("preheader errors return 502 and postheader truncation fails instead of ending successfully", async () => {
+    let truncate: () => void = () => {};
     const setup = await fixture((request, response) => {
       if (request.headers.range === "bytes=0-") {
         response.destroy();
@@ -137,11 +135,12 @@ describe("real HTTP playback bridge", () => {
       }
       response.writeHead(200, { "content-length": "100" });
       response.write("short");
-      setTimeout(() => response.destroy(), 20);
+      truncate = () => response.destroy();
     });
     try {
       expect((await fetch(setup.url, { headers: { range: "bytes=0-" } })).status).toBe(502);
       const response = await fetch(setup.url);
+      truncate();
       await expect(response.arrayBuffer()).rejects.toBeDefined();
       await waitFor(() => setup.bridge.activeTransferCount === 0);
       expect(setup.diagnostics.snapshot().at(-1)?.fields).toMatchObject({

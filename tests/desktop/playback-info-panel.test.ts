@@ -1,4 +1,5 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
+import { setImmediate } from "node:timers/promises";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { PlaybackInfo } from "../../packages/contracts/src/index.ts";
@@ -7,8 +8,6 @@ import {
   type PlaybackInfoContent,
   pollPlaybackInfo,
 } from "../../packages/ui/src/playbackInfoPolling.ts";
-
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 const info: PlaybackInfo = {
   player: "mpv 0.40.0",
@@ -52,53 +51,66 @@ describe("PlaybackInfoPanel", () => {
 });
 
 describe("pollPlaybackInfo", () => {
+  beforeEach(() => {
+    jest.useFakeTimers();
+  });
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   test("asks again only once the last answer is in, and tells why when there is none", async () => {
     const contents: PlaybackInfoContent["kind"][] = [];
-    let load: (() => Promise<PlaybackInfo>) | undefined;
-    let pending = 0;
-    let overlapped = false;
-    load = async () => {
-      pending += 1;
-      overlapped ||= pending > 1;
-      await wait(15);
-      pending -= 1;
-      return info;
+    const answer = Promise.withResolvers<PlaybackInfo>();
+    let requests = 0;
+    let load: (() => Promise<PlaybackInfo>) | undefined = () => {
+      requests += 1;
+      return answer.promise;
     };
     const stop = pollPlaybackInfo(
       () => load,
       (content) => contents.push(content.kind),
       5,
     );
-    await wait(60);
-    expect(contents.length).toBeGreaterThanOrEqual(2);
-    expect(new Set(contents)).toEqual(new Set(["ready"]));
-    expect(overlapped).toBe(false);
-
-    load = undefined;
-    await wait(40);
-    expect(contents.at(-1)).toBe("idle");
-    load = () => Promise.reject(new Error("unavailable"));
-    await wait(30);
-    expect(contents.at(-1)).toBe("failed");
-
-    stop();
+    try {
+      jest.advanceTimersByTime(100);
+      expect(requests).toBe(1);
+      expect(contents).toEqual([]);
+      answer.resolve(info);
+      await setImmediate();
+      expect(contents).toEqual(["ready"]);
+      jest.advanceTimersByTime(5);
+      await setImmediate();
+      expect(requests).toBe(2);
+      expect(contents).toEqual(["ready", "ready"]);
+      load = undefined;
+      jest.advanceTimersByTime(5);
+      expect(contents.at(-1)).toBe("idle");
+      load = () => Promise.reject(new Error("unavailable"));
+      jest.advanceTimersByTime(5);
+      await setImmediate();
+      expect(contents.at(-1)).toBe("failed");
+    } finally {
+      stop();
+    }
     const told = contents.length;
-    await wait(30);
+    jest.advanceTimersByTime(100);
+    await setImmediate();
     expect(contents).toHaveLength(told);
   });
 
   test("an answer that arrives after stopping is not passed on", async () => {
     const contents: PlaybackInfoContent[] = [];
+    const answer = Promise.withResolvers<PlaybackInfo>();
     const stop = pollPlaybackInfo(
-      () => async () => {
-        await wait(10);
-        return info;
-      },
+      () => () => answer.promise,
       (content) => contents.push(content),
       5,
     );
     stop();
-    await wait(30);
+    answer.resolve(info);
+    await setImmediate();
+    jest.advanceTimersByTime(100);
     expect(contents).toEqual([]);
+    expect(jest.getTimerCount()).toBe(0);
   });
 });

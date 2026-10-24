@@ -63,7 +63,7 @@ interface MediaPlayerProps {
   readonly selectedSubtitleStreamId: string | null;
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
-  readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
+  readonly onAudioOutput?: ((output: AudioOutput) => Promise<void>) | undefined;
   /** What the player reports about the playback in progress; omitted while nothing is playing. */
   readonly onPlaybackInfo?: (() => Promise<PlaybackInfo>) | undefined;
   /** False where the player cannot switch tracks at all, whatever the file contains. */

@@ -564,6 +564,7 @@ test("double-clicking the video toggles fullscreen without pausing", async ({ pa
 test("the show drawer opens at the playing episode and plays another", async ({
   page,
 }, testInfo) => {
+  await page.clock.install();
   await signIn(page);
   await page.goto("/web/library");
   // A show and its seasons have nothing of their own to play, so their play buttons open them.
@@ -586,8 +587,8 @@ test("the show drawer opens at the playing episode and plays another", async ({
   ).toBeGreaterThan(0);
   await testInfo.attach("show drawer", { body: await page.screenshot(), contentType: "image/png" });
 
-  // The controls stay for as long as the drawer is open.
-  await page.waitForTimeout(3_500);
+  // The controls stay past their auto-hide deadline while the drawer is open.
+  await page.clock.runFor(3_500);
   await expect(page.getByRole("button", { name: "Back", exact: true })).toBeVisible();
 
   await drawer.getByRole("button", { name: "Play Storm Glass" }).click({ force: true });

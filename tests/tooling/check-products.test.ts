@@ -28,6 +28,7 @@ const fixture = () => {
   };
   for (const path of [
     "scripts",
+    "tooling",
     ".github",
     "biome.json",
     "tsconfig.base.json",

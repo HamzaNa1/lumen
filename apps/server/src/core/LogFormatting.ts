@@ -175,7 +175,10 @@ export const formatTextLog = (record: LogRecord): string => {
       ([key, value]) =>
         !metadataKeys.has(key) && !usedFields.has(key) && value !== undefined && value !== null,
     )
-    .map(([key, value]) => `${key[0].toUpperCase()}${key.slice(1)}: ${displayValue(key, value)}`);
+    .map(
+      ([key, value]) =>
+        `${key.charAt(0).toUpperCase()}${key.slice(1)}: ${displayValue(key, value)}`,
+    );
   const details = context.length === 0 ? "" : ` (${context.join("; ")})`;
   const error = record.error === undefined ? "" : `. Error: ${formatError(record.error)}`;
   return `${singleLine(`[${time}] [${labels[record.level]}] [${record.source}] ${record.msg}${details}${error}`)}\n`;

@@ -98,7 +98,7 @@ export interface ServerApiOptions {
 /** What the sign-in forms collect, wherever they are shown. */
 export interface CredentialsInput {
   readonly username: string;
-  readonly displayName?: string;
+  readonly displayName?: string | undefined;
   readonly password: string;
 }
 
@@ -113,16 +113,16 @@ export interface CreateUserInput {
   readonly username: string;
   readonly displayName: string;
   readonly password: string;
-  readonly role?: UserRole;
-  readonly libraryAccess?: LibraryAccess;
+  readonly role?: UserRole | undefined;
+  readonly libraryAccess?: LibraryAccess | undefined;
 }
 
 export interface UpdateUserInput {
-  readonly displayName?: string;
-  readonly password?: string;
-  readonly role?: UserRole;
-  readonly libraryAccess?: LibraryAccess;
-  readonly isActive?: boolean;
+  readonly displayName?: string | undefined;
+  readonly password?: string | undefined;
+  readonly role?: UserRole | undefined;
+  readonly libraryAccess?: LibraryAccess | undefined;
+  readonly isActive?: boolean | undefined;
 }
 
 export interface CreateLibraryInput {
@@ -133,10 +133,10 @@ export interface CreateLibraryInput {
 }
 
 export interface UpdateLibraryInput {
-  readonly name?: string;
-  readonly slug?: string;
-  readonly kind?: LibraryKind;
-  readonly isEnabled?: boolean;
+  readonly name?: string | undefined;
+  readonly slug?: string | undefined;
+  readonly kind?: LibraryKind | undefined;
+  readonly isEnabled?: boolean | undefined;
 }
 
 export interface AddLibraryRootInput {

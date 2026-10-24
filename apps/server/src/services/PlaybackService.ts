@@ -473,6 +473,8 @@ export const makePlaybackService = Effect.gen(function* () {
                 setWhere: eq(itemWatchStates.manualVersion, watchVersion.manualVersion),
               });
           }
+          if (updated === undefined)
+            return yield* Effect.die(new Error("Progress upsert returned no row"));
           return updated;
         }),
       );

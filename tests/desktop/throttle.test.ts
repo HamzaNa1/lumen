@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { throttle } from "../../packages/ui/src/throttle.ts";
 
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 describe("throttle", () => {
   test("runs the first call at once", () => {
@@ -19,7 +24,7 @@ describe("throttle", () => {
     throttled(2);
     throttled(3);
     expect(calls).toEqual([1]);
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual([1, 3]);
   });
 
@@ -28,10 +33,10 @@ describe("throttle", () => {
     const throttled = throttle((value: number) => calls.push(value), 40);
     throttled(1);
     throttled(2);
-    await wait(50);
+    jest.advanceTimersByTime(50);
     throttled(3);
     expect(calls).toEqual([1, 2]);
-    await wait(60);
+    jest.advanceTimersByTime(60);
     expect(calls).toEqual([1, 2, 3]);
   });
 
@@ -39,7 +44,7 @@ describe("throttle", () => {
     const calls: Array<number> = [];
     const throttled = throttle((value: number) => calls.push(value), 20);
     throttled(1);
-    await wait(40);
+    jest.advanceTimersByTime(40);
     throttled(2);
     expect(calls).toEqual([1, 2]);
     throttled.cancel();
@@ -51,7 +56,7 @@ describe("throttle", () => {
     throttled(1);
     throttled(2);
     throttled.cancel();
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual([1]);
   });
 });

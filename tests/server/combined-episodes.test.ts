@@ -9,6 +9,7 @@ import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
 import type { CatalogItem, HomeContent } from "../../packages/contracts/src/index.ts";
 import { Effect } from "../../packages/database/node_modules/effect/dist/index.js";
 import { Database, sql } from "../../packages/database/src/index.ts";
+import { eventually } from "../helpers/eventually";
 
 // A synthetic video under release-style names, scanned by the actual server. Its ffprobe is a stub
 // printing what ffprobe reports for this fixture, so the test needs no ffmpeg install while the
@@ -120,12 +121,12 @@ const library = async () => {
   };
   const scan = async (mode: "full" | "incremental") => {
     const { runId } = await request<{ runId: string }>("scans", "POST", { libraryId, mode });
-    for (let attempt = 0; attempt < 300; attempt++) {
-      const run = await request<{ status: string }>(`scans/${runId}`);
-      if (!["queued", "running"].includes(run.status)) return run.status;
-      await Bun.sleep(50);
-    }
-    throw new Error("Scan did not finish");
+    let status = "queued";
+    await eventually(async () => {
+      status = (await request<{ status: string }>(`scans/${runId}`)).status;
+      return !["queued", "running"].includes(status);
+    }, 15_000);
+    return status;
   };
   const episodes = async () => {
     const [show] = (await request<{ items: CatalogItem[] }>(`items?libraryId=${libraryId}`)).items;

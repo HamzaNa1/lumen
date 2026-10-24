@@ -36,7 +36,15 @@ for (const entry of raw.split(/\r?\n/u)) {
     hits.set(path, current);
   } else if (entry.startsWith("DA:")) {
     const [line, count] = entry.slice(3).split(",").map(Number);
-    if (!current || !Number.isInteger(line) || line < 1 || !Number.isFinite(count) || count < 0)
+    if (
+      line === undefined ||
+      count === undefined ||
+      !current ||
+      !Number.isInteger(line) ||
+      line < 1 ||
+      !Number.isFinite(count) ||
+      count < 0
+    )
       throw new Error(`Invalid LCOV entry: ${entry}`);
     current.set(line, Math.max(current.get(line) ?? 0, count));
   } else if (entry === "end_of_record") current = undefined;

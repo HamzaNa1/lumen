@@ -11,6 +11,7 @@ import {
   sampleMpvPlayback,
 } from "../../apps/desktop/src/main/player/MpvSynchronization";
 import { analyzeAudioTransition } from "../helpers/audio-transition";
+import { eventually } from "../helpers/eventually";
 
 // Standalone real-MPV check: bun tests/native/mpv-watch-audio.ts [evidence-directory].
 // Requires mpv and ffmpeg on PATH; captures PCM, without relying on a speaker/device driver.
@@ -69,15 +70,13 @@ const child = spawn(
 );
 const exited = once(child, "exit");
 const ipc = new MpvIpc();
-const delay = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const waitForPcm = async (minimumBytes: number): Promise<number> => {
-  const deadline = performance.now() + 5000;
-  while (true) {
-    const bytes = statSync(pcm, { throwIfNoEntry: false })?.size ?? 0;
-    if (bytes >= minimumBytes) return bytes;
-    assert(performance.now() < deadline, `Timed out waiting for ${minimumBytes} PCM bytes`);
-    await delay(20);
-  }
+  let bytes = 0;
+  await eventually(() => {
+    bytes = statSync(pcm, { throwIfNoEntry: false })?.size ?? 0;
+    return bytes >= minimumBytes;
+  });
+  return bytes;
 };
 const segments: {
   speed: number;
@@ -95,11 +94,10 @@ try {
       return child.exitCode === null ? socket : null;
     },
   } as MpvProcess);
-  const deadline = performance.now() + 5000;
-  while ((await ipc.command(["get_property", "audio-out-params"]).catch(() => null)) === null) {
-    assert(performance.now() < deadline, "MPV audio failed to initialize");
-    await delay(20);
-  }
+  await eventually(
+    async () =>
+      (await ipc.command(["get_property", "audio-out-params"]).catch(() => null)) !== null,
+  );
   version = await ipc.command(["get_property", "mpv-version"]);
   const params = (await ipc.command(["get_property", "audio-out-params"])) as Record<
     string,

@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, jest, test } from "bun:test";
 import { clickGesture } from "../../packages/ui/src/clickGesture.ts";
 
-const wait = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
+beforeEach(() => {
+  jest.useFakeTimers();
+});
+afterEach(() => {
+  jest.useRealTimers();
+});
 
 const record = (delayMs: number) => {
   const calls: Array<"single" | "double"> = [];
@@ -18,7 +23,7 @@ describe("clickGesture", () => {
     const { calls, gesture } = record(20);
     gesture();
     expect(calls).toEqual([]);
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual(["single"]);
   });
 
@@ -27,16 +32,16 @@ describe("clickGesture", () => {
     gesture();
     gesture();
     expect(calls).toEqual(["double"]);
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual(["double"]);
   });
 
   test("runs clicks further apart than the wait as singles", async () => {
     const { calls, gesture } = record(20);
     gesture();
-    await wait(40);
+    jest.advanceTimersByTime(40);
     gesture();
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual(["single", "single"]);
   });
 
@@ -45,7 +50,7 @@ describe("clickGesture", () => {
     gesture();
     gesture();
     gesture();
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual(["double", "single"]);
   });
 
@@ -53,7 +58,7 @@ describe("clickGesture", () => {
     const { calls, gesture } = record(20);
     gesture();
     gesture.cancel();
-    await wait(40);
+    jest.advanceTimersByTime(40);
     expect(calls).toEqual([]);
   });
 });

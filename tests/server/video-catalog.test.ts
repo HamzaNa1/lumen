@@ -12,6 +12,7 @@ import { type RunningServer, startServer } from "../../apps/server/src/Runtime";
 import { makeScanner } from "../../apps/server/src/services/Scanner";
 import { Effect, Layer } from "../../packages/database/node_modules/effect/dist/index.js";
 import { Database, RepositoriesLive, sql } from "../../packages/database/src/index.ts";
+import { eventually } from "../helpers/eventually";
 
 const must = <T>(value: T | null | undefined): T => {
   if (value == null) throw new Error("Expected a catalog entry");
@@ -129,8 +130,8 @@ test("video folders browse as series, seasons, episodes and movies without requi
         );
       }
       for (const [libraryId, rootId, rootPath, relative] of [
-        ...episodes.map((path) => [showsId, showRootId, showsRoot, path]),
-        [moviesId, movieRootId, moviesRoot, `${movieFolder}/Movie Name (2021).mkv`],
+        ...episodes.map((path) => [showsId, showRootId, showsRoot, path] as const),
+        [moviesId, movieRootId, moviesRoot, `${movieFolder}/Movie Name (2021).mkv`] as const,
       ]) {
         const sourceId = newUuid();
         sourceIds.push(sourceId);
@@ -561,12 +562,11 @@ test("video folders browse as series, seasons, episodes and movies without requi
       firstSeason.items.map((episode) => episode.id),
     );
     let enrichedEpisodeTitle: string | undefined;
-    for (let attempt = 0; attempt < 40; attempt++) {
+    await eventually(async () => {
       const response = await remoteGet(`/api/v1/items/${must(firstSeason.items[0]).id}`);
       enrichedEpisodeTitle = ((await response.json()) as { item: { title: string } }).item.title;
-      if (enrichedEpisodeTitle === "Pilot") break;
-      await Bun.sleep(100);
-    }
+      return enrichedEpisodeTitle === "Pilot";
+    }, 4000);
     expect(enrichedEpisodeTitle).toBe("Pilot");
     // An episode is dated by its season, which need not have come out the year its show did.
     const enrichedEpisode = (await (
@@ -594,16 +594,15 @@ test("video folders browse as series, seasons, episodes and movies without requi
       ).status,
     ).toBe(200);
     let movieOverview: string | null = null;
-    for (let attempt = 0; attempt < 40; attempt++) {
+    await eventually(async () => {
       movieOverview = (
         (await (await remoteGet(`/api/v1/items/${must(movies.items[0]).id}`)).json()) as {
           item: { overview: string | null };
         }
       ).item.overview;
-      if (movieOverview === "Remote movie") break;
-      await Bun.sleep(100);
-    }
-    expect(movieOverview).toBe("Remote movie");
+      return movieOverview === "Remote movie";
+    }, 4000);
+    expect<string | null>(movieOverview).toBe("Remote movie");
     const enrichedSeasons = (await (
       await remoteGet(`/api/v1/items/${showId}/children`)
     ).json()) as { items: { artworkId: string | null }[] };
@@ -624,13 +623,12 @@ test("video folders browse as series, seasons, episodes and movies without requi
     });
     expect(match.status).toBe(200);
     let correctedYear: number | undefined;
-    for (let attempt = 0; attempt < 40; attempt++) {
+    await eventually(async () => {
       correctedYear = (
         (await (await remoteGet(`/api/v1/items/${showId}`)).json()) as { item: { year: number } }
       ).item.year;
-      if (correctedYear === 2005) break;
-      await Bun.sleep(100);
-    }
+      return correctedYear === 2005;
+    }, 4000);
     expect(correctedYear).toBe(2005);
     await writeFile(
       join(showsRoot, "House", "tvshow.nfo"),
@@ -680,7 +678,6 @@ test("video folders browse as series, seasons, episodes and movies without requi
         })
       ).status,
     ).toBe(200);
-    await Bun.sleep(250);
     expect((await remoteGet(`/api/v1/items/${showId}`)).status).toBe(200);
     await enrichedServer.stop();
     servers.pop();

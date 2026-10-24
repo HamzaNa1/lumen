@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { join, resolve } from "node:path";
-import { setTimeout as delay } from "node:timers/promises";
+import { setImmediate } from "node:timers/promises";
 import {
   app,
   BaseWindow,
@@ -25,6 +25,8 @@ import { PlayerOverlayWindow } from "../../apps/desktop/src/main/player/PlayerOv
 import { broadcastPlayerFullscreen } from "../../apps/desktop/src/main/player/PlayerWindowState";
 import { createMainWindow } from "../../apps/desktop/src/main/windows";
 import { initialWatchStatus } from "../../packages/contracts/src/index";
+import { withDeadline } from "../helpers/deadline";
+import { eventually } from "../helpers/eventually";
 
 const root = resolve("apps/desktop");
 const scale = process.env.LUMEN_SMOKE_SCALE ?? "1";
@@ -150,6 +152,7 @@ async function run(): Promise<void> {
   parent.focus();
   const syncSurface = (): void => {
     const [width, height] = parent.getContentSize();
+    assert(width !== undefined && height !== undefined);
     surface.setBounds({ x: 0, y: 0, width, height });
   };
   syncSurface();
@@ -191,8 +194,15 @@ async function run(): Promise<void> {
         `window.dispatchEvent(new MouseEvent('mousemove'))`,
       );
     }
-    await delay(750);
     const active = Reflect.get(controller, "active") as { ipc: MpvIpc };
+    await eventually(
+      async () =>
+        (await active.ipc.command(["get_property", "vo-configured"])) === true &&
+        (await active.ipc.command(["get_property", "audio-out-params"]).catch(() => null)) !== null,
+    );
+    await overlay.window.webContents.executeJavaScript(
+      "new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))",
+    );
     await active.ipc
       .command(["screenshot-to-file", join(evidence, `${label}-decoded.png`), "video"])
       .catch((error: unknown) => observations.push({ screenshotError: String(error) }));
@@ -241,7 +251,8 @@ async function run(): Promise<void> {
     const bitmap = image.toBitmap(); // Windows nativeImage pixels are BGRA.
     let redPixels = 0;
     for (let i = 0; i < bitmap.length; i += 4) {
-      if (bitmap[i + 2] > 150 && bitmap[i + 1] < 80 && bitmap[i] < 80) redPixels++;
+      if (bitmap.readUInt8(i + 2) > 150 && bitmap.readUInt8(i + 1) < 80 && bitmap.readUInt8(i) < 80)
+        redPixels++;
     }
     if (bottomEdge !== undefined) {
       // One-to-one desktop pixels are required to detect a single exposed row.
@@ -316,14 +327,12 @@ async function run(): Promise<void> {
   const visible: boolean[] = [];
   async function inspectFullscreenControl(fullscreen: boolean): Promise<void> {
     const expected = fullscreen ? "Exit fullscreen" : "Enter fullscreen";
-    for (let attempt = 0; attempt < 50; attempt += 1) {
+    await eventually(async () => {
       const label = await overlay.window.webContents.executeJavaScript(
         `document.querySelector('button[aria-label$=" fullscreen"]')?.getAttribute('aria-label')`,
       );
-      if (parent.isFullScreen() === fullscreen && label === expected) return;
-      await delay(20);
-    }
-    assert.fail(`The player controls did not update to ${expected}`);
+      return parent.isFullScreen() === fullscreen && label === expected;
+    });
   }
   async function toggleFullscreen(fullscreen: boolean): Promise<void> {
     await inspectFullscreenControl(!fullscreen);
@@ -350,7 +359,7 @@ async function run(): Promise<void> {
       await otherWindow.loadURL('data:text/html,<body style="background:blue">');
       otherWindow.show();
       otherWindow.focus();
-      for (let attempt = 0; attempt < 20 && !otherWindow.isFocused(); attempt++) await delay(50);
+      await eventually(() => otherWindow.isFocused());
       assert(otherWindow.isFocused(), "The independent window did not acquire focus");
       assert(!parent.isFocused() && !overlay.window.isFocused());
       visible.push(await inspect(label));
@@ -375,7 +384,7 @@ async function run(): Promise<void> {
       await inspectUnfocused(`fullscreen-away-${cycle}`);
       visible.push(await inspect(`fullscreen-parent-return-${cycle}`, 0.5, "gradient"));
       overlay.window.focus();
-      await delay(100);
+      await eventually(() => overlay.window.isFocused());
       assert(overlay.window.isFocused(), "The controls window did not acquire focus");
       visible.push(await inspect(`fullscreen-controls-return-${cycle}`, 0.5, "gradient"));
     }
@@ -398,7 +407,7 @@ async function run(): Promise<void> {
       syncSurface();
       visible.push(await inspect("resized"));
       parent.minimize();
-      await delay(250);
+      await eventually(() => parent.isMinimized());
       parent.restore();
       parent.focus();
       visible.push(await inspect("restored"));
@@ -406,14 +415,14 @@ async function run(): Promise<void> {
       for (const fullscreen of [true, false, true, false, true]) {
         await toggleFullscreen(fullscreen);
       }
-      await delay(250);
+      await inspectFullscreenControl(true);
       syncSurface();
       visible.push(await inspect("fullscreen"));
       if (scale === "1") await inspectFullscreenFocusCycles();
       // Leaving playback hides the existing controls and exits fullscreen from the main window.
       overlay.setVisible(false);
       parent.setFullScreen(false);
-      await delay(250);
+      await eventually(() => !parent.isFullScreen());
       overlay.setVisible(true);
       await inspectFullscreenControl(false);
       syncSurface();
@@ -456,7 +465,7 @@ async function run(): Promise<void> {
     assert.equal(diagnostics.properties.aid, diagnostics.expectedAudioTrack);
     for (const speed of [1.01, 1.006, 1, 0.99, 0.994, 1]) {
       await controller.speed(state.sessionId, speed);
-      await delay(200);
+      await eventually(async () => (await controller.sample(state.sessionId))?.speed === speed);
       const sample = await controller.sample(state.sessionId);
       assert(sample, "Fresh Windows MPV synchronization sample unavailable");
       assert.equal(sample.speed, speed);
@@ -516,12 +525,11 @@ async function run(): Promise<void> {
     `window.dispatchEvent(new MouseEvent('mousemove'));
      document.querySelector('[aria-label="Playback settings"]').click()`,
   );
-  await delay(100);
-  assert(
-    await overlay.window.webContents.executeJavaScript(
-      `document.querySelector('#media-player-settings-panel') !== null`,
-    ),
-    "The playback settings did not open",
+  await eventually(
+    async () =>
+      await overlay.window.webContents.executeJavaScript(
+        `document.querySelector('#media-player-settings-panel') !== null`,
+      ),
   );
   // The settings panel covers the center at 150% scaling. Sample the visible
   // video to its left while retaining a full desktop screenshot for UI review.
@@ -555,7 +563,7 @@ async function run(): Promise<void> {
     window.close();
     await closed;
     await stopped;
-    await delay(100); // Let queued focus work and native close events run.
+    await setImmediate(); // Drain queued native close events after both completion signals.
     assert(window.isDestroyed());
     assert(controls.window.isDestroyed());
     assert.equal(isWindow(handle), 0, "The native video host survived its owner");
@@ -587,13 +595,14 @@ async function run(): Promise<void> {
     player = closingPlayer;
     closingWindow.show();
     const [width, height] = closingWindow.getContentSize();
+    assert(width !== undefined && height !== undefined);
     closingSurface.setBounds({ x: 0, y: 0, width, height });
     closingOverlay.setVisible(true);
     await closingPlayer.start({ client, connectionId: "test", itemId: "test-item" });
     const closingState = closingPlayer.getState();
     assert(closingState);
     if (paused) await closingPlayer.pause(closingState.sessionId, true);
-    await delay(100);
+    await eventually(() => closingPlayer.getState()?.paused === paused);
     await closePlayerWindow(
       paused ? "close-while-paused" : "close-while-playing",
       closingWindow,
@@ -614,12 +623,7 @@ async function run(): Promise<void> {
   console.log("Native Windows playback passed");
 }
 
-const timeout = setTimeout(() => {
-  observations.push({ error: "Smoke test timed out" });
-  writeFileSync(join(evidence, "results.json"), JSON.stringify(observations, null, 2));
-  app.exit(1);
-}, 120_000);
-void run().then(
+void withDeadline(run(), 120_000, "Smoke test timed out").then(
   () => finish(0),
   (error: unknown) => {
     console.error(error);
@@ -628,7 +632,6 @@ void run().then(
   },
 );
 async function finish(code: number): Promise<void> {
-  clearTimeout(timeout);
   writeFileSync(join(evidence, "results.json"), JSON.stringify(observations, null, 2));
   await player?.stop();
   upstream.closeAllConnections();

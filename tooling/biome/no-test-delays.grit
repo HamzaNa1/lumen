@@ -1,0 +1,37 @@
+or {
+  `$receiver.setTimeout($args)` as $call where {
+    not $receiver <: or {
+      `test`,
+      `jest`,
+      `vi`
+    },
+    register_diagnostic(span=$call, message="Use events, conditions, or a fake clock instead of timer delays in tests.", severity="error")
+  },
+  `import { $imports } from "bun"` where {
+    $imports <: r".*sleep.*",
+    register_diagnostic(span=$imports, message="Do not import sleeps in tests, including aliases.", severity="error")
+  },
+  `$fn($args)` where {
+    $fn <: or {
+      `setTimeout`,
+      `sleep`,
+      `delay`,
+      `Bun.sleep`,
+      `Bun.sleepSync`,
+      `Atomics.wait`,
+      `$object.sleep`,
+      `$object.waitForTimeout`
+    },
+    register_diagnostic(span=$fn, message="Wait for an observable condition or event, or advance a fake clock; do not delay tests.", severity="error")
+  },
+  `import { $imports } from $source` where {
+    $source <: or {
+      `"node:timers/promises"`,
+      `"timers/promises"`,
+      `"node:timers"`,
+      `"timers"`
+    },
+    $imports <: r".*setTimeout.*",
+    register_diagnostic(span=$imports, message="Do not import timer delays in tests, including aliases. Use conditions, events, or a fake clock.", severity="error")
+  }
+}

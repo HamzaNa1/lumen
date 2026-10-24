@@ -24,7 +24,7 @@ export class MpvSurface {
   private macWindow: NativeVideoWindow | null = null;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private playbackVisible = false;
-  private readonly overlay?: PlayerOverlayWindow;
+  private readonly overlay: PlayerOverlayWindow | undefined;
   private readonly createNativeVideoWindow: CreateNativeVideoWindow;
   private disposed = false;
   private readonly stopObservingFocus: () => void;
@@ -61,6 +61,8 @@ export class MpvSurface {
     if (bounds !== null) {
       const [contentWidth, contentHeight] = this.parent.getContentSize();
       if (
+        contentWidth === undefined ||
+        contentHeight === undefined ||
         bounds.x + bounds.width > contentWidth + 1 ||
         bounds.y + bounds.height > contentHeight + 1
       ) {

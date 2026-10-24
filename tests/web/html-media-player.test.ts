@@ -809,7 +809,11 @@ const groupViewer = async (prepare: (element: FakeMedia) => void = () => undefin
   const viewer = new WatchPlaybackController(
     {
       start: ({ itemId, startAtSeconds, paused }) =>
-        player.start({ itemId, startAtSeconds, paused }),
+        player.start({
+          itemId,
+          ...(startAtSeconds === undefined ? {} : { startAtSeconds }),
+          ...(paused === undefined ? {} : { paused }),
+        }),
       stop: () => player.stop(),
       getState: () => player.getState(),
       sample: (sessionId) => player.sample(sessionId),

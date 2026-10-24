@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { AudioSettingsStore } from "../../apps/desktop/src/main/player/AudioSettingsStore";
+import { eventually } from "../helpers/eventually";
 
 const withSettingsFile = async (run: (path: string) => Promise<void>): Promise<void> => {
   const directory = await mkdtemp(join(tmpdir(), "audio-settings-"));
@@ -15,13 +16,10 @@ const withSettingsFile = async (run: (path: string) => Promise<void>): Promise<v
 
 /** Waits for the store's writes to leave the expected settings in its file. */
 const expectStored = async (path: string, expected: object): Promise<void> => {
-  const deadline = Date.now() + 5000;
-  for (;;) {
+  await eventually(async () => {
     const stored: unknown = JSON.parse(await readFile(path, "utf8").catch(() => "null"));
-    if (Date.now() >= deadline) expect(stored).toMatchObject(expected);
-    if (Bun.deepEquals({ ...(stored as object), ...expected }, stored)) return;
-    await Bun.sleep(10);
-  }
+    return Bun.deepEquals({ ...(stored as object), ...expected }, stored);
+  });
 };
 
 describe("desktop audio settings", () => {

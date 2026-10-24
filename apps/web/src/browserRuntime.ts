@@ -81,7 +81,12 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
     watchAuthentication: () => ({ session: "cookie" }),
   };
   const watchPlayer: WatchPlayer<WatchServer> = {
-    start: ({ itemId, startAtSeconds, paused }) => player.start({ itemId, startAtSeconds, paused }),
+    start: ({ itemId, startAtSeconds, paused }) =>
+      player.start({
+        itemId,
+        ...(startAtSeconds === undefined ? {} : { startAtSeconds }),
+        ...(paused === undefined ? {} : { paused }),
+      }),
     stop: () => player.stop(),
     getState: () => player.getState(),
     sample: (sessionId) => player.sample(sessionId),
@@ -148,7 +153,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
   };
 
   const commands = viewerPlayback(watch, {
-    start: (itemId, startAtSeconds) => player.start({ itemId, startAtSeconds }),
+    start: (itemId, startAtSeconds) =>
+      player.start({ itemId, ...(startAtSeconds === undefined ? {} : { startAtSeconds }) }),
     pause: (sessionId, paused) => player.pause(sessionId, paused),
     seek: (sessionId, positionSeconds) => player.seek(sessionId, positionSeconds),
     getActiveState: (sessionId) => player.getActiveState(sessionId),

@@ -9,7 +9,7 @@ import {
   type WatchServer,
 } from "../../packages/client/src/index.ts";
 import { watchPosition } from "../../packages/contracts/src/watch-groups";
-import { eventually } from "../helpers/eventually";
+import { afterNextObservation, eventually } from "../helpers/eventually";
 import { watchFixture, watchProxy } from "../helpers/watch-groups";
 
 class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
@@ -43,7 +43,9 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
     this.state = null;
     this.rate = 1;
   }
+  inspections = 0;
   getState() {
+    this.inspections += 1;
     return this.state;
   }
   /** Models a player whose timing replies arrive too late to measure drift with. */
@@ -89,7 +91,9 @@ class NativePlayback implements WatchPlayer<ServerApi & WatchServer> {
   /** How long a seek takes to land; until it has, nothing is buffered where it is going. */
   seekMs = 0;
   private seekingUntil = 0;
+  bufferChecks = 0;
   buffer() {
+    this.bufferChecks += 1;
     const gate = this.bufferGate;
     this.bufferGate = null;
     if (gate === null && performance.now() < this.seekingUntil)
@@ -117,7 +121,7 @@ test("a late join waits for its native surface, seeks to the shared pause positi
     playback.connect(await fixture.login(), "viewer");
     await eventually(() => playback.status.connection === "connected");
     await playback.action({ type: "join", groupId: owner.status.group?.id ?? "", password: "" });
-    await Bun.sleep(550);
+    await afterNextObservation(() => native.inspections);
     expect(native.state).toBeNull();
     playback.setSurfaceReady(true);
     await eventually(() => native.state?.positionSeconds === 4.25);
@@ -218,7 +222,7 @@ test("stopping during a delayed rejoin cancels membership recovery and stays sto
         playback.status.error === "Group is busy. Rejoining shortly…",
     );
     await playback.stop();
-    await Bun.sleep(650);
+    await afterNextObservation(() => native.inspections);
     expect(native.state).toBeNull();
     expect(playback.status.group).toBeNull();
   } finally {
@@ -254,7 +258,7 @@ test("a stalled shared stop cannot delay local stop or revive playback through r
     playback.setSurfaceReady(false);
     playback.setSurfaceReady(true);
     await owner.action({ type: "seek", itemId: fixture.itemId, positionSeconds: 5 });
-    await Bun.sleep(650);
+    await afterNextObservation(() => native.inspections);
     expect(native.state).toBeNull();
     expect(playback.status.error).toBeNull();
     proxy.releaseStops();
@@ -318,7 +322,7 @@ test.each([false, true])(
       proxy.stallStop();
       await playback.stop();
       releaseStart();
-      await Bun.sleep(650);
+      await afterNextObservation(() => native.inspections);
       expect(native.state).toBeNull();
       expect(resumed).toBe(false);
       expect(playback.status.error).toBeNull();
@@ -371,7 +375,7 @@ test.each([undefined, { watchGroups: false }])(
       expect(playback.status.connection).toBe("unavailable");
       expect(playback.grouped).toBe(false);
       await native.start({ server: client, connectionId: "old", itemId: fixture.itemId });
-      await Bun.sleep(550);
+      await afterNextObservation(() => native.inspections);
       expect(native.state?.itemId).toBe(fixture.itemId);
       expect(upgrades).toBe(0);
       expect(identityRequests).toBe(1);
@@ -441,7 +445,7 @@ test("restored media visibility resumes the current revision and a new membershi
     await playback.action({ type: "ping", sentAtMs: Date.now() });
     playback.retry();
     playback.setSurfaceReady(true);
-    await Bun.sleep(650);
+    await afterNextObservation(() => native.inspections);
     expect(native.state).toBeNull();
     expect(playback.status.group?.playback?.itemId).toBe(fixture.itemId);
     expect(playback.status.group?.revision).toBe(revision);
@@ -513,7 +517,7 @@ test.each([false, true])(
       expect(position).toBeGreaterThanOrEqual(3);
 
       native.aheadSeconds = 4.9;
-      await Bun.sleep(700);
+      await afterNextObservation(() => native.bufferChecks);
       expect(owner.status.group?.playback?.paused).toBe(true);
       expect(existing.native.state?.paused).toBe(true);
       expect(native.state).toMatchObject({ paused: true, positionSeconds: position });
@@ -594,7 +598,7 @@ test("a group holds until a slow viewer has loaded, without making that viewer s
     await eventually(() => slow.native.state?.positionSeconds === 3);
     const held = owner.status.group;
     const seeks = slow.native.seeks;
-    await Bun.sleep(700);
+    await afterNextObservation(() => slow.native.bufferChecks);
     expect(owner.status.group?.revision).toBe(held?.revision);
     expect(fast.native.state).toMatchObject({ paused: true, positionSeconds: 3 });
     expect(slow.native.state).toMatchObject({ paused: true, positionSeconds: 3 });
@@ -644,7 +648,7 @@ test("a held group can be paused, and stops waiting for a viewer who leaves", as
     expect(owner.status.group?.playback).toMatchObject({ positionSeconds: 40, paused: true });
     expect(owner.status.group?.playback?.waitingFor).toBeUndefined();
     slow.native.aheadSeconds = 5;
-    await Bun.sleep(300);
+    await afterNextObservation(() => slow.native.bufferChecks);
     expect(owner.status.group?.playback?.paused).toBe(true);
 
     // Resuming holds again, and asking once more to play does not cut the wait short.
@@ -708,7 +712,7 @@ test("readiness answered after the viewer changed groups does not release the ne
     viewer.native.aheadSeconds = 0;
     answer.resolve({ aheadSeconds: 5, starved: false, settled: false });
     await eventually(() => viewer.native.state?.positionSeconds === 50);
-    await Bun.sleep(300);
+    await afterNextObservation(() => viewer.native.bufferChecks);
     expect(second.status.group?.playback).toMatchObject({
       positionSeconds: 50,
       paused: true,
@@ -759,7 +763,7 @@ test("a viewer who runs out of buffered media holds the group until they have bu
 
     // Having some media again is not enough; the group waits for the full five seconds.
     stalled.native.aheadSeconds = 4.9;
-    await Bun.sleep(700);
+    await afterNextObservation(() => stalled.native.bufferChecks);
     expect(owner.status.group?.revision).toBe(held?.revision);
     expect(owner.status.group?.playback?.paused).toBe(true);
 

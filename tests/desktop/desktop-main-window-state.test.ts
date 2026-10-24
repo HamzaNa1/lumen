@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -10,6 +10,7 @@ import {
   placeMainWindow,
   rememberMainWindowState,
 } from "../../apps/desktop/src/main/MainWindowState";
+import { eventually } from "../helpers/eventually";
 
 const laptop = { x: 0, y: 25, width: 1512, height: 920 };
 const monitor = { x: 1512, y: -300, width: 2560, height: 1415 };
@@ -25,13 +26,10 @@ const withStateFile = async (run: (path: string) => Promise<void>): Promise<void
 };
 
 const waitForStored = async (path: string, expected: MainWindowState): Promise<void> => {
-  const deadline = Date.now() + 5000;
-  for (;;) {
+  await eventually(async () => {
     const stored: unknown = JSON.parse(await readFile(path, "utf8").catch(() => "null"));
-    if (Bun.deepEquals(stored, expected)) return;
-    if (Date.now() >= deadline) expect(stored).toEqual(expected);
-    await Bun.sleep(10);
-  }
+    return Bun.deepEquals(stored, expected);
+  });
 };
 
 class FakeWindow extends EventEmitter {
@@ -142,15 +140,20 @@ describe("main window state", () => {
       window.resizeTo(kept.bounds);
       window.emit("close");
       await waitForStored(path, kept);
-      window.fullscreen = true;
-      window.emit("enter-full-screen");
-      window.resizeTo(monitor);
-      window.emit("close");
-      window.fullscreen = false;
-      window.minimized = true;
-      window.resizeTo({ x: 0, y: 0, width: 160, height: 28 });
-      window.emit("close");
-      await Bun.sleep(400);
+      jest.useFakeTimers();
+      try {
+        window.fullscreen = true;
+        window.emit("enter-full-screen");
+        window.resizeTo(monitor);
+        window.emit("close");
+        window.fullscreen = false;
+        window.minimized = true;
+        window.resizeTo({ x: 0, y: 0, width: 160, height: 28 });
+        window.emit("close");
+        jest.advanceTimersByTime(400);
+      } finally {
+        jest.useRealTimers();
+      }
       expect(store.current).toEqual(kept);
       await waitForStored(path, kept);
     }));
