@@ -43,6 +43,8 @@ jobs:
         runner: [ubuntu-24.04, macos-26, windows-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
