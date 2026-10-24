@@ -1298,6 +1298,11 @@ describe("macOS MPV window lifecycle", () => {
 });
 
 describe("native playback failure recovery", () => {
+  const seededTrackList = [
+    { id: 1, type: "audio", "ff-index": 1 },
+    { id: 2, type: "sub", "ff-index": 2 },
+  ];
+
   test("a failure during media loading tears down that startup exactly once", async () => {
     await withPlayback(async ({ controller, failNextLoad, restart, stopProcess, request }) => {
       await controller.stop();
@@ -1357,7 +1362,8 @@ describe("native playback failure recovery", () => {
   test("an established IPC failure restarts shared playback at the group position after its surface is ready", async () => {
     const fixture = await watchFixture();
     try {
-      await withPlayback(async ({ controller, connections }) => {
+      await withPlayback(async ({ controller, connections, properties }) => {
+        properties.set("track-list", seededTrackList);
         const watch = new WatchPlaybackController(watchPlayerFor(controller), () => undefined);
         try {
           const owner = await fixture.connect(await fixture.login());
@@ -1424,6 +1430,7 @@ describe("native playback failure recovery", () => {
     const fixture = await watchFixture();
     try {
       await withPlayback(async ({ controller, properties }) => {
+        properties.set("track-list", seededTrackList);
         properties.set("demuxer-cache-state", { "cache-duration": 60, eof: false });
         const watch = new WatchPlaybackController(watchPlayerFor(controller), () => undefined);
         const unanswered = Promise.withResolvers<void>();
@@ -1442,7 +1449,10 @@ describe("native playback failure recovery", () => {
           await eventually(() => watch.status.connection === "connected");
           await watch.action({ type: "join", groupId, password: "" });
           await owner.action({ type: "play", itemId: fixture.itemId, positionSeconds: 7 });
-          await eventually(() => owner.status.group?.playback?.waitingFor !== undefined);
+          await eventually(() => {
+            const waitingFor = owner.status.group?.playback?.waitingFor;
+            return waitingFor?.length === 1 && waitingFor[0] === starving.status.memberId;
+          });
           await starving.action({ type: "ready", revision: owner.status.group?.revision ?? 0 });
           await eventually(
             () =>
@@ -1636,6 +1646,33 @@ describe("native track memory", () => {
       isDefault: true,
     },
   ] as const satisfies PlayerSession["streams"];
+  test("startup discovers tracks that appear after the file loads", async () => {
+    await withPlayback(
+      async ({ controller, properties, restart }) => {
+        await controller.stop();
+        const trackList = properties.get("track-list");
+        properties.delete("track-list");
+        jest.useFakeTimers();
+        try {
+          const starting = restart();
+          await setImmediate();
+          expect(controller.getState()).toBeNull();
+          properties.set("track-list", trackList);
+          jest.advanceTimersByTime(50);
+          await starting;
+          expect(controller.getState()).toMatchObject({
+            selectedAudioStreamId: "en-first",
+            streams,
+          });
+          expect(properties.get("aid")).toBe(12);
+        } finally {
+          jest.useRealTimers();
+        }
+      },
+      { streams },
+    );
+  });
+
   test("startup maps resolved file tracks to MPV IDs, defaults subtitles Off, and never saves", async () => {
     await withPlayback(
       async ({ controller, properties, saveChoice }) => {
