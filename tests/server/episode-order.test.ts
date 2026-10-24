@@ -227,12 +227,16 @@ const fixture = async (episodes: number | ReadonlyArray<Numbering> = 2) => {
     expect(response.status).toBe(200);
     const { runId } = await responseJson(refreshResponse, response);
     let completed: typeof ScanRun.Type | undefined;
-    await eventually(async () => {
-      const status = await responseJson(ScanRun, request(`scans/${runId}`));
-      if (["queued", "running"].includes(status.status)) return false;
-      completed = status;
-      return true;
-    }, 20_000);
+    await eventually(
+      async () => {
+        const status = await responseJson(ScanRun, request(`scans/${runId}`));
+        if (["queued", "running"].includes(status.status)) return false;
+        completed = status;
+        return true;
+      },
+      20_000,
+      100,
+    );
     if (completed === undefined) throw new Error("Metadata refresh did not finish");
     return completed;
   };

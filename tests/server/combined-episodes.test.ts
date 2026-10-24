@@ -122,10 +122,14 @@ const library = async () => {
   const scan = async (mode: "full" | "incremental") => {
     const { runId } = await request<{ runId: string }>("scans", "POST", { libraryId, mode });
     let status = "queued";
-    await eventually(async () => {
-      status = (await request<{ status: string }>(`scans/${runId}`)).status;
-      return !["queued", "running"].includes(status);
-    }, 15_000);
+    await eventually(
+      async () => {
+        status = (await request<{ status: string }>(`scans/${runId}`)).status;
+        return !["queued", "running"].includes(status);
+      },
+      15_000,
+      100,
+    );
     return status;
   };
   const episodes = async () => {

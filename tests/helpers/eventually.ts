@@ -4,10 +4,11 @@ import { setImmediate, setInterval } from "node:timers/promises";
 export const eventually = async (
   ready: () => boolean | Promise<boolean>,
   timeout = 5000,
+  intervalMs = 10,
 ): Promise<void> => {
   const deadline = performance.now() + timeout;
   if (await ready()) return;
-  for await (const _ of setInterval(10)) {
+  for await (const _ of setInterval(intervalMs)) {
     if (await ready()) return;
     if (performance.now() >= deadline) throw new Error("Condition did not become true");
   }
