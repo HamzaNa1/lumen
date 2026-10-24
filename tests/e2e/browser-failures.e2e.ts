@@ -1,6 +1,36 @@
-import { DatabaseSync } from "node:sqlite";
 import { openMovie, pause, playing, signIn } from "./support/browser";
+import { collectBrowserErrors } from "./support/browser-errors";
+import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
+
+test("browser error guard distinguishes handled network errors from uncaught exceptions and rejections", async ({
+  browser,
+  server,
+}) => {
+  const context = await browser.newContext();
+  try {
+    const errors = await collectBrowserErrors(context);
+    const page = await context.newPage();
+    await page.goto(`${server.origin}health/ready`);
+    await page.route("**/guard-network", (route) => route.abort("connectionreset"));
+    await page.evaluate(async () => {
+      await fetch("/guard-network").catch(() => undefined);
+      await Promise.reject(new Error("handled rejection")).catch(() => undefined);
+      queueMicrotask(() => {
+        throw new Error("uncaught exception control");
+      });
+      void Promise.reject(new Error("unhandled rejection control"));
+    });
+    await expect
+      .poll(() => errors)
+      .toEqual([
+        expect.stringContaining("uncaught exception control"),
+        expect.stringContaining("unhandled rejection control"),
+      ]);
+  } finally {
+    await context.close();
+  }
+});
 
 for (const failure of ["invalid-media", "load-timeout", "network-error"] as const)
   test(`browser ${failure} ends visibly and releases the playback session`, async ({
@@ -32,7 +62,7 @@ for (const failure of ["invalid-media", "load-timeout", "network-error"] as cons
       await expect(page.getByText("Playback failed", { exact: true })).toBeVisible({
         timeout: 25_000,
       });
-      const db = new DatabaseSync(server.databasePath, { readOnly: true });
+      const db = openDatabase(server.databasePath, { readOnly: true });
       try {
         await expect
           .poll(
@@ -117,7 +147,7 @@ test("navigation cancels a loading movie without letting its late network respon
     await playing(page);
     release.resolve();
     await expect(page.getByRole("region", { name: "Media player" })).toContainText("Other");
-    const db = new DatabaseSync(server.databasePath, { readOnly: true });
+    const db = openDatabase(server.databasePath, { readOnly: true });
     try {
       await expect
         .poll(
@@ -171,7 +201,7 @@ test("expired playback is reopened after the tab resumes and retains its last po
   await page.clock.install();
   await openMovie(page, server, library.id);
   await pause(page);
-  const db = new DatabaseSync(server.databasePath);
+  const db = openDatabase(server.databasePath);
   try {
     const old = db.prepare("SELECT id FROM playback_sessions WHERE closed_at_ms IS NULL").get()?.id;
     db.exec(

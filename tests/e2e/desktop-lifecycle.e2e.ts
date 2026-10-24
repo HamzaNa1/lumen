@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { connectDesktop, expect, test } from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
 import { password } from "./support/server";
@@ -113,7 +113,7 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
     .poll(() => page.evaluate(() => window.lumen.player.state()))
     .toMatchObject({ itemId: item?.id });
   await app.close();
-  const db = new DatabaseSync(server.databasePath);
+  const db = openDatabase(server.databasePath);
   try {
     expect(
       db.prepare("SELECT count(*) AS count FROM playback_sessions WHERE closed_at_ms IS NULL").get()

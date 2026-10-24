@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { expect, type Item, password, repository, test } from "./support/server";
 
 interface Home {
@@ -35,7 +35,7 @@ test("Home orders and limits the complete catalog after access and availability 
     },
   });
   const account = await server.login("viewer");
-  const db = new DatabaseSync(server.databasePath);
+  const db = openDatabase(server.databasePath);
   try {
     // Fix externally visible chronology without sleeping between 65 independent scans.
     for (const [index, item] of items.entries())

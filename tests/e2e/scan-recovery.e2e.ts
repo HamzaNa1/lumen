@@ -1,6 +1,6 @@
 import { rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
 
 for (const attempts of [1, 3])
@@ -11,7 +11,7 @@ for (const attempts of [1, 3])
     const token = admin.accessToken;
     const library = await server.library(token, "movies", ["Film.mp4"]);
     await server.stop();
-    const db = new DatabaseSync(server.databasePath);
+    const db = openDatabase(server.databasePath);
     const runId = crypto.randomUUID();
     const jobId = crypto.randomUUID();
     try {

@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { test as base, expect } from "@playwright/test";
 
+import { collectBrowserErrors } from "./browser-errors";
 import { collectBrowserCoverage } from "./coverage";
 
 export const repository = resolve(import.meta.dirname, "../../..");
@@ -230,10 +231,7 @@ export const test = base.extend<{ server: Server; admin: Account }, { processCov
       { scope: "worker", auto: true },
     ],
     context: async ({ context }, use) => {
-      const errors: string[] = [];
-      context.on("page", (page) =>
-        page.on("pageerror", (error) => errors.push(error.stack ?? error.message)),
-      );
+      const errors = await collectBrowserErrors(context);
       const flush = await collectBrowserCoverage(context);
       try {
         await use(context);

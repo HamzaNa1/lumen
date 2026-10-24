@@ -1,13 +1,12 @@
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { expect, password, test } from "./support/server";
 
 test("stored session secrets are hashed, refreshed on use, and invalid after inactivity or revocation", async ({
   server,
   admin,
 }) => {
-  const db = new DatabaseSync(server.databasePath);
+  const db = openDatabase(server.databasePath);
   try {
-    db.exec("PRAGMA busy_timeout = 5000");
     const secret = db
       .prepare("SELECT session_token_hash AS hash FROM auth_sessions WHERE id = ?")
       .get(admin.sessionId);
@@ -64,7 +63,7 @@ for (const ending of ["expired", "stopped", "revoked-access"] as const)
     const playback = await server.play(viewer.accessToken, itemId);
     const path = `/playback/sessions/${playback.sessionId}`;
     if (ending === "expired") {
-      const db = new DatabaseSync(server.databasePath);
+      const db = openDatabase(server.databasePath);
       try {
         db.prepare(
           "UPDATE playback_sessions SET started_at_ms = 1, last_seen_at_ms = 1, expires_at_ms = 2 WHERE id = ?",
@@ -92,7 +91,7 @@ for (const ending of ["expired", "stopped", "revoked-access"] as const)
       body: { trackId: itemId, positionMs: 3000, durationMs: 20000, sequence: 1 },
     });
     if (ending === "revoked-access") {
-      const db = new DatabaseSync(server.databasePath);
+      const db = openDatabase(server.databasePath);
       try {
         db.prepare("UPDATE playback_grants SET expires_at_ms = 1 WHERE session_id = ?").run(
           playback.sessionId,

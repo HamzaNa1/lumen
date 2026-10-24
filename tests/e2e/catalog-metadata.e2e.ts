@@ -1,6 +1,6 @@
 import { copyFile, mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { expect, type Item, repository, test } from "./support/server";
 
 const episodeNames = [
@@ -115,7 +115,7 @@ for (const [from, to, end, edited] of [
     const token = admin.accessToken;
     const path = `Show/Season 1/Show ${from}.mp4`;
     const library = await server.library(token, "shows", [path]);
-    const db = new DatabaseSync(server.databasePath);
+    const db = openDatabase(server.databasePath);
     try {
       const id = db.prepare("SELECT id FROM catalog_items WHERE kind = 'episode'").get()
         ?.id as string;

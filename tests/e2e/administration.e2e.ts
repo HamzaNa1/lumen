@@ -1,6 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { expect, password, test } from "./support/server";
 
 test("administrators list and revoke individual devices and sessions without affecting other logins", async ({
@@ -115,7 +115,7 @@ test("event streams replay only public and caller events after the requested cur
   admin,
 }) => {
   const token = admin.accessToken;
-  const db = new DatabaseSync(server.databasePath);
+  const db = openDatabase(server.databasePath);
   const insert = db.prepare(
     "INSERT INTO server_event_log(created_at_ms, topic, user_id, payload_json) VALUES (?, ?, ?, ?)",
   );

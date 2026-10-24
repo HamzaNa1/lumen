@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { DatabaseSync } from "node:sqlite";
+import { openDatabase } from "./support/database";
 import { expect, password, repository, test } from "./support/server";
 
 for (const through of [3, 6, 8, 9])
@@ -12,7 +12,7 @@ for (const through of [3, 6, 8, 9])
     await server.stop();
     for (const suffix of ["", "-wal", "-shm"])
       await rm(`${server.databasePath}${suffix}`, { force: true });
-    const before = new DatabaseSync(server.databasePath);
+    const before = openDatabase(server.databasePath);
     const migrations = (await readdir(join(repository, "packages/database/drizzle"))).sort();
     const library = crypto.randomUUID();
     const root = crypto.randomUUID();
@@ -98,7 +98,7 @@ for (const through of [3, 6, 8, 9])
       before.close();
     }
     await server.start();
-    const db = new DatabaseSync(server.databasePath);
+    const db = openDatabase(server.databasePath);
     try {
       db.exec("PRAGMA foreign_keys = ON");
       expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
@@ -164,7 +164,7 @@ test("legacy refresh exchange is one-use, revokes the old session and survives r
   admin,
 }) => {
   const refreshToken = crypto.randomUUID();
-  const db = new DatabaseSync(server.databasePath);
+  const db = openDatabase(server.databasePath);
   try {
     const now = Date.now();
     db.prepare(
