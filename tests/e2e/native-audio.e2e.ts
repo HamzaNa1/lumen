@@ -76,7 +76,7 @@ for (const codec of ["eac3", "ac3", "dca"] as const)
         const start = (await bytes()) - 4800 * 6 * 4;
         await ipc.command(["set_property", "speed", speed]);
         const after = await bytes();
-        await expect.poll(bytes).toBeGreaterThan(after + 2 * 48000 * 6 * 4);
+        await expect.poll(bytes, { intervals: [100] }).toBeGreaterThan(after + 2 * 48000 * 6 * 4);
         captures.push({ speed, start, end: await bytes() });
         const sample = await sampleMpvPlayback(ipc, {
           sessionId: "e2e",
