@@ -154,7 +154,6 @@ export class WatchGroups {
 
   readonly websocket: HttpSocketHandler<WatchSocketData> = {
     maxPayloadLength: 4096,
-    idleTimeout: 30,
     backpressureLimit: 128 * 1024,
     closeOnBackpressureLimit: true,
     open: (socket) => {

@@ -1,6 +1,38 @@
+import { once } from "node:events";
 import { WatchGroupClient } from "../../packages/client/src/index";
 import { expect, test } from "./support/watch";
 import { WatchProxy } from "./support/watch-proxy";
+
+for (const authenticated of [false, true])
+  test(`silent watch sockets expire through application deadlines, authenticated=${authenticated}`, async ({
+    server,
+    admin,
+  }) => {
+    const socket = new WebSocket(
+      new URL("/api/v1/watch-groups", server.origin.replace(/^http/, "ws")),
+    );
+    let closure: CloseEvent | undefined;
+    socket.addEventListener("close", (event) => {
+      closure = event;
+    });
+    try {
+      await once(socket, "open", { signal: AbortSignal.timeout(5000) });
+      if (authenticated) {
+        const ready = once(socket, "message", { signal: AbortSignal.timeout(5000) });
+        socket.send(JSON.stringify({ token: admin.accessToken }));
+        expect(JSON.parse((await ready)[0].data)).toMatchObject({ type: "ready" });
+        await server.advanceTime(30_001);
+      }
+      await expect.poll(() => closure).toBeDefined();
+      expect(closure).toMatchObject(
+        authenticated
+          ? { code: 1001, reason: "Watch client heartbeat expired" }
+          : { code: 1008, reason: "Authentication required" },
+      );
+    } finally {
+      socket.close();
+    }
+  });
 
 for (const interrupted of [false, true])
   test(`watch client catches up after a socket outage and interrupted handshake=${interrupted}`, async ({

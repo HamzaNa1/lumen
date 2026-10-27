@@ -12,7 +12,6 @@ export interface HttpSocket<Data> {
 
 export interface HttpSocketHandler<Data> {
   readonly maxPayloadLength: number;
-  readonly idleTimeout: number;
   readonly backpressureLimit: number;
   readonly closeOnBackpressureLimit: boolean;
   readonly open: (socket: HttpSocket<Data>) => void;
@@ -136,7 +135,8 @@ export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise
               },
               close: (code, reason) => connection.close(code, reason),
             };
-            incoming.socket.setTimeout(handler.idleTimeout * 1000, () => connection.terminate());
+            // Bun does not refresh socket timers on upgraded traffic. The handler owns liveness.
+            incoming.socket.setTimeout(0);
             connection.on("message", (message, binary) =>
               handler.message(peer, binary ? Buffer.from(message as Buffer) : message.toString()),
             );
