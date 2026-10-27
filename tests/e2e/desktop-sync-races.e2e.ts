@@ -27,6 +27,9 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
       await expect.poll(() => owner.status.connection).toBe("connected");
       await owner.action({ type: "create", name: "Races", password: "" });
       await connectDesktop(page, proxy);
+      await expect
+        .poll(() => page.evaluate(async () => (await window.lumen.watch.state()).connection))
+        .toBe("connected");
       const groupId = owner.status.group?.id ?? "";
       await page.evaluate(
         (groupId) => window.lumen.watch.action({ type: "join", groupId, password: "" }),
