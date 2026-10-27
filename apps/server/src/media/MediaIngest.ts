@@ -1,4 +1,6 @@
-import { ServerLogger } from "../core/Logger";
+import { createHash } from "node:crypto";
+import { lstat } from "node:fs/promises";
+import { basename, dirname, extname, join } from "node:path";
 import {
   albums,
   artists,
@@ -6,8 +8,8 @@ import {
   catalogItemArtwork,
   catalogItemMetadata,
   catalogItemOrigins,
-  catalogItems,
   catalogItemSources,
+  catalogItems,
   Database,
   libraryProfiles,
   mediaSources,
@@ -18,17 +20,15 @@ import {
 } from "@lumen/database";
 import { and, count, eq, isNull, ne, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
-import { createHash } from "node:crypto";
-import { lstat } from "node:fs/promises";
-import { basename, dirname, extname, join } from "node:path";
-import { newUuid } from "../core/Security";
+import { readLocalFile } from "../core/BoundedInput";
 import { mapRepositoryError } from "../core/Cause";
+import { ServerLogger } from "../core/Logger";
+import { newUuid } from "../core/Security";
 import { Ffprobe, type FfprobeResult } from "../media/Ffprobe";
-import { parseVideoPath } from "./VideoPaths";
+import { imageInfo } from "./ImageInfo";
 import { readLocalNfo } from "./LocalMetadata";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
-import { readLocalFile } from "../core/BoundedInput";
-import { imageInfo } from "./ImageInfo";
+import { parseVideoPath } from "./VideoPaths";
 
 const probedStreamValues = (stream: FfprobeResult["streams"][number], isDefault: boolean) => ({
   kind: stream.kind,
@@ -251,7 +251,7 @@ export const makeMediaIngest = Effect.gen(function* () {
       .where(eq(libraryProfiles.libraryId, source.libraryId))
       .get();
     const libraryKind = (profile?.kind ?? "movies") as "movies" | "shows" | "music";
-    const parts = source.relativePath.split("/").filter(Boolean);
+    const parts = source.relativePath.split(/[\\/]/u).filter(Boolean);
     const filename = parts.at(-1) ?? "Untitled";
     const video = libraryKind === "music" ? null : parseVideoPath(libraryKind, source.relativePath);
     if (video?.warning)
@@ -621,7 +621,6 @@ export const makeMediaIngest = Effect.gen(function* () {
     }
     let primaryStreamId: string | null = existingTrack?.primaryStreamId ?? null;
     if (existingTrack == null) {
-      const parts = source.relativePath.split("/").filter(Boolean);
       const filename = parts.at(-1) ?? "Track";
       const title =
         basename(filename, extname(filename))

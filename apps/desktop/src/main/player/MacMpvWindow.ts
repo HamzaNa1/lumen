@@ -1,4 +1,4 @@
-import { load, struct, type LibraryHandle } from "koffi";
+import { type LibraryHandle, load, struct } from "koffi";
 
 type NativePointer = bigint;
 type Point = { readonly x: number; readonly y: number };
@@ -68,6 +68,20 @@ export class MacMpvWindow {
 
     this.hostWindow = sendPointer(hostView, this.selector("window"));
     this.mpvWindow = mpvWindow;
+    // The embedded video accompanies Electron's fullscreen Space; it never owns one.
+    const collectionBehavior = this.library.func("objc_msgSend", "ulong", ["void *", "void *"]);
+    const setCollectionBehavior = this.library.func("objc_msgSend", "void", [
+      "void *",
+      "void *",
+      "ulong",
+    ]);
+    const behavior = Number(collectionBehavior(mpvWindow, this.selector("collectionBehavior")));
+    setCollectionBehavior(
+      mpvWindow,
+      this.selector("setCollectionBehavior:"),
+      (behavior & ~128) | 256,
+    );
+
     sendVoidPointerLong(
       this.hostWindow,
       this.selector("addChildWindow:ordered:"),

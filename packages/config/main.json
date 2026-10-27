@@ -4,5 +4,9 @@
     "lib": ["ES2023"],
     "types": ["node"]
   },
-  "include": ["../../apps/desktop/src/main", "../../apps/desktop/src/preload", "../../packages/contracts/src"]
+  "include": [
+    "../../apps/desktop/src/main",
+    "../../apps/desktop/src/preload",
+    "../../packages/contracts/src"
+  ]
 }

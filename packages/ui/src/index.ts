@@ -11,17 +11,17 @@ export {
 } from "./Controls";
 export { MediaCard, PosterFallback, posterHue } from "./MediaCard";
 export { MediaPlayer } from "./MediaPlayer";
-export { usePlayerShortcuts } from "./usePlayerShortcuts";
 export {
   DropdownGroup,
   DropdownItem,
   DropdownMenu,
   DropdownSeparator,
-  type SegmentOption,
   SegmentedControl,
+  type SegmentOption,
 } from "./Menu";
 export { formatPlayerTime } from "./PlayerFormatting";
 export { Popover, PopoverTitle } from "./Popover";
 export { Shell } from "./Shell";
 export { EmptyState, StatusState } from "./StatusState";
 export { UpdateToast } from "./UpdateToast";
+export { usePlayerShortcuts } from "./usePlayerShortcuts";

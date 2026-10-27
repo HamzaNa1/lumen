@@ -42,16 +42,18 @@ jobs:
           RELEASE_VERSION: ${{ inputs.version }}
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: bun scripts/release.ts preflight "$RELEASE_PRODUCT" "$RELEASE_VERSION"
+      - run: bun install --frozen-lockfile
+      - uses: ./.github/actions/e2e-runtime
       - name: Install and check the selected product
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
         run: |
           bun scripts/install-product.ts "$RELEASE_PRODUCT"
-          bun scripts/check.ts "$RELEASE_PRODUCT"
+          xvfb-run -a bash scripts/with-window-manager.sh bun scripts/check.ts "$RELEASE_PRODUCT"
       - name: Check compatibility with the released counterpart
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
-        run: bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
+        run: xvfb-run -a bash scripts/with-window-manager.sh bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
 
   browser:
     needs: check
@@ -68,12 +70,12 @@ jobs:
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
         run: bun scripts/install-product.ts "$RELEASE_PRODUCT"
-      - run: bunx playwright install --with-deps chromium firefox webkit
+      - uses: ./.github/actions/e2e-runtime
       - name: Verify the product in browsers
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
           LUMEN_BROWSER_TEST_PORT: '3279'
-        run: bun scripts/test-browser.ts "$RELEASE_PRODUCT"
+        run: xvfb-run -a bash scripts/with-window-manager.sh bun scripts/test-browser.ts "$RELEASE_PRODUCT"
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:

@@ -1,8 +1,4 @@
-import {
-  coveredEpisodeNumbers,
-  type EpisodeNumbering,
-  lastEpisodeNumber,
-} from "@lumen/contracts";
+import { coveredEpisodeNumbers, type EpisodeNumbering, lastEpisodeNumber } from "@lumen/contracts";
 
 /** A show's episode entry, listed in watching order: by season, then by first episode. */
 export interface SequencedEpisode extends EpisodeNumbering {
@@ -47,8 +43,7 @@ export const previousEpisode = <A extends SequencedEpisode>(
       .slice(0, index)
       .findLast(
         (episode) =>
-          !comparable(episode, current) ||
-          (episode.indexNumber ?? 0) < (current.indexNumber ?? 0),
+          !comparable(episode, current) || (episode.indexNumber ?? 0) < (current.indexNumber ?? 0),
       ) ?? null
   );
 };

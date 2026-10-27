@@ -3,60 +3,24 @@ description: Build and exercise the real Electron/MPV player, retaining native f
 runs:
   using: composite
   steps:
-    - name: Install Electron runtime
-      shell: pwsh
-      run: bun apps/desktop/node_modules/electron/install.js
+    - uses: ./.github/actions/e2e-runtime
     - name: Check desktop types
       shell: pwsh
-      run: bun run check:desktop typecheck
-    - name: Check Windows lifecycle behavior
-      shell: pwsh
-      run: bun test tests/compatibility/desktop-mpv-window-lifecycle.test.ts
-    - name: Bundle MPV
-      shell: pwsh
-      run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
-    - name: Seal and verify native MPV files
-      shell: pwsh
       run: |
-        bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
-        if ($LASTEXITCODE -ne 0) { throw "Native manifest creation failed" }
-        bun apps/desktop/scripts/verify-native-binaries.ts
-        if ($LASTEXITCODE -ne 0) { throw "Native manifest verification failed" }
-    - name: Build desktop
+        bun run --cwd apps/desktop typecheck
+        if ($LASTEXITCODE -ne 0) { throw "Desktop typecheck failed" }
+        bun run typecheck:tests
+        if ($LASTEXITCODE -ne 0) { throw "E2E typecheck failed" }
+    - uses: ./.github/actions/bundle-mpv
+    - name: Real Electron lifecycle, playback and audio
       shell: pwsh
-      run: bun run --cwd apps/desktop build
-    - name: Real Electron/MPV playback and fullscreen regression
-      shell: pwsh
-      run: |
-        bun build tests/native/windows-playback.ts --target=node --format=esm --external electron --external koffi --outfile apps/desktop/out/windows-playback.mjs
-        if ($LASTEXITCODE -ne 0) { throw "Smoke harness compilation failed" }
-        $electron = Resolve-Path apps/desktop/node_modules/electron/dist/electron.exe
-        $env:LUMEN_SMOKE_SCALE = "1"
-        try {
-          $process = Start-Process $electron -ArgumentList "apps/desktop/out/windows-playback.mjs" -PassThru -NoNewWindow -RedirectStandardOutput smoke.stdout.log -RedirectStandardError smoke.stderr.log
-          $null = $process.Handle
-          if (-not $process.WaitForExit(180000)) {
-            taskkill /PID $process.Id /T /F
-            throw "Native Windows regression exceeded 3 minutes"
-          }
-          if ($process.ExitCode -ne 0) { throw "Native Windows regression failed: $($process.ExitCode)" }
-        } finally {
-          Get-Content smoke.*.log -ErrorAction SilentlyContinue
-          Remove-Item apps/desktop/out/windows-playback.mjs -ErrorAction SilentlyContinue
-        }
-    - name: Keep evidence outside packaged application files
-      if: always()
-      shell: pwsh
-      run: |
-        if (Test-Path apps/desktop/out/playback-evidence) {
-          Move-Item apps/desktop/out/playback-evidence windows-native-evidence
-        }
+      run: bun scripts/test-e2e.ts source --project native --no-deps
     - uses: actions/upload-artifact@v4
-      if: always()
+      if: ${{ !cancelled() }}
       with:
         name: windows-native-regression-${{ github.sha }}
         path: |
-          windows-native-evidence/
-          smoke.*.log
-        if-no-files-found: warn
+          test-results/
+          playwright-report/
+        if-no-files-found: error
         retention-days: 14

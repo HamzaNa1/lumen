@@ -1,9 +1,7 @@
-import { ServerLogger } from "../core/Logger";
 import type { ScanJob } from "@lumen/contracts";
-import { backgroundTask, logJobOutcome } from "./JobLogging";
 import {
-  catalogItems,
   catalogItemSources,
+  catalogItems,
   Database,
   libraryProfiles,
   mediaSourceAvailability,
@@ -13,13 +11,15 @@ import {
   scanJobs,
 } from "@lumen/database";
 import { and, asc, eq, inArray, notExists, sql } from "drizzle-orm";
-import type { ServerConfig } from "../config/Config";
 import { Cause, Clock, Context, Effect, Exit, Layer, Option } from "effect";
+import type { ServerConfig } from "../config/Config";
+import { ServerLogger } from "../core/Logger";
 import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
-import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner";
 import { MetadataSettings } from "../services/MetadataSettings";
+import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner";
+import { backgroundTask, logJobOutcome } from "./JobLogging";
 import { LibraryWatcher } from "./LibraryWatcher";
 import {
   cleanupParkedAtMs,

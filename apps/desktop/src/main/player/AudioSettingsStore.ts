@@ -2,8 +2,8 @@ import {
   AudioOutput,
   rememberTitleVolume,
   VolumeMemory,
-  volumeForTitle,
   type VolumeSettings,
+  volumeForTitle,
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import { JsonFileStore } from "../storage/JsonFileStore";

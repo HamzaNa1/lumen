@@ -1,7 +1,17 @@
 {
   "$schema": "https://biomejs.dev/schemas/2.5.14/schema.json",
   "files": {
-    "includes": ["**", "!**/node_modules", "!**/dist", "!**/out", "!**/release", "!**/coverage", "!**/playwright-report", "!**/test-results", "!bun.lock"]
+    "includes": [
+      "**",
+      "!**/node_modules",
+      "!**/dist",
+      "!**/out",
+      "!**/release",
+      "!**/coverage",
+      "!**/playwright-report",
+      "!**/test-results",
+      "!bun.lock"
+    ]
   },
   "formatter": {
     "enabled": true,
@@ -24,5 +34,11 @@
       "semicolons": "always",
       "trailingCommas": "all"
     }
-  }
+  },
+  "overrides": [
+    {
+      "includes": ["tests/**"],
+      "plugins": ["./tooling/biome/no-test-delays.grit"]
+    }
+  ]
 }

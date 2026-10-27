@@ -94,7 +94,7 @@ export interface AppRouterOptions {
   /** How locations are stored: the URL hash in a desktop window, the address bar in a browser. */
   readonly history: RouterHistory;
   /** The path the application is served under, when it is not the root. */
-  readonly basepath?: string;
+  readonly basepath?: string | undefined;
 }
 
 /** A new router. Every application root creates its own, so no navigation state is shared. */

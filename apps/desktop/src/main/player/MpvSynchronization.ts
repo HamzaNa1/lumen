@@ -46,8 +46,9 @@ export async function sampleMpvPlayback(
 }
 
 // One persistent instance receives MPV's speed command, so its automatic filter stays idle.
-// Keep the upstream WSOLA defaults; tuning them has no demonstrated benefit for +/-1% sync.
+// A longer overlap search preserves multichannel DTS pitch during small speed changes,
+// including the older MPV build shipped on Linux.
 export const mpvPitchArguments = [
   "--audio-pitch-correction=yes",
-  "--af=@lumen-tempo:scaletempo2",
+  "--af=@lumen-tempo:scaletempo2=search-interval=100",
 ] as const;

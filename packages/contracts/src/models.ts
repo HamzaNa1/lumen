@@ -1,7 +1,7 @@
 import { Schema } from "effect";
 import { Sha256Digest, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
-import { TrackMemory } from "./track-memory.ts";
 import { ServerInfo } from "./server.ts";
+import { TrackMemory } from "./track-memory.ts";
 
 // Application models shared by every client. They describe what the apps render, independent of
 // how a platform transports them (HTTP for the browser, IPC for the desktop renderer).

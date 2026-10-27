@@ -2,20 +2,20 @@ import {
   initialWatchStatus,
   WATCH_BUFFER_REPORT_INTERVAL_MS,
   WATCH_READY_BUFFER_SECONDS,
-  watchPosition,
   type WatchAction,
   type WatchGroup,
   type WatchStatus,
+  watchPosition,
 } from "@lumen/contracts";
+import { PlaybackUnsupportedError } from "../errors.ts";
+import type { PlaybackDiagnosticEvent } from "../playback/PlaybackDiagnostics.ts";
+import { type WatchConnection, WatchGroupClient } from "./WatchGroupClient.ts";
 import {
   WatchDriftCorrection,
-  watchSamplePosition,
   type WatchPlaybackSample,
   type WatchPlayerState,
+  watchSamplePosition,
 } from "./WatchSynchronization.ts";
-import type { PlaybackDiagnosticEvent } from "../playback/PlaybackDiagnostics.ts";
-import { PlaybackUnsupportedError } from "../errors.ts";
-import { type WatchConnection, WatchGroupClient } from "./WatchGroupClient.ts";
 
 export interface WatchServer extends WatchConnection {
   readonly supportsWatchGroups: boolean;

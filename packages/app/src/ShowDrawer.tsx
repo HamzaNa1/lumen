@@ -78,9 +78,7 @@ const EpisodeCard = ({
       title={episode.title}
       subtitle={
         current
-          ? [episodeCode(seasonNumber, episode), "Now playing"]
-              .filter(Boolean)
-              .join(" · ")
+          ? [episodeCode(seasonNumber, episode), "Now playing"].filter(Boolean).join(" · ")
           : episodeSubtitle(episode, seasonNumber)
       }
       kind={episode.kind}
@@ -154,7 +152,13 @@ export const ShowDrawer = ({
     <>
       <div className="show-drawer-scrim" aria-hidden="true" onClick={onClose} />
       {/* `data-popup-open` marks an open popup to the player's shortcuts, which leave Escape to it. */}
-      <aside className="show-drawer" id={DRAWER_ID} aria-label="Episodes" ref={panel} data-popup-open>
+      <aside
+        className="show-drawer"
+        id={DRAWER_ID}
+        aria-label="Episodes"
+        ref={panel}
+        data-popup-open
+      >
         <header className="show-drawer-header">
           <div className="show-drawer-title">
             <h2>{show.title}</h2>

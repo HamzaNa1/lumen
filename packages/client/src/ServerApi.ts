@@ -1,12 +1,6 @@
 import {
-  type ArtworkRef,
-  TrackPreferences,
-  TrackMemory,
-  type TrackPreferencesPatch,
-  type TrackChoiceInput,
-} from "@lumen/contracts";
-import {
   AdjacentEpisodes,
+  type ArtworkRef,
   BROWSER_CSRF_HEADER,
   BrowserSession,
   type CatalogItem,
@@ -14,13 +8,13 @@ import {
   type CatalogItemPage,
   EpisodeOrderOptions,
   type EpisodeOrderSelection,
-  MetadataMatchOptions,
-  type MetadataMatchSelection,
   HomeContent,
   JobLogEntry,
   type LibraryAccess,
   type LibrarySummary,
   ManagedUser,
+  MetadataMatchOptions,
+  type MetadataMatchSelection,
   PlayableMedia,
   PlayableStream,
   type PlayerSession,
@@ -28,6 +22,10 @@ import {
   type ScanRun,
   type ServerDiscovery,
   ServerInfo,
+  type TrackChoiceInput,
+  TrackMemory,
+  TrackPreferences,
+  type TrackPreferencesPatch,
   User,
   UserRole,
 } from "@lumen/contracts";
@@ -57,6 +55,7 @@ export interface AccountSession {
  * and "session" also reports a rejected session to the owner of this client.
  */
 type RequestAuth = "none" | "credentials" | "session";
+
 export type { UserRole };
 export type LibraryKind = LibrarySummary["kind"];
 export type ScanMode = ScanRun["mode"];
@@ -99,7 +98,7 @@ export interface ServerApiOptions {
 /** What the sign-in forms collect, wherever they are shown. */
 export interface CredentialsInput {
   readonly username: string;
-  readonly displayName?: string;
+  readonly displayName?: string | undefined;
   readonly password: string;
 }
 
@@ -114,16 +113,16 @@ export interface CreateUserInput {
   readonly username: string;
   readonly displayName: string;
   readonly password: string;
-  readonly role?: UserRole;
-  readonly libraryAccess?: LibraryAccess;
+  readonly role?: UserRole | undefined;
+  readonly libraryAccess?: LibraryAccess | undefined;
 }
 
 export interface UpdateUserInput {
-  readonly displayName?: string;
-  readonly password?: string;
-  readonly role?: UserRole;
-  readonly libraryAccess?: LibraryAccess;
-  readonly isActive?: boolean;
+  readonly displayName?: string | undefined;
+  readonly password?: string | undefined;
+  readonly role?: UserRole | undefined;
+  readonly libraryAccess?: LibraryAccess | undefined;
+  readonly isActive?: boolean | undefined;
 }
 
 export interface CreateLibraryInput {
@@ -134,10 +133,10 @@ export interface CreateLibraryInput {
 }
 
 export interface UpdateLibraryInput {
-  readonly name?: string;
-  readonly slug?: string;
-  readonly kind?: LibraryKind;
-  readonly isEnabled?: boolean;
+  readonly name?: string | undefined;
+  readonly slug?: string | undefined;
+  readonly kind?: LibraryKind | undefined;
+  readonly isEnabled?: boolean | undefined;
 }
 
 export interface AddLibraryRootInput {

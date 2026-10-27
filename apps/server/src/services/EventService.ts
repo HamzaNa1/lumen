@@ -1,7 +1,7 @@
-import { ServerLogger } from "../core/Logger";
 import { Database, serverEventLog } from "@lumen/database";
 import { and, asc, eq, gt, isNull, or } from "drizzle-orm";
 import { Context, Effect, Layer, Schema } from "effect";
+import { ServerLogger } from "../core/Logger";
 
 const Event = Schema.Struct({
   id: Schema.Int,

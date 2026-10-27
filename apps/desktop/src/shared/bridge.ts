@@ -1,20 +1,21 @@
+import type { PlaybackDiagnosticEvent } from "@lumen/client";
 import type {
   AccountsRuntime,
-  TrackSettingsRuntime,
   AdminRuntime,
   ArtworkRuntime,
   CatalogRuntime,
+  TrackSettingsRuntime,
   Unsubscribe,
   WatchRuntime,
 } from "@lumen/client/runtime";
 import type {
   AudioOutput,
-  TrackKind,
   IpcPlayerSurfaceBounds,
   PlaybackInfo,
   PlayerAction,
   PlayerDisplay,
   PlayerState,
+  TrackKind,
 } from "@lumen/contracts";
 
 /**
@@ -54,6 +55,7 @@ export interface DesktopBridge {
     readonly audioOutput: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
     readonly info: (sessionId: string) => Promise<PlaybackInfo>;
     readonly state: () => Promise<PlayerState | null>;
+    readonly timeline: () => Promise<ReadonlyArray<PlaybackDiagnosticEvent>>;
     readonly display: (display: PlayerDisplay) => Promise<void>;
     readonly displayState: () => Promise<PlayerDisplay | null>;
     readonly overlayAction: (action: PlayerAction) => Promise<void>;

@@ -1,8 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { mpvCacheArguments } from "./MpvCache";
 import { LibMpv } from "./LibMpv";
+import { mpvCacheArguments } from "./MpvCache";
 import { mpvPitchArguments } from "./MpvSynchronization";
 
 export interface MpvProcessOptions {
@@ -76,6 +76,7 @@ export class MpvProcess {
             "--vo=gpu",
             "--force-window=yes",
             "--border=no",
+            "--native-fs=no",
             "--auto-window-resize=no",
             "--window-dragging=no",
             "--input-cursor-passthrough=yes",

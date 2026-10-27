@@ -3,9 +3,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { errorMessage } from "./format";
 import { CurrentBadge, ItemSettingsPanel, SettingsChoice } from "./ItemSettingsPanel";
+import { useRuntime } from "./Runtime";
 import type { MetadataRefresh } from "./useMetadataRefresh";
 import { useWorkspace } from "./Workspace";
-import { useRuntime } from "./Runtime";
 
 const defaultOrder = "default";
 

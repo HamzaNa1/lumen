@@ -1,5 +1,5 @@
-import { isEpisodeRange } from "@lumen/contracts";
 import { basename, extname } from "node:path";
+import { isEpisodeRange } from "@lumen/contracts";
 
 export interface VideoPath {
   readonly kind: "movie" | "episode";
@@ -7,7 +7,13 @@ export interface VideoPath {
   readonly year: number | null;
   readonly providerId: string | null;
   readonly imdbId: string | null;
-  readonly show: { readonly path: string; readonly title: string; readonly year: number | null; readonly providerId: string | null; readonly imdbId: string | null } | null;
+  readonly show: {
+    readonly path: string;
+    readonly title: string;
+    readonly year: number | null;
+    readonly providerId: string | null;
+    readonly imdbId: string | null;
+  } | null;
   readonly season: { readonly path: string; readonly number: number } | null;
   readonly episodeNumber: number | null;
   /** The last episode of a file holding several consecutive episodes; null for one episode. */
@@ -15,10 +21,13 @@ export interface VideoPath {
   readonly warning: string | null;
 }
 
-const clean = (value: string): string => value
-  .replace(/\s*\[(?:tmdbid|tmdb|imdbid|imdb)-[^\]]+\]/giu, "")
-  .replace(/\s*\((?:19|20)\d{2}\)\s*$/u, "")
-  .replace(/[._]+/gu, " ").replace(/\s+/gu, " ").trim() || "Untitled";
+const clean = (value: string): string =>
+  value
+    .replace(/\s*\[(?:tmdbid|tmdb|imdbid|imdb)-[^\]]+\]/giu, "")
+    .replace(/\s*\((?:19|20)\d{2}\)\s*$/u, "")
+    .replace(/[._]+/gu, " ")
+    .replace(/\s+/gu, " ")
+    .trim() || "Untitled";
 
 const name = (value: string) => ({
   title: clean(value),
@@ -106,30 +115,57 @@ export const parseVideoPath = (kind: "movies" | "shows", relativePath: string): 
   const file = parts.at(-1) ?? "Untitled";
   const stem = basename(file, extname(file));
   if (kind === "movies") {
-    const label = parts.length > 1 ? parts.at(-2) ?? stem : stem;
-    return { kind: "movie", ...name(label), show: null, season: null, episodeNumber: null, episodeNumberEnd: null, warning: null };
+    const label = parts.length > 1 ? (parts.at(-2) ?? stem) : stem;
+    return {
+      kind: "movie",
+      ...name(label),
+      show: null,
+      season: null,
+      episodeNumber: null,
+      episodeNumberEnd: null,
+      warning: null,
+    };
   }
-  const showPath = parts.length > 1 ? parts[0] ?? "" : "";
+  const showPath = parts.length > 1 ? (parts[0] ?? "") : "";
   const show = { path: showPath, ...name(showPath || "Unsorted") };
-  const seasonLabel = parts.length > 2 ? parts[1] ?? "" : "";
+  const seasonLabel = parts.length > 2 ? (parts[1] ?? "") : "";
   const seasonNumber = /^(?:season|series)\s*0*(\d+)$/iu.exec(seasonLabel)?.[1];
   const coordinates = episodeCoordinates(stem);
-  const season = seasonNumber !== undefined
-    ? { path: `${showPath}/${seasonLabel}`, number: Number(seasonNumber) }
-    : coordinates !== null ? { path: `${showPath}/Season ${coordinates.season}`, number: coordinates.season } : null;
+  const season =
+    seasonNumber !== undefined
+      ? { path: `${showPath}/${seasonLabel}`, number: Number(seasonNumber) }
+      : coordinates !== null
+        ? { path: `${showPath}/Season ${coordinates.season}`, number: coordinates.season }
+        : null;
   const episodeNumber = coordinates?.episode ?? null;
   const end = coordinates === null ? null : episodeEnd(coordinates);
   const afterCoordinates = coordinates === null ? stem : stem.slice(coordinates.end);
-  const episodeTitle = afterCoordinates.replace(/[._]+/gu, " ").replace(/^[\s-]+/u, "").trim();
-  const warning = showPath === "" ? "show_folder_missing"
-    : seasonNumber === undefined ? "season_folder_missing"
-    : coordinates === null ? "episode_coordinates_missing"
-    : coordinates.season !== Number(seasonNumber) ? "season_number_mismatch"
-    : end === "invalid" ? "episode_range_invalid"
-    : null;
+  const episodeTitle = afterCoordinates
+    .replace(/[._]+/gu, " ")
+    .replace(/^[\s-]+/u, "")
+    .trim();
+  const warning =
+    showPath === ""
+      ? "show_folder_missing"
+      : seasonNumber === undefined
+        ? "season_folder_missing"
+        : coordinates === null
+          ? "episode_coordinates_missing"
+          : coordinates.season !== Number(seasonNumber)
+            ? "season_number_mismatch"
+            : end === "invalid"
+              ? "episode_range_invalid"
+              : null;
   return {
-    kind: "episode", title: episodeTitle || `Episode ${episodeNumber ?? stem}`, year: null,
-    providerId: null, imdbId: null, show, season, episodeNumber,
-    episodeNumberEnd: end === "invalid" ? null : end, warning,
+    kind: "episode",
+    title: episodeTitle || `Episode ${episodeNumber ?? stem}`,
+    year: null,
+    providerId: null,
+    imdbId: null,
+    show,
+    season,
+    episodeNumber,
+    episodeNumberEnd: end === "invalid" ? null : end,
+    warning,
   };
 };

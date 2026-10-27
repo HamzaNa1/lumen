@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
-import { app, safeStorage } from "electron";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { app, safeStorage } from "electron";
 import { canEncryptTokens } from "./TokenStoragePolicy";
 
 export interface VaultValue {
@@ -49,7 +49,11 @@ export const createTokenVault = async (fileName: string): Promise<VaultValue> =>
   return {
     available: false,
     read: async () => {
-      try { return await readFile(filePath, "utf8"); } catch { return null; }
+      try {
+        return await readFile(filePath, "utf8");
+      } catch {
+        return null;
+      }
     },
     write: async (value) => {
       await mkdir(dirname(filePath), { recursive: true });

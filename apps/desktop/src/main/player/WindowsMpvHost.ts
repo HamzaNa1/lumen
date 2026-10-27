@@ -1,5 +1,5 @@
 import { type BrowserWindow, type Rectangle, screen } from "electron";
-import { load, type LibraryHandle } from "koffi";
+import { type LibraryHandle, load } from "koffi";
 
 type Hwnd = number | bigint;
 type CreateWindow = (

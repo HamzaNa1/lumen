@@ -14,7 +14,6 @@ export const products = {
       "apps/web",
       "apps/server",
     ],
-    tests: ["tests/server", "tests/web"],
   },
   desktop: {
     name: "Lumen Desktop",
@@ -26,7 +25,6 @@ export const products = {
       "packages/app",
       "apps/desktop",
     ],
-    tests: ["tests/desktop"],
   },
 } as const;
 export type Product = keyof typeof products;
@@ -38,33 +36,7 @@ export const parseProduct = (value: string | undefined): Product => {
 
 export const productWorkspaces = (product: Product): string[] => [...products[product].workspaces];
 
-export const checkWorkspaces = (product: Product): string[] => [
-  ...productWorkspaces(product),
-  "packages/testkit",
-];
-
-export const productTests = (product: Product): string[] => [
-  ...products[product].tests,
-  "tests/shared",
-  "tests/tooling",
-];
-
-// These regressions need both products at runtime. CI exercises the source pair;
-// releases substitute the latest stable counterpart, keeping its dependencies too.
-export const compatibilitySuites = {
-  "desktop-mpv-window-lifecycle.test.ts": ["desktop"],
-  "server-watch-groups.test.ts": ["server"],
-  "playback-bridge.test.ts": ["desktop", "server"],
-  "watch-group-client.test.ts": ["desktop", "server"],
-  "watch-playback.test.ts": ["desktop", "server"],
-  "mixed-watch-groups.test.ts": ["desktop", "server"],
-  "releases.test.ts": ["desktop", "server"],
-} satisfies Record<string, Product[]>;
-
-export const productCompatibilityTests = (product: Product): string[] =>
-  Object.entries(compatibilitySuites)
-    .filter(([, owners]) => owners.some((owner) => owner === product))
-    .map(([file]) => `tests/compatibility/${file}`);
+export const checkWorkspaces = productWorkspaces;
 
 export const workspaceFilters = (paths: readonly string[]): string[] =>
   paths.flatMap((path) => ["--filter", `./${path}`]);

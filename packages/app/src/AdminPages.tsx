@@ -1,3 +1,4 @@
+import { randomId } from "@lumen/client";
 import type { LibraryAccess, LibrarySummary, ManagedUser, UserRole } from "@lumen/contracts";
 import {
   Avatar,
@@ -38,10 +39,9 @@ import {
   roleLabels,
   slugify,
 } from "./format";
+import { useRuntime } from "./Runtime";
 import { libraryIcon } from "./Sidebar";
 import { PageHeader, useWorkspace } from "./Workspace";
-import { useRuntime } from "./Runtime";
-import { randomId } from "@lumen/client";
 
 const roleOptions = [
   { value: "user", label: roleLabels.user },
@@ -672,7 +672,7 @@ const UserDialog = ({
         await runtime.admin.updateUser({
           userId: user.id,
           displayName,
-          password: password === "" ? undefined : password,
+          ...(password === "" ? {} : { password }),
           role,
           libraryAccess,
           isActive,

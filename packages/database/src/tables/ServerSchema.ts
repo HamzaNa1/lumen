@@ -12,8 +12,8 @@ import {
 } from "drizzle-orm/sqlite-core";
 import {
   artwork,
-  libraryRoots,
   libraries,
+  libraryRoots,
   mediaSources,
   outboxEvents,
   playbackSessions,

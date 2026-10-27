@@ -24,11 +24,7 @@
   },
   "commands": {
     "all": {
-      "command": [
-        "bun",
-        "run",
-        "typecheck"
-      ],
+      "command": ["bun", "run", "typecheck"],
       "samples": {
         "before": [
           {
@@ -135,12 +131,7 @@
       }
     },
     "server": {
-      "command": [
-        "bun",
-        "run",
-        "check:server",
-        "typecheck"
-      ],
+      "command": ["bun", "run", "check:server", "typecheck"],
       "samples": {
         "before": [
           {
@@ -247,12 +238,7 @@
       }
     },
     "desktop": {
-      "command": [
-        "bun",
-        "run",
-        "check:desktop",
-        "typecheck"
-      ],
+      "command": ["bun", "run", "check:desktop", "typecheck"],
       "samples": {
         "before": [
           {

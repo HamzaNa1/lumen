@@ -94,7 +94,11 @@ export const makeAuthRepository = (database: DatabaseClient) => {
         .get(),
       "auth.getCredentialsByUsername",
     );
-    return yield* boundary(UserCredentials, row, "auth.getCredentialsByUsername.result");
+    return yield* boundary(
+      UserCredentials,
+      row === undefined ? undefined : { user: row, passwordHash: row.passwordHash },
+      "auth.getCredentialsByUsername.result",
+    );
   });
 
   const createDevice = Effect.fn("AuthRepository.createDevice")(function* (input: unknown) {
@@ -121,15 +125,18 @@ export const makeAuthRepository = (database: DatabaseClient) => {
   const createSession = Effect.fn("AuthRepository.createSession")(function* (input: unknown) {
     const value = yield* boundary(CreateAuthSession, input, "auth.createSession");
     const rows = yield* guard(
-      database.insert(authSessions).values({
-        id: value.id,
-        userId: value.userId,
-        deviceId: value.deviceId,
-        sessionTokenHash: value.sessionTokenHash,
-        issuedAtMs: value.issuedAtMs,
-        lastUsedAtMs: value.issuedAtMs,
-        expiresAtMs: value.expiresAtMs,
-      }).returning(sessionSelection),
+      database
+        .insert(authSessions)
+        .values({
+          id: value.id,
+          userId: value.userId,
+          deviceId: value.deviceId,
+          sessionTokenHash: value.sessionTokenHash,
+          issuedAtMs: value.issuedAtMs,
+          lastUsedAtMs: value.issuedAtMs,
+          expiresAtMs: value.expiresAtMs,
+        })
+        .returning(sessionSelection),
       "auth.createSession",
     );
     return yield* boundary(AuthSession, rows[0], "auth.createSession.result");
@@ -138,7 +145,9 @@ export const makeAuthRepository = (database: DatabaseClient) => {
   const revokeSession = Effect.fn("AuthRepository.revokeSession")(function* (input: unknown) {
     const value = yield* boundary(RevokeSession, input, "auth.revokeSession");
     yield* guard(
-      database.update(authSessions).set({ revokedAtMs: value.nowMs })
+      database
+        .update(authSessions)
+        .set({ revokedAtMs: value.nowMs })
         .where(and(eq(authSessions.id, value.sessionId), isNull(authSessions.revokedAtMs))),
       "auth.revokeSession",
     );

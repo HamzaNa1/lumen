@@ -1,30 +1,30 @@
 import {
-  rememberTitleVolume,
-  resolveTrackSelection,
-  volumeForTitle,
-  type TrackKind,
-  type TrackChoiceInput,
-  type TrackMemory,
-} from "@lumen/contracts";
-import {
   describePlayback,
   measuredSize,
-  PlaybackDiagnostics,
-  TrackSelectionController,
   PLAYBACK_REPORT_INTERVAL_MS,
+  PlaybackDiagnostics,
   type PlaybackSessionApi,
-  type PlayerBuffer,
-  type WatchPlaybackSample,
   PlaybackSessionReporter,
   PlaybackUnsupportedError,
+  type PlayerBuffer,
   ServerHttpError,
+  TrackSelectionController,
+  type WatchPlaybackSample,
 } from "@lumen/client";
 import type {
-  PlaybackInfo,
   PlayableStream,
+  PlaybackInfo,
   PlayerSession,
   PlayerState,
   VolumeMemory,
+} from "@lumen/contracts";
+import {
+  rememberTitleVolume,
+  resolveTrackSelection,
+  type TrackChoiceInput,
+  type TrackKind,
+  type TrackMemory,
+  volumeForTitle,
 } from "@lumen/contracts";
 
 /** The parts of an HTML media element the player drives. */
@@ -68,7 +68,10 @@ export interface MediaElementLike {
 
 export interface BrowserPlaybackApi {
   readonly serverOrigin: string;
-  readonly saveTrackChoice: (sessionId: string, input: TrackChoiceInput) => Promise<TrackMemory | null>;
+  readonly saveTrackChoice: (
+    sessionId: string,
+    input: TrackChoiceInput,
+  ) => Promise<TrackMemory | null>;
   readonly startPlayback: (itemId: string) => Promise<PlayerSession>;
   readonly heartbeat: (sessionId: string, state: PlayerState) => Promise<void>;
   readonly progress: (
@@ -256,7 +259,9 @@ export class HtmlMediaPlayer {
       // A seek also makes the element wait; that is not running out.
       // Nor can fetching replenish a file whose entire remainder is already buffered.
       starved:
-        active.buffering && !element.paused && !element.seeking &&
+        active.buffering &&
+        !element.paused &&
+        !element.seeking &&
         aheadSeconds !== Number.POSITIVE_INFINITY,
       // A paused browser fetches only as much as it sees fit, and reports what it holds by its
       // own estimate, so it may come to rest short of any amount that is waited for.
@@ -380,7 +385,8 @@ export class HtmlMediaPlayer {
         !active.buffering &&
         !active.suspended &&
         !active.awaitingInteraction &&
-        this.element.readyState >= HAVE_FUTURE_DATA,
+        (this.element.readyState >= HAVE_FUTURE_DATA ||
+          this.bufferedAhead() === Number.POSITIVE_INFINITY),
     };
   }
 
@@ -600,9 +606,14 @@ export class HtmlMediaPlayer {
       const onError = (): void =>
         settle(() => reject(describeMediaError(this.element.error?.code)));
       const timer = setTimeout(
-        () => settle(() => reject(new Error(
-          `Timed out waiting for media to ${event === "loadedmetadata" ? "load" : "seek"}`,
-        ))),
+        () =>
+          settle(() =>
+            reject(
+              new Error(
+                `Timed out waiting for media to ${event === "loadedmetadata" ? "load" : "seek"}`,
+              ),
+            ),
+          ),
         this.loadTimeoutMs,
       );
       // A newer start or stop abandons this load without waiting for the browser to give up.
@@ -715,6 +726,12 @@ export class HtmlMediaPlayer {
       if (active.buffering) record("browser_recovery");
       buffering(false)();
     };
+    const onSeeked = (): void => {
+      // WebKit can keep HAVE_CURRENT_DATA after seeking in a fully downloaded file,
+      // even while its clock advances. No further canplay/playing event is guaranteed.
+      if (this.bufferedAhead() > 0) active.buffering = false;
+      update();
+    };
     const onError = (): void => {
       record("browser_error");
       if (this.active === active) void this.recover(active, this.element.error?.code);
@@ -729,7 +746,7 @@ export class HtmlMediaPlayer {
       ["progress", update],
       ["play", update],
       ["pause", update],
-      ["seeked", update],
+      ["seeked", onSeeked],
       ["volumechange", update],
       ["waiting", onWaiting],
       ["stalled", () => record("browser_stalled")],

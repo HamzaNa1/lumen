@@ -1,11 +1,6 @@
-import { checkWorkspaces, parseProduct, workspaceFilters } from "./lib/products";
+import { parseProduct } from "./lib/products";
 import { run } from "./lib/releases";
 
-const product = parseProduct(process.argv[2]);
-run(process.execPath, [
-  "install",
-  "--frozen-lockfile",
-  "--filter",
-  "./",
-  ...workspaceFilters(checkWorkspaces(product)),
-]);
+parseProduct(process.argv[2]);
+// E2E verification builds the candidate and a released counterpart in separate workspaces.
+run(process.execPath, ["install", "--frozen-lockfile"]);

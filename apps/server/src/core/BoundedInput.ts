@@ -1,7 +1,10 @@
 import { constants } from "node:fs";
 import { open } from "node:fs/promises";
 
-export const readLocalFile = async (path: string, maxBytes: number): Promise<Uint8Array<ArrayBuffer> | null> => {
+export const readLocalFile = async (
+  path: string,
+  maxBytes: number,
+): Promise<Uint8Array<ArrayBuffer> | null> => {
   try {
     const file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     try {
@@ -26,7 +29,10 @@ export const readLocalFile = async (path: string, maxBytes: number): Promise<Uin
   }
 };
 
-export const readResponseBytes = async (response: Response, maxBytes: number): Promise<Uint8Array> => {
+export const readResponseBytes = async (
+  response: Response,
+  maxBytes: number,
+): Promise<Uint8Array> => {
   if (response.body === null) throw new Error("Response body is missing");
   const reader = response.body.getReader();
   const chunks: Uint8Array[] = [];

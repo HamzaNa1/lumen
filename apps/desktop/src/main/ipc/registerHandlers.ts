@@ -2,16 +2,16 @@ import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
   ArtworkRef,
   AudioOutput,
-  TrackPreferencesPatch,
-  TrackKind,
   ConnectionInput,
   EpisodeOrderSelection,
-  MetadataMatchSelection,
   IpcPlayerSurfaceBounds,
   LibraryAccess,
+  MetadataMatchSelection,
   PlayerAction,
   PlayerDisplay,
   type ServerDiscovery,
+  TrackKind,
+  TrackPreferencesPatch,
   UserRole,
   WatchAction,
 } from "@lumen/contracts";
@@ -19,11 +19,12 @@ import { Schema } from "effect";
 import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
-import { ServerClient, ServerHttpError, type AccountSession } from "../api/ServerClient";
+import { type AccountSession, ServerClient, ServerHttpError } from "../api/ServerClient";
 import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
+import { playerFullscreen } from "../player/PlayerWindowState";
 import type { AppUpdates } from "../updates/AppUpdates";
 
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
@@ -83,6 +84,7 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 };
 
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
+  const fullscreen = playerFullscreen(dependencies.window);
   const watch = new WatchPlaybackController(watchPlayerFor(dependencies.player), (status) => {
     for (const window of [dependencies.window, dependencies.overlay.window]) {
       if (!window.isDestroyed()) window.webContents.send("watch:state", status);
@@ -503,6 +505,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     dependencies.player.info(decode(Schema.String, raw)),
   );
   handle("player:state", async () => dependencies.player.getState());
+  handle("player:timeline", async () => dependencies.player.playbackTimeline());
   handle("player:display", async (_event, raw) => {
     playerDisplay = decode(PlayerDisplay, raw);
     dependencies.overlay.window.webContents.send("player:display", playerDisplay);
@@ -512,10 +515,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const action = decode(PlayerAction, raw);
     dependencies.window.webContents.send("player:overlay-action", action);
   });
-  handle("player:fullscreen", async (_event, raw) => {
-    dependencies.window.setFullScreen(decode(Schema.Boolean, raw));
-    return dependencies.window.isFullScreen();
-  });
+  handle("player:fullscreen", async (_event, raw) => fullscreen(decode(Schema.Boolean, raw)));
   handle("player:fullscreen-state", async () => dependencies.window.isFullScreen());
   handle("player:stop", async () => {
     await watch.stop();

@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
-import { WebSocketServer, type WebSocket } from "ws";
+import { type WebSocket, WebSocketServer } from "ws";
 import type { RequestContext } from "./ClientIdentity";
 
 export interface HttpSocket<Data> {
@@ -12,7 +12,6 @@ export interface HttpSocket<Data> {
 
 export interface HttpSocketHandler<Data> {
   readonly maxPayloadLength: number;
-  readonly idleTimeout: number;
   readonly backpressureLimit: number;
   readonly closeOnBackpressureLimit: boolean;
   readonly open: (socket: HttpSocket<Data>) => void;
@@ -136,7 +135,8 @@ export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise
               },
               close: (code, reason) => connection.close(code, reason),
             };
-            incoming.socket.setTimeout(handler.idleTimeout * 1000, () => connection.terminate());
+            // Bun does not refresh socket timers on upgraded traffic. The handler owns liveness.
+            incoming.socket.setTimeout(0);
             connection.on("message", (message, binary) =>
               handler.message(peer, binary ? Buffer.from(message as Buffer) : message.toString()),
             );

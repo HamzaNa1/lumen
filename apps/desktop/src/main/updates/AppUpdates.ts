@@ -31,7 +31,10 @@ export class AppUpdates {
   private source: UpdateSource | null = null;
   private readyVersion: string | null = null;
 
-  constructor(private readonly onReady: (version: string) => void) {}
+  constructor(
+    private readonly onReady: (version: string) => void,
+    private readonly intervalMs = checkIntervalMs,
+  ) {}
 
   /** The version waiting to be installed, if one has been downloaded. */
   get ready(): string | null {
@@ -58,7 +61,7 @@ export class AppUpdates {
         });
     };
     check();
-    const timer = setInterval(check, checkIntervalMs);
+    const timer = setInterval(check, this.intervalMs);
     return () => clearInterval(timer);
   }
 

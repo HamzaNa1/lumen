@@ -16,13 +16,13 @@ export const createMainWindow = (options: DesktopWindowOptions = {}): Electron.B
     minHeight: mainWindowMinimumSize.height,
     backgroundColor: "#0c0c0e",
     show: false,
-    parent: options.parent,
+    ...(options.parent === undefined ? {} : { parent: options.parent }),
     webPreferences: {
       contextIsolation: true,
       sandbox: true,
       nodeIntegration: false,
       webSecurity: true,
-      preload: options.preloadPath,
+      ...(options.preloadPath === undefined ? {} : { preload: options.preloadPath }),
     },
   });
   if (process.platform === "win32") window.removeMenu();

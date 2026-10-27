@@ -1,16 +1,17 @@
+import { extname } from "node:path";
 import type {
-  TrackMemory,
-  TrackPreferences,
-  TrackPreferencesPatch,
-  TrackChoiceInput,
   PlayableMedia,
   PlayableStream,
   PlaybackProgress,
   PlaybackSession,
+  TrackChoiceInput,
+  TrackMemory,
+  TrackPreferences,
+  TrackPreferencesPatch,
 } from "@lumen/contracts";
 import {
-  catalogItems,
   catalogItemSources,
+  catalogItems,
   Database,
   devices,
   itemWatchStates,
@@ -27,15 +28,14 @@ import {
   tracks,
 } from "@lumen/database";
 import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
-import { extname } from "node:path";
+import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
 import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
-import { hashToken, newOpaqueToken, newUuid } from "../core/Security";
 import { canonicalPath, isPathWithin } from "../core/Paths";
+import { hashToken, newOpaqueToken, newUuid } from "../core/Security";
+import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Schemas";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
-import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Schemas";
-import type { Schema } from "effect";
 
 type PlaybackInput = Schema.Schema.Type<typeof StartPlaybackBody>;
 type HeartbeatInput = Schema.Schema.Type<typeof HeartbeatBody>;
@@ -473,6 +473,8 @@ export const makePlaybackService = Effect.gen(function* () {
                 setWhere: eq(itemWatchStates.manualVersion, watchVersion.manualVersion),
               });
           }
+          if (updated === undefined)
+            return yield* Effect.die(new Error("Progress upsert returned no row"));
           return updated;
         }),
       );

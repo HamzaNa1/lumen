@@ -1,5 +1,5 @@
 import { Slider } from "@base-ui/react/slider";
-import type { AudioOutput, BufferedRange, PlaybackInfo, PlayableStream } from "@lumen/contracts";
+import type { AudioOutput, BufferedRange, PlayableStream, PlaybackInfo } from "@lumen/contracts";
 import {
   Activity,
   ArrowLeft,
@@ -19,7 +19,6 @@ import {
 } from "lucide-react";
 import { type ReactNode, type Ref, useEffect, useEffectEvent, useState } from "react";
 import { Button } from "./Button";
-import { useClickGesture } from "./useClickGesture";
 import { SelectField } from "./Controls";
 import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
@@ -28,6 +27,7 @@ import {
   streamLabels,
   trackSelectionWarning,
 } from "./PlayerFormatting";
+import { useClickGesture } from "./useClickGesture";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
 import { useThrottledCallback } from "./useThrottledCallback";
@@ -63,7 +63,7 @@ interface MediaPlayerProps {
   readonly selectedSubtitleStreamId: string | null;
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
-  readonly onAudioOutput?: (output: AudioOutput) => Promise<void>;
+  readonly onAudioOutput?: ((output: AudioOutput) => Promise<void>) | undefined;
   /** What the player reports about the playback in progress; omitted while nothing is playing. */
   readonly onPlaybackInfo?: (() => Promise<PlaybackInfo>) | undefined;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
@@ -330,7 +330,9 @@ export const MediaPlayer = ({
                 className="media-slider-control"
                 onPointerMove={(event) => {
                   const { left, width } = event.currentTarget.getBoundingClientRect();
-                  setTimelineHover(width > 0 ? Math.min(1, Math.max(0, (event.clientX - left) / width)) : null);
+                  setTimelineHover(
+                    width > 0 ? Math.min(1, Math.max(0, (event.clientX - left) / width)) : null,
+                  );
                 }}
                 onPointerLeave={() => setTimelineHover(null)}
               >

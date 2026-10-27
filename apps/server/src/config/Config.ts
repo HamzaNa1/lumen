@@ -1,13 +1,12 @@
-import { normalizeAddress } from "../http/ClientIdentity";
-import { Schema } from "effect";
-import { fileURLToPath } from "node:url";
 import { isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { Schema } from "effect";
+import { normalizeAddress } from "../http/ClientIdentity";
 
 const workspaceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 try {
   process.loadEnvFile(join(workspaceRoot, ".env"));
-} catch {
-}
+} catch {}
 
 const Numeric = Schema.String.check(Schema.isPattern(/^\d+$/u));
 const Port = Numeric;
@@ -102,13 +101,20 @@ const toInteger = (name: string, raw: string | undefined, fallback: number): num
   return value;
 };
 
-const toBoundedInteger = (name: string, raw: string | undefined, fallback: number, minimum: number, maximum: number): number => {
+const toBoundedInteger = (
+  name: string,
+  raw: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number => {
   const value = toInteger(name, raw, fallback);
   if (value < minimum || value > maximum) throw new Error(`${name} is outside its allowed range`);
   return value;
 };
 
-const resolveWorkspacePath = (value: string): string => isAbsolute(value) ? value : resolve(workspaceRoot, value);
+const resolveWorkspacePath = (value: string): string =>
+  isAbsolute(value) ? value : resolve(workspaceRoot, value);
 
 export const decodeConfig = (environment: Record<string, string | undefined>): ServerConfig => {
   const parsed = Schema.decodeUnknownSync(Environment)(environment);
@@ -121,10 +127,34 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     dataDir,
     logLevel: parsed.LUMEN_LOG_LEVEL ?? "info",
     logFormat: parsed.LUMEN_LOG_FORMAT ?? "text",
-    maxRequestBodyBytes: toBoundedInteger("LUMEN_MAX_REQUEST_BODY_BYTES", parsed.LUMEN_MAX_REQUEST_BODY_BYTES, 1_048_576, 1_024, 100_000_000),
-    maxConcurrentRequests: toBoundedInteger("LUMEN_MAX_CONCURRENT_REQUESTS", parsed.LUMEN_MAX_CONCURRENT_REQUESTS, 128, 1, 10_000),
-    maxRequestsPerMinute: toBoundedInteger("LUMEN_MAX_REQUESTS_PER_MINUTE", parsed.LUMEN_MAX_REQUESTS_PER_MINUTE, 600, 1, 1_000_000),
-    loginAttemptsPerMinute: toBoundedInteger("LUMEN_LOGIN_ATTEMPTS_PER_MINUTE", parsed.LUMEN_LOGIN_ATTEMPTS_PER_MINUTE, 10, 1, 1_000_000),
+    maxRequestBodyBytes: toBoundedInteger(
+      "LUMEN_MAX_REQUEST_BODY_BYTES",
+      parsed.LUMEN_MAX_REQUEST_BODY_BYTES,
+      1_048_576,
+      1_024,
+      100_000_000,
+    ),
+    maxConcurrentRequests: toBoundedInteger(
+      "LUMEN_MAX_CONCURRENT_REQUESTS",
+      parsed.LUMEN_MAX_CONCURRENT_REQUESTS,
+      128,
+      1,
+      10_000,
+    ),
+    maxRequestsPerMinute: toBoundedInteger(
+      "LUMEN_MAX_REQUESTS_PER_MINUTE",
+      parsed.LUMEN_MAX_REQUESTS_PER_MINUTE,
+      600,
+      1,
+      1_000_000,
+    ),
+    loginAttemptsPerMinute: toBoundedInteger(
+      "LUMEN_LOGIN_ATTEMPTS_PER_MINUTE",
+      parsed.LUMEN_LOGIN_ATTEMPTS_PER_MINUTE,
+      10,
+      1,
+      1_000_000,
+    ),
     mediaPeerRequestsPerMinute: toBoundedInteger(
       "LUMEN_MEDIA_PEER_REQUESTS_PER_MINUTE",
       parsed.LUMEN_MEDIA_PEER_REQUESTS_PER_MINUTE,
@@ -154,13 +184,55 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
       1,
       10000,
     ),
-    maxEventId: toBoundedInteger("LUMEN_MAX_EVENT_ID", parsed.LUMEN_MAX_EVENT_ID, 65_536, 1, 100_000_000),
-    scanLeaseMs: toBoundedInteger("LUMEN_SCAN_LEASE_MS", parsed.LUMEN_SCAN_LEASE_MS, 300_000, 1_000, 86_400_000),
-    libraryWatchIntervalMs: toBoundedInteger("LUMEN_LIBRARY_WATCH_INTERVAL_MS", parsed.LUMEN_LIBRARY_WATCH_INTERVAL_MS, 60_000, 1_000, 86_400_000),
-    ffprobeTimeoutMs: toBoundedInteger("LUMEN_FFPROBE_TIMEOUT_MS", parsed.LUMEN_FFPROBE_TIMEOUT_MS, 15_000, 100, 600_000),
-    ffprobeMaxOutputBytes: toBoundedInteger("LUMEN_FFPROBE_MAX_OUTPUT_BYTES", parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES, 1_048_576, 1_024, 100_000_000),
-    shutdownGraceMs: toBoundedInteger("LUMEN_SHUTDOWN_GRACE_MS", parsed.LUMEN_SHUTDOWN_GRACE_MS, 10_000, 100, 600_000),
-    heartbeatIntervalMs: toBoundedInteger("LUMEN_HEARTBEAT_INTERVAL_MS", parsed.LUMEN_HEARTBEAT_INTERVAL_MS, 20_000, 1_000, 600_000),
+    maxEventId: toBoundedInteger(
+      "LUMEN_MAX_EVENT_ID",
+      parsed.LUMEN_MAX_EVENT_ID,
+      65_536,
+      1,
+      100_000_000,
+    ),
+    scanLeaseMs: toBoundedInteger(
+      "LUMEN_SCAN_LEASE_MS",
+      parsed.LUMEN_SCAN_LEASE_MS,
+      300_000,
+      1_000,
+      86_400_000,
+    ),
+    libraryWatchIntervalMs: toBoundedInteger(
+      "LUMEN_LIBRARY_WATCH_INTERVAL_MS",
+      parsed.LUMEN_LIBRARY_WATCH_INTERVAL_MS,
+      60_000,
+      1_000,
+      86_400_000,
+    ),
+    ffprobeTimeoutMs: toBoundedInteger(
+      "LUMEN_FFPROBE_TIMEOUT_MS",
+      parsed.LUMEN_FFPROBE_TIMEOUT_MS,
+      15_000,
+      100,
+      600_000,
+    ),
+    ffprobeMaxOutputBytes: toBoundedInteger(
+      "LUMEN_FFPROBE_MAX_OUTPUT_BYTES",
+      parsed.LUMEN_FFPROBE_MAX_OUTPUT_BYTES,
+      1_048_576,
+      1_024,
+      100_000_000,
+    ),
+    shutdownGraceMs: toBoundedInteger(
+      "LUMEN_SHUTDOWN_GRACE_MS",
+      parsed.LUMEN_SHUTDOWN_GRACE_MS,
+      10_000,
+      100,
+      600_000,
+    ),
+    heartbeatIntervalMs: toBoundedInteger(
+      "LUMEN_HEARTBEAT_INTERVAL_MS",
+      parsed.LUMEN_HEARTBEAT_INTERVAL_MS,
+      20_000,
+      1_000,
+      600_000,
+    ),
     webRoot: resolveWorkspacePath(parsed.LUMEN_WEB_ROOT ?? "./apps/web/dist"),
     // A production server ships with the browser app; a checkout may not have built it yet.
     webApp: parsed.LUMEN_WEB_APP ?? (parsed.NODE_ENV === "production" ? "required" : "optional"),
