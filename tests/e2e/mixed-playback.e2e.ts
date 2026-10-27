@@ -104,7 +104,11 @@ test("real desktop and browser render shared routes, forms and menus with matchi
       location.hash = route;
     }, route);
     for (const current of [page, desktop.page]) {
-      await expect(current.getByRole("navigation", { name: "Primary" })).toBeVisible();
+      await expect(
+        current
+          .getByRole("navigation", { name: "Primary" })
+          .getByRole("link", { name: "movies", exact: true }),
+      ).toBeVisible();
       await expect(current.locator(".main-content").first()).toBeVisible();
     }
     const regions =
@@ -125,7 +129,13 @@ test("real desktop and browser render shared routes, forms and menus with matchi
               background: style.backgroundColor,
             };
           });
-      await expect.poll(() => snapshot(desktop.page)).toEqual(await snapshot(page));
+      await expect(async () => {
+        const [browserSnapshot, desktopSnapshot] = await Promise.all([
+          snapshot(page),
+          snapshot(desktop.page),
+        ]);
+        expect(desktopSnapshot).toEqual(browserSnapshot);
+      }).toPass({ timeout: 10000 });
     }
   }
   await page.goto(`${server.origin}web/settings`);
