@@ -33,7 +33,28 @@ export class NetworkProxy {
       const outbound = request(new URL(incoming.url ?? "/", this.upstream), {
         headers: incoming.headers,
       });
-      outbound.on("upgrade", (response, remote, remoteHead) => {
+      let remote: Duplex | undefined;
+      const disconnect = () => {
+        socket.destroy();
+        remote?.destroy();
+        outbound.destroy();
+      };
+      socket.on("error", disconnect);
+      socket.on("end", disconnect);
+      socket.on("close", disconnect);
+      outbound.on("error", disconnect);
+      outbound.on("response", (response) => {
+        response.destroy();
+        disconnect();
+      });
+      outbound.on("upgrade", (response, upgraded, remoteHead) => {
+        remote = upgraded;
+        remote.on("error", disconnect);
+        remote.on("close", disconnect);
+        if (socket.destroyed) {
+          disconnect();
+          return;
+        }
         socket.write(
           `HTTP/1.1 ${response.statusCode} ${response.statusMessage}\r\n${response.rawHeaders.reduce((lines, value, index) => (index % 2 === 0 ? `${lines}${value}: ` : `${lines}${value}\r\n`), "")}\r\n`,
         );
@@ -41,10 +62,7 @@ export class NetworkProxy {
         if (remoteHead.length) socket.write(remoteHead);
         remote.pipe(socket);
         socket.pipe(remote);
-        socket.on("close", () => remote.destroy());
-        remote.on("error", () => socket.destroy());
       });
-      outbound.on("error", () => socket.destroy());
       outbound.end();
     });
   }

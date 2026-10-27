@@ -1,7 +1,79 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import { createServer } from "node:http";
+import { createConnection, type Socket } from "node:net";
 import { join } from "node:path";
+import type { Duplex } from "node:stream";
+import { NetworkProxy } from "./support/proxy";
 import { expect, repository, test } from "./support/server";
+
+test("network proxy closes both peers after interrupted upgrades and relay socket failures", async () => {
+  const upstream = createServer();
+  const sockets = new Set<Duplex>();
+  upstream.on("upgrade", (_request, socket) => {
+    sockets.add(socket);
+    socket.on("error", () => socket.destroy());
+    socket.on("end", () => socket.end());
+    socket.on("close", () => sockets.delete(socket));
+    socket.resume();
+  });
+  upstream.listen(0, "127.0.0.1");
+  await once(upstream, "listening");
+  const address = upstream.address();
+  if (!address || typeof address === "string") throw new Error("Upstream did not listen");
+  const proxy = await new NetworkProxy(`http://127.0.0.1:${address.port}`).start();
+  const clients = new Set<Socket>();
+  try {
+    for (const fault of ["pending upgrade", "client reset", "upstream reset"] as const) {
+      await test.step(fault, async () => {
+        const client = createConnection(Number(new URL(proxy.origin).port), "127.0.0.1");
+        clients.add(client);
+        client.on("error", () => client.destroy());
+        await once(client, "connect");
+        const accepted = once(upstream, "upgrade");
+        client.write(
+          "GET / HTTP/1.1\r\nHost: localhost\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+        );
+        const [, remote] = (await accepted) as [unknown, Socket];
+        let clientClosed = false;
+        let remoteClosed = false;
+        client.once("close", () => {
+          clientClosed = true;
+        });
+        remote.once("close", () => {
+          remoteClosed = true;
+        });
+        if (fault === "pending upgrade") client.end();
+        else {
+          const received = once(client, "data");
+          remote.write(
+            "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n",
+          );
+          if (fault === "client reset") {
+            const chunk = Buffer.alloc(65536);
+            const send = () => {
+              if (remote.destroyed) return;
+              if (remote.write(chunk)) setImmediate(send);
+              else remote.once("drain", send);
+            };
+            send();
+          }
+          await received;
+          if (fault === "client reset") client.resetAndDestroy();
+          else remote.resetAndDestroy();
+        }
+        await expect
+          .poll(() => ({ clientClosed, remoteClosed }), { timeout: 5000 })
+          .toEqual({ clientClosed: true, remoteClosed: true });
+      });
+    }
+  } finally {
+    for (const client of clients) client.destroy();
+    await proxy.close();
+    for (const socket of sockets) socket.destroy();
+    await new Promise<void>((resolve) => upstream.close(() => resolve()));
+  }
+});
 
 test("HTTP transport and desktop bridge preserve framing, reject redirects, propagate overload and cancel failed streams", async ({
   playwright: _playwright,
