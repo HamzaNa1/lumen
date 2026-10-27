@@ -23,6 +23,8 @@ test("Playwright discovery assigns every E2E suite, selects product owners and f
     expect(result.stdout).toContain("release-tooling.e2e.ts");
     if (product === "desktop") {
       expect(result.stdout).not.toContain("browser-journeys.e2e.ts");
+      expect(result.stdout).not.toContain("browser-groups.e2e.ts");
+      expect(result.stdout).not.toContain("watch-transport.e2e.ts");
       expect(result.stdout).not.toContain("catalog.e2e.ts");
     } else {
       for (const browser of ["chromium", "firefox", "webkit"])
@@ -205,14 +207,27 @@ for (const product of ["server", "desktop"] as const)
         );
       }
     workspace.write("candidate/package.json", { type: "module" });
+    const supportFiles = [
+      ".github/rulesets/main.json",
+      "biome.json",
+      "tooling/test-policy.grit",
+      "tsconfig.scripts.json",
+    ];
+    for (const path of supportFiles) {
+      workspace.write(`candidate/${path}`, "candidate test support");
+      workspace.write(`released/${path}`, "released test support");
+    }
     workspace.write(
       "candidate/tests/e2e/check.ts",
       `
+import { readFileSync } from "node:fs";
 import { version as own } from "../../apps/${product}/index";
 import { version as other } from "../../apps/${counterpart}/index";
 import { version as client } from "../../packages/client/index";
 import { version as database } from "../../packages/database/index";
 if (own !== "candidate" || other !== "released" || client !== "candidate" || database !== "${product === "server" ? "candidate" : "released"}") throw new Error("Wrong dependency versions");
+for (const path of ${JSON.stringify(supportFiles)})
+  if (readFileSync(new URL("../../" + path, import.meta.url), "utf8") !== "candidate test support") throw new Error("Wrong test support: " + path);
 console.log("candidate and released versions verified");`,
     );
     workspace.write(
