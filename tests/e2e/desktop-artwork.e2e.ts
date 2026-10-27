@@ -1,6 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { connectDesktop, expect, launchDesktop, test } from "./support/desktop";
+import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
 import { password } from "./support/server";
 
@@ -132,7 +132,7 @@ test("native artwork cache persists by account and revision, rejects arbitrary U
     await desktop.app.close();
     const reopened = await launchDesktop(desktop.profile);
     try {
-      const page = await reopened.firstWindow();
+      const page = await mainDesktopPage(reopened);
       await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
       expect(await page.evaluate((ref) => window.lumen.library.artwork(ref), ref)).toBe(url);
       expect(reads()).toBe(before);

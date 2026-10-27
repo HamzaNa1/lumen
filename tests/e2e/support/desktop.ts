@@ -19,28 +19,8 @@ export const test = base.extend<{
     const logs: string[] = [];
     child.stderr?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
     try {
-      await expect
-        .poll(
-          async () =>
-            Promise.all(
-              app.windows().map(async (page) => ({
-                url: page.url(),
-                text: await page.locator("body").innerText(),
-              })),
-            ),
-          { message: "Desktop windows must show the connection form" },
-        )
-        .toContainEqual(
-          expect.objectContaining({ text: expect.stringContaining("Server address") }),
-        );
-      const pages = app.windows();
-      const page =
-        pages[
-          (
-            await Promise.all(pages.map((page) => page.getByLabel("Server address").count()))
-          ).findIndex((count) => count > 0)
-        ];
-      if (!page) throw new Error("Main desktop window not found");
+      const page = await mainDesktopPage(app);
+      await expect(page.getByLabel("Server address")).toBeVisible();
       try {
         await app.evaluate(({ app }) => app.focus({ steal: true }));
         await use({ app, page, profile });
@@ -91,6 +71,50 @@ export async function launchDesktop(profile: string, mpvFaults = false) {
     env: { ...environment, LUMEN_E2E_PROFILE: profile, LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "" },
   });
 }
+export async function mainDesktopPage(app: ElectronApplication): Promise<Page> {
+  let selected: Page | undefined;
+  let windows: {
+    id: number;
+    parentId: number | null;
+    url: string;
+    visible: boolean;
+  }[] = [];
+  try {
+    await expect
+      .poll(
+        async () => {
+          windows = await app.evaluate(({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows().map((window) => ({
+              id: window.id,
+              parentId: window.getParentWindow()?.id ?? null,
+              url: window.webContents.getURL(),
+              visible: window.isVisible(),
+            })),
+          );
+          // The player overlay is a child window. Startup event order does not identify the app UI.
+          const main = windows.filter(
+            (window) =>
+              window.parentId === null && window.url !== "" && window.url !== "about:blank",
+          );
+          selected =
+            main.length === 1
+              ? app.windows().find((page) => page.url() === main[0]?.url)
+              : undefined;
+          return { windows, mainPageFound: selected !== undefined };
+        },
+        { message: "The main Electron window must have a loaded renderer" },
+      )
+      .toMatchObject({ mainPageFound: true });
+  } finally {
+    await test.info().attach("desktop window selection", {
+      body: JSON.stringify({ windows, selectedUrl: selected?.url() ?? null }, null, 2),
+      contentType: "application/json",
+    });
+  }
+  if (!selected) throw new Error("Main desktop window not found");
+  return selected;
+}
+
 export async function connectDesktop(
   page: Page,
   server: Pick<Server, "origin">,

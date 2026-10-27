@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { connectDesktop, expect, launchDesktop, test } from "./support/desktop";
+import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
 
 test("desktop connects through real IPC, persists its account and window, and never exposes tokens to the renderer", async ({
   server,
@@ -39,7 +39,7 @@ test("desktop connects through real IPC, persists its account and window, and ne
   await app.close();
   const reopened = await launchDesktop(profile);
   try {
-    const restored = await reopened.firstWindow();
+    const restored = await mainDesktopPage(reopened);
     await expect(restored.getByRole("navigation", { name: "Primary" })).toBeVisible();
     expect(await restored.evaluate(() => window.lumen.accounts.list())).toMatchObject({
       activeConnectionId: accounts.activeConnectionId,
