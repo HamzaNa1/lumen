@@ -18,7 +18,16 @@ export const createVerificationWorkspace = ({
   mkdirSync(workspace, { recursive: true });
   // Copy the candidate's tests so relative fixture imports resolve through this workspace.
   // Symlinking the tests would resolve them back into the unreleased source pair.
-  for (const path of ["tests", "scripts", "playwright.config.ts", "tsconfig.base.json"])
+  for (const path of [
+    "tests",
+    "scripts",
+    ".github/rulesets",
+    "tooling",
+    "biome.json",
+    "playwright.config.ts",
+    "tsconfig.base.json",
+    "tsconfig.scripts.json",
+  ])
     if (existsSync(join(candidate, path)))
       cpSync(join(candidate, path), join(workspace, path), { recursive: true });
   const owned = productWorkspaces(product);
