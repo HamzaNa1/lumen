@@ -505,6 +505,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     dependencies.player.info(decode(Schema.String, raw)),
   );
   handle("player:state", async () => dependencies.player.getState());
+  handle("player:timeline", async () => dependencies.player.playbackTimeline());
   handle("player:display", async (_event, raw) => {
     playerDisplay = decode(PlayerDisplay, raw);
     dependencies.overlay.window.webContents.send("player:display", playerDisplay);

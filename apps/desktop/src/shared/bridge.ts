@@ -1,3 +1,4 @@
+import type { PlaybackDiagnosticEvent } from "@lumen/client";
 import type {
   AccountsRuntime,
   AdminRuntime,
@@ -54,6 +55,7 @@ export interface DesktopBridge {
     readonly audioOutput: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
     readonly info: (sessionId: string) => Promise<PlaybackInfo>;
     readonly state: () => Promise<PlayerState | null>;
+    readonly timeline: () => Promise<ReadonlyArray<PlaybackDiagnosticEvent>>;
     readonly display: (display: PlayerDisplay) => Promise<void>;
     readonly displayState: () => Promise<PlayerDisplay | null>;
     readonly overlayAction: (action: PlayerAction) => Promise<void>;

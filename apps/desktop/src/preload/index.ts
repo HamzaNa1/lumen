@@ -83,6 +83,7 @@ const api: DesktopBridge = {
     audioOutput: (sessionId, output) => invoke("player:audio-output", { sessionId, output }),
     info: (sessionId) => invoke("player:info", sessionId),
     state: () => invoke("player:state"),
+    timeline: () => invoke("player:timeline"),
     display: (display) => invoke("player:display", display),
     displayState: () => invoke("player:display-state"),
     overlayAction: (action) => invoke("player:overlay-action", action),

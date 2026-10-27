@@ -518,6 +518,10 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
+  playbackTimeline() {
+    return this.diagnostics.snapshot();
+  }
+
   async audioDiagnostics(sessionId: string): Promise<string> {
     if (this.active === null || this.state === null)
       return JSON.stringify(
