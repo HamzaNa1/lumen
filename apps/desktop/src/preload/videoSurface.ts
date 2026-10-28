@@ -66,6 +66,14 @@ export const prepareVideoSurface = (): void => {
     }
   });
   observer.observe(document.documentElement, { childList: true, subtree: true });
+  let creationError = "";
+  canvas.addEventListener(
+    "webglcontextcreationerror",
+    (event) => {
+      creationError = (event as WebGLContextEvent).statusMessage;
+    },
+    { once: true },
+  );
   gl = canvas.getContext("webgl2", {
     alpha: false,
     antialias: false,
@@ -73,7 +81,7 @@ export const prepareVideoSurface = (): void => {
     stencil: false,
     failIfMajorPerformanceCaveat: true,
   });
-  if (!gl) throw new Error("Hardware WebGL2 is required for video playback");
+  if (!gl) throw new Error(`Hardware WebGL2 is required for video playback: ${creationError}`);
   const context = gl;
   canvas.addEventListener(
     "webglcontextlost",

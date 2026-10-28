@@ -6,6 +6,7 @@ import { WindowsTextureHandles } from "./WindowsTextureHandles";
 
 export class CompositorSurface {
   readonly kind = "compositor" as const;
+  private readonly contents: Electron.WebContents;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private generation = 0;
   private player: MpvProcess | null = null;
@@ -17,13 +18,14 @@ export class CompositorSurface {
   private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly window: BrowserWindow) {
+    this.contents = window.webContents;
     ipcMain.on("video:status", this.status);
-    window.webContents.on("render-process-gone", this.lost);
-    window.webContents.on("did-start-loading", this.lost);
-    window.webContents.on("destroyed", this.lost);
+    this.contents.on("render-process-gone", this.lost);
+    this.contents.on("did-start-loading", this.lost);
+    this.contents.on("destroyed", this.lost);
     app.on("child-process-gone", this.childGone);
     window.on("move", this.resize);
-    window.webContents.on("zoom-changed", this.resize);
+    this.contents.on("zoom-changed", this.resize);
     window.once("closed", () => this.dispose());
   }
 
@@ -33,8 +35,8 @@ export class CompositorSurface {
     error: unknown,
   ): void => {
     if (
-      event.sender !== this.window.webContents ||
-      event.senderFrame !== this.window.webContents.mainFrame ||
+      event.sender !== this.contents ||
+      event.senderFrame !== this.contents.mainFrame ||
       generation !== this.generation
     )
       return;
@@ -82,7 +84,7 @@ export class CompositorSurface {
     if (!this.bounds) throw new Error("The video surface is not mounted");
     const scale =
       screen.getDisplayMatching(this.window.getBounds()).scaleFactor *
-      this.window.webContents.getZoomFactor();
+      this.contents.getZoomFactor();
     const width = Math.round(this.bounds.width * scale);
     const height = Math.round(this.bounds.height * scale);
     validateTextureSize(width, height);
@@ -92,7 +94,7 @@ export class CompositorSurface {
   prepare(): ReadonlyArray<string> {
     const { width, height } = this.size();
     this.generation++;
-    this.window.webContents.send("video:generation", this.generation);
+    this.contents.send("video:generation", this.generation);
     this.presentation = new Promise((resolve, reject) => {
       this.presented = resolve;
       this.rejectPresentation = reject;
@@ -129,7 +131,7 @@ export class CompositorSurface {
       );
       await sharedTexture.sendSharedTexture(
         {
-          frame: this.window.webContents.mainFrame,
+          frame: this.contents.mainFrame,
           importedSharedTexture: imported,
         },
         generation,
@@ -155,8 +157,7 @@ export class CompositorSurface {
     this.player = null;
     this.failure = null;
     this.generation++;
-    if (!this.window.webContents.isDestroyed())
-      this.window.webContents.send("video:generation", this.generation);
+    if (!this.contents.isDestroyed()) this.contents.send("video:generation", this.generation);
   }
 
   private fail(error: Error): void {
@@ -173,9 +174,9 @@ export class CompositorSurface {
     ipcMain.off("video:status", this.status);
     app.off("child-process-gone", this.childGone);
     this.window.off("move", this.resize);
-    this.window.webContents.off("zoom-changed", this.resize);
-    this.window.webContents.off("render-process-gone", this.lost);
-    this.window.webContents.off("did-start-loading", this.lost);
-    this.window.webContents.off("destroyed", this.lost);
+    this.contents.off("zoom-changed", this.resize);
+    this.contents.off("render-process-gone", this.lost);
+    this.contents.off("did-start-loading", this.lost);
+    this.contents.off("destroyed", this.lost);
   }
 }

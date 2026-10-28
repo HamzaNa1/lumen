@@ -21,6 +21,18 @@ export const test = base.extend<{
     try {
       const page = await mainDesktopPage(app);
       await expect(page.getByLabel("Server address")).toBeVisible();
+      if (process.platform === "win32")
+        await testInfo.attach("Electron GPU diagnostics", {
+          body: JSON.stringify(
+            await app.evaluate(async ({ app }) => ({
+              features: app.getGPUFeatureStatus(),
+              info: await app.getGPUInfo("complete"),
+            })),
+            null,
+            2,
+          ),
+          contentType: "application/json",
+        });
       try {
         await app.evaluate(({ app }) => app.focus({ steal: true }));
         await use({ app, page, profile });

@@ -84,7 +84,8 @@ const bootstrap = async (): Promise<void> => {
     surface,
     audioSettings,
     onState: (state) => {
-      mainWindow?.webContents.send("player:state", state);
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("player:state", state);
       if (overlay && !overlay.window.isDestroyed())
         overlay.window.webContents.send("player:state", state);
     },
