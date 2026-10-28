@@ -30,11 +30,12 @@ render target is RGBA8 UNORM with BT.709 primaries, sRGB transfer, 100-nit SDR
 and explicit BT.2390 tone mapping. HDR passthrough and hardware decoding need
 separate validation before enabling them.
 
-The helper selects the default hardware D3D11 adapter, prints its LUID to
+The helper requests the default D3D11 hardware adapter, prints its LUID to
 stderr, and fails on device, sharing, render, or completion errors. Electron
 must import on the same adapter and surface import failure; the helper cannot
-observe Electron's import operation. WARP and cross-adapter copying are not
-fallbacks. A D3D event query completes before publication, and the consumer's
+observe Electron's import operation. It does not retry with an explicit WARP
+device or cross-adapter copying. Windows can still supply Microsoft Basic
+Render Driver as the default adapter when no display driver is available. A D3D event query completes before publication, and the consumer's
 all-references-released callback is the only valid production release point.
 
 Driver calls and inherited pipe writes can block indefinitely on Windows.
@@ -44,3 +45,11 @@ if either native teardown or pipe I/O does not return. This sacrifices cleanup
 inside an already failing helper to bound failure recovery in the application.
 
 After explicit cleanup, process termination also bypasses DLL-detach callbacks: Windows can otherwise deadlock detaching a DLL after stopping a thread that holds a CRT or loader lock. Pipe and parent-monitor storage remains alive until the OS reclaims the process.
+
+Windows hosted CI uses Microsoft Basic Render Driver. Its Electron test launch
+explicitly selects ANGLE D3D11 and bypasses Chromium's GPU blocklist so that
+shared-texture integration can be exercised on the software driver. These flags
+apply only to the CI fixture, never the packaged application. CI captures and
+crash-recovery tests validate that driver path; physical-GPU performance,
+Alt+Tab behavior, and adapter compatibility still require a Windows machine
+with a supported GPU before release.

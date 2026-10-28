@@ -78,7 +78,15 @@ export async function launchDesktop(profile: string, mpvFaults = false) {
   ) as Record<string, string>;
   return _electron.launch({
     executablePath: require("electron") as string,
-    args: [join(repository, "tests/e2e/support/electron-entry.mjs"), "--no-sandbox"],
+    args: [
+      join(repository, "tests/e2e/support/electron-entry.mjs"),
+      "--no-sandbox",
+      // Hosted Windows runners expose Microsoft Basic Render Driver. Exercise D3D11
+      // sharing there; this is software-driver coverage, not physical-GPU evidence.
+      ...(process.platform === "win32" && process.env.GITHUB_ACTIONS === "true"
+        ? ["--ignore-gpu-blocklist", "--use-angle=d3d11"]
+        : []),
+    ],
     cwd: join(repository, "apps/desktop"),
     env: { ...environment, LUMEN_E2E_PROFILE: profile, LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "" },
   });
