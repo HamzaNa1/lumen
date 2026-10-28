@@ -7,7 +7,6 @@ import { WindowsTextureHandles } from "./WindowsTextureHandles";
 export class CompositorSurface {
   readonly kind = "compositor" as const;
   private bounds: IpcPlayerSurfaceBounds | null = null;
-  private ready = false;
   private generation = 0;
   private player: MpvProcess | null = null;
   private failure: ((error: Error) => void) | null = null;
@@ -47,7 +46,7 @@ export class CompositorSurface {
     }
   };
   private readonly lost = (): void => {
-    this.ready = false;
+    this.bounds = null;
     this.fail(new Error("The video renderer was closed or reloaded"));
   };
   private readonly childGone = (_event: Electron.Event, details: Electron.Details): void => {
@@ -56,7 +55,6 @@ export class CompositorSurface {
 
   setBounds(bounds: IpcPlayerSurfaceBounds | null): void {
     this.bounds = bounds;
-    this.ready = bounds !== null;
     if (bounds === null) {
       this.fail(new Error("The video surface was unmounted"));
       return;
@@ -92,7 +90,6 @@ export class CompositorSurface {
   }
 
   prepare(): ReadonlyArray<string> {
-    if (!this.ready) throw new Error("The GPU video surface is not ready");
     const { width, height } = this.size();
     this.generation++;
     this.window.webContents.send("video:generation", this.generation);

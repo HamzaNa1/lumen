@@ -24,12 +24,8 @@ export const validateTextureSize = (width: number, height: number): void => {
 export class HelperFrames {
   private pending = "";
   private ready = false;
-  private resolveReady: (() => void) | undefined;
-  private rejectReady: ((error: Error) => void) | undefined;
-  readonly initialized = new Promise<void>((resolve, reject) => {
-    this.resolveReady = resolve;
-    this.rejectReady = reject;
-  });
+  private readonly initialization = Promise.withResolvers<void>();
+  readonly initialized = this.initialization.promise;
   private readonly startupTimer: ReturnType<typeof setTimeout>;
   private lastSequence = 0;
   private stopped = false;
@@ -77,9 +73,7 @@ export class HelperFrames {
     if (message.type === "ready" && !this.ready) {
       this.ready = true;
       clearTimeout(this.startupTimer);
-      this.resolveReady?.();
-      this.resolveReady = undefined;
-      this.rejectReady = undefined;
+      this.initialization.resolve();
       return;
     }
     if (
@@ -139,17 +133,14 @@ export class HelperFrames {
   fail(cause: unknown): void {
     if (this.stopped) return;
     const error = cause instanceof Error ? cause : new Error(String(cause));
-    this.rejectReady?.(error);
-    this.dispose();
+    this.dispose(error);
     this.failure(error);
   }
 
-  dispose(): void {
+  dispose(cause = new Error("Video helper initialization cancelled")): void {
     this.stopped = true;
     clearTimeout(this.startupTimer);
-    this.rejectReady?.(new Error("Video helper initialization cancelled"));
-    this.rejectReady = undefined;
-    this.resolveReady = undefined;
+    this.initialization.reject(cause);
     clearTimeout(this.resizeTimer);
     for (const timer of this.leases.values()) clearTimeout(timer);
     this.leases.clear();
