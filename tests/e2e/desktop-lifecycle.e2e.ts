@@ -328,13 +328,14 @@ test("Windows main-window capture contains video and inline controls, and a kill
     }
   }
   // Kill at the OS boundary: the real helper, decoder and Electron import path remain in use.
+  const electronPid = await app.evaluate(() => process.pid);
   const helpers = (): number[] => {
     const output = execFileSync(
       "powershell.exe",
       [
         "-NoProfile",
         "-Command",
-        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Lumen Video Helper.exe' -and $_.ParentProcessId -eq ${app.process().pid} } | Select-Object -ExpandProperty ProcessId`,
+        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Lumen Video Helper.exe' -and $_.ParentProcessId -eq ${electronPid} } | Select-Object -ExpandProperty ProcessId`,
       ],
       { encoding: "utf8" },
     );

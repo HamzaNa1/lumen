@@ -27,7 +27,18 @@ public static class PresentationProbe {
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect bounds);
-    [DllImport("user32.dll")] static extern void keybd_event(byte key, byte scan, uint flags, UIntPtr extra);
+    [StructLayout(LayoutKind.Sequential)] public struct KeyboardInput {
+        public ushort Key, Scan; public uint Flags, Time; public UIntPtr Extra;
+    }
+    [StructLayout(LayoutKind.Sequential)] public struct MouseInput {
+        public int X, Y; public uint Data, Flags, Time; public UIntPtr Extra;
+    }
+    [StructLayout(LayoutKind.Explicit)] public struct InputData {
+        [FieldOffset(0)] public KeyboardInput Keyboard;
+        [FieldOffset(0)] public MouseInput Mouse;
+    }
+    [StructLayout(LayoutKind.Sequential)] public struct Input { public uint Type; public InputData Data; }
+    [DllImport("user32.dll", SetLastError = true)] static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")] static extern IntPtr SetThreadDpiAwarenessContext(IntPtr context);
     [DllImport("dwmapi.dll")] static extern int DwmRegisterThumbnail(IntPtr destination, IntPtr source, out IntPtr thumbnail);
     [DllImport("dwmapi.dll")] static extern int DwmUpdateThumbnailProperties(IntPtr thumbnail, ref Thumbnail properties);
@@ -45,13 +56,20 @@ public static class PresentationProbe {
             Application.DoEvents(); Thread.Sleep(20);
         }
     }
+    static void Key(ushort scan, bool up) {
+        var inputs = new[] { new Input { Type = 1, Data = new InputData {
+            Keyboard = new KeyboardInput { Scan = scan, Flags = 8u | (up ? 2u : 0u) }
+        } } };
+        if (SendInput(1, inputs, Marshal.SizeOf(typeof(Input))) != 1)
+            throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Keyboard input injection failed");
+    }
     static void AltTab(Action whileHeld) {
-        keybd_event(0x12, 0, 0, UIntPtr.Zero);
+        Key(0x38, false);
         try {
-            keybd_event(0x09, 0, 0, UIntPtr.Zero);
-            keybd_event(0x09, 0, 2, UIntPtr.Zero);
+            Key(0x0f, false);
+            Key(0x0f, true);
             if (whileHeld != null) whileHeld();
-        } finally { keybd_event(0x12, 0, 2, UIntPtr.Zero); }
+        } finally { Key(0x38, true); }
     }
     static bool Capture(Rectangle bounds, string path, bool requireVideo) {
         using (var bitmap = new Bitmap(bounds.Width, bounds.Height)) {
@@ -110,6 +128,8 @@ public static class PresentationProbe {
             Wait(() => GetForegroundWindow() == preview.Handle, "Thumbnail window did not take focus");
             SetForegroundWindow(window);
             Wait(() => GetForegroundWindow() == window, "Cannot prepare Alt+Tab");
+            var screenBounds = Screen.FromHandle(window).Bounds;
+            Cursor.Position = new Point(screenBounds.Right - 4, screenBounds.Bottom - 4);
             AltTab(() => {
                 // Sample the OS animation with Alt held for visual inspection.
                 Thread.Sleep(350); DwmFlush();
