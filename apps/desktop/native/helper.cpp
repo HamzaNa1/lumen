@@ -280,7 +280,7 @@ int main(int argc, char** argv) {
         option("vo", "libmpv"); option("hwdec", "no"); option("terminal", "no");
         option("load-scripts", "no"); option("config", "no"); option("idle", "yes");
         option("target-colorspace-hint", "no"); option("target-prim", "bt.709");
-        option("target-trc", "srgb"); option("target-peak", "100"); option("tone-mapping", "bt.2390");
+        option("target-trc", "auto"); option("target-peak", "auto"); option("tone-mapping", "bt.2390");
         require(api.initialize(mpv) >= 0, "Cannot initialize libmpv");
         std::thread renderer([&] { try { render(state, api, mpv, dimensions, pattern); }
             catch (const std::exception& error) { state.shutdown(error.what()); } });
