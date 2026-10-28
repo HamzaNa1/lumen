@@ -16,9 +16,11 @@ interface Job {
 /** Owns live encoders; slots are released only after the child actually exits. */
 export class Transcoder {
   private readonly jobs = new Set<Job>();
+  private readonly starts = new Map<string, { readonly userId: string; readonly id: symbol }>();
   constructor(private readonly config: TranscodingConfig) {}
 
   stop(sessionId: string, userId: string): void {
+    if (this.starts.get(sessionId)?.userId === userId) this.starts.delete(sessionId);
     for (const job of this.jobs)
       if (job.sessionId === sessionId && job.userId === userId) job.stop();
   }
@@ -29,13 +31,17 @@ export class Transcoder {
     authorize: () => Promise<unknown>,
   ): Promise<Response> {
     const params = new URL(request.url).searchParams;
-    const video = params.get("video") ?? "copy";
-    const audio = params.get("audio") ?? "copy";
+    const requestedVideo = params.get("video") ?? "copy";
+    const requestedAudio = params.get("audio") ?? "copy";
+    const format = params.get("format") ?? "mp4";
     const audioIndex = Number(params.get("audioIndex") ?? 0);
     const start = Number(params.get("start") ?? 0);
     if (
-      !["copy", "h264"].includes(video) ||
-      !["copy", "aac"].includes(audio) ||
+      !["copy", "h264", "vp8", "none"].includes(requestedVideo) ||
+      !["copy", "aac", "opus"].includes(requestedAudio) ||
+      !["mp4", "webm"].includes(format) ||
+      (format === "webm" &&
+        ((requestedVideo !== "vp8" && requestedVideo !== "none") || requestedAudio !== "opus")) ||
       !Number.isSafeInteger(audioIndex) ||
       audioIndex < 0 ||
       audioIndex > 1024 ||
@@ -44,19 +50,31 @@ export class Transcoder {
       start > 604800
     )
       throw badRequest("Invalid transcoding parameters");
+    const audio = start > 0 && requestedAudio === "copy" ? "aac" : requestedAudio;
+    const video = start > 0 && requestedVideo === "copy" ? "h264" : requestedVideo;
     if (!this.config.enabled) throw unavailable("Transcoding is disabled on this server");
     const headers = {
-      "content-type": "video/mp4",
+      "content-type": format === "webm" ? "video/webm" : "video/mp4",
       "cache-control": "no-store",
       "accept-ranges": "none",
     };
     if (request.method === "HEAD") return new Response(null, { headers });
     if (request.signal.aborted) throw badRequest("Playback request was cancelled");
+    const pending = Symbol();
+    this.starts.set(media.sessionId, { userId: media.userId, id: pending });
     const previous = [...this.jobs].filter((job) => job.sessionId === media.sessionId);
     for (const job of previous) job.stop();
     await Promise.all(previous.map((job) => job.finished));
+    if (this.starts.get(media.sessionId)?.id !== pending)
+      throw badRequest("Playback request was superseded");
+    this.starts.delete(media.sessionId);
     if (request.signal.aborted) throw badRequest("Playback request was cancelled");
     if (this.jobs.size >= this.config.maxJobs) throw unavailable("All transcoding slots are busy");
+    if (
+      !this.config.softwareVideo &&
+      (video === "vp8" || (video === "h264" && this.config.encoder === "cpu"))
+    )
+      throw unavailable("Software video encoding is disabled on this server");
     let gpu: string | null = null;
     if (video === "h264" && this.config.encoder !== "cpu") {
       const loads = this.config.gpus.map((device) => ({
@@ -92,7 +110,23 @@ export class Transcoder {
       "-sn",
       "-dn",
     );
-    if (video === "copy") args.push("-c:v", "copy");
+    if (video === "none") args.push("-vn");
+    else if (video === "vp8")
+      args.push(
+        "-c:v",
+        "libvpx",
+        "-deadline",
+        "realtime",
+        "-cpu-used",
+        "4",
+        "-b:v",
+        "4M",
+        "-vf",
+        "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p",
+        "-g",
+        "48",
+      );
+    else if (video === "copy") args.push("-c:v", "copy");
     else {
       args.push(
         "-c:v",
@@ -104,24 +138,32 @@ export class Transcoder {
       );
       if (this.config.encoder === "cpu") args.push("-preset", "veryfast", "-crf", "23");
       if (gpu !== null && this.config.encoder === "nvenc") args.push("-gpu", gpu);
+      args.push("-profile:v", "baseline", "-bf", "0");
       args.push(
         "-vf",
-        this.config.encoder === "vaapi" ? "format=nv12,hwupload" : "format=yuv420p",
+        this.config.encoder === "vaapi"
+          ? "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=nv12,hwupload"
+          : "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p",
         "-g",
         "48",
       );
     }
-    args.push("-threads", String(this.config.threads), "-c:a", audio === "copy" ? "copy" : "aac");
-    if (audio === "aac") args.push("-ac", "2", "-b:a", "192k");
     args.push(
-      "-movflags",
-      "+frag_keyframe+empty_moov+default_base_moof",
-      "-frag_duration",
-      "1000000",
-      "-f",
-      "mp4",
-      "pipe:1",
+      "-threads",
+      String(this.config.threads),
+      "-c:a",
+      audio === "copy" ? "copy" : audio === "opus" ? "libopus" : "aac",
     );
+    if (audio !== "copy") args.push("-ac", "2", "-b:a", "192k");
+    if (format === "mp4")
+      args.push(
+        "-movflags",
+        "+frag_keyframe+empty_moov+default_base_moof",
+        "-frag_duration",
+        "1000000",
+      );
+    else args.push("-cluster_time_limit", "1000");
+    args.push("-f", format, "pipe:1");
     const child = spawn(this.config.ffmpeg, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stopped = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;

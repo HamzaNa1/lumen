@@ -1,9 +1,11 @@
 import type { PlayerSession } from "@lumen/contracts";
+import { resolveTrackSelection } from "@lumen/contracts";
 
 export interface TranscodingPlan {
+  readonly format: "mp4" | "webm";
   readonly audioIndex: number;
-  readonly video: "copy" | "h264";
-  readonly audio: "copy" | "aac";
+  readonly video: "copy" | "h264" | "vp8" | "none";
+  readonly audio: "copy" | "aac" | "opus";
 }
 
 const videoCodecs: Readonly<Record<string, string>> = {
@@ -25,9 +27,36 @@ const audioCodecs: Readonly<Record<string, string>> = {
   truehd: "mlpa",
 };
 
+const selectedAudio = (session: PlayerSession) => {
+  const streams = session.streams
+    .filter((stream) => stream.kind === "audio")
+    .sort((a, b) => a.ordinal - b.ordinal);
+  const selected =
+    resolveTrackSelection(streams, session.sourceId, session.trackMemory).audio ??
+    streams.find((stream) => stream.isDefault) ??
+    streams[0];
+  return {
+    streams,
+    selected,
+    index: Math.max(
+      0,
+      streams.findIndex((stream) => stream.id === selected?.id),
+    ),
+  };
+};
+
+const outputFormat = (canPlay: (mime: string) => string): "mp4" | "webm" => {
+  if (canPlay('video/mp4; codecs="avc1.42E01E, mp4a.40.2"') !== "") return "mp4";
+  if (canPlay('video/webm; codecs="vp8, opus"') !== "") return "webm";
+  throw new Error(
+    "This browser cannot decode either available transcoding format (H.264/AAC or VP8/Opus).",
+  );
+};
+
 export const transcodingPlan = (
   session: PlayerSession,
   canPlay: (mime: string) => string,
+  canSelectAudio = false,
 ): TranscodingPlan | null => {
   if (!session.media) return null;
   const container = session.media.container;
@@ -46,8 +75,8 @@ export const transcodingPlan = (
                 ? "video/mp4"
                 : null;
   const video = session.media.video?.codec;
-  const audios = session.streams.filter((stream) => stream.kind === "audio");
-  const audio = (audios.find((stream) => stream.isDefault) ?? audios[0])?.codec;
+  const { streams: audios, selected, index } = selectedAudio(session);
+  const audio = selected?.codec;
   const supported = (
     codec: string | null | undefined,
     mapping: Readonly<Record<string, string>>,
@@ -56,26 +85,53 @@ export const transcodingPlan = (
     codec === undefined || codec === null
       ? codec === undefined
       : mapping[codec] !== undefined && canPlay(`${type}; codecs="${mapping[codec]}"`) !== "";
+  const nativeAudio =
+    session.media.video === null &&
+    ((container === "wav" && audio?.startsWith("pcm_")) ||
+      (container === "flac" && audio === "flac") ||
+      (container === "mp3" && audio === "mp3"));
   if (
     mime &&
     canPlay(mime) !== "" &&
     supported(video, videoCodecs, mime) &&
-    supported(audio, audioCodecs, mime)
+    (nativeAudio || supported(audio, audioCodecs, mime)) &&
+    (canSelectAudio || selected === (audios.find((stream) => stream.isDefault) ?? audios[0]))
   )
     return null;
+  const mp4 = outputFormat(canPlay) === "mp4";
   return {
-    audioIndex: Math.max(
-      0,
-      audios.findIndex((stream) => stream.isDefault),
-    ),
+    format: mp4 ? "mp4" : "webm",
+    audioIndex: index,
     video:
-      session.media.video === null ||
-      (video === "h264" && supported(video, videoCodecs, "video/mp4"))
-        ? "copy"
-        : "h264",
-    audio:
-      audios.length === 0 || (audio === "aac" && supported(audio, audioCodecs, "audio/mp4"))
+      session.media.video === null
+        ? "none"
+        : !mp4
+          ? "vp8"
+          : video === "h264" && supported(video, videoCodecs, "video/mp4")
+            ? "copy"
+            : "h264",
+    audio: !mp4
+      ? "opus"
+      : audios.length === 0 || (audio === "aac" && supported(audio, audioCodecs, "audio/mp4"))
         ? "copy"
         : "aac",
   };
+};
+
+export const fallbackTranscodingPlan = (
+  session: PlayerSession,
+  canPlay: (mime: string) => string,
+): TranscodingPlan => {
+  const mp4 = outputFormat(canPlay) === "mp4";
+  return {
+    format: mp4 ? "mp4" : "webm",
+    video: session.media?.video === null ? "none" : mp4 ? "h264" : "vp8",
+    audio: mp4 ? "aac" : "opus",
+    audioIndex: selectedAudio(session).index,
+  };
+};
+
+export const audioCodecProbe = (codec: string | null): string | null => {
+  const value = audioCodecs[codec?.toLowerCase() ?? ""];
+  return value === undefined ? null : `audio/mp4; codecs="${value}"`;
 };

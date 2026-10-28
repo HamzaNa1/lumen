@@ -120,7 +120,7 @@ test("transcoding produces playable H264/AAC, supports offsets and retains grant
   const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
   const item = (await server.items(admin.accessToken, library.id))[0];
   const playback = await server.play(admin.accessToken, item?.id ?? "");
-  const url = `${playback.streamUrl}?transcode=1&video=h264&audio=aac&start=3`;
+  const url = `${playback.streamUrl}?transcode=1&video=copy&audio=copy&start=13`;
   expect((await server.request(url)).status).toBe(401);
   const headers = { authorization: `Bearer ${playback.grantToken}` };
   const response = await server.request(url, { headers });
@@ -137,6 +137,10 @@ test("transcoding produces playable H264/AAC, supports offsets and retains grant
     "h264",
     "aac",
   ]);
+  for (const stream of metadata.streams) {
+    expect(Number(stream.duration)).toBeGreaterThan(6.9);
+    expect(Number(stream.duration)).toBeLessThan(7.3);
+  }
   await testInfo.attach("transcoded media", { path: output, contentType: "video/mp4" });
   expect(
     (await server.request(`${playback.streamUrl}?transcode=1&start=-1`, { headers })).status,
@@ -188,7 +192,7 @@ test.describe("transcoding resource ownership", () => {
     const request = (playback: typeof first, signal?: AbortSignal) =>
       server.request(`${playback.streamUrl}?transcode=1&video=h264&audio=aac`, {
         headers: { authorization: `Bearer ${playback.grantToken}` },
-        signal,
+        ...(signal === undefined ? {} : { signal }),
       });
     const abort = new AbortController();
     const response = await request(first, abort.signal);

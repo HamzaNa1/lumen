@@ -189,34 +189,83 @@ test("older server capabilities keep playback and settings usable without unsupp
   expect(unsupported).toEqual([]);
 });
 
-test("incompatible container and audio transcode automatically, seek and close", async ({
-  server,
-  admin,
-  page,
-}) => {
-  const library = await server.library(admin.accessToken, "movies", []);
-  const { copyFile } = await import("node:fs/promises");
-  const { join } = await import("node:path");
-  await copyFile(
-    join(import.meta.dirname, "../fixtures/playback-ac3.mkv"),
-    join(library.path, "Film.mkv"),
-  );
-  await server.scan(admin.accessToken, library.id);
+for (const output of ["mp4", "webm"] as const)
+  test(`incompatible container and audio transcode to ${output}, seek and close`, async ({
+    server,
+    admin,
+    page,
+  }) => {
+    if (output === "webm")
+      await page.addInitScript(() => {
+        const canPlayType = HTMLMediaElement.prototype.canPlayType;
+        HTMLMediaElement.prototype.canPlayType = function (type) {
+          return type.includes("mp4") ? "" : canPlayType.call(this, type);
+        };
+      });
+    const library = await server.library(admin.accessToken, "movies", []);
+    const { copyFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await copyFile(
+      join(import.meta.dirname, "../fixtures/playback-ac3.mkv"),
+      join(library.path, "Film.mkv"),
+    );
+    await server.scan(admin.accessToken, library.id);
+    await signIn(page, server);
+    await openMovie(page, server, library.id);
+    const video = page.locator("video");
+    await expect
+      .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+      .toBeGreaterThan(0.3);
+    expect(await video.getAttribute("src")).toContain("transcode=1");
+    expect(await video.getAttribute("src")).toContain(`format=${output}`);
+    await pause(page);
+    await page.getByRole("button", { name: "Forward 10 seconds" }).click();
+    await expect
+      .poll(async () =>
+        new URL((await video.getAttribute("src")) ?? "http://invalid").searchParams.get("start"),
+      )
+      .not.toBe("0");
+    await page.mouse.move(310, 310);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(video).toHaveCount(0);
+  });
+
+test.describe("native browser audio", () => {
+  test.use({ serverEnvironment: { LUMEN_TRANSCODING_ENABLED: "false" } });
+  for (const format of ["wav", "flac"] as const)
+    test(`supported ${format} plays directly with transcoding disabled`, async ({
+      server,
+      admin,
+      page,
+    }) => {
+      const { execFileSync } = await import("node:child_process");
+      const { join } = await import("node:path");
+      const library = await server.library(admin.accessToken, "movies", []);
+      execFileSync("ffmpeg", [
+        "-v",
+        "error",
+        "-i",
+        join(import.meta.dirname, "../fixtures/playback.mp4"),
+        "-vn",
+        join(library.path, `Film.${format}`),
+      ]);
+      await server.scan(admin.accessToken, library.id);
+      await signIn(page, server);
+      await openMovie(page, server, library.id);
+      expect(await page.locator("video").getAttribute("src")).not.toContain("transcode=1");
+    });
+});
+
+test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {
+  const library = await server.library(admin.accessToken, "movies", [], {
+    "Film.mkv": "playback-ac3.mkv",
+  });
+  await page.route("**/api/v1/media/**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("video") === "copy")
+      await route.fulfill({ contentType: "video/mp4", body: "unsupported copied video" });
+    else await route.continue();
+  });
   await signIn(page, server);
   await openMovie(page, server, library.id);
-  const video = page.locator("video");
-  await expect
-    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
-    .toBeGreaterThan(0.3);
-  expect(await video.getAttribute("src")).toContain("transcode=1");
-  await pause(page);
-  await page.getByRole("button", { name: "Forward 10 seconds" }).click();
-  await expect
-    .poll(async () =>
-      new URL((await video.getAttribute("src")) ?? "http://invalid").searchParams.get("start"),
-    )
-    .not.toBe("0");
-  await page.mouse.move(310, 310);
-  await page.getByRole("button", { name: "Back", exact: true }).click();
-  await expect(video).toHaveCount(0);
+  expect(await page.locator("video").getAttribute("src")).toContain("video=h264");
 });

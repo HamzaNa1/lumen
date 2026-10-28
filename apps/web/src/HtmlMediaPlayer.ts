@@ -26,7 +26,12 @@ import {
   type TrackMemory,
   volumeForTitle,
 } from "@lumen/contracts";
-import { type TranscodingPlan, transcodingPlan } from "./TranscodingPlan";
+import {
+  audioCodecProbe,
+  fallbackTranscodingPlan,
+  type TranscodingPlan,
+  transcodingPlan,
+} from "./TranscodingPlan";
 
 /** The parts of an HTML media element the player drives. */
 export interface MediaElementLike {
@@ -123,6 +128,7 @@ interface ActiveSession {
   suspended: boolean;
   /** Whether playback was running when the page was hidden. */
   playingBeforeSuspend: boolean;
+  suspendedPositionSeconds: number | null;
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
@@ -147,14 +153,6 @@ const MEDIA_ERR_SRC_NOT_SUPPORTED = 4;
 
 const UNSUPPORTED_FORMAT =
   "This browser can’t play this file’s format. Try another browser or the Lumen desktop app.";
-
-// What to ask the browser about an audio codec. Codecs it plays everywhere are not listed.
-const audioCodecProbes: Readonly<Record<string, string>> = {
-  ac3: 'audio/mp4; codecs="ac-3"',
-  eac3: 'audio/mp4; codecs="ec-3"',
-  dts: 'audio/mp4; codecs="dtsc"',
-  truehd: 'audio/mp4; codecs="mlpa"',
-};
 
 const cancelled = (): Error => new Error("Playback was cancelled");
 
@@ -254,8 +252,14 @@ export class HtmlMediaPlayer {
     if (this.conversion !== null) {
       const paused = this.element.paused;
       this.unload();
-      await this.load(++this.generation, active.session, positionSeconds);
+      const generation = ++this.generation;
+      try {
+        await this.load(generation, active.session, positionSeconds);
+      } catch (cause) {
+        if (generation === this.generation || this.active !== active) throw cause;
+      }
       if (this.active !== active) throw inactive();
+      if (generation !== this.generation) return this.snapshot(active);
       if (!paused) await this.play(active);
     } else this.element.currentTime = positionSeconds;
     return this.publishIfActive(active);
@@ -351,13 +355,33 @@ export class HtmlMediaPlayer {
     return this.publishIfActive(active);
   }
 
-  private applyAudio(active: ActiveSession, streamId: string | null): void {
+  private async applyAudio(active: ActiveSession, streamId: string | null): Promise<void> {
+    if (this.conversion !== null) {
+      const audioIndex = active.streams.findIndex((stream) => stream.id === streamId);
+      if (audioIndex < 0) throw new Error("Audio stream is unavailable");
+      const position = this.snapshot(active).positionSeconds;
+      this.conversion = {
+        ...this.conversion,
+        audioIndex,
+        audio: this.conversion.format === "webm" ? "opus" : "aac",
+      };
+      await this.seek(active.session.sessionId, position);
+      active.selectedAudioStreamId = streamId;
+      return;
+    }
     const tracks = this.element.audioTracks;
     const index = active.streams.findIndex((stream) => stream.id === streamId);
     if (tracks === undefined || index < 0 || tracks.length !== active.streams.length)
       throw new Error("Audio stream is unavailable");
     const stream = active.streams[index];
-    if (stream !== undefined) this.assertAudioSupported([stream]);
+    const probe = audioCodecProbe(stream?.codec ?? null);
+    if (probe !== null && this.element.canPlayType(probe) === "") {
+      this.conversion = {
+        ...fallbackTranscodingPlan(active.session, (mime) => this.element.canPlayType(mime)),
+        audioIndex: index,
+      };
+      return this.applyAudio(active, streamId);
+    }
     for (let track = 0; track < tracks.length; track += 1) {
       const entry = tracks[track];
       if (entry !== undefined) entry.enabled = track === index;
@@ -440,12 +464,15 @@ export class HtmlMediaPlayer {
   leave(): void {
     const active = this.active;
     if (active === null || active.suspended) return;
+    active.suspendedPositionSeconds = this.snapshot(active).positionSeconds;
     active.suspended = true;
     active.playingBeforeSuspend = !this.element.paused;
     this.element.pause();
     this.leaving = true;
+    const state = this.snapshot(active);
+    this.unload();
     void active.reporter
-      .saveProgress(this.snapshot(active))
+      .saveProgress(state)
       .then(() => active.reporter.end())
       .finally(() => {
         this.leaving = false;
@@ -502,20 +529,28 @@ export class HtmlMediaPlayer {
     }
     try {
       this.conversion = this.forceConversion
-        ? { video: "h264", audio: "aac", audioIndex: 0 }
-        : transcodingPlan(session, (mime) => this.element.canPlayType(mime));
+        ? fallbackTranscodingPlan(session, (mime) => this.element.canPlayType(mime))
+        : transcodingPlan(
+            session,
+            (mime) => this.element.canPlayType(mime),
+            this.element.audioTracks !== undefined,
+          );
       this.applyRememberedVolume(session);
       try {
         await this.load(generation, session, this.conversion === null ? 0 : startAtSeconds);
       } catch (cause) {
         if (
           generation !== this.generation ||
-          this.conversion !== null ||
+          (this.conversion !== null &&
+            this.conversion.video !== "copy" &&
+            this.conversion.audio !== "copy") ||
           !(cause instanceof PlaybackUnsupportedError)
         )
           throw cause;
         this.forceConversion = true;
-        this.conversion = { video: "h264", audio: "aac", audioIndex: 0 };
+        this.conversion = fallbackTranscodingPlan(session, (mime) =>
+          this.element.canPlayType(mime),
+        );
         this.unload();
         await this.load(generation, session, startAtSeconds);
       }
@@ -539,9 +574,8 @@ export class HtmlMediaPlayer {
       .sort((a, b) => a.ordinal - b.ordinal);
     // Offer audio tracks only when the browser exposes exactly the tracks the server lists.
     const switchable =
-      this.conversion === null &&
       audioStreams.length > 0 &&
-      this.element.audioTracks?.length === audioStreams.length;
+      (this.conversion !== null || this.element.audioTracks?.length === audioStreams.length);
     const active: ActiveSession = {
       session,
       reporter,
@@ -555,6 +589,7 @@ export class HtmlMediaPlayer {
       heldPlay: null,
       suspended: false,
       playingBeforeSuspend: false,
+      suspendedPositionSeconds: null,
     };
     this.active = active;
     try {
@@ -563,9 +598,11 @@ export class HtmlMediaPlayer {
         session.sourceId,
         session.trackMemory,
       ).audio;
-      if (switchable && selected !== null) this.applyAudio(active, selected.id);
-      if (this.conversion === null)
-        this.assertAudioSupported(switchable && selected !== null ? [selected] : session.streams);
+      if (switchable && selected !== null) {
+        if (this.conversion !== null) active.selectedAudioStreamId = selected.id;
+        else await this.applyAudio(active, selected.id);
+      }
+
       active.selection = new TrackSelectionController({
         sourceId: session.sourceId,
         ...(session.trackMemory === undefined ? {} : { memory: session.trackMemory }),
@@ -575,7 +612,7 @@ export class HtmlMediaPlayer {
         },
         apply: async (kind, streamId) => {
           // Resetting an unsupported kind still clears its server override for other devices.
-          if (kind === "audio" && switchable) this.applyAudio(active, streamId);
+          if (kind === "audio" && switchable) await this.applyAudio(active, streamId);
         },
         save: (choice) => this.api.saveTrackChoice(session.sessionId, choice),
         onError: (message) => {
@@ -615,6 +652,7 @@ export class HtmlMediaPlayer {
     this.timeOffset = this.conversion === null ? 0 : start;
     if (this.conversion !== null) {
       url.searchParams.set("transcode", "1");
+      url.searchParams.set("format", this.conversion.format);
       url.searchParams.set("video", this.conversion.video);
       url.searchParams.set("audio", this.conversion.audio);
       url.searchParams.set("audioIndex", String(this.conversion.audioIndex));
@@ -665,17 +703,6 @@ export class HtmlMediaPlayer {
         settle(() => reject(cause));
       }
     });
-  }
-
-  /** A file whose default audio the browser cannot decode would play silently; say so instead. */
-  private assertAudioSupported(streams: ReadonlyArray<PlayableStream>): void {
-    const audio = streams.filter((stream) => stream.kind === "audio");
-    const first = audio.find((stream) => stream.isDefault) ?? audio[0];
-    const probe = audioCodecProbes[first?.codec?.toLowerCase() ?? ""];
-    if (probe !== undefined && this.element.canPlayType(probe) === "")
-      throw new PlaybackUnsupportedError(
-        `This browser can’t play this file’s ${first?.codec?.toUpperCase()} audio. Try another browser or the Lumen desktop app.`,
-      );
   }
 
   /**
@@ -808,7 +835,9 @@ export class HtmlMediaPlayer {
     const nowMs = Date.now();
     this.recoveries = this.recoveries.filter((at) => nowMs - at < RECOVERY_WINDOW_MS);
     const incompatible =
-      this.conversion === null &&
+      (this.conversion === null ||
+        this.conversion.video === "copy" ||
+        this.conversion.audio === "copy") &&
       (code === MEDIA_ERR_DECODE || code === MEDIA_ERR_SRC_NOT_SUPPORTED);
     if (incompatible) this.forceConversion = true;
     if ((!incompatible && code !== MEDIA_ERR_NETWORK) || this.recoveries.length >= MAX_RECOVERIES) {
@@ -900,9 +929,11 @@ export class HtmlMediaPlayer {
       sessionId: active.session.sessionId,
       itemId: active.session.itemId,
       paused: element.paused,
-      positionSeconds: Number.isFinite(element.currentTime)
-        ? element.currentTime + this.timeOffset
-        : this.timeOffset,
+      positionSeconds:
+        active.suspendedPositionSeconds ??
+        (Number.isFinite(element.currentTime)
+          ? element.currentTime + this.timeOffset
+          : this.timeOffset),
       durationSeconds:
         this.conversion === null && Number.isFinite(element.duration) && element.duration > 0
           ? element.duration

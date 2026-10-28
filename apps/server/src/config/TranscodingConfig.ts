@@ -1,5 +1,6 @@
 export interface TranscodingConfig {
   readonly enabled: boolean;
+  readonly softwareVideo: boolean;
   readonly ffmpeg: string;
   readonly threads: number;
   readonly maxJobs: number;
@@ -18,6 +19,9 @@ export const transcodingConfig = (env: Record<string, string | undefined>): Tran
   const enabled = env.LUMEN_TRANSCODING_ENABLED ?? "true";
   if (enabled !== "true" && enabled !== "false")
     throw new Error("LUMEN_TRANSCODING_ENABLED must be true or false");
+  const softwareVideo = env.LUMEN_TRANSCODING_SOFTWARE_VIDEO ?? "true";
+  if (softwareVideo !== "true" && softwareVideo !== "false")
+    throw new Error("LUMEN_TRANSCODING_SOFTWARE_VIDEO must be true or false");
   const encoder = env.LUMEN_TRANSCODING_ENCODER ?? "cpu";
   if (encoder !== "cpu" && encoder !== "nvenc" && encoder !== "vaapi")
     throw new Error("LUMEN_TRANSCODING_ENCODER must be cpu, nvenc or vaapi");
@@ -33,6 +37,7 @@ export const transcodingConfig = (env: Record<string, string | undefined>): Tran
     throw new Error("LUMEN_TRANSCODING_GPUS must list unique GPU indices or VAAPI render devices");
   return {
     enabled: enabled === "true",
+    softwareVideo: softwareVideo === "true",
     encoder,
     gpus,
     ffmpeg: env.LUMEN_FFMPEG_PATH ?? "ffmpeg",
