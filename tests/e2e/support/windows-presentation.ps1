@@ -36,6 +36,14 @@ public static class PresentationProbe {
             Application.DoEvents(); Thread.Sleep(20);
         }
     }
+    static void AltTab(Action whileHeld) {
+        keybd_event(0x12, 0, 0, UIntPtr.Zero);
+        try {
+            keybd_event(0x09, 0, 0, UIntPtr.Zero);
+            keybd_event(0x09, 0, 2, UIntPtr.Zero);
+            if (whileHeld != null) whileHeld();
+        } finally { keybd_event(0x12, 0, 2, UIntPtr.Zero); }
+    }
     static bool Capture(Rectangle bounds, string path, bool requireVideo) {
         using (var bitmap = new Bitmap(bounds.Width, bounds.Height)) {
             using (var graphics = Graphics.FromImage(bitmap))
@@ -72,7 +80,6 @@ public static class PresentationProbe {
             preview.ClientSize = new Size(640, 400);
             preview.StartPosition = FormStartPosition.CenterScreen;
             preview.BackColor = Color.Black;
-            preview.ShowInTaskbar = false;
             preview.Show(); Application.DoEvents();
             IntPtr thumbnail;
             if (DwmRegisterThumbnail(preview.Handle, window, out thumbnail) != 0)
@@ -88,21 +95,23 @@ public static class PresentationProbe {
                     System.IO.Path.Combine(directory, "native-thumbnail.png"), true);
                 }, "Windows thumbnail has no video");
             } finally { DwmUnregisterThumbnail(thumbnail); }
+            // Keep a known Alt+Tab target alive. Switching back via keyboard respects
+            // Windows foreground rules and waits for each actual focus transition.
+            preview.Activate();
+            Wait(() => GetForegroundWindow() == preview.Handle, "Thumbnail window did not take focus");
+            SetForegroundWindow(window);
+            Wait(() => GetForegroundWindow() == window, "Cannot prepare Alt+Tab");
+            AltTab(() => {
+                // Sample the OS animation with Alt held for visual inspection.
+                Thread.Sleep(350); DwmFlush();
+                Capture(Screen.FromHandle(window).Bounds, System.IO.Path.Combine(directory, "native-alt-tab.png"), false);
+            });
+            Wait(() => GetForegroundWindow() == preview.Handle, "Alt+Tab did not switch away from playback");
+            AltTab(null);
+            Wait(() => GetForegroundWindow() == window, "Playback did not return after Alt+Tab");
+            Wait(() => Capture(Bounds(window), System.IO.Path.Combine(directory, "native-after-alt-tab.png"), true), "Video did not return after Alt+Tab");
             preview.Close();
         }
-        SetForegroundWindow(window);
-        Wait(() => GetForegroundWindow() == window, "Cannot prepare Alt+Tab");
-        try {
-            keybd_event(0x12, 0, 0, UIntPtr.Zero);
-            keybd_event(0x09, 0, 0, UIntPtr.Zero);
-            keybd_event(0x09, 0, 2, UIntPtr.Zero);
-            // Sample the OS animation with Alt held; this image is retained for visual inspection.
-            Thread.Sleep(350); DwmFlush();
-            Capture(Screen.FromHandle(window).Bounds, System.IO.Path.Combine(directory, "native-alt-tab.png"), false);
-        } finally { keybd_event(0x12, 0, 2, UIntPtr.Zero); }
-        SetForegroundWindow(window);
-        Wait(() => GetForegroundWindow() == window, "Playback did not return after Alt+Tab");
-        Wait(() => Capture(Bounds(window), System.IO.Path.Combine(directory, "native-after-alt-tab.png"), true), "Video did not return after Alt+Tab");
     }
 }
 '@
