@@ -188,3 +188,35 @@ test("older server capabilities keep playback and settings usable without unsupp
   await expect(page.getByRole("button", { name: "Playback info", exact: true })).toBeVisible();
   expect(unsupported).toEqual([]);
 });
+
+test("incompatible container and audio transcode automatically, seek and close", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", []);
+  const { copyFile } = await import("node:fs/promises");
+  const { join } = await import("node:path");
+  await copyFile(
+    join(import.meta.dirname, "../fixtures/playback-ac3.mkv"),
+    join(library.path, "Film.mkv"),
+  );
+  await server.scan(admin.accessToken, library.id);
+  await signIn(page, server);
+  await openMovie(page, server, library.id);
+  const video = page.locator("video");
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeGreaterThan(0.3);
+  expect(await video.getAttribute("src")).toContain("transcode=1");
+  await pause(page);
+  await page.getByRole("button", { name: "Forward 10 seconds" }).click();
+  await expect
+    .poll(async () =>
+      new URL((await video.getAttribute("src")) ?? "http://invalid").searchParams.get("start"),
+    )
+    .not.toBe("0");
+  await page.mouse.move(310, 310);
+  await page.getByRole("button", { name: "Back", exact: true }).click();
+  await expect(video).toHaveCount(0);
+});

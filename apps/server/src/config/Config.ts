@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { normalizeAddress } from "../http/ClientIdentity";
 
+import { type TranscodingConfig, transcodingConfig } from "./TranscodingConfig";
+
 const workspaceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 try {
   process.loadEnvFile(join(workspaceRoot, ".env"));
@@ -43,6 +45,7 @@ const Environment = Schema.Struct({
 });
 
 export interface ServerConfig {
+  readonly transcoding: TranscodingConfig;
   readonly host: string;
   readonly port: number;
   readonly databasePath: string;
@@ -121,6 +124,7 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
   const databasePath = resolveWorkspacePath(parsed.LUMEN_DATABASE_PATH ?? "./data/lumen.sqlite");
   const dataDir = resolveWorkspacePath(parsed.LUMEN_DATA_DIR ?? "./data");
   return {
+    transcoding: transcodingConfig(environment),
     host: parsed.LUMEN_HOST ?? "127.0.0.1",
     port: toBoundedInteger("LUMEN_PORT", parsed.LUMEN_PORT, 3210, 1, 65_535),
     databasePath,

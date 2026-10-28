@@ -21,6 +21,7 @@ import type { ServerIdentity } from "../database/Identity";
 import * as S from "../http/Schemas";
 import type { JobServiceShape } from "../jobs/JobService";
 import type { MetadataProvider } from "../media/Tmdb";
+import { Transcoder } from "../media/Transcoder";
 import type { AccessControlShape } from "../services/AccessControl";
 import type { AdminServiceShape } from "../services/AdminService";
 import type { AssetServiceShape } from "../services/AssetService";
@@ -210,6 +211,7 @@ export const makeHttpHandler = (
       { "cache-control": "no-store" },
     );
   };
+  const transcoder = new Transcoder(config.transcoding);
   const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
@@ -327,6 +329,10 @@ export const makeHttpHandler = (
       mediaSessions.set(request, media.sessionId);
       const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
       try {
+        if (url.searchParams.get("transcode") === "1")
+          return await transcoder.serve(request, media, () =>
+            call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now())),
+          );
         return await serveFile({
           request,
           path: media.absolutePath,
@@ -998,6 +1004,7 @@ export const makeHttpHandler = (
       parts[4] !== undefined
     ) {
       await call(services.playback.stop(principal, parts[4], Date.now()));
+      transcoder.stop(parts[4], principal.user.id);
       return ack();
     }
     if (

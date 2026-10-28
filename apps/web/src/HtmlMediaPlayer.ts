@@ -26,6 +26,7 @@ import {
   type TrackMemory,
   volumeForTitle,
 } from "@lumen/contracts";
+import { type TranscodingPlan, transcodingPlan } from "./TranscodingPlan";
 
 /** The parts of an HTML media element the player drives. */
 export interface MediaElementLike {
@@ -185,6 +186,9 @@ export class HtmlMediaPlayer {
   private readonly loadTimeoutMs: number;
   private readonly playAnswerTimeoutMs: number;
   private active: ActiveSession | null = null;
+  private conversion: TranscodingPlan | null = null;
+  private timeOffset = 0;
+  private forceConversion = false;
   private generation = 0;
   private stopping: Promise<void> | null = null;
   private recoveries: number[] = [];
@@ -219,6 +223,7 @@ export class HtmlMediaPlayer {
     await this.stopActive();
     if (generation !== this.generation) throw cancelled();
     this.recoveries = [];
+    this.forceConversion = false;
     const diagnostics = new PlaybackDiagnostics();
     this.diagnostics = diagnostics;
     try {
@@ -246,8 +251,14 @@ export class HtmlMediaPlayer {
     const active = this.requireActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
-    this.element.currentTime = positionSeconds;
-    return this.publish(active);
+    if (this.conversion !== null) {
+      const paused = this.element.paused;
+      this.unload();
+      await this.load(++this.generation, active.session, positionSeconds);
+      if (this.active !== active) throw inactive();
+      if (!paused) await this.play(active);
+    } else this.element.currentTime = positionSeconds;
+    return this.publishIfActive(active);
   }
 
   buffer(sessionId: string): PlayerBuffer {
@@ -490,12 +501,27 @@ export class HtmlMediaPlayer {
       throw cancelled();
     }
     try {
-      if (this.element.audioTracks === undefined) this.assertAudioSupported(session.streams);
+      this.conversion = this.forceConversion
+        ? { video: "h264", audio: "aac", audioIndex: 0 }
+        : transcodingPlan(session, (mime) => this.element.canPlayType(mime));
       this.applyRememberedVolume(session);
-      await this.load(generation, session);
+      try {
+        await this.load(generation, session, this.conversion === null ? 0 : startAtSeconds);
+      } catch (cause) {
+        if (
+          generation !== this.generation ||
+          this.conversion !== null ||
+          !(cause instanceof PlaybackUnsupportedError)
+        )
+          throw cause;
+        this.forceConversion = true;
+        this.conversion = { video: "h264", audio: "aac", audioIndex: 0 };
+        this.unload();
+        await this.load(generation, session, startAtSeconds);
+      }
       // The element is shared: metadata may have arrived for a newer start's source.
       if (generation !== this.generation) throw cancelled();
-      if (Number.isFinite(startAtSeconds) && startAtSeconds > 0) {
+      if (this.conversion === null && Number.isFinite(startAtSeconds) && startAtSeconds > 0) {
         this.element.currentTime = startAtSeconds;
         // Starting while the initial seek is pending can leave WebKit waiting indefinitely.
         if (this.element.seeking) await this.waitForMediaEvent(generation, "seeked");
@@ -513,7 +539,9 @@ export class HtmlMediaPlayer {
       .sort((a, b) => a.ordinal - b.ordinal);
     // Offer audio tracks only when the browser exposes exactly the tracks the server lists.
     const switchable =
-      audioStreams.length > 0 && this.element.audioTracks?.length === audioStreams.length;
+      this.conversion === null &&
+      audioStreams.length > 0 &&
+      this.element.audioTracks?.length === audioStreams.length;
     const active: ActiveSession = {
       session,
       reporter,
@@ -536,7 +564,8 @@ export class HtmlMediaPlayer {
         session.trackMemory,
       ).audio;
       if (switchable && selected !== null) this.applyAudio(active, selected.id);
-      this.assertAudioSupported(switchable && selected !== null ? [selected] : session.streams);
+      if (this.conversion === null)
+        this.assertAudioSupported(switchable && selected !== null ? [selected] : session.streams);
       active.selection = new TrackSelectionController({
         sourceId: session.sourceId,
         ...(session.trackMemory === undefined ? {} : { memory: session.trackMemory }),
@@ -578,11 +607,19 @@ export class HtmlMediaPlayer {
   }
 
   /** Points the element at the media and waits until the browser can tell whether it will play. */
-  private load(generation: number, session: PlayerSession): Promise<void> {
+  private load(generation: number, session: PlayerSession, start = 0): Promise<void> {
     // The grant authorises this one file for this one session. It appears only in the element's
     // source: never in state handed to the application, and never in anything that is stored.
     const url = new URL(session.streamUrl, this.api.serverOrigin);
     url.searchParams.set("grant", session.grantToken);
+    this.timeOffset = this.conversion === null ? 0 : start;
+    if (this.conversion !== null) {
+      url.searchParams.set("transcode", "1");
+      url.searchParams.set("video", this.conversion.video);
+      url.searchParams.set("audio", this.conversion.audio);
+      url.searchParams.set("audioIndex", String(this.conversion.audioIndex));
+      url.searchParams.set("start", String(start));
+    }
     return this.waitForMediaEvent(generation, "loadedmetadata", () => {
       this.element.src = url.toString();
       this.element.load();
@@ -770,7 +807,11 @@ export class HtmlMediaPlayer {
   private async recover(active: ActiveSession, code: number | undefined): Promise<void> {
     const nowMs = Date.now();
     this.recoveries = this.recoveries.filter((at) => nowMs - at < RECOVERY_WINDOW_MS);
-    if (code !== MEDIA_ERR_NETWORK || this.recoveries.length >= MAX_RECOVERIES) {
+    const incompatible =
+      this.conversion === null &&
+      (code === MEDIA_ERR_DECODE || code === MEDIA_ERR_SRC_NOT_SUPPORTED);
+    if (incompatible) this.forceConversion = true;
+    if ((!incompatible && code !== MEDIA_ERR_NETWORK) || this.recoveries.length >= MAX_RECOVERIES) {
       await this.fail(describeMediaError(code));
       return;
     }
@@ -851,17 +892,19 @@ export class HtmlMediaPlayer {
     const { element } = this;
     const bufferedRanges = [];
     for (let index = 0; index < element.buffered.length; index += 1) {
-      const startSeconds = element.buffered.start(index);
-      const endSeconds = element.buffered.end(index);
+      const startSeconds = element.buffered.start(index) + this.timeOffset;
+      const endSeconds = element.buffered.end(index) + this.timeOffset;
       if (endSeconds > startSeconds) bufferedRanges.push({ startSeconds, endSeconds });
     }
     return {
       sessionId: active.session.sessionId,
       itemId: active.session.itemId,
       paused: element.paused,
-      positionSeconds: Number.isFinite(element.currentTime) ? element.currentTime : 0,
+      positionSeconds: Number.isFinite(element.currentTime)
+        ? element.currentTime + this.timeOffset
+        : this.timeOffset,
       durationSeconds:
-        Number.isFinite(element.duration) && element.duration > 0
+        this.conversion === null && Number.isFinite(element.duration) && element.duration > 0
           ? element.duration
           : active.session.durationSeconds,
       bufferedRanges,
