@@ -10,6 +10,7 @@ using System.Drawing;
 using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using System.Threading;
+using System.Text;
 using System.Windows.Forms;
 public static class PresentationProbe {
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
@@ -20,6 +21,9 @@ public static class PresentationProbe {
     }
     [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr window);
     [DllImport("user32.dll")] static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern IntPtr GetShellWindow();
+    [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)] static extern int GetWindowText(IntPtr window, StringBuilder text, int count);
     [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr window, int command);
     [DllImport("user32.dll")] static extern bool IsIconic(IntPtr window);
     [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out Rect bounds);
@@ -32,7 +36,12 @@ public static class PresentationProbe {
     static void Wait(Func<bool> condition, string message) {
         var deadline = DateTime.UtcNow.AddSeconds(5);
         while (!condition()) {
-            if (DateTime.UtcNow >= deadline) throw new Exception(message);
+            if (DateTime.UtcNow >= deadline) {
+                var title = new StringBuilder(256);
+                var foreground = GetForegroundWindow();
+                GetWindowText(foreground, title, title.Capacity);
+                throw new Exception(message + "; foreground=" + foreground + " (" + title + ")");
+            }
             Application.DoEvents(); Thread.Sleep(20);
         }
     }
@@ -95,8 +104,8 @@ public static class PresentationProbe {
                     System.IO.Path.Combine(directory, "native-thumbnail.png"), true);
                 }, "Windows thumbnail has no video");
             } finally { DwmUnregisterThumbnail(thumbnail); }
-            // Keep a known Alt+Tab target alive. Switching back via keyboard respects
-            // Windows foreground rules and waits for each actual focus transition.
+            // Windows may select the owning console instead of this form. Wait for
+            // another application, excluding Explorer's transient task switcher.
             preview.Activate();
             Wait(() => GetForegroundWindow() == preview.Handle, "Thumbnail window did not take focus");
             SetForegroundWindow(window);
@@ -106,7 +115,14 @@ public static class PresentationProbe {
                 Thread.Sleep(350); DwmFlush();
                 Capture(Screen.FromHandle(window).Bounds, System.IO.Path.Combine(directory, "native-alt-tab.png"), false);
             });
-            Wait(() => GetForegroundWindow() == preview.Handle, "Alt+Tab did not switch away from playback");
+            uint shellProcess;
+            GetWindowThreadProcessId(GetShellWindow(), out shellProcess);
+            Wait(() => {
+                var foreground = GetForegroundWindow();
+                uint foregroundProcess;
+                GetWindowThreadProcessId(foreground, out foregroundProcess);
+                return foreground != IntPtr.Zero && foreground != window && foregroundProcess != shellProcess;
+            }, "Alt+Tab did not switch away from playback");
             AltTab(null);
             Wait(() => GetForegroundWindow() == window, "Playback did not return after Alt+Tab");
             Wait(() => Capture(Bounds(window), System.IO.Path.Combine(directory, "native-after-alt-tab.png"), true), "Video did not return after Alt+Tab");

@@ -31,7 +31,8 @@ export const mpvWire = (app: ElectronApplication) => ({
         if (typeof speed !== "number") throw new Error("MPV did not report its speed");
         const expectedSpeed = speed < 1 ? 1.01 : 0.99;
         const afterId = wire.arm(mode, expectedSpeed);
-        const offset = expectedSpeed < 1 ? 0.5 : -0.5;
+        // Leave room for seek/render latency while keeping drift below the one-second seek threshold.
+        const offset = expectedSpeed < 1 ? 0.75 : -0.5;
         // Advance the supplied group clock across the IPC/probe latency before seeking.
         await wire.command([
           "seek",

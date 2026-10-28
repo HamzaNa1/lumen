@@ -297,7 +297,7 @@ test("Windows main-window capture contains video and inline controls, and a kill
     ),
     contentType: "image/png",
   });
-  const { execFileSync } = await import("node:child_process");
+  const { execFileSync, spawnSync } = await import("node:child_process");
   const nativeProof = test.info().outputPath("windows-presentation");
   await page.evaluate(() => window.lumen.player.fullscreen(false));
   await page.mouse.move(300, 300);
@@ -305,7 +305,7 @@ test("Windows main-window capture contains video and inline controls, and a kill
     window.getNativeWindowHandle().readBigUInt64LE().toString(),
   );
   try {
-    execFileSync(
+    const presentation = spawnSync(
       "powershell.exe",
       [
         "-NoProfile",
@@ -316,8 +316,10 @@ test("Windows main-window capture contains video and inline controls, and a kill
         "-OutputDirectory",
         nativeProof,
       ],
-      { timeout: 35000 },
+      { timeout: 35000, encoding: "utf8" },
     );
+    // Keep recovery evidence even if a native presentation assertion fails.
+    expect.soft(presentation.status, `${presentation.error ?? ""}\n${presentation.stderr}`).toBe(0);
   } finally {
     for (const name of ["window", "restored", "thumbnail", "alt-tab", "after-alt-tab"]) {
       const path = join(nativeProof, `native-${name}.png`);
