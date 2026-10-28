@@ -63,12 +63,23 @@ public static class PresentationProbe {
         if (SendInput(1, inputs, Marshal.SizeOf(typeof(Input))) != 1)
             throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error(), "Keyboard input injection failed");
     }
+    static bool ShellHasFocus() {
+        uint shellProcess, foregroundProcess;
+        GetWindowThreadProcessId(GetShellWindow(), out shellProcess);
+        GetWindowThreadProcessId(GetForegroundWindow(), out foregroundProcess);
+        return shellProcess != 0 && foregroundProcess == shellProcess;
+    }
     static void AltTab(Action whileHeld) {
         Key(0x38, false);
         try {
             Key(0x0f, false);
             Key(0x0f, true);
+            Wait(ShellHasFocus, "Task switcher did not open");
             if (whileHeld != null) whileHeld();
+            // Commit the selected task explicitly; Alt release alone can leave
+            // the hosted Windows task switcher open after synthetic input.
+            Key(0x1c, false);
+            Key(0x1c, true);
         } finally { Key(0x38, true); }
     }
     static bool Capture(Rectangle bounds, string path, bool requireVideo) {
@@ -91,6 +102,13 @@ public static class PresentationProbe {
         return Rectangle.FromLTRB(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
     }
     public static void Run(long handle, string directory) {
+        try { RunChecks(handle, directory); }
+        finally {
+            Key(0x38, true);
+            if (ShellHasFocus()) { Key(0x01, false); Key(0x01, true); }
+        }
+    }
+    static void RunChecks(long handle, string directory) {
         SetThreadDpiAwarenessContext(new IntPtr(-4));
         var window = new IntPtr(handle);
         ShowWindow(window, 9); SetForegroundWindow(window);
@@ -135,14 +153,8 @@ public static class PresentationProbe {
                 Thread.Sleep(350); DwmFlush();
                 Capture(Screen.FromHandle(window).Bounds, System.IO.Path.Combine(directory, "native-alt-tab.png"), false);
             });
-            uint shellProcess;
-            GetWindowThreadProcessId(GetShellWindow(), out shellProcess);
-            Wait(() => {
-                var foreground = GetForegroundWindow();
-                uint foregroundProcess;
-                GetWindowThreadProcessId(foreground, out foregroundProcess);
-                return foreground != IntPtr.Zero && foreground != window && foregroundProcess != shellProcess;
-            }, "Alt+Tab did not switch away from playback");
+            Wait(() => GetForegroundWindow() != IntPtr.Zero && GetForegroundWindow() != window && !ShellHasFocus(),
+                "Alt+Tab did not switch away from playback");
             AltTab(null);
             Wait(() => GetForegroundWindow() == window, "Playback did not return after Alt+Tab");
             Wait(() => Capture(Bounds(window), System.IO.Path.Combine(directory, "native-after-alt-tab.png"), true), "Video did not return after Alt+Tab");
