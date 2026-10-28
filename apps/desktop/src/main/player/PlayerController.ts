@@ -22,6 +22,7 @@ import { app } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
+import type { CompositorSurface } from "./CompositorSurface";
 import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import { MpvProcess } from "./MpvProcess";
@@ -31,8 +32,8 @@ import type { PlaybackBridge } from "./PlaybackBridge";
 
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
-  readonly surface: MpvSurface;
-  readonly onState: (state: PlayerState) => void;
+  readonly surface: MpvSurface | CompositorSurface;
+  readonly onState: (state: PlayerState | null) => void;
   /** Where the viewer's volumes and audio output are kept; forgotten on exit when omitted. */
   readonly audioSettings?: AudioSettingsStore;
 }
@@ -113,10 +114,11 @@ const resolveTrackIds = async (
 
 export class PlayerController extends EventEmitter {
   private readonly bridge: PlaybackBridge;
-  private readonly surface: MpvSurface;
-  private readonly onState: (state: PlayerState) => void;
+  private readonly surface: MpvSurface | CompositorSurface;
+  private readonly onState: (state: PlayerState | null) => void;
   private readonly audioSettings: AudioSettingsStore;
   private active: ActiveSession | null = null;
+  private startingProcess: MpvProcess | null = null;
   private state: PlayerState | null = null;
   private refreshing: ActiveSession | null = null;
   private startGeneration = 0;
@@ -165,14 +167,28 @@ export class PlayerController extends EventEmitter {
         cwd: process.cwd(),
         resourcesPath: process.resourcesPath,
         videoOutputArguments: this.surface.prepare(),
+        onFrame: (frame) => {
+          if (this.surface.kind === "compositor") void this.surface.frame(frame);
+        },
+        onFailure: (error) => {
+          if (this.active?.process === playerProcess) this.failActive(this.active, error);
+        },
         onExit: () => {
           const active = this.active;
           if (active?.process === playerProcess && active?.session === session)
             this.failActive(active, new Error("MPV has exited"));
         },
       });
+      this.startingProcess = playerProcess;
+      if (this.surface.kind === "compositor")
+        this.surface.connect(playerProcess, (error) => {
+          if (this.active?.process === playerProcess) this.failActive(this.active, error);
+        });
+      await playerProcess.frames?.initialized;
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       ipc = new MpvIpc();
       await ipc.connect(playerProcess);
+      if (this.startingProcess === playerProcess) this.startingProcess = null;
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       const registered = this.bridge.register({
         diagnostics: this.diagnostics,
@@ -257,7 +273,7 @@ export class PlayerController extends EventEmitter {
         detachLoadListeners();
       }
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      if (process.platform === "darwin") {
+      if (process.platform === "darwin" && this.surface.kind === "native") {
         const windowId = await ipc.command(["get_property", "window-id"]);
         if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
         if (typeof windowId !== "number" || !Number.isSafeInteger(windowId) || windowId <= 0) {
@@ -294,7 +310,8 @@ export class PlayerController extends EventEmitter {
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       await ipc.command(["set_property", "pause", input.paused === true ? "yes" : "no"]);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      this.surface.show();
+      await this.surface.show();
+      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
@@ -328,6 +345,7 @@ export class PlayerController extends EventEmitter {
       this.publish();
       return this.sanitized(session);
     } catch (cause) {
+      if (this.startingProcess === playerProcess) this.startingProcess = null;
       diagnostics.record(
         generation === this.startGeneration ? "playback_failure" : "playback_cancelled",
         { stage: "startup" },
@@ -418,8 +436,14 @@ export class PlayerController extends EventEmitter {
   }
 
   async setSurface(bounds: IpcPlayerSurfaceBounds | null): Promise<void> {
+    if (bounds === null && this.surface.kind === "compositor") {
+      const stopping = this.stop();
+      this.surface.setBounds(null);
+      await stopping;
+      return;
+    }
     this.surface.setBounds(bounds);
-    if (this.active !== null) this.surface.show();
+    if (this.active !== null) await this.surface.show();
   }
 
   async selectAudioStream(sessionId: string, streamId: string): Promise<PlayerState> {
@@ -634,6 +658,7 @@ export class PlayerController extends EventEmitter {
     });
     this.startGeneration += 1;
     void this.stopActive(cause);
+    this.onState(null);
     this.emitError(cause);
     this.emit("ended", cause);
   }
@@ -658,6 +683,8 @@ export class PlayerController extends EventEmitter {
   private stopActive(cause: unknown = new Error("Playback was cancelled")): Promise<void> {
     if (this.stopping !== null) return this.stopping;
     const active = this.active;
+    const starting = this.startingProcess;
+    this.startingProcess = null;
     const state = this.state;
     this.active = null;
     this.state = null;
@@ -666,9 +693,11 @@ export class PlayerController extends EventEmitter {
     active?.reporter.retire();
     active?.cancellation.abort(cause);
     this.surface.hide();
-    if (active === null) return Promise.resolve();
-    const stopping = this.cleanup(active, state === null ? null : { active, state });
-    active.stopping = stopping;
+    const stopping =
+      active === null
+        ? (starting?.stop() ?? Promise.resolve())
+        : this.cleanup(active, state === null ? null : { active, state });
+    if (active !== null) active.stopping = stopping;
     this.stopping = stopping;
     const clearStopping = (): void => {
       if (this.stopping === stopping) this.stopping = null;

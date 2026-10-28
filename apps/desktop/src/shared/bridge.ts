@@ -37,6 +37,8 @@ export interface DesktopBridge {
   };
   readonly admin: AdminRuntime;
   readonly player: {
+    readonly inline: boolean;
+    readonly onFailure: (callback: (message: string) => void) => Unsubscribe;
     readonly resetTrack: (sessionId: string, kind: TrackKind) => Promise<PlayerState>;
     readonly retryTrackMemory: (sessionId: string) => Promise<PlayerState>;
     readonly dismissTrackMemoryError: (sessionId: string) => Promise<PlayerState>;

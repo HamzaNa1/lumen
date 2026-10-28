@@ -65,7 +65,7 @@ export interface IpcDependencies {
   readonly bridge: PlaybackBridge;
   readonly installationId: string;
   readonly window: BrowserWindow;
-  readonly overlay: PlayerOverlayWindow;
+  readonly overlay: PlayerOverlayWindow | undefined;
   readonly updates: AppUpdates;
 }
 
@@ -86,8 +86,8 @@ const activeConnectionId = (dependencies: IpcDependencies): string => {
 export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   const fullscreen = playerFullscreen(dependencies.window);
   const watch = new WatchPlaybackController(watchPlayerFor(dependencies.player), (status) => {
-    for (const window of [dependencies.window, dependencies.overlay.window]) {
-      if (!window.isDestroyed()) window.webContents.send("watch:state", status);
+    for (const window of [dependencies.window, dependencies.overlay?.window]) {
+      if (window && !window.isDestroyed()) window.webContents.send("watch:state", status);
     }
   });
   dependencies.window.once("closed", () => watch.close());
@@ -479,11 +479,15 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     );
     return dependencies.player.volume(input.sessionId, input.volume, input.muted);
   });
+  let surfaceRevision = 0;
   handle("player:surface", async (_event, raw) => {
+    const revision = ++surfaceRevision;
     const bounds = decode(Schema.NullOr(IpcPlayerSurfaceBounds), raw);
     await dependencies.player.setSurface(bounds);
-    dependencies.overlay.setVisible(bounds !== null);
-    watch.setSurfaceReady(bounds !== null);
+    if (revision === surfaceRevision) {
+      dependencies.overlay?.setVisible(bounds !== null);
+      watch.setSurfaceReady(bounds !== null);
+    }
     return { ok: true };
   });
   handle("player:select-audio", async (_event, raw) => {
@@ -508,7 +512,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("player:timeline", async () => dependencies.player.playbackTimeline());
   handle("player:display", async (_event, raw) => {
     playerDisplay = decode(PlayerDisplay, raw);
-    dependencies.overlay.window.webContents.send("player:display", playerDisplay);
+    dependencies.overlay?.window.webContents.send("player:display", playerDisplay);
   });
   handle("player:display-state", async () => playerDisplay);
   handle("player:overlay-action", async (_event, raw) => {

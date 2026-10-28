@@ -57,13 +57,11 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
       const parentId = await main.evaluate((window) => window.id);
       await expect
         .poll(() =>
-          app.evaluate(({ BaseWindow, BrowserWindow, screen }, parentId) => {
+          app.evaluate(({ BaseWindow, BrowserWindow }, parentId) => {
             const parent = BrowserWindow.fromId(parentId);
             if (!parent) return false;
-            const expected =
-              process.platform === "win32" && parent.isFullScreen()
-                ? screen.getDisplayMatching(parent.getBounds()).bounds
-                : parent.getContentBounds();
+            if (process.platform === "win32") return BaseWindow.getAllWindows().length === 1;
+            const expected = parent.getContentBounds();
             const children = BaseWindow.getAllWindows().filter(
               (window) => window.getParentWindow()?.id === parentId,
             );
@@ -236,4 +234,133 @@ test("a stalled progress response cannot block native pause, local samples or fi
     held.release();
     await proxy.close();
   }
+});
+
+test("Windows main-window capture contains video and inline controls, and a killed helper can be retried", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  test.skip(process.platform !== "win32", "Windows shared D3D11 compositor");
+  test.setTimeout(120000);
+  await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const { page, app } = desktop;
+  await connectDesktop(page, server);
+  await page.getByRole("link", { name: "movies", exact: true }).click();
+  await page.getByRole("button", { name: "Play Film", exact: true }).first().click();
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ paused: false });
+  await expect(page.locator(".watch-page.has-inline-controls canvas")).toBeVisible();
+  await page.mouse.move(300, 300);
+  await expect(page.getByRole("button", { name: "Pause playback", exact: true })).toBeVisible();
+  const main = await app.browserWindow(page);
+  expect(await app.evaluate(({ BaseWindow }) => BaseWindow.getAllWindows().length)).toBe(1);
+  const capture = async () =>
+    main.evaluate(async (window) => {
+      const image = await window.webContents.capturePage();
+      const { width, height } = image.getSize();
+      const pixels = image.toBitmap();
+      let red = 0;
+      // Inspect the central video region, excluding controls and window chrome.
+      for (let y = Math.floor(height * 0.25); y < height * 0.65; y += 4)
+        for (let x = Math.floor(width * 0.25); x < width * 0.75; x += 4) {
+          const offset = (y * width + x) * 4;
+          const b = pixels[offset] ?? 0,
+            g = pixels[offset + 1] ?? 0,
+            r = pixels[offset + 2] ?? 0;
+          if (r > 200 && g < 40 && b < 40) red++;
+        }
+      return red;
+    });
+  await expect.poll(capture).toBeGreaterThan(100);
+  await main.evaluate((window) => window.setContentSize(960, 640));
+  await expect.poll(capture).toBeGreaterThan(100);
+  await page.evaluate(async () => {
+    const state = await window.lumen.player.state();
+    if (!state) throw new Error("Playback missing");
+    await window.lumen.player.pause(state.sessionId, true);
+    await window.lumen.player.seek(state.sessionId, 5);
+  });
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ paused: true });
+  await expect.poll(capture).toBeGreaterThan(100);
+  await page.evaluate(() => window.lumen.player.fullscreen(true));
+  await expect.poll(capture).toBeGreaterThan(100);
+  await test.info().attach("Windows single compositor playback", {
+    body: Buffer.from(
+      await main.evaluate(async (window) =>
+        (await window.webContents.capturePage()).toPNG().toString("base64"),
+      ),
+      "base64",
+    ),
+    contentType: "image/png",
+  });
+  const { execFileSync } = await import("node:child_process");
+  const nativeProof = test.info().outputPath("windows-presentation");
+  await page.evaluate(() => window.lumen.player.fullscreen(false));
+  await page.mouse.move(300, 300);
+  const handle = await main.evaluate((window) =>
+    window.getNativeWindowHandle().readBigUInt64LE().toString(),
+  );
+  try {
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-File",
+        join(import.meta.dirname, "support/windows-presentation.ps1"),
+        "-WindowHandle",
+        handle,
+        "-OutputDirectory",
+        nativeProof,
+      ],
+      { timeout: 35000 },
+    );
+  } finally {
+    for (const name of ["window", "restored", "thumbnail", "alt-tab", "after-alt-tab"]) {
+      const path = join(nativeProof, `native-${name}.png`);
+      if (await stat(path).catch(() => null))
+        await test.info().attach(`Windows ${name}`, { path, contentType: "image/png" });
+    }
+  }
+  // Kill at the OS boundary: the real helper, decoder and Electron import path remain in use.
+  const helpers = (): number[] => {
+    const output = execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-Command",
+        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Lumen Video Helper.exe' -and $_.ParentProcessId -eq ${app.process().pid} } | Select-Object -ExpandProperty ProcessId`,
+      ],
+      { encoding: "utf8" },
+    );
+    return output.trim().split(/\s+/).filter(Boolean).map(Number);
+  };
+  const before = helpers();
+  expect(before).toHaveLength(1);
+  process.kill(before[0] as number, "SIGKILL");
+  await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+  await expect.poll(helpers).toHaveLength(0);
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ paused: false });
+  await expect.poll(capture).toBeGreaterThan(100);
+  expect(helpers()).toHaveLength(1);
+  await page.evaluate(() => {
+    const canvas = document.querySelector(".watch-surface canvas") as HTMLCanvasElement | null;
+    const context = canvas?.getContext("webgl2");
+    const extension = context?.getExtension("WEBGL_lose_context");
+    if (!extension) throw new Error("Cannot exercise GPU context loss");
+    extension.loseContext();
+  });
+  await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeVisible();
+  await expect.poll(helpers).toHaveLength(0);
+  await page.getByRole("button", { name: "Try again", exact: true }).click();
+  await expect.poll(capture).toBeGreaterThan(100);
+  expect(helpers()).toHaveLength(1);
+  await page.evaluate(() => window.lumen.player.stop());
+  await expect.poll(helpers).toHaveLength(0);
 });

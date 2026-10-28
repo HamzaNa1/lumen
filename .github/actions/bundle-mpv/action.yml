@@ -41,10 +41,19 @@ runs:
         mkdir -p "$native_dir/lib"
         cp "$(brew --prefix mpv)/lib/libmpv.dylib" "$native_dir/libmpv.dylib"
         dylibbundler -od -b -x "$native_dir/libmpv.dylib" -d "$native_dir/lib" -p '@loader_path/lib/'
+    - name: Configure MSVC (Windows)
+      if: runner.os == 'Windows'
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
     - name: Bundle MPV (Windows)
       if: runner.os == 'Windows'
       shell: pwsh
       run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
+    - name: Exercise Windows helper on the runner GPU
+      if: runner.os == 'Windows'
+      shell: pwsh
+      run: ./apps/desktop/native/smoke-test.ps1 -Helper "./apps/desktop/resources/native/Lumen Video Helper.exe"
     - name: Seal and verify native MPV files
       shell: bash
       run: |

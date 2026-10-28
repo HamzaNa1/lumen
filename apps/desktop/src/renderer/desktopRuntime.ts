@@ -2,14 +2,15 @@ import type { LumenRuntime, PlayerSurface } from "@lumen/client/runtime";
 import type { DesktopBridge } from "../shared/bridge";
 
 /**
- * Tells the main process where the video belongs. MPV draws into a native window placed over
- * this element, so its bounds are sent whenever they change.
+ * Reports the surface in CSS pixels. The presentation backend owns native sizing
+ * and drawing; the application only owns the element and its lifetime.
  */
 const mountNativeSurface = (
   bridge: DesktopBridge,
   element: HTMLElement,
   onError: (cause: unknown) => void,
 ): PlayerSurface => {
+  element.dataset.lumenVideoSurface = "";
   const syncSurface = async (): Promise<void> => {
     const bounds = element.getBoundingClientRect();
     if (bounds.width < 1 || bounds.height < 1) return;
@@ -84,17 +85,18 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     },
     state: bridge.player.state,
     onState: bridge.player.onState,
-    // The main process does not report failures after playback has started.
-    onFailure: () => () => undefined,
+    onFailure: bridge.player.onFailure,
     mountSurface: (element, onError) => mountNativeSurface(bridge, element, onError),
     fullscreen: bridge.player.fullscreen,
     fullscreenState: bridge.player.fullscreenState,
     onFullscreenChange: bridge.player.onFullscreenChange,
-    presentation: {
-      kind: "external",
-      display: bridge.player.display,
-      onAction: bridge.player.onOverlayAction,
-    },
+    presentation: bridge.player.inline
+      ? { kind: "inline" }
+      : {
+          kind: "external",
+          display: bridge.player.display,
+          onAction: bridge.player.onOverlayAction,
+        },
     nativeAudio: { output: bridge.player.audioOutput },
   },
   watch: bridge.watch,
