@@ -37,6 +37,7 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "desktop-artwork.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop-lifecycle.e2e.ts": { runtime: "native", products: ["desktop"] },
+  "desktop-video-color.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop-tracks.e2e.ts": { runtime: "native", products: ["desktop"] },
   "mixed-playback.e2e.ts": { runtime: "native", products: ["server", "desktop"] },
   "verification.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
