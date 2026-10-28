@@ -1,0 +1,2 @@
+# The Windows bundler verifies these headers byte-for-byte against the pinned SDK.
+/apps/desktop/native/vendor/mpv/*.h text eol=lf
