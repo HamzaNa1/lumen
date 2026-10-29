@@ -295,7 +295,10 @@ test("administrators configure transcoding from Settings and persist changes", a
   await expect(panel.getByLabel("CPU threads per job", { exact: true })).toHaveValue("3");
   await panel.scrollIntoViewIfNeeded();
   await testInfo.attach("CPU transcoding settings", {
-    body: await page.screenshot({ fullPage: true }),
+    body: await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("transcoding-cpu.png"),
+    }),
     contentType: "image/png",
   });
   await panel.getByRole("combobox", { name: "Video encoder" }).click();
@@ -308,7 +311,10 @@ test("administrators configure transcoding from Settings and persist changes", a
   await expect(panel.getByLabel("GPU devices", { exact: true })).toHaveValue("0,1");
   await panel.scrollIntoViewIfNeeded();
   await testInfo.attach("Multi-GPU transcoding settings", {
-    body: await page.screenshot({ fullPage: true }),
+    body: await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("transcoding-gpu.png"),
+    }),
     contentType: "image/png",
   });
   await panel.getByRole("switch", { name: /^Enable transcoding/ }).click();
