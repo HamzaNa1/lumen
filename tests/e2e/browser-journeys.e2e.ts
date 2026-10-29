@@ -1,5 +1,6 @@
 import type { Page } from "@playwright/test";
 import { openMovie, pause, playing, signIn } from "./support/browser";
+import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
 
 const requireConversion = (page: Page, webm = false) =>
@@ -294,8 +295,15 @@ test.describe("native browser audio", () => {
       body: { ...settings, enabled: false },
     });
   });
-  for (const format of ["wav", "flac", "opus", "aac"] as const)
-    test(`supported ${format} plays directly with transcoding disabled`, async ({
+  for (const [format, artwork] of [
+    ["wav", null],
+    ["flac", null],
+    ["opus", null],
+    ["aac", null],
+    ["mp3", "png"],
+    ["flac", "mjpeg"],
+  ] as const)
+    test(`supported ${format}${artwork === null ? "" : ` with ${artwork} artwork`} plays directly with transcoding disabled`, async ({
       server,
       admin,
       page,
@@ -308,13 +316,54 @@ test.describe("native browser audio", () => {
         "error",
         "-i",
         join(import.meta.dirname, "../fixtures/playback.mp4"),
-        "-vn",
+        ...(artwork === null
+          ? ["-vn"]
+          : [
+              "-i",
+              join(import.meta.dirname, "../fixtures/still.png"),
+              "-map",
+              "0:a:0",
+              "-map",
+              "1:v:0",
+              "-c:v",
+              artwork,
+              "-disposition:v:0",
+              "attached_pic",
+            ]),
         join(library.path, `Film.${format}`),
       ]);
       await server.scan(admin.accessToken, library.id);
+      if (artwork !== null) {
+        const database = openDatabase(server.databasePath);
+        try {
+          expect(
+            database.prepare("SELECT count(*) AS n FROM streams WHERE kind='video'").get(),
+          ).toEqual({ n: 0 });
+          const track = database.prepare("SELECT id, primary_stream_id FROM tracks").get();
+          // Older scans stored cover art as video; a full rescan repairs that metadata.
+          database
+            .prepare(
+              "INSERT INTO streams(id,source_id,kind,codec,ordinal,is_default) SELECT ?,source_id,'video',?,1,1 FROM tracks",
+            )
+            .run(crypto.randomUUID(), artwork);
+          await server.scan(admin.accessToken, library.id, "full");
+          expect(
+            database.prepare("SELECT count(*) AS n FROM streams WHERE kind='video'").get(),
+          ).toEqual({ n: 0 });
+          expect(database.prepare("SELECT id, primary_stream_id FROM tracks").get()).toEqual(track);
+        } finally {
+          database.close();
+        }
+      }
+      const conversions: string[] = [];
+      page.on("request", (request) => {
+        if (new URL(request.url()).searchParams.get("transcode") === "1")
+          conversions.push(request.url());
+      });
       await signIn(page, server);
       await openMovie(page, server, library.id);
       expect(await page.locator("video").getAttribute("src")).not.toContain("transcode=1");
+      expect(conversions).toEqual([]);
     });
 });
 

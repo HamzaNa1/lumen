@@ -18,7 +18,7 @@ import {
   streams as streamTable,
   tracks,
 } from "@lumen/database";
-import { and, count, eq, isNull, ne, or, sql } from "drizzle-orm";
+import { and, count, eq, isNull, ne, notInArray, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { readLocalFile } from "../core/BoundedInput";
 import { mapRepositoryError } from "../core/Cause";
@@ -602,15 +602,27 @@ export const makeMediaIngest = Effect.gen(function* () {
       .from(tracks)
       .where(eq(tracks.sourceId, sourceId))
       .get();
-    const missingOrdinals =
+    const obsoleteStream = notInArray(
+      streamTable.ordinal,
+      probe.streams.map((stream) => stream.ordinal),
+    );
+    const staleStreams =
       existingTrack == null
         ? null
         : yield* database
             .select({ count: count() })
             .from(streamTable)
-            .where(and(eq(streamTable.sourceId, sourceId), isNull(streamTable.ordinal)))
+            .where(
+              and(
+                eq(streamTable.sourceId, sourceId),
+                or(
+                  isNull(streamTable.ordinal),
+                  and(eq(streamTable.id, existingTrack.primaryStreamId), obsoleteStream),
+                ),
+              ),
+            )
             .get();
-    const needsStreamRefresh = existingTrack == null ? false : (missingOrdinals?.count ?? 0) !== 0;
+    const needsStreamRefresh = (staleStreams?.count ?? 0) !== 0;
     const defaultOrdinals = new Set<number>();
     for (const kind of ["audio", "video", "subtitle"] as const) {
       const streams = probe.streams.filter((stream) => stream.kind === kind);
@@ -758,6 +770,9 @@ export const makeMediaIngest = Effect.gen(function* () {
     if (existingTrack !== undefined && !needsStreamRefresh) {
       yield* database.transaction((transaction) =>
         Effect.gen(function* () {
+          yield* transaction
+            .delete(streamTable)
+            .where(and(eq(streamTable.sourceId, sourceId), obsoleteStream));
           for (const stream of probe.streams) {
             yield* transaction
               .update(streamTable)
