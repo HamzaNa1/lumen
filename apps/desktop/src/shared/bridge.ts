@@ -64,6 +64,7 @@ export interface DesktopBridge {
     readonly fullscreen: (enabled: boolean) => Promise<boolean>;
     readonly fullscreenState: () => Promise<boolean>;
     readonly stop: () => Promise<unknown>;
+    readonly onFailure: (callback: (message: string) => void) => Unsubscribe;
     readonly onState: (callback: (state: PlayerState | null) => void) => Unsubscribe;
     readonly onDisplay: (callback: (display: PlayerDisplay) => void) => Unsubscribe;
     readonly onOverlayAction: (callback: (action: PlayerAction) => void) => Unsubscribe;

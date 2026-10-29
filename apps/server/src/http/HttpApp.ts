@@ -231,6 +231,7 @@ export const makeHttpHandler = (
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
           capabilities: {
+            transcoding: true,
             directPlayOnly: true,
             watchGroups: true,
             browserSessions: true,

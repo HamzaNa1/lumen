@@ -101,6 +101,7 @@ const api: DesktopBridge = {
     fullscreen: (enabled) => invoke("player:fullscreen", enabled),
     fullscreenState: () => invoke("player:fullscreen-state"),
     stop: () => invoke("player:stop"),
+    onFailure: subscribe("player:failure"),
     onState: subscribe("player:state"),
     onDisplay: subscribe("player:display"),
     onOverlayAction: subscribe("player:overlay-action"),

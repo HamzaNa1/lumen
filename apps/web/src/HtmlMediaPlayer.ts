@@ -8,6 +8,7 @@ import {
   PlaybackUnsupportedError,
   type PlayerBuffer,
   ServerHttpError,
+  setTranscodingParameters,
   TrackSelectionController,
   type WatchPlaybackSample,
 } from "@lumen/client";
@@ -650,14 +651,7 @@ export class HtmlMediaPlayer {
     const url = new URL(session.streamUrl, this.api.serverOrigin);
     url.searchParams.set("grant", session.grantToken);
     this.timeOffset = this.conversion === null ? 0 : start;
-    if (this.conversion !== null) {
-      url.searchParams.set("transcode", "1");
-      url.searchParams.set("format", this.conversion.format);
-      url.searchParams.set("video", this.conversion.video);
-      url.searchParams.set("audio", this.conversion.audio);
-      url.searchParams.set("audioIndex", String(this.conversion.audioIndex));
-      url.searchParams.set("start", String(start));
-    }
+    if (this.conversion !== null) setTranscodingParameters(url, this.conversion, start);
     return this.waitForMediaEvent(generation, "loadedmetadata", () => {
       this.element.src = url.toString();
       this.element.load();

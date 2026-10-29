@@ -33,6 +33,7 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "browser-journeys.e2e.ts": { runtime: "browser", products: ["server"] },
   "desktop-updates.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop-sync-races.e2e.ts": { runtime: "native", products: ["desktop"] },
+  "desktop-transcoding.e2e.ts": { runtime: "native", products: ["desktop"] },
   "native-audio.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop-artwork.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop.e2e.ts": { runtime: "native", products: ["desktop"] },

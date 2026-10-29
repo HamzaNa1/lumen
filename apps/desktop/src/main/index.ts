@@ -90,12 +90,8 @@ const bootstrap = async (): Promise<void> => {
         overlay.window.webContents.send("player:state", state);
     },
   });
-  player.on("ended", (cause: unknown) => {
-    if (!mainWindow?.isDestroyed())
-      mainWindow?.webContents.send(
-        "player:failure",
-        cause instanceof Error ? cause.message : String(cause),
-      );
+  player.on("failure", (message: string) => {
+    if (!mainWindow?.isDestroyed()) mainWindow?.webContents.send("player:failure", message);
   });
   let closingWindow = false;
   mainWindow.on("close", (event) => {

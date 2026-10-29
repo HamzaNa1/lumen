@@ -1,12 +1,9 @@
+import type { TranscodingPlan } from "@lumen/client";
+
+export type { TranscodingPlan } from "@lumen/client";
+
 import type { PlayerSession } from "@lumen/contracts";
 import { resolveTrackSelection } from "@lumen/contracts";
-
-export interface TranscodingPlan {
-  readonly format: "mp4" | "webm";
-  readonly audioIndex: number;
-  readonly video: "copy" | "h264" | "vp8" | "none";
-  readonly audio: "copy" | "aac" | "opus";
-}
 
 const videoCodecs: Readonly<Record<string, string>> = {
   h264: "avc1.640028",

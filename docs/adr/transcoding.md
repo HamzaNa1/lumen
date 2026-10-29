@@ -1,8 +1,8 @@
-# Browser transcoding
+# Media transcoding
 
 ## Decision
 
-Use the installed FFmpeg decoder set and produce fragmented MP4 with H.264 and AAC (or WebM with VP8/Opus when that is the supported output) for incompatible browser media. Browser capability probes select direct delivery first; codec failures can retry with conversion. Preserve compatible H.264/AAC streams when repackaging a container at the beginning. Native desktop playback continues using MPV's local decoders.
+Use the installed FFmpeg decoder set and produce fragmented MP4 with H.264 and AAC (or WebM with VP8/Opus when that is the supported output) for incompatible browser media. Browser capability probes select direct delivery first; codec failures can retry with conversion. Preserve compatible H.264/AAC streams when repackaging a container at the beginning. Native desktop playback tries MPV's local decoders first. A missing video/audio decoder or a decoding failure triggers one server conversion to H.264/AAC, retaining the playback session and source position. Network errors do not trigger conversion. A server capability flag prevents fallback requests to older servers. Converted desktop playback uses the same administrator policy, resource limits and authenticated media endpoint as browser playback; stream replacement on seeking or audio selection retains pause state and cancels the preceding request. Unavailable conversion is surfaced as a playback error rather than retried indefinitely.
 
 Stream through bounded pipes rather than creating a full-file cache. Cancellation terminates FFmpeg, closes its output pipe, and escalates to a forced kill; the scheduler releases capacity after the process closes. Session authorization is rechecked during streaming. An inactive consumer has a bounded lease. Reject excess work instead of building an unbounded queue.
 

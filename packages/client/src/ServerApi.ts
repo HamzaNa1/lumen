@@ -301,6 +301,10 @@ export class ServerApi {
     this.onUnauthorized = options.onUnauthorized;
   }
 
+  get supportsTranscoding(): boolean {
+    return this.serverIdentity?.capabilities?.transcoding === true;
+  }
+
   get supportsWatchGroups(): boolean {
     return this.serverIdentity?.capabilities?.watchGroups === true;
   }

@@ -14,6 +14,7 @@ interface Capability {
   readonly active: () => boolean;
   readonly diagnostics?: PlaybackDiagnostics;
   readonly sessionId?: string;
+  readonly onStatus?: (status: number) => void;
 }
 interface Transfer {
   readonly controller: AbortController;
@@ -177,6 +178,7 @@ export class PlaybackBridge {
         signal: controller.signal,
       });
       status = upstream.status;
+      entry.onStatus?.(status);
       headerLatencyMs = performance.now() - started;
       const id = upstream.headers.get("x-request-id");
       serverRequestId = id !== null && /^[\da-f-]{36}$/iu.test(id) ? id : null;

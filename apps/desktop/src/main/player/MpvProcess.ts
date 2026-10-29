@@ -72,6 +72,8 @@ export class MpvProcess {
       "--no-config",
       "--load-scripts=no",
       "--idle=yes",
+      "--ytdl=no",
+      "--force-window=yes",
       "--no-terminal",
       // Keep decoding and the playback clock active without opening a speaker device in E2E.
       ...(process.env.LUMEN_E2E_SILENT_AUDIO === "1" ? ["--ao=null"] : []),
@@ -83,7 +85,6 @@ export class MpvProcess {
       ...(process.platform === "darwin"
         ? [
             "--vo=gpu",
-            "--force-window=yes",
             "--border=no",
             "--native-fs=no",
             "--auto-window-resize=no",
