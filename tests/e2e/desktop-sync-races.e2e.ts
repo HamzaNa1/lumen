@@ -76,6 +76,19 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           .poll(() => page.evaluate(() => window.lumen.player.state()))
           .toMatchObject({ itemId: film, paused: false });
         await expect.poll(() => wire.command(["get_property", "time-pos"])).toBeGreaterThan(1.2);
+        if (scenario !== "hold-sample" && (await timeline()).length > 0) {
+          // Wait for the controller to observe advancing playback after startup seeking.
+          // A real clock may retain soft drift, which does not need to reach zero first.
+          await expect
+            .poll(async () => {
+              const sample = (await timeline()).findLast(
+                (event) =>
+                  event.kind === "watch_synchronization" && event.fields.event === "drift_sample",
+              );
+              return sample?.fields.advancing === true && sample.fields.seek === false;
+            })
+            .toBe(true);
+        }
         if (scenario === "hold-sample") {
           await wire.arm("hold-sample");
           await expect

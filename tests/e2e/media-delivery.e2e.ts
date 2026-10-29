@@ -1,6 +1,7 @@
-import { readFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, repository, test } from "./support/server";
+import { expect, password, repository, test } from "./support/server";
 
 test("scanned media streams exact bytes with scoped grants, range and conditional request semantics", async ({
   server,
@@ -110,4 +111,154 @@ test("static app routing, MIME types, caching and CSP remain isolated from the A
   expect((await server.request("/api/v1/unknown")).headers.get("content-type")).not.toContain(
     "text/html",
   );
+});
+
+test("transcoding produces playable H264/AAC, supports offsets and retains grant isolation", async ({
+  server,
+  admin,
+}, testInfo) => {
+  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const item = (await server.items(admin.accessToken, library.id))[0];
+  const playback = await server.play(admin.accessToken, item?.id ?? "");
+  const url = `${playback.streamUrl}?transcode=1&video=copy&audio=copy&start=13`;
+  expect((await server.request(url)).status).toBe(401);
+  const headers = { authorization: `Bearer ${playback.grantToken}` };
+  const response = await server.request(url, { headers });
+  expect(response.status).toBe(200);
+  expect(response.headers.get("accept-ranges")).toBe("none");
+  const output = testInfo.outputPath("transcoded.mp4");
+  await writeFile(output, Buffer.from(await response.arrayBuffer()));
+  const metadata = JSON.parse(
+    execFileSync("ffprobe", ["-v", "error", "-show_streams", "-of", "json", output], {
+      encoding: "utf8",
+    }),
+  );
+  expect(metadata.streams.map((stream: { codec_name: string }) => stream.codec_name)).toEqual([
+    "h264",
+    "aac",
+  ]);
+  for (const stream of metadata.streams) {
+    expect(Number(stream.duration)).toBeGreaterThan(6.9);
+    expect(Number(stream.duration)).toBeLessThan(7.3);
+  }
+  await testInfo.attach("transcoded media", { path: output, contentType: "video/mp4" });
+  expect(
+    (await server.request(`${playback.streamUrl}?transcode=1&start=-1`, { headers })).status,
+  ).toBe(400);
+  await server.api(`/playback/sessions/${playback.sessionId}`, {
+    token: admin.accessToken,
+    method: "DELETE",
+  });
+  expect((await server.request(url, { headers })).status).toBe(404);
+});
+
+test.describe("transcoding disabled", () => {
+  test("preserves direct play and rejects conversion", async ({ server, admin }) => {
+    const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, enabled: false },
+    });
+    await server.api("/users", {
+      token: admin.accessToken,
+      body: { username: "viewer", displayName: "Viewer", password },
+    });
+    const viewer = await server.login("viewer");
+    await server.api("/admin/transcoding-settings", { token: viewer.accessToken, status: 403 });
+    await server.api("/admin/transcoding-settings", {
+      token: viewer.accessToken,
+      method: "PUT",
+      body: settings,
+      status: 403,
+    });
+    for (const patch of [
+      { threads: 0 },
+      { maxJobs: 129 },
+      { encoder: "unknown" },
+      { gpus: ["0", "0"] },
+      { encoder: "vaapi", gpus: ["0"] },
+      { ffmpeg: " " },
+    ]) {
+      await server.api("/admin/transcoding-settings", {
+        token: admin.accessToken,
+        method: "PUT",
+        body: { ...settings, ...patch },
+        status: 400,
+      });
+    }
+    await server.restart();
+    const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+    const item = (await server.items(admin.accessToken, library.id))[0];
+    const playback = await server.play(admin.accessToken, item?.id ?? "");
+    const headers = { authorization: `Bearer ${playback.grantToken}` };
+    expect((await server.request(`${playback.streamUrl}?transcode=1`, { headers })).status).toBe(
+      503,
+    );
+    const direct = await server.request(playback.streamUrl, { headers });
+    expect(direct.status).toBe(200);
+    await direct.arrayBuffer();
+  });
+});
+
+test.describe("transcoding resource ownership", () => {
+  test("closing or disconnecting playback frees the encoder slot", async ({ server, admin }) => {
+    const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, maxJobs: 1 },
+    });
+    const library = await server.library(admin.accessToken, "movies", []);
+    execFileSync("ffmpeg", [
+      "-v",
+      "error",
+      "-stream_loop",
+      "-1",
+      "-i",
+      join(repository, "tests/fixtures/playback.mp4"),
+      "-t",
+      "3600",
+      "-c",
+      "copy",
+      join(library.path, "Long.mp4"),
+    ]);
+    await server.scan(admin.accessToken, library.id);
+    const item = (await server.items(admin.accessToken, library.id))[0];
+    const first = await server.play(admin.accessToken, item?.id ?? "");
+    const second = await server.play(admin.accessToken, item?.id ?? "");
+    const request = (playback: typeof first, signal?: AbortSignal) =>
+      server.request(`${playback.streamUrl}?transcode=1&video=h264&audio=aac`, {
+        headers: { authorization: `Bearer ${playback.grantToken}` },
+        ...(signal === undefined ? {} : { signal }),
+      });
+    const abort = new AbortController();
+    const response = await request(first, abort.signal);
+    expect(response.status).toBe(200);
+    expect((await request(second)).status).toBe(503);
+    await server.api(`/playback/sessions/${first.sessionId}`, {
+      token: admin.accessToken,
+      method: "DELETE",
+    });
+    await expect
+      .poll(async () => {
+        const next = await request(second);
+        await next.body?.cancel();
+        return next.status;
+      })
+      .toBe(200);
+    abort.abort();
+    const third = await server.play(admin.accessToken, item?.id ?? "");
+    await expect
+      .poll(async () => {
+        const next = await request(third);
+        await next.body?.cancel();
+        return next.status;
+      })
+      .toBe(200);
+  });
 });

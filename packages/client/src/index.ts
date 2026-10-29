@@ -4,6 +4,7 @@ export * from "./playback/PlaybackDiagnostics.ts";
 export * from "./playback/PlaybackInfo.ts";
 export * from "./playback/PlaybackSessionReporter.ts";
 export * from "./playback/TrackSelectionController.ts";
+export * from "./playback/Transcoding.ts";
 export * from "./ServerApi.ts";
 export * from "./watch/viewerPlayback.ts";
 export * from "./watch/WatchGroupClient.ts";

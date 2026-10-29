@@ -30,6 +30,23 @@ if (found === undefined) {
 if (platform !== "win32" && platform !== "darwin") accessSync(found, constants.X_OK);
 
 const root = dirname(found);
+if (platform === "win32") {
+  for (const name of [
+    "Lumen Video Helper.exe",
+    "libmpv-2.dll",
+    "vulkan-1.dll",
+    "d3dcompiler_43.dll",
+    "d3dcompiler_47.dll",
+    "dependencies.json",
+    "licenses/mpv-Copyright",
+    "licenses/mpv-LICENSE.GPL",
+    "licenses/electron-LICENSE",
+    "licenses/electron-LICENSES.chromium.html",
+  ]) {
+    if (!existsSync(join(root, name)))
+      throw new Error(`Packaged native dependency is missing: ${name}`);
+  }
+}
 const manifestPath = join(root, manifestName);
 const relativePath = (path: string): string => relative(root, path).split(sep).join("/");
 const nativeFiles = (directory: string): ReadonlyArray<string> =>

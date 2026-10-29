@@ -63,6 +63,7 @@ export const parseFfprobeOutput = (output: unknown): FfprobeResult => {
     durationMs: asDurationMs(value.format?.duration),
     tags: value.format?.tags ?? {},
     streams: value.streams.flatMap((stream) => {
+      if (stream.disposition?.attached_pic === 1) return [];
       if (
         stream.codec_type !== "audio" &&
         stream.codec_type !== "video" &&

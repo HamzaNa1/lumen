@@ -43,6 +43,11 @@ import { PlaybackService, PlaybackServiceLive } from "./services/PlaybackService
 import { ScannerLive } from "./services/Scanner";
 import { ScanService, ScanServiceLive } from "./services/ScanService";
 import { ServerName, ServerNameLive, type ServerNameShape } from "./services/ServerName";
+import {
+  TranscodingSettingsLive,
+  TranscodingSettingsService,
+  type TranscodingSettingsShape,
+} from "./services/TranscodingSettings";
 import { WatchGroups, type WatchSocketData } from "./watch-groups/WatchGroups";
 
 export interface ServerServices {
@@ -63,6 +68,7 @@ export interface ServerServices {
   readonly serverName: ServerNameShape;
   readonly tmdb: TmdbProvider["Service"];
   readonly metadataSettings: MetadataSettingsShape;
+  readonly transcodingSettings: TranscodingSettingsShape;
 }
 
 export const makeLayers = (
@@ -119,6 +125,7 @@ export const makeLayers = (
     identity,
     serverName,
     metadataSettings,
+    TranscodingSettingsLive.pipe(Layer.provide(dependencies)),
     tmdb,
   ).pipe(Layer.provide(Layer.succeed(ServerLogger, logger)));
 };
@@ -143,6 +150,7 @@ const makeServices = Effect.gen(function* () {
     identity,
     serverName: yield* ServerName,
     metadataSettings: yield* MetadataSettings,
+    transcodingSettings: yield* TranscodingSettingsService,
     tmdb: yield* TmdbProvider,
   };
 });
@@ -237,6 +245,7 @@ const startConfiguredServer = async (
       identity: services.identity,
       serverName: services.serverName,
       metadataSettings: services.metadataSettings,
+      transcodingSettings: services.transcodingSettings,
       tmdb: services.tmdb,
       startedAtMs: Date.now(),
       databaseReady: async () => {

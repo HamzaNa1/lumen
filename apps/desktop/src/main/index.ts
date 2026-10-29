@@ -7,6 +7,7 @@ import { ArtworkCache } from "./artwork/ArtworkCache";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
 import { openMainWindowState, placeMainWindow, rememberMainWindowState } from "./MainWindowState";
 import { AudioSettingsStore } from "./player/AudioSettingsStore";
+import { CompositorSurface } from "./player/CompositorSurface";
 import { MpvSurface } from "./player/MpvSurface";
 import { PlaybackBridge } from "./player/PlaybackBridge";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
@@ -18,7 +19,7 @@ import { createMainWindow } from "./windows";
 let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
-let surface: MpvSurface | null = null;
+let surface: MpvSurface | CompositorSurface | null = null;
 let quitting = false;
 let closingPlayback: Promise<void> | null = null;
 
@@ -72,16 +73,25 @@ const bootstrap = async (): Promise<void> => {
     maximized: windowState.current.maximized,
   });
   rememberMainWindowState(mainWindow, windowState);
-  const overlay = new PlayerOverlayWindow(mainWindow, preloadPath);
-  surface = new MpvSurface(mainWindow, overlay);
+  const overlay =
+    process.platform === "win32" ? undefined : new PlayerOverlayWindow(mainWindow, preloadPath);
+  surface =
+    process.platform === "win32"
+      ? new CompositorSurface(mainWindow)
+      : new MpvSurface(mainWindow, overlay);
   player = new PlayerController({
     bridge,
     surface,
     audioSettings,
     onState: (state) => {
-      mainWindow?.webContents.send("player:state", state);
-      if (!overlay.window.isDestroyed()) overlay.window.webContents.send("player:state", state);
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("player:state", state);
+      if (overlay && !overlay.window.isDestroyed())
+        overlay.window.webContents.send("player:state", state);
     },
+  });
+  player.on("failure", (message: string) => {
+    if (!mainWindow?.isDestroyed()) mainWindow?.webContents.send("player:failure", message);
   });
   let closingWindow = false;
   mainWindow.on("close", (event) => {
@@ -112,11 +122,11 @@ const bootstrap = async (): Promise<void> => {
     overlay,
     updates,
   });
-  broadcastPlayerFullscreen(mainWindow, overlay.window);
+  broadcastPlayerFullscreen(mainWindow, overlay?.window);
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
   if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
   else await mainWindow.loadFile(rendererPath);
-  await overlay.load(rendererUrl, rendererPath);
+  await overlay?.load(rendererUrl, rendererPath);
   const stopUpdates = startNativePlayer(player);
   mainWindow.once("closed", stopUpdates);
   if (

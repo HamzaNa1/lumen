@@ -26,6 +26,7 @@ import {
   TrackMemory,
   TrackPreferences,
   type TrackPreferencesPatch,
+  TranscodingSettings,
   User,
   UserRole,
 } from "@lumen/contracts";
@@ -298,6 +299,10 @@ export class ServerApi {
     this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
     this.credentials = options.credentials;
     this.onUnauthorized = options.onUnauthorized;
+  }
+
+  get supportsTranscoding(): boolean {
+    return this.serverIdentity?.capabilities?.transcoding === true;
   }
 
   get supportsWatchGroups(): boolean {
@@ -647,6 +652,16 @@ export class ServerApi {
     return renamed.displayName;
   }
 
+  async transcodingSettings(): Promise<TranscodingSettings> {
+    return this.request("/api/v1/admin/transcoding-settings", {}, TranscodingSettings);
+  }
+  async updateTranscodingSettings(settings: TranscodingSettings): Promise<TranscodingSettings> {
+    return this.request(
+      "/api/v1/admin/transcoding-settings",
+      jsonBody("PUT", settings),
+      TranscodingSettings,
+    );
+  }
   async metadataSettings(): Promise<MetadataSettings> {
     return this.request("/api/v1/admin/metadata-settings", {}, metadataSettingsSchema);
   }

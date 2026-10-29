@@ -5,6 +5,7 @@ import { CircleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
+import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
 import { ACCOUNTS_KEY, PageHeader, useWorkspace } from "./Workspace";
 
 const SettingsRow = ({
@@ -178,6 +179,9 @@ export const SettingsPage = (): React.ReactElement => {
           <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
         </div>
       </section>
+      {account.role === "admin" ? (
+        <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
+      ) : null}
       <section className="settings-group" aria-labelledby="settings-server">
         <h2 id="settings-server">Server</h2>
         <div className="settings-card">

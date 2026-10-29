@@ -9,6 +9,7 @@ import {
   ServerInfo,
   TrackChoiceInput,
   TrackPreferencesPatch,
+  TranscodingSettings,
   User,
 } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
@@ -21,6 +22,7 @@ import type { ServerIdentity } from "../database/Identity";
 import * as S from "../http/Schemas";
 import type { JobServiceShape } from "../jobs/JobService";
 import type { MetadataProvider } from "../media/Tmdb";
+import { Transcoder } from "../media/Transcoder";
 import type { AccessControlShape } from "../services/AccessControl";
 import type { AdminServiceShape } from "../services/AdminService";
 import type { AssetServiceShape } from "../services/AssetService";
@@ -33,6 +35,7 @@ import type { MetadataSettingsShape } from "../services/MetadataSettings";
 import type { PlaybackServiceShape } from "../services/PlaybackService";
 import type { ScanServiceShape } from "../services/ScanService";
 import type { ServerNameShape } from "../services/ServerName";
+import type { TranscodingSettingsShape } from "../services/TranscodingSettings";
 import {
   assertBrowserMutation,
   clearedSessionCookie,
@@ -65,6 +68,7 @@ export interface HttpServices {
   readonly tmdb?: MetadataProvider;
   readonly jobs?: JobServiceShape;
   readonly metadataSettings: MetadataSettingsShape;
+  readonly transcodingSettings: TranscodingSettingsShape;
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
   readonly serverName: ServerNameShape;
@@ -210,6 +214,7 @@ export const makeHttpHandler = (
       { "cache-control": "no-store" },
     );
   };
+  const transcoder = new Transcoder(() => call(services.transcodingSettings.read()));
   const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
@@ -226,6 +231,7 @@ export const makeHttpHandler = (
           serverVersion,
           setupRequired: await call(services.auth.setupRequired()),
           capabilities: {
+            transcoding: true,
             directPlayOnly: true,
             watchGroups: true,
             browserSessions: true,
@@ -327,6 +333,10 @@ export const makeHttpHandler = (
       mediaSessions.set(request, media.sessionId);
       const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
       try {
+        if (url.searchParams.get("transcode") === "1")
+          return await transcoder.serve(request, media, () =>
+            call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now())),
+          );
         return await serveFile({
           request,
           path: media.absolutePath,
@@ -341,6 +351,21 @@ export const makeHttpHandler = (
     if (url.pathname.startsWith("/api/v1/media/")) throw notFound("Endpoint not found");
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
+    if (
+      url.pathname === "/api/v1/admin/transcoding-settings" &&
+      (method === "GET" || method === "PUT")
+    ) {
+      await call(services.access.requireAdmin(principal));
+      if (method === "PUT") {
+        const settings = decode(
+          TranscodingSettings,
+          await body(request, config.maxRequestBodyBytes),
+        );
+        await call(services.transcodingSettings.save(settings));
+        if (!settings.enabled) transcoder.stopAll();
+      }
+      return json(TranscodingSettings, await call(services.transcodingSettings.read()));
+    }
     if (method === "PUT" && url.pathname === "/api/v1/admin/server") {
       await call(services.access.requireAdmin(principal));
       const input = decode(S.ServerRenameBody, await body(request, config.maxRequestBodyBytes));
@@ -998,6 +1023,7 @@ export const makeHttpHandler = (
       parts[4] !== undefined
     ) {
       await call(services.playback.stop(principal, parts[4], Date.now()));
+      transcoder.stop(parts[4], principal.user.id);
       return ack();
     }
     if (

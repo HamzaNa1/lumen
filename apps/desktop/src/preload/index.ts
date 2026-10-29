@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge } from "../shared/bridge";
+import { prepareVideoSurface, releaseVideoSurface } from "./videoSurface";
 
 // The main process validates every argument and shapes every result, so a channel's result is
 // trusted to have the type the bridge declares for it.
@@ -56,6 +57,8 @@ const api: DesktopBridge = {
     listLibraries: () => invoke("admin:listLibraries"),
     renameServer: (name) => invoke("admin:renameServer", name),
     metadataSettings: () => invoke("admin:metadataSettings"),
+    transcodingSettings: () => invoke("admin:transcodingSettings"),
+    updateTranscodingSettings: (settings) => invoke("admin:updateTranscodingSettings", settings),
     updateMetadataSettings: (input) => invoke("admin:updateMetadataSettings", input),
     createLibrary: (input) => invoke("admin:createLibrary", input),
     updateLibrary: (input) => invoke("admin:updateLibrary", input),
@@ -68,15 +71,23 @@ const api: DesktopBridge = {
     jobLog: () => invoke("admin:jobLog"),
   },
   player: {
+    inline: process.platform === "win32",
+    onFailure: subscribe("player:failure"),
     resetTrack: (sessionId, kind) => invoke("player:reset-track", { sessionId, kind }),
     retryTrackMemory: (sessionId) => invoke("player:retry-track-memory", sessionId),
     dismissTrackMemoryError: (sessionId) => invoke("player:dismiss-track-memory-error", sessionId),
-    start: (itemId, startAtSeconds, title, replaces) =>
-      invoke("player:start", { itemId, startAtSeconds, title, replaces }),
+    start: async (itemId, startAtSeconds, title, replaces) => {
+      prepareVideoSurface();
+      return invoke("player:start", { itemId, startAtSeconds, title, replaces });
+    },
     pause: (sessionId, paused) => invoke("player:pause", { sessionId, paused }),
     seek: (sessionId, positionSeconds) => invoke("player:seek", { sessionId, positionSeconds }),
     volume: (sessionId, volume, muted) => invoke("player:volume", { sessionId, volume, muted }),
-    surface: (bounds) => invoke("player:surface", bounds),
+    surface: async (bounds) => {
+      if (bounds !== null) prepareVideoSurface();
+      else releaseVideoSurface();
+      return invoke<{ ok: true }>("player:surface", bounds);
+    },
     selectAudio: (sessionId, streamId) => invoke("player:select-audio", { sessionId, streamId }),
     selectSubtitle: (sessionId, streamId) =>
       invoke("player:select-subtitle", { sessionId, streamId }),

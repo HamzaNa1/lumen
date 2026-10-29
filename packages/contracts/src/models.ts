@@ -174,6 +174,7 @@ export type Dimensions = Schema.Schema.Type<typeof Dimensions>;
 export const PlayableMedia = Schema.Struct({
   /** The file's format, such as "mkv". */
   container: Schema.NullOr(Schema.String),
+  mimeType: Schema.optional(Schema.NullOr(Schema.String)),
   sizeBytes: Schema.NullOr(Schema.Number),
   video: Schema.NullOr(
     Schema.Struct({

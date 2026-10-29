@@ -4,6 +4,7 @@ import net from "node:net";
 // Delay or reject individual frames on the real MPV socket; decoding and the application stay live.
 const connect = net.createConnection;
 let mode = null;
+let decoderRestrictions = {};
 let expectedSpeed = null;
 let pendingHold = null;
 let socket = null;
@@ -37,6 +38,9 @@ const hold = (entry, send) => {
 };
 
 globalThis.__lumenMpvWire = {
+  restrictDecoders(value) {
+    decoderRestrictions = value;
+  },
   arm(next, speed = null) {
     if (mode || pendingHold) throw new Error("Release the previous MPV fault before arming");
     mode = next;
@@ -128,6 +132,14 @@ net.createConnection = (...args) => {
       }
       return true;
     }
+    if (frame.command[0] === "loadfile") {
+      for (const [kind, codec] of Object.entries(decoderRestrictions)) {
+        originalWrite(
+          `${JSON.stringify({ command: ["set_property", kind === "video" ? "vd" : "ad", `${codec},-`] })}\n`,
+          "utf8",
+        );
+      }
+    }
     return originalWrite(chunk, ...rest);
   };
   connected.emit = (event, ...args) => {
@@ -151,7 +163,13 @@ net.createConnection = (...args) => {
         entry.error = frame.error ?? "success";
         if (entry.command[0] === "expand-text") entry.sample = frame.data;
       }
-      if (mode === "hold-sample" && entry?.command[0] === "expand-text") {
+      if (
+        (mode === "hold-sample" && entry?.command[0] === "expand-text") ||
+        (mode === "hold-unpause" &&
+          entry?.command[0] === "set_property" &&
+          entry.command[1] === "pause" &&
+          entry.command[2] === "no")
+      ) {
         mode = null;
         hold(entry, () => emit("data", `${line}\n`));
       } else emit("data", `${line}\n`);

@@ -3,7 +3,6 @@ import { BaseWindow, type BrowserWindow } from "electron";
 import { MacMpvWindow } from "./MacMpvWindow";
 import type { PlayerOverlayWindow } from "./PlayerOverlayWindow";
 import { observePlayerFocus, playerContentBounds } from "./PlayerWindowState";
-import { WindowsMpvHost } from "./WindowsMpvHost";
 
 type NativeVideoWindow = Pick<MacMpvWindow, "sync" | "show" | "dispose">;
 type CreateNativeVideoWindow = (hostView: bigint, windowId: bigint) => NativeVideoWindow;
@@ -13,12 +12,12 @@ type VideoHost = Pick<
 >;
 
 const nativeWindowId = (handle: Buffer): string => {
-  if (process.platform === "win32") return String(handle.readUInt32LE(0));
   if (handle.byteLength >= 8) return handle.readBigUInt64LE(0).toString();
   return String(handle.readUInt32LE(0));
 };
 
 export class MpvSurface {
+  readonly kind = "native" as const;
   private readonly parent: BrowserWindow;
   private host: VideoHost | null = null;
   private macWindow: NativeVideoWindow | null = null;
@@ -49,8 +48,7 @@ export class MpvSurface {
     parent.on("hide", this.onHide);
     this.stopObservingFocus = observePlayerFocus(parent, overlay?.window, (focused) => {
       if (focused) this.show();
-      // Keep Windows video visible without raising it over the foreground app.
-      else if (process.platform !== "win32") this.hideHost();
+      else this.hideHost();
     });
     parent.on("show", this.onShow);
     parent.once("closed", this.onClosed);
@@ -81,8 +79,7 @@ export class MpvSurface {
     const host = this.ensureHost();
     this.playbackVisible = true;
     this.syncHostBounds();
-    if (process.platform === "win32") this.show();
-    else host.showInactive();
+    host.showInactive();
     if (process.platform === "darwin") return [];
     return [`--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
   }
@@ -143,10 +140,6 @@ export class MpvSurface {
 
   private ensureHost(): VideoHost {
     if (this.host !== null && !this.host.isDestroyed()) return this.host;
-    if (process.platform === "win32") {
-      this.host = new WindowsMpvHost(this.parent);
-      return this.host;
-    }
     const host = new BaseWindow({
       parent: this.parent,
       frame: false,

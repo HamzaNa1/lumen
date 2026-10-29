@@ -1,5 +1,17 @@
+import type { Page } from "@playwright/test";
 import { openMovie, pause, playing, signIn } from "./support/browser";
+import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
+
+const requireConversion = (page: Page, webm = false) =>
+  page.addInitScript((webm) => {
+    const canPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function (type) {
+      return type.includes("matroska") || (webm && type.includes("mp4"))
+        ? ""
+        : canPlayType.call(this, type);
+    };
+  }, webm);
 
 test("browser sign-in protects cookies, restores routes and propagates logout across tabs", async ({
   server,
@@ -187,4 +199,249 @@ test("older server capabilities keep playback and settings usable without unsupp
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
   await expect(page.getByRole("button", { name: "Playback info", exact: true })).toBeVisible();
   expect(unsupported).toEqual([]);
+});
+
+for (const output of ["mp4", "webm"] as const)
+  test(`incompatible container and audio transcode to ${output}, seek and close`, async ({
+    server,
+    admin,
+    page,
+  }) => {
+    await requireConversion(page, output === "webm");
+    const library = await server.library(admin.accessToken, "movies", []);
+    const { copyFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    await copyFile(
+      join(import.meta.dirname, "../fixtures/playback-ac3.mkv"),
+      join(library.path, "Film.mkv"),
+    );
+    await server.scan(admin.accessToken, library.id);
+    await signIn(page, server);
+    await openMovie(page, server, library.id);
+    const video = page.locator("video");
+    await expect
+      .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+      .toBeGreaterThan(0.3);
+    expect(await video.getAttribute("src")).toContain("transcode=1");
+    expect(await video.getAttribute("src")).toContain(`format=${output}`);
+    await pause(page);
+    await page.getByRole("button", { name: "Forward 10 seconds" }).click();
+    await expect
+      .poll(async () =>
+        new URL((await video.getAttribute("src")) ?? "http://invalid").searchParams.get("start"),
+      )
+      .not.toBe("0");
+    await page.mouse.move(310, 310);
+    await page.getByRole("button", { name: "Back", exact: true }).click();
+    await expect(video).toHaveCount(0);
+  });
+
+for (const action of ["seek again", "pause"] as const)
+  test(`converted playback preserves intent when ${action} interrupts a seek`, async ({
+    server,
+    admin,
+    page,
+  }) => {
+    await requireConversion(page);
+    const library = await server.library(admin.accessToken, "movies", [], {
+      "Film.mkv": "playback-ac3.mkv",
+    });
+    await signIn(page, server);
+    await openMovie(page, server, library.id);
+    const video = page.locator("video");
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requests = 0;
+    await page.route("**/api/v1/media/**", async (route) => {
+      requests += 1;
+      await gate;
+      await route.continue().catch(() => {});
+    });
+    try {
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => requests).toBeGreaterThan(0);
+      if (action === "seek again") {
+        await page.keyboard.press("ArrowLeft");
+        await expect.poll(() => requests).toBeGreaterThan(1);
+      } else {
+        await pause(page);
+      }
+    } finally {
+      release();
+    }
+    await expect
+      .poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState))
+      .toBeGreaterThanOrEqual(2);
+    if (action === "seek again") await playing(page);
+    else {
+      await expect
+        .poll(() => video.evaluate((element: HTMLVideoElement) => element.paused))
+        .toBe(true);
+      await page.keyboard.press("Space");
+      await playing(page);
+    }
+  });
+
+test.describe("native browser audio", () => {
+  test.beforeEach(async ({ server, admin }) => {
+    const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, enabled: false },
+    });
+  });
+  for (const [format, artwork] of [
+    ["wav", null],
+    ["flac", null],
+    ["opus", null],
+    ["aac", null],
+    ["mp3", "png"],
+    ["flac", "mjpeg"],
+  ] as const)
+    test(`supported ${format}${artwork === null ? "" : ` with ${artwork} artwork`} plays directly with transcoding disabled`, async ({
+      server,
+      admin,
+      page,
+    }) => {
+      const { execFileSync } = await import("node:child_process");
+      const { join } = await import("node:path");
+      const library = await server.library(admin.accessToken, "movies", []);
+      execFileSync("ffmpeg", [
+        "-v",
+        "error",
+        "-i",
+        join(import.meta.dirname, "../fixtures/playback.mp4"),
+        ...(artwork === null
+          ? ["-vn"]
+          : [
+              "-i",
+              join(import.meta.dirname, "../fixtures/still.png"),
+              "-map",
+              "0:a:0",
+              "-map",
+              "1:v:0",
+              "-c:v",
+              artwork,
+              "-disposition:v:0",
+              "attached_pic",
+            ]),
+        join(library.path, `Film.${format}`),
+      ]);
+      await server.scan(admin.accessToken, library.id);
+      if (artwork !== null) {
+        const database = openDatabase(server.databasePath);
+        try {
+          expect(
+            database.prepare("SELECT count(*) AS n FROM streams WHERE kind='video'").get(),
+          ).toEqual({ n: 0 });
+          const track = database.prepare("SELECT id, primary_stream_id FROM tracks").get();
+          // Older scans stored cover art as video; a full rescan repairs that metadata.
+          database
+            .prepare(
+              "INSERT INTO streams(id,source_id,kind,codec,ordinal,is_default) SELECT ?,source_id,'video',?,1,1 FROM tracks",
+            )
+            .run(crypto.randomUUID(), artwork);
+          await server.scan(admin.accessToken, library.id, "full");
+          expect(
+            database.prepare("SELECT count(*) AS n FROM streams WHERE kind='video'").get(),
+          ).toEqual({ n: 0 });
+          expect(database.prepare("SELECT id, primary_stream_id FROM tracks").get()).toEqual(track);
+        } finally {
+          database.close();
+        }
+      }
+      const conversions: string[] = [];
+      page.on("request", (request) => {
+        if (new URL(request.url()).searchParams.get("transcode") === "1")
+          conversions.push(request.url());
+      });
+      await signIn(page, server);
+      await openMovie(page, server, library.id);
+      expect(await page.locator("video").getAttribute("src")).not.toContain("transcode=1");
+      expect(conversions).toEqual([]);
+    });
+});
+
+test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {
+  await requireConversion(page);
+  const library = await server.library(admin.accessToken, "movies", [], {
+    "Film.mkv": "playback-ac3.mkv",
+  });
+  await page.route("**/api/v1/media/**", async (route) => {
+    if (new URL(route.request().url()).searchParams.get("video") === "copy")
+      await route.fulfill({ contentType: "video/mp4", body: "unsupported copied video" });
+    else await route.continue();
+  });
+  await signIn(page, server);
+  await openMovie(page, server, library.id);
+  expect(await page.locator("video").getAttribute("src")).toContain("video=h264");
+});
+
+test("administrators configure transcoding from Settings and persist changes", async ({
+  server,
+  admin: _admin,
+  page,
+}, testInfo) => {
+  await signIn(page, server);
+  await page.goto(`${server.origin}web/settings`);
+  const panel = page.getByRole("region", { name: "Server transcoding" });
+  await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeChecked();
+  await panel.getByLabel("CPU threads per job", { exact: true }).fill("3");
+  let finishSave = () => {};
+  const saveGate = new Promise<void>((resolve) => {
+    finishSave = resolve;
+  });
+  await page.route("**/api/v1/admin/transcoding-settings", async (route) => {
+    const response = await route.fetch();
+    await saveGate;
+    await route.fulfill({ response });
+  });
+  await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  try {
+    await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeDisabled();
+    await expect(
+      panel.getByRole("switch", { name: /^Allow software video encoding/ }),
+    ).toBeDisabled();
+  } finally {
+    finishSave();
+  }
+
+  await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.unroute("**/api/v1/admin/transcoding-settings");
+  await page.reload();
+  await expect(panel.getByLabel("CPU threads per job", { exact: true })).toHaveValue("3");
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("CPU transcoding settings", {
+    body: await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("transcoding-cpu.png"),
+    }),
+    contentType: "image/png",
+  });
+  await panel.getByRole("combobox", { name: "Video encoder" }).click();
+  await page.getByRole("option", { name: "NVIDIA NVENC", exact: true }).click();
+  await panel.getByLabel("GPU devices", { exact: true }).fill("0,1");
+  await panel.getByLabel("Maximum jobs per GPU", { exact: true }).fill("3");
+  await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.reload();
+  await expect(panel.getByLabel("GPU devices", { exact: true })).toHaveValue("0,1");
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("Multi-GPU transcoding settings", {
+    body: await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("transcoding-gpu.png"),
+    }),
+    contentType: "image/png",
+  });
+  await panel.getByRole("switch", { name: /^Enable transcoding/ }).click();
+  await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.reload();
+  await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).not.toBeChecked();
 });

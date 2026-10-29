@@ -8,7 +8,15 @@ runs:
         node-version: 24
     - if: runner.os == 'Linux'
       shell: bash
-      run: sudo apt-get update && sudo apt-get install -y ffmpeg mpv xvfb openbox x11-utils
+      run: sudo apt-get update && sudo apt-get install -y ffmpeg mpv xvfb openbox x11-utils pulseaudio pulseaudio-utils
+    - name: Provide an audio output device for headless Linux playback
+      if: runner.os == 'Linux'
+      shell: bash
+      run: |
+        pulseaudio --start --exit-idle-time=-1
+        pactl load-module module-null-sink sink_name=lumen_e2e rate=48000 channels=2
+        pactl set-default-sink lumen_e2e
+        pactl info
     - if: runner.os == 'macOS'
       shell: bash
       run: brew install ffmpeg mpv

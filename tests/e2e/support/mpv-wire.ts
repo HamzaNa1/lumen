@@ -14,13 +14,19 @@ export interface WireEntry {
   releasedAtMs: number | null;
 }
 interface Wire {
-  arm(mode: "hold-speed" | "fail-speed" | "hold-sample", speed?: number): number;
+  restrictDecoders(value: { video?: string; audio?: string }): void;
+  arm(mode: "hold-speed" | "fail-speed" | "hold-sample" | "hold-unpause", speed?: number): number;
   snapshot(): { captured: WireEntry | null; commands: WireEntry[]; expired: number[] };
   release(): void;
   command(args: (string | number)[]): Promise<unknown>;
 }
 type MainGlobal = typeof globalThis & { __lumenMpvWire: Wire };
 export const mpvWire = (app: ElectronApplication) => ({
+  restrictDecoders: (value: { video?: string; audio?: string }) =>
+    app.evaluate(
+      (_electron, value) => (globalThis as MainGlobal).__lumenMpvWire.restrictDecoders(value),
+      value,
+    ),
   arm: (mode: Parameters<Wire["arm"]>[0]) =>
     app.evaluate((_electron, mode) => (globalThis as MainGlobal).__lumenMpvWire.arm(mode), mode),
   disturb: (mode: "hold-speed" | "fail-speed", targetSeconds: number) =>
@@ -31,7 +37,8 @@ export const mpvWire = (app: ElectronApplication) => ({
         if (typeof speed !== "number") throw new Error("MPV did not report its speed");
         const expectedSpeed = speed < 1 ? 1.01 : 0.99;
         const afterId = wire.arm(mode, expectedSpeed);
-        const offset = expectedSpeed < 1 ? 0.5 : -0.5;
+        // Leave room for seek/render latency while keeping drift below the one-second seek threshold.
+        const offset = expectedSpeed < 1 ? 0.75 : -0.5;
         // Advance the supplied group clock across the IPC/probe latency before seeking.
         await wire.command([
           "seek",

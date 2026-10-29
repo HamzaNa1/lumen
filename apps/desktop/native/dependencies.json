@@ -1,0 +1,16 @@
+{
+  "mpv": {
+    "repository": "https://github.com/shinchiro/mpv-winbuild-cmake",
+    "release": "20261021",
+    "source": "https://github.com/mpv-player/mpv/tree/e471496c56",
+    "clientApi": "2.6",
+    "devArchiveSha256": "efc719eff3dc5954b4a5efc800632808bcec01cc9034940dd14e5eb7fe9ea633",
+    "exeArchiveSha256": "4a355f3e89c83fabc730d33fb4e759dfec747806ed2287b61a90d1681b83e8d3"
+  },
+  "electron": {
+    "release": "44.4.5",
+    "archive": "https://github.com/electron/electron/releases/download/v44.4.5/electron-v44.4.5-win32-x64.zip",
+    "sha256": "11c395820a5aaa8ebcc0686b476d0ac98a730274ebfbdc8cf5538a7c2815cb5d",
+    "libraries": ["vulkan-1.dll", "d3dcompiler_47.dll"]
+  }
+}

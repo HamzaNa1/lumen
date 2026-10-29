@@ -34,6 +34,7 @@ import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
 import { canonicalPath, isPathWithin } from "../core/Paths";
 import { hashToken, newOpaqueToken, newUuid } from "../core/Security";
 import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Schemas";
+import { mediaType } from "../media/MediaType";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
 
@@ -267,6 +268,7 @@ export const makePlaybackService = Effect.gen(function* () {
         streams,
         media: {
           container: extension === "" ? null : extension,
+          mimeType: mediaType(source.absolutePath),
           sizeBytes: source.sizeBytes,
           video:
             video == null
@@ -493,14 +495,6 @@ export const makePlaybackService = Effect.gen(function* () {
         rootPath: libraryRoots.path,
         size: mediaSources.fileSizeBytes,
         modifiedAtMs: sql<number>`coalesce(${mediaSources.modifiedAtMs}, 0)`,
-        mimeType: sql<string>`case
-        when lower(${mediaSources.absolutePath}) like '%.mkv' then 'video/x-matroska'
-        when lower(${mediaSources.absolutePath}) like '%.mp4' or lower(${mediaSources.absolutePath}) like '%.m4v' then 'video/mp4'
-        when lower(${mediaSources.absolutePath}) like '%.webm' then 'video/webm'
-        when lower(${mediaSources.absolutePath}) like '%.flac' then 'audio/flac'
-        when lower(${mediaSources.absolutePath}) like '%.ogg' or lower(${mediaSources.absolutePath}) like '%.oga' then 'audio/ogg'
-        when lower(${mediaSources.absolutePath}) like '%.wav' then 'audio/wav'
-        else 'application/octet-stream' end`,
       })
       .from(playbackGrants)
       .innerJoin(playbackSessions, eq(playbackSessions.id, playbackGrants.sessionId))
@@ -526,7 +520,12 @@ export const makePlaybackService = Effect.gen(function* () {
       Effect.promise(() => canonicalPath(row.absolutePath)),
     ]);
     if (!isPathWithin(root, file)) return yield* notFound("Playback grant is invalid or expired");
-    return { ...row, size: row.size, absolutePath: file };
+    return {
+      ...row,
+      size: row.size,
+      absolutePath: file,
+      mimeType: mediaType(file) ?? "application/octet-stream",
+    };
   });
 
   return {

@@ -21,6 +21,18 @@ export const test = base.extend<{
     try {
       const page = await mainDesktopPage(app);
       await expect(page.getByLabel("Server address")).toBeVisible();
+      if (process.platform === "win32")
+        await testInfo.attach("Electron GPU diagnostics", {
+          body: JSON.stringify(
+            await app.evaluate(async ({ app }) => ({
+              features: app.getGPUFeatureStatus(),
+              info: await app.getGPUInfo("complete"),
+            })),
+            null,
+            2,
+          ),
+          contentType: "application/json",
+        });
       try {
         await app.evaluate(({ app }) => app.focus({ steal: true }));
         await use({ app, page, profile });
@@ -66,10 +78,26 @@ export async function launchDesktop(profile: string, mpvFaults = false) {
   ) as Record<string, string>;
   return _electron.launch({
     executablePath: require("electron") as string,
-    args: [join(repository, "tests/e2e/support/electron-entry.mjs"), "--no-sandbox"],
+    args: [
+      join(repository, "tests/e2e/support/electron-entry.mjs"),
+      "--no-sandbox",
+      // Hosted Windows runners expose Microsoft Basic Render Driver. Exercise D3D11
+      // sharing there; this is software-driver coverage, not physical-GPU evidence.
+      ...(process.platform === "win32" && process.env.GITHUB_ACTIONS === "true"
+        ? ["--ignore-gpu-blocklist", "--use-angle=d3d11"]
+        : []),
+    ],
     cwd: join(repository, "apps/desktop"),
-    env: { ...environment, LUMEN_E2E_PROFILE: profile, LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "" },
+    env: {
+      ...environment,
+      LUMEN_E2E_PROFILE: profile,
+      LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "",
+      LUMEN_E2E_SILENT_AUDIO: "1",
+    },
   });
+}
+export async function desktopPlayerPage(app: ElectronApplication): Promise<Page> {
+  return app.windows().find((window) => window.url().includes("overlay=1")) ?? mainDesktopPage(app);
 }
 export async function mainDesktopPage(app: ElectronApplication): Promise<Page> {
   let selected: Page | undefined;

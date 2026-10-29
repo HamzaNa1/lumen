@@ -1,6 +1,7 @@
 // Starts a server image and checks that it serves the web app it was built with.
 // Usage: bun scripts/smoke-server-image.ts <image>
 import { execFileSync } from "node:child_process";
+import { H264_ENCODERS } from "../apps/server/src/media/VideoEncoders";
 
 const image = process.argv[2];
 if (image === undefined) throw new Error("Usage: bun scripts/smoke-server-image.ts <image>");
@@ -10,6 +11,28 @@ const docker = (...args: string[]): string =>
 
 const container = docker("run", "--detach", "--publish", "127.0.0.1::3210", image);
 try {
+  const encoders = docker("exec", container, "ffmpeg", "-hide_banner", "-encoders");
+  for (const encoder of [
+    ...Object.values(H264_ENCODERS).map((encoder) => encoder.name),
+    "libvpx",
+    "aac",
+    "libopus",
+  ]) {
+    if (!encoders.split(/\s+/).includes(encoder))
+      throw new Error(`The server image is missing encoder ${encoder}`);
+  }
+  for (const encoder of [H264_ENCODERS.nvenc, H264_ENCODERS.vaapi]) {
+    const options = docker(
+      "exec",
+      container,
+      "ffmpeg",
+      "-hide_banner",
+      "-h",
+      `encoder=${encoder.name}`,
+    );
+    if (!new RegExp(`^\\s+${encoder.profile}\\s+`, "m").test(options))
+      throw new Error(`${encoder.name} does not support configured profile ${encoder.profile}`);
+  }
   const port = docker("port", container, "3210/tcp").split(":").at(-1);
   const origin = `http://127.0.0.1:${port}`;
   const expectStatus = async (path: string, status: number, init?: RequestInit) => {
