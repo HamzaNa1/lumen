@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
-import { connectDesktop, expect, test } from "./support/desktop";
+import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
 import { mpvWire } from "./support/mpv-wire";
 import { NetworkProxy } from "./support/proxy";
 import { repository } from "./support/server";
@@ -35,8 +35,7 @@ for (const kind of ["video", "audio", "both"] as const)
     const { page, app } = desktop;
     try {
       await connectDesktop(page, proxy);
-      const overlay = app.windows().find((window) => window.url().includes("overlay=1"));
-      if (!overlay) throw new Error("Player overlay is missing");
+      const overlay = await desktopPlayerPage(app);
       await mpvWire(app).restrictDecoders(
         kind === "both"
           ? { video: "h264", audio: "aac" }
@@ -236,8 +235,7 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled", "unsupported"]
     const { page, app } = desktop;
     try {
       await connectDesktop(page, proxy);
-      const overlay = app.windows().find((window) => window.url().includes("overlay=1"));
-      if (!overlay) throw new Error("Player overlay is missing");
+      const overlay = await desktopPlayerPage(app);
       if (scenario !== "runtime-disabled") await mpvWire(app).restrictDecoders({ audio: "aac" });
       await page.getByRole("link", { name: "movies", exact: true }).click();
       await page

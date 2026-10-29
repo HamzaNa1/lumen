@@ -96,6 +96,9 @@ export async function launchDesktop(profile: string, mpvFaults = false) {
     },
   });
 }
+export async function desktopPlayerPage(app: ElectronApplication): Promise<Page> {
+  return app.windows().find((window) => window.url().includes("overlay=1")) ?? mainDesktopPage(app);
+}
 export async function mainDesktopPage(app: ElectronApplication): Promise<Page> {
   let selected: Page | undefined;
   let windows: {
