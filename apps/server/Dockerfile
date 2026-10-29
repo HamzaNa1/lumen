@@ -1,5 +1,3 @@
-FROM mwader/static-ffmpeg:9.0@sha256:b90574a4e2ae62b763c39c384526689e7eb435da6398f4fb3f6c3f1c6a14ce33 AS ffprobe
-
 FROM oven/bun:1.4.4 AS dependencies
 WORKDIR /app
 COPY package.json bun.lock bunfig.toml tsconfig.base.json biome.json ./
@@ -32,12 +30,15 @@ WORKDIR /app
 ENV NODE_ENV=production \
     LUMEN_HOST=0.0.0.0 \
     LUMEN_DATA_DIR=/data \
-    LUMEN_DATABASE_PATH=/data/lumen.sqlite
+    LUMEN_DATABASE_PATH=/data/lumen.sqlite \
+    NVIDIA_DRIVER_CAPABILITIES=compute,video,utility
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg mesa-va-drivers \
+    && if [ "$(dpkg --print-architecture)" = amd64 ]; then apt-get install -y --no-install-recommends intel-media-va-driver; fi \
+    && rm -rf /var/lib/apt/lists/*
 RUN groupadd --system --gid 10001 lumen \
     && useradd --system --uid 10001 --gid 10001 --create-home lumen \
     && install -d -o 10001 -g 10001 /app /data /media
-COPY --from=ffprobe /ffmpeg /usr/local/bin/ffmpeg
-COPY --from=ffprobe /ffprobe /usr/local/bin/ffprobe
 COPY --chown=10001:10001 --from=dependencies /app/node_modules ./node_modules
 COPY --chown=10001:10001 --from=dependencies /app/package.json ./package.json
 COPY --chown=10001:10001 --from=dependencies /app/bun.lock ./bun.lock

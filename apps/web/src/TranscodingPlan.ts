@@ -56,21 +56,8 @@ export const transcodingPlan = (
   canSelectAudio = false,
 ): TranscodingPlan | null => {
   if (!session.media) return null;
-  const container = session.media.container;
-  const mime =
-    container === "webm"
-      ? "video/webm"
-      : container === "ogg" || container === "oga"
-        ? "audio/ogg"
-        : container === "flac"
-          ? "audio/flac"
-          : container === "wav"
-            ? "audio/wav"
-            : container === "mp3"
-              ? "audio/mpeg"
-              : ["mp4", "m4v", "m4a", "mov"].includes(container ?? "")
-                ? "video/mp4"
-                : null;
+  const mime = session.media.mimeType;
+  if (!mime) return null;
   const video = session.media.video?.codec;
   const { streams: audios, selected, index } = selectedAudio(session);
   const audio = selected?.codec;
@@ -82,16 +69,12 @@ export const transcodingPlan = (
     codec === undefined || codec === null
       ? codec === undefined
       : mapping[codec] !== undefined && canPlay(`${type}; codecs="${mapping[codec]}"`) !== "";
-  const nativeAudio =
-    session.media.video === null &&
-    ((container === "wav" && audio?.startsWith("pcm_")) ||
-      (container === "flac" && audio === "flac") ||
-      (container === "mp3" && audio === "mp3"));
+  const audioProbe = audioCodecProbe(audio ?? null, mime);
   if (
     mime &&
     canPlay(mime) !== "" &&
     supported(video, videoCodecs, mime) &&
-    (nativeAudio || supported(audio, audioCodecs, mime)) &&
+    (audio === undefined || (audioProbe !== null && canPlay(audioProbe) !== "")) &&
     (canSelectAudio || selected === (audios.find((stream) => stream.isDefault) ?? audios[0]))
   )
     return null;
@@ -128,7 +111,15 @@ export const fallbackTranscodingPlan = (
   };
 };
 
-export const audioCodecProbe = (codec: string | null): string | null => {
-  const value = audioCodecs[codec?.toLowerCase() ?? ""];
-  return value === undefined ? null : `audio/mp4; codecs="${value}"`;
+export const audioCodecProbe = (codec: string | null, mime = "audio/mp4"): string | null => {
+  const name = codec?.toLowerCase() ?? "";
+  if (
+    (mime === "audio/aac" && name === "aac") ||
+    (mime === "audio/mpeg" && name === "mp3") ||
+    (mime === "audio/flac" && name === "flac") ||
+    (mime === "audio/wav" && name.startsWith("pcm_"))
+  )
+    return mime;
+  const value = audioCodecs[name];
+  return value === undefined ? null : `${mime}; codecs="${value}"`;
 };

@@ -1,5 +1,16 @@
+import type { Page } from "@playwright/test";
 import { openMovie, pause, playing, signIn } from "./support/browser";
 import { expect, test } from "./support/server";
+
+const requireConversion = (page: Page, webm = false) =>
+  page.addInitScript((webm) => {
+    const canPlayType = HTMLMediaElement.prototype.canPlayType;
+    HTMLMediaElement.prototype.canPlayType = function (type) {
+      return type.includes("matroska") || (webm && type.includes("mp4"))
+        ? ""
+        : canPlayType.call(this, type);
+    };
+  }, webm);
 
 test("browser sign-in protects cookies, restores routes and propagates logout across tabs", async ({
   server,
@@ -195,13 +206,7 @@ for (const output of ["mp4", "webm"] as const)
     admin,
     page,
   }) => {
-    if (output === "webm")
-      await page.addInitScript(() => {
-        const canPlayType = HTMLMediaElement.prototype.canPlayType;
-        HTMLMediaElement.prototype.canPlayType = function (type) {
-          return type.includes("mp4") ? "" : canPlayType.call(this, type);
-        };
-      });
+    await requireConversion(page, output === "webm");
     const library = await server.library(admin.accessToken, "movies", []);
     const { copyFile } = await import("node:fs/promises");
     const { join } = await import("node:path");
@@ -230,6 +235,54 @@ for (const output of ["mp4", "webm"] as const)
     await expect(video).toHaveCount(0);
   });
 
+for (const action of ["seek again", "pause"] as const)
+  test(`converted playback preserves intent when ${action} interrupts a seek`, async ({
+    server,
+    admin,
+    page,
+  }) => {
+    await requireConversion(page);
+    const library = await server.library(admin.accessToken, "movies", [], {
+      "Film.mkv": "playback-ac3.mkv",
+    });
+    await signIn(page, server);
+    await openMovie(page, server, library.id);
+    const video = page.locator("video");
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let requests = 0;
+    await page.route("**/api/v1/media/**", async (route) => {
+      requests += 1;
+      await gate;
+      await route.continue().catch(() => {});
+    });
+    try {
+      await page.keyboard.press("ArrowRight");
+      await expect.poll(() => requests).toBeGreaterThan(0);
+      if (action === "seek again") {
+        await page.keyboard.press("ArrowLeft");
+        await expect.poll(() => requests).toBeGreaterThan(1);
+      } else {
+        await pause(page);
+      }
+    } finally {
+      release();
+    }
+    await expect
+      .poll(() => video.evaluate((element: HTMLVideoElement) => element.readyState))
+      .toBeGreaterThanOrEqual(2);
+    if (action === "seek again") await playing(page);
+    else {
+      await expect
+        .poll(() => video.evaluate((element: HTMLVideoElement) => element.paused))
+        .toBe(true);
+      await page.keyboard.press("Space");
+      await playing(page);
+    }
+  });
+
 test.describe("native browser audio", () => {
   test.beforeEach(async ({ server, admin }) => {
     const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
@@ -241,7 +294,7 @@ test.describe("native browser audio", () => {
       body: { ...settings, enabled: false },
     });
   });
-  for (const format of ["wav", "flac"] as const)
+  for (const format of ["wav", "flac", "opus", "aac"] as const)
     test(`supported ${format} plays directly with transcoding disabled`, async ({
       server,
       admin,
@@ -266,6 +319,7 @@ test.describe("native browser audio", () => {
 });
 
 test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {
+  await requireConversion(page);
   const library = await server.library(admin.accessToken, "movies", [], {
     "Film.mkv": "playback-ac3.mkv",
   });

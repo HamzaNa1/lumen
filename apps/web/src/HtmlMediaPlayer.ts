@@ -130,6 +130,8 @@ interface ActiveSession {
   /** Whether playback was running when the page was hidden. */
   playingBeforeSuspend: boolean;
   suspendedPositionSeconds: number | null;
+  desiredPaused: boolean;
+  replacingSource: boolean;
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
@@ -238,11 +240,12 @@ export class HtmlMediaPlayer {
 
   async pause(sessionId: string, paused: boolean): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
+    active.desiredPaused = paused;
     if (paused) {
       this.element.pause();
       // The pause already holds; what the server makes of the save is not something to wait on.
       void active.reporter.saveProgress(this.snapshot(active));
-    } else await this.play(active);
+    } else if (!active.replacingSource) await this.play(active);
     return this.publishIfActive(active);
   }
 
@@ -251,17 +254,19 @@ export class HtmlMediaPlayer {
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
     if (this.conversion !== null) {
-      const paused = this.element.paused;
+      active.replacingSource = true;
       this.unload();
       const generation = ++this.generation;
       try {
         await this.load(generation, active.session, positionSeconds);
       } catch (cause) {
+        if (generation === this.generation) active.replacingSource = false;
         if (generation === this.generation || this.active !== active) throw cause;
       }
       if (this.active !== active) throw inactive();
       if (generation !== this.generation) return this.snapshot(active);
-      if (!paused) await this.play(active);
+      active.replacingSource = false;
+      if (!active.desiredPaused) await this.play(active);
     } else this.element.currentTime = positionSeconds;
     return this.publishIfActive(active);
   }
@@ -375,7 +380,10 @@ export class HtmlMediaPlayer {
     if (tracks === undefined || index < 0 || tracks.length !== active.streams.length)
       throw new Error("Audio stream is unavailable");
     const stream = active.streams[index];
-    const probe = audioCodecProbe(stream?.codec ?? null);
+    const probe = audioCodecProbe(
+      stream?.codec ?? null,
+      active.session.media?.mimeType ?? "audio/mp4",
+    );
     if (probe !== null && this.element.canPlayType(probe) === "") {
       this.conversion = {
         ...fallbackTranscodingPlan(active.session, (mime) => this.element.canPlayType(mime)),
@@ -467,7 +475,7 @@ export class HtmlMediaPlayer {
     if (active === null || active.suspended) return;
     active.suspendedPositionSeconds = this.snapshot(active).positionSeconds;
     active.suspended = true;
-    active.playingBeforeSuspend = !this.element.paused;
+    active.playingBeforeSuspend = !active.desiredPaused;
     this.element.pause();
     this.leaving = true;
     const state = this.snapshot(active);
@@ -591,6 +599,8 @@ export class HtmlMediaPlayer {
       suspended: false,
       playingBeforeSuspend: false,
       suspendedPositionSeconds: null,
+      desiredPaused: paused,
+      replacingSource: false,
     };
     this.active = active;
     try {
@@ -844,10 +854,10 @@ export class HtmlMediaPlayer {
 
   /** Replaces a session the server no longer honours with a new one at the same position. */
   private async reopen(active: ActiveSession): Promise<void> {
-    const { positionSeconds, paused } = this.snapshot(active);
+    const { positionSeconds } = this.snapshot(active);
     const wasPaused = active.suspended
       ? !active.playingBeforeSuspend
-      : paused && !active.awaitingInteraction;
+      : active.desiredPaused && !active.awaitingInteraction;
     const generation = ++this.generation;
     // The application keeps showing this playback while its session is replaced.
     await this.stopActive({ saveProgress: false, announce: false });
@@ -922,7 +932,7 @@ export class HtmlMediaPlayer {
     return {
       sessionId: active.session.sessionId,
       itemId: active.session.itemId,
-      paused: element.paused,
+      paused: active.replacingSource ? active.desiredPaused : element.paused,
       positionSeconds:
         active.suspendedPositionSeconds ??
         (Number.isFinite(element.currentTime)

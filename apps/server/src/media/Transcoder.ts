@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import type { TranscodingSettings } from "@lumen/contracts";
 import { badRequest, ServerError } from "../core/Errors";
+import { H264_ENCODERS } from "./VideoEncoders";
 
 const unavailable = (message: string) =>
   new ServerError({ status: 503, code: "service_unavailable", message });
@@ -145,17 +146,11 @@ export class Transcoder {
       );
     else if (video === "copy") args.push("-c:v", "copy");
     else {
-      args.push(
-        "-c:v",
-        config.encoder === "cpu"
-          ? "libx264"
-          : config.encoder === "nvenc"
-            ? "h264_nvenc"
-            : "h264_vaapi",
-      );
+      const encoder = H264_ENCODERS[config.encoder];
+      args.push("-c:v", encoder.name);
       if (config.encoder === "cpu") args.push("-preset", "veryfast", "-crf", "23");
       if (gpu !== null && config.encoder === "nvenc") args.push("-gpu", gpu);
-      args.push("-profile:v", "baseline", "-bf", "0");
+      args.push("-profile:v", encoder.profile, "-bf", "0");
       args.push(
         "-vf",
         config.encoder === "vaapi"
