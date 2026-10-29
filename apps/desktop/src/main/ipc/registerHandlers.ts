@@ -12,6 +12,7 @@ import {
   type ServerDiscovery,
   TrackKind,
   TrackPreferencesPatch,
+  TranscodingSettings,
   UserRole,
   WatchAction,
 } from "@lumen/contracts";
@@ -364,6 +365,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const serverName = await client.renameServer(input);
     if (serverId !== undefined) await dependencies.registry.updateServerName(serverId, serverName);
   });
+  handle("admin:transcodingSettings", async () => activeClient(dependencies).transcodingSettings());
+  handle("admin:updateTranscodingSettings", async (_event, raw) =>
+    activeClient(dependencies).updateTranscodingSettings(decode(TranscodingSettings, raw)),
+  );
   handle("admin:metadataSettings", async () => activeClient(dependencies).metadataSettings());
   handle("admin:updateMetadataSettings", async (_event, raw) => {
     const input = decode(Schema.Struct({ tmdbApiKey: Schema.NullOr(Schema.String) }), raw);

@@ -24,6 +24,7 @@ import type {
   TrackKind,
   TrackPreferences,
   TrackPreferencesPatch,
+  TranscodingSettings,
   WatchAction,
   WatchStatus,
 } from "@lumen/contracts";
@@ -92,6 +93,10 @@ export interface ArtworkRuntime {
 }
 
 export interface AdminRuntime {
+  readonly transcodingSettings: () => Promise<TranscodingSettings>;
+  readonly updateTranscodingSettings: (
+    settings: TranscodingSettings,
+  ) => Promise<TranscodingSettings>;
   readonly listUsers: () => Promise<ReadonlyArray<ManagedUser>>;
   readonly createUser: (input: CreateUserInput) => Promise<ManagedUser>;
   readonly updateUser: (

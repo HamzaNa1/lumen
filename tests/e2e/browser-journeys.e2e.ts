@@ -231,7 +231,16 @@ for (const output of ["mp4", "webm"] as const)
   });
 
 test.describe("native browser audio", () => {
-  test.use({ serverEnvironment: { LUMEN_TRANSCODING_ENABLED: "false" } });
+  test.beforeEach(async ({ server, admin }) => {
+    const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, enabled: false },
+    });
+  });
   for (const format of ["wav", "flac"] as const)
     test(`supported ${format} plays directly with transcoding disabled`, async ({
       server,
@@ -268,4 +277,43 @@ test("a rejected copied video retries with actual encoding", async ({ server, ad
   await signIn(page, server);
   await openMovie(page, server, library.id);
   expect(await page.locator("video").getAttribute("src")).toContain("video=h264");
+});
+
+test("administrators configure transcoding from Settings and persist changes", async ({
+  server,
+  admin: _admin,
+  page,
+}, testInfo) => {
+  await signIn(page, server);
+  await page.goto(`${server.origin}web/settings`);
+  const panel = page.getByRole("region", { name: "Server transcoding" });
+  await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeChecked();
+  await panel.getByLabel("CPU threads per job", { exact: true }).fill("3");
+  await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.reload();
+  await expect(panel.getByLabel("CPU threads per job", { exact: true })).toHaveValue("3");
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("CPU transcoding settings", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+  await panel.getByRole("combobox", { name: "Video encoder" }).click();
+  await page.getByRole("option", { name: "NVIDIA NVENC", exact: true }).click();
+  await panel.getByLabel("GPU devices", { exact: true }).fill("0,1");
+  await panel.getByLabel("Maximum jobs per GPU", { exact: true }).fill("3");
+  await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.reload();
+  await expect(panel.getByLabel("GPU devices", { exact: true })).toHaveValue("0,1");
+  await panel.scrollIntoViewIfNeeded();
+  await testInfo.attach("Multi-GPU transcoding settings", {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: "image/png",
+  });
+  await panel.getByRole("switch", { name: /^Enable transcoding/ }).click();
+  await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.reload();
+  await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).not.toBeChecked();
 });

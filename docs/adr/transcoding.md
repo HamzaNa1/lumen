@@ -12,6 +12,8 @@ Offer CPU encoding, NVIDIA NVENC and Linux VAAPI with explicit device lists and 
 
 This establishes broad input codec support through FFmpeg, not a promise of every Jellyfin feature. Output is currently H.264/AAC or VP8/Opus, converted audio is stereo, and there is no adaptive bitrate ladder, subtitle burn-in, HDR tone mapping or Dolby Vision preservation. Actual input support depends on the installed FFmpeg build; GPU execution additionally depends on drivers and device access. CPU and real-browser tests cannot certify GPU hardware.
 
+Persist transcoding policy in the server database and expose it only to administrators through Settings. Each new conversion reads the current policy, so saving requires no restart. Existing jobs retain their settings until completion; disabling conversion cancels active jobs and pending starts. Environment overrides were rejected to keep one authoritative configuration surface.
+
 ## Alternatives
 
 - Full-file conversion caches need storage quotas, eviction and partial-file ownership while continuing work viewers no longer need.

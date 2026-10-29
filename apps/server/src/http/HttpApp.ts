@@ -9,6 +9,7 @@ import {
   ServerInfo,
   TrackChoiceInput,
   TrackPreferencesPatch,
+  TranscodingSettings,
   User,
 } from "@lumen/contracts";
 import { Effect, Schema } from "effect";
@@ -34,6 +35,7 @@ import type { MetadataSettingsShape } from "../services/MetadataSettings";
 import type { PlaybackServiceShape } from "../services/PlaybackService";
 import type { ScanServiceShape } from "../services/ScanService";
 import type { ServerNameShape } from "../services/ServerName";
+import type { TranscodingSettingsShape } from "../services/TranscodingSettings";
 import {
   assertBrowserMutation,
   clearedSessionCookie,
@@ -66,6 +68,7 @@ export interface HttpServices {
   readonly tmdb?: MetadataProvider;
   readonly jobs?: JobServiceShape;
   readonly metadataSettings: MetadataSettingsShape;
+  readonly transcodingSettings: TranscodingSettingsShape;
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
   readonly serverName: ServerNameShape;
@@ -211,7 +214,7 @@ export const makeHttpHandler = (
       { "cache-control": "no-store" },
     );
   };
-  const transcoder = new Transcoder(config.transcoding);
+  const transcoder = new Transcoder(() => call(services.transcodingSettings.read()));
   const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
@@ -347,6 +350,21 @@ export const makeHttpHandler = (
     if (url.pathname.startsWith("/api/v1/media/")) throw notFound("Endpoint not found");
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
+    if (
+      url.pathname === "/api/v1/admin/transcoding-settings" &&
+      (method === "GET" || method === "PUT")
+    ) {
+      await call(services.access.requireAdmin(principal));
+      if (method === "PUT") {
+        const settings = decode(
+          TranscodingSettings,
+          await body(request, config.maxRequestBodyBytes),
+        );
+        await call(services.transcodingSettings.save(settings));
+        if (!settings.enabled) transcoder.stopAll();
+      }
+      return json(TranscodingSettings, await call(services.transcodingSettings.read()));
+    }
     if (method === "PUT" && url.pathname === "/api/v1/admin/server") {
       await call(services.access.requireAdmin(principal));
       const input = decode(S.ServerRenameBody, await body(request, config.maxRequestBodyBytes));

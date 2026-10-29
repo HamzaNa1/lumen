@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, repository, test } from "./support/server";
+import { expect, password, repository, test } from "./support/server";
 
 test("scanned media streams exact bytes with scoped grants, range and conditional request semantics", async ({
   server,
@@ -153,8 +153,43 @@ test("transcoding produces playable H264/AAC, supports offsets and retains grant
 });
 
 test.describe("transcoding disabled", () => {
-  test.use({ serverEnvironment: { LUMEN_TRANSCODING_ENABLED: "false" } });
   test("preserves direct play and rejects conversion", async ({ server, admin }) => {
+    const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, enabled: false },
+    });
+    await server.api("/users", {
+      token: admin.accessToken,
+      body: { username: "viewer", displayName: "Viewer", password },
+    });
+    const viewer = await server.login("viewer");
+    await server.api("/admin/transcoding-settings", { token: viewer.accessToken, status: 403 });
+    await server.api("/admin/transcoding-settings", {
+      token: viewer.accessToken,
+      method: "PUT",
+      body: settings,
+      status: 403,
+    });
+    for (const patch of [
+      { threads: 0 },
+      { maxJobs: 129 },
+      { encoder: "unknown" },
+      { gpus: ["0", "0"] },
+      { encoder: "vaapi", gpus: ["0"] },
+      { ffmpeg: " " },
+    ]) {
+      await server.api("/admin/transcoding-settings", {
+        token: admin.accessToken,
+        method: "PUT",
+        body: { ...settings, ...patch },
+        status: 400,
+      });
+    }
+    await server.restart();
     const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
     const item = (await server.items(admin.accessToken, library.id))[0];
     const playback = await server.play(admin.accessToken, item?.id ?? "");
@@ -169,8 +204,15 @@ test.describe("transcoding disabled", () => {
 });
 
 test.describe("transcoding resource ownership", () => {
-  test.use({ serverEnvironment: { LUMEN_TRANSCODING_MAX_JOBS: "1" } });
   test("closing or disconnecting playback frees the encoder slot", async ({ server, admin }) => {
+    const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, maxJobs: 1 },
+    });
     const library = await server.library(admin.accessToken, "movies", []);
     execFileSync("ffmpeg", [
       "-v",

@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import type { TranscodingConfig } from "../config/TranscodingConfig";
+import type { TranscodingSettings } from "@lumen/contracts";
 import { badRequest, ServerError } from "../core/Errors";
 
 const unavailable = (message: string) =>
@@ -17,7 +17,12 @@ interface Job {
 export class Transcoder {
   private readonly jobs = new Set<Job>();
   private readonly starts = new Map<string, { readonly userId: string; readonly id: symbol }>();
-  constructor(private readonly config: TranscodingConfig) {}
+  constructor(private readonly settings: () => Promise<TranscodingSettings>) {}
+
+  stopAll(): void {
+    this.starts.clear();
+    for (const job of this.jobs) job.stop();
+  }
 
   stop(sessionId: string, userId: string): void {
     if (this.starts.get(sessionId)?.userId === userId) this.starts.delete(sessionId);
@@ -52,38 +57,44 @@ export class Transcoder {
       throw badRequest("Invalid transcoding parameters");
     const audio = start > 0 && requestedAudio === "copy" ? "aac" : requestedAudio;
     const video = start > 0 && requestedVideo === "copy" ? "h264" : requestedVideo;
-    if (!this.config.enabled) throw unavailable("Transcoding is disabled on this server");
+
     const headers = {
       "content-type": format === "webm" ? "video/webm" : "video/mp4",
       "cache-control": "no-store",
       "accept-ranges": "none",
     };
-    if (request.method === "HEAD") return new Response(null, { headers });
+    if (request.method === "HEAD") {
+      if (!(await this.settings()).enabled)
+        throw unavailable("Transcoding is disabled on this server");
+      return new Response(null, { headers });
+    }
     if (request.signal.aborted) throw badRequest("Playback request was cancelled");
     const pending = Symbol();
     this.starts.set(media.sessionId, { userId: media.userId, id: pending });
     const previous = [...this.jobs].filter((job) => job.sessionId === media.sessionId);
     for (const job of previous) job.stop();
     await Promise.all(previous.map((job) => job.finished));
+    const config = await this.settings();
     if (this.starts.get(media.sessionId)?.id !== pending)
       throw badRequest("Playback request was superseded");
     this.starts.delete(media.sessionId);
+    if (!config.enabled) throw unavailable("Transcoding is disabled on this server");
     if (request.signal.aborted) throw badRequest("Playback request was cancelled");
-    if (this.jobs.size >= this.config.maxJobs) throw unavailable("All transcoding slots are busy");
+    if (this.jobs.size >= config.maxJobs) throw unavailable("All transcoding slots are busy");
     if (
-      !this.config.softwareVideo &&
-      (video === "vp8" || (video === "h264" && this.config.encoder === "cpu"))
+      !config.softwareVideo &&
+      (video === "vp8" || (video === "h264" && config.encoder === "cpu"))
     )
       throw unavailable("Software video encoding is disabled on this server");
     let gpu: string | null = null;
-    if (video === "h264" && this.config.encoder !== "cpu") {
-      const loads = this.config.gpus.map((device) => ({
+    if (video === "h264" && config.encoder !== "cpu") {
+      const loads = config.gpus.map((device) => ({
         device,
         count: [...this.jobs].filter((job) => job.gpu === device).length,
       }));
       loads.sort((a, b) => a.count - b.count);
       const selected = loads[0];
-      if (!selected || selected.count >= this.config.gpuJobs)
+      if (!selected || selected.count >= config.gpuJobs)
         throw unavailable("All GPU slots are busy");
       gpu = selected.device;
     }
@@ -93,11 +104,11 @@ export class Transcoder {
       "error",
       "-nostdin",
       "-threads",
-      String(this.config.threads),
+      String(config.threads),
       "-filter_threads",
-      String(this.config.threads),
+      String(config.threads),
     ];
-    if (gpu !== null && this.config.encoder === "vaapi") args.push("-vaapi_device", gpu);
+    if (gpu !== null && config.encoder === "vaapi") args.push("-vaapi_device", gpu);
     args.push(
       "-ss",
       String(start),
@@ -130,18 +141,18 @@ export class Transcoder {
     else {
       args.push(
         "-c:v",
-        this.config.encoder === "cpu"
+        config.encoder === "cpu"
           ? "libx264"
-          : this.config.encoder === "nvenc"
+          : config.encoder === "nvenc"
             ? "h264_nvenc"
             : "h264_vaapi",
       );
-      if (this.config.encoder === "cpu") args.push("-preset", "veryfast", "-crf", "23");
-      if (gpu !== null && this.config.encoder === "nvenc") args.push("-gpu", gpu);
+      if (config.encoder === "cpu") args.push("-preset", "veryfast", "-crf", "23");
+      if (gpu !== null && config.encoder === "nvenc") args.push("-gpu", gpu);
       args.push("-profile:v", "baseline", "-bf", "0");
       args.push(
         "-vf",
-        this.config.encoder === "vaapi"
+        config.encoder === "vaapi"
           ? "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=nv12,hwupload"
           : "pad=ceil(iw/2)*2:ceil(ih/2)*2,format=yuv420p",
         "-g",
@@ -150,7 +161,7 @@ export class Transcoder {
     }
     args.push(
       "-threads",
-      String(this.config.threads),
+      String(config.threads),
       "-c:a",
       audio === "copy" ? "copy" : audio === "opus" ? "libopus" : "aac",
     );
@@ -164,7 +175,7 @@ export class Transcoder {
       );
     else args.push("-cluster_time_limit", "1000");
     args.push("-f", format, "pipe:1");
-    const child = spawn(this.config.ffmpeg, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(config.ffmpeg, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stopped = false;
     let killTimer: ReturnType<typeof setTimeout> | undefined;
     const stop = () => {

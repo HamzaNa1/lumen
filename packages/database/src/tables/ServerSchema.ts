@@ -657,3 +657,8 @@ export const mediaTrackOverrides = sqliteTable(
   },
   (table) => [primaryKey({ columns: [table.userId, table.itemId] })],
 );
+
+export const transcodingSettings = sqliteTable("transcoding_settings", {
+  id: integer("id").primaryKey(),
+  settings: text("settings").notNull(),
+});
