@@ -76,6 +76,24 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           .poll(() => page.evaluate(() => window.lumen.player.state()))
           .toMatchObject({ itemId: film, paused: false });
         await expect.poll(() => wire.command(["get_property", "time-pos"])).toBeGreaterThan(1.2);
+        if (scenario !== "hold-sample") {
+          // Startup synchronization can still seek after MPV starts advancing. Let it converge
+          // before injecting a competing seek, otherwise it can erase the intended drift.
+          await expect
+            .poll(async () => {
+              const seeking = await wire.command(["get_property", "seeking"]);
+              const buffering = await wire.command(["get_property", "paused-for-cache"]);
+              const position = await wire.command(["get_property", "time-pos"]);
+              const playback = owner.status.group?.playback;
+              return seeking === false &&
+                buffering === false &&
+                typeof position === "number" &&
+                playback
+                ? Math.abs(position - watchPosition(playback, owner.serverNow))
+                : Number.POSITIVE_INFINITY;
+            })
+            .toBeLessThan(0.35);
+        }
         if (scenario === "hold-sample") {
           await wire.arm("hold-sample");
           await expect
