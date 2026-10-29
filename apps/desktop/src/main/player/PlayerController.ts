@@ -184,6 +184,10 @@ export class PlayerController extends EventEmitter {
       ipc.on("disconnected", (cause: Error) => this.failActive(active, cause));
       const onMediaFailure = (cause: Error) => {
         if (active.media.loading || active.recovering || this.active !== active) return;
+        if (active.media.transcoded && this.state?.paused) {
+          active.media.suspend();
+          return;
+        }
         if (
           cause instanceof MediaDecodeFailure &&
           !active.media.transcoded &&
@@ -306,7 +310,9 @@ export class PlayerController extends EventEmitter {
     }
     const previous = this.requireState();
     try {
-      await this.motion(active, ["set_property", "pause", paused ? "yes" : "no"]);
+      if (!paused && previous.paused && active.media.transcoded)
+        await this.reloadConverted(active, previous.positionSeconds);
+      else await this.motion(active, ["set_property", "pause", paused ? "yes" : "no"]);
     } catch (cause) {
       this.emitError(cause);
       throw cause;
@@ -341,7 +347,7 @@ export class PlayerController extends EventEmitter {
 
   async buffer(sessionId: string): Promise<PlayerBuffer> {
     const active = this.requireActive(sessionId);
-    if (active.media.loading) return { aheadSeconds: 0, starved: false, settled: false };
+    if (!active.media.ready) return { aheadSeconds: 0, starved: false, settled: false };
     // Until a seek has finished, the cache still describes the position MPV is leaving.
     if ((await this.command(active, ["get_property", "seeking"])) !== false)
       return { aheadSeconds: 0, starved: false, settled: false };
@@ -604,7 +610,7 @@ export class PlayerController extends EventEmitter {
   async sample(sessionId: string): Promise<WatchPlaybackSample | null> {
     const active = this.requireActive(sessionId);
     const revision = active.motionRevision;
-    if (active.pendingMotion > 0 || active.media.loading) return null;
+    if (active.pendingMotion > 0 || !active.media.ready) return null;
     const sample = await sampleMpvPlayback(
       { command: (args) => this.command(active, args) },
       this.requireState(),
@@ -706,7 +712,7 @@ export class PlayerController extends EventEmitter {
       active === null ||
       state === null ||
       this.refreshing === active ||
-      active.media.loading ||
+      !active.media.ready ||
       active.pendingMotion > 0
     )
       return;
@@ -731,7 +737,7 @@ export class PlayerController extends EventEmitter {
       if (
         this.active !== active ||
         this.state !== state ||
-        active.media.loading ||
+        !active.media.ready ||
         active.motionRevision !== revision
       )
         return;
@@ -808,7 +814,7 @@ export class PlayerController extends EventEmitter {
   }
 
   private async samplePosition(active: ActiveSession, state: PlayerState): Promise<PlayerState> {
-    if (active.media.loading) return state;
+    if (!active.media.ready) return state;
     let positionSeconds = state.positionSeconds;
     try {
       const position = await active.ipc.command(["get_property", "time-pos"], 150);

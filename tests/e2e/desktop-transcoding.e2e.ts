@@ -111,6 +111,66 @@ for (const kind of ["video", "audio", "both"] as const)
         await expect
           .poll(() => page.evaluate(() => window.lumen.player.state()))
           .toMatchObject({ paused: true });
+        const conversions = () =>
+          proxy.requests.filter((request) => request.path.includes("transcode=1")).length;
+        const beforeResume = conversions();
+        await mpvWire(app).command(["set_property", "ad", "not-a-decoder,-"]);
+        await mpvWire(app).command(["set_property", "aid", "no"]);
+        await mpvWire(app).command(["set_property", "aid", 1]);
+        await expect
+          .poll(() => page.evaluate(() => window.lumen.player.state()))
+          .toMatchObject({ paused: true });
+        await page.evaluate((id) => window.lumen.player.pause(id, false), sessionId);
+        expect(conversions()).toBeGreaterThan(beforeResume);
+        expect(await mpvWire(app).command(["get_property", "audio-codec-name"])).toBe("aac");
+
+        const first = state?.streams.find((stream) => stream.kind === "audio");
+        if (!first) throw new Error("First audio stream is missing");
+        const choices = () =>
+          proxy.requests.filter((request) => request.path.endsWith("/track-choice")).length;
+        const beforeChoice = choices();
+        await mpvWire(app).arm("hold-unpause");
+        const selecting = page.evaluate(
+          ({ id, stream }) => window.lumen.player.selectAudio(id, stream),
+          { id: sessionId, stream: first.id },
+        );
+        void selecting.catch(() => undefined);
+        await expect
+          .poll(async () => (await mpvWire(app).snapshot()).captured?.outcome)
+          .toBe("held");
+        const replacing = page.evaluate((id) => window.lumen.player.seek(id, 8), sessionId);
+        void replacing.catch(() => undefined);
+        try {
+          await expect
+            .poll(() => page.evaluate(() => window.lumen.player.state()))
+            .toMatchObject({ positionSeconds: 8 });
+        } finally {
+          await mpvWire(app).release();
+        }
+        expect(
+          (await Promise.allSettled([selecting, replacing])).map((result) => result.status),
+        ).toEqual(["fulfilled", "fulfilled"]);
+        expect(choices()).toBe(beforeChoice + 1);
+        expect(
+          (await page.evaluate(() => window.lumen.player.state()))?.selectedAudioStreamId,
+        ).toBe(first.id);
+
+        await mpvWire(app).arm("hold-unpause");
+        const failingSeek = page.evaluate((id) => window.lumen.player.seek(id, 3), sessionId);
+        void failingSeek.catch(() => undefined);
+        try {
+          await expect
+            .poll(async () => (await mpvWire(app).snapshot()).captured?.outcome)
+            .toBe("held");
+          await mpvWire(app).command(["set_property", "ad", "not-a-decoder,-"]);
+          await mpvWire(app).command(["set_property", "aid", "no"]);
+          await mpvWire(app).command(["set_property", "aid", 1]);
+        } finally {
+          await mpvWire(app).release();
+        }
+        expect((await Promise.allSettled([failingSeek]))[0]?.status).toBe("rejected");
+        await expect(overlay.getByText(/MPV could not decode the media/)).toBeVisible();
+        expect((await mpvWire(app).snapshot()).expired).toEqual([]);
       }
       await page.evaluate(() => window.lumen.player.stop());
       await expect.poll(() => page.evaluate(() => window.lumen.player.state())).toBeNull();

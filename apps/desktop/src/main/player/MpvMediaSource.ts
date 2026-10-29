@@ -18,6 +18,7 @@ export class MpvMediaSource {
   transcoded = false;
   offset = 0;
   loading = false;
+  interrupted = false;
   paused = true;
   audioId: string | null;
   subtitleId: string | null;
@@ -46,6 +47,10 @@ export class MpvMediaSource {
     );
     this.audioId = selected.audio?.id ?? null;
     this.subtitleId = selected.subtitle?.id ?? null;
+  }
+
+  get ready() {
+    return !this.loading && !this.interrupted;
   }
 
   get streams() {
@@ -78,7 +83,12 @@ export class MpvMediaSource {
       throw new Error("Subtitles are unavailable during server transcoding");
     if (kind === "audio" && this.transcoded) {
       this.audioId = streamId;
-      await this.convert(position);
+      try {
+        await this.convert(position);
+      } catch (cause) {
+        if (!(cause instanceof MediaLoadCancelled)) throw cause;
+        await this.waitForReplacement();
+      }
       return;
     }
     const trackId = streamId === null ? "no" : this.trackIds.get(streamId);
@@ -95,6 +105,25 @@ export class MpvMediaSource {
     } else this.subtitleId = streamId;
   }
 
+  private async waitForReplacement(): Promise<void> {
+    for (;;) {
+      const pending = this.tail;
+      try {
+        await pending;
+      } catch (cause) {
+        if (pending === this.tail || !(cause instanceof MediaLoadCancelled)) throw cause;
+      }
+      if (this.closed || !this.options.active())
+        throw new MediaLoadCancelled("Playback request was cancelled");
+      if (pending === this.tail) return;
+    }
+  }
+
+  suspend(): void {
+    this.interrupted = true;
+    if (this.capability !== null) this.options.bridge.revoke(this.capability);
+  }
+
   close(): void {
     this.closed = true;
     this.revision += 1;
@@ -105,12 +134,16 @@ export class MpvMediaSource {
   private load(converted: boolean, position: number): Promise<void> {
     const revision = ++this.revision;
     this.transcoded = converted;
+    this.interrupted = false;
     this.loading = true;
     this.loadAbort?.abort();
     if (this.capability !== null) this.options.bridge.revoke(this.capability);
+    let loadFailure: Error | null = null;
+    let detach = () => {};
     const assertCurrent = () => {
       if (this.closed || revision !== this.revision || !this.options.active())
         throw new MediaLoadCancelled("Playback request was cancelled");
+      if (loadFailure !== null) throw loadFailure;
     };
     const task = this.tail
       .catch(() => {})
@@ -163,28 +196,30 @@ export class MpvMediaSource {
         await ipc.command(["set_property", "pause", "yes"]);
         assertCurrent();
         let decoderError: MediaDecodeFailure | null = null;
-        let detach = () => {};
+        let fileLoaded = false;
         const loaded = new Promise<void>((resolve, reject) => {
-          const finish = (cause?: unknown) => {
-            detach();
-            cause ? reject(cause) : resolve();
+          const onLoaded = () => {
+            fileLoaded = true;
+            clearTimeout(timer);
+            resolve();
           };
-          const onLoaded = () => finish();
           const onEnd = (event: { reason?: string; file_error?: string }) => {
-            if (event.reason === "error")
-              finish(
-                transferError ??
-                  decoderError ??
-                  mediaFailure(event.file_error ?? "Media load failed"),
-              );
+            if (event.reason !== "error") return;
+            loadFailure =
+              transferError ??
+              decoderError ??
+              mediaFailure(event.file_error ?? "Media load failed");
+            reject(loadFailure);
           };
           const onLog = (event: { text?: string }) => {
-            if (isDecoderError(event.text ?? ""))
+            if (isDecoderError(event.text ?? "")) {
               decoderError = new MediaDecodeFailure("MPV could not decode the media");
+              if (fileLoaded) loadFailure = decoderError;
+            }
           };
-          const onAbort = () => finish(new MediaLoadCancelled("Playback request was cancelled"));
+          const onAbort = () => reject(new MediaLoadCancelled("Playback request was cancelled"));
           const timer = setTimeout(
-            () => finish(new Error("Timed out waiting for media to load")),
+            () => reject(new Error("Timed out waiting for media to load")),
             25000,
           );
           detach = () => {
@@ -200,12 +235,8 @@ export class MpvMediaSource {
           abort.signal.addEventListener("abort", onAbort, { once: true });
         });
         void loaded.catch(() => {});
-        try {
-          await ipc.command(["loadfile", registered.url, "replace"]);
-          await loaded;
-        } finally {
-          detach();
-        }
+        await ipc.command(["loadfile", registered.url, "replace"]);
+        await loaded;
         assertCurrent();
         this.transcoded = converted;
         this.offset = offset;
@@ -229,18 +260,18 @@ export class MpvMediaSource {
             if (stream) this.trackIds.set(stream.id, track.id);
           }
         if (converted) this.subtitleId = null;
-        await ipc.command([
-          "set_property",
-          "aid",
-          this.audioId === null ? "no" : (this.trackIds.get(this.audioId) ?? "no"),
-        ]);
-        assertCurrent();
-        await ipc.command([
-          "set_property",
-          "sid",
-          this.subtitleId === null ? "no" : (this.trackIds.get(this.subtitleId) ?? "no"),
-        ]);
-        assertCurrent();
+        for (const [kind, streamId] of [
+          ["audio", this.audioId],
+          ["sub", this.subtitleId],
+        ] as const) {
+          const desired = streamId === null ? "no" : (this.trackIds.get(streamId) ?? "no");
+          const selected = Array.isArray(tracks)
+            ? (tracks.find((track) => track?.type === kind && track.selected === true)?.id ?? "no")
+            : "no";
+          if (selected !== desired)
+            await ipc.command(["set_property", kind === "audio" ? "aid" : "sid", desired]);
+          assertCurrent();
+        }
         await this.checkDecoders();
         assertCurrent();
         if (!converted && position > 0) await ipc.command(["seek", position, "absolute+exact"]);
@@ -262,6 +293,7 @@ export class MpvMediaSource {
         throw cause;
       })
       .finally(() => {
+        detach();
         if (this.revision === revision) this.loading = false;
       });
     this.tail = task;
