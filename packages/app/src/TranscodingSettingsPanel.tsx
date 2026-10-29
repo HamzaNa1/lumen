@@ -42,10 +42,6 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
             update.mutate(value);
           }}
         >
-          <p className="transcoding-description">
-            Convert media only when the browser needs it. Changes apply to new playback requests;
-            turning this off stops active conversions.
-          </p>
           <fieldset disabled={update.isPending}>
             <SwitchField
               disabled={update.isPending}
