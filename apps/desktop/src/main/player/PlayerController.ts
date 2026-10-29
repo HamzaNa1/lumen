@@ -26,6 +26,7 @@ import type { CompositorSurface } from "./CompositorSurface";
 import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import {
+  isDecoderError,
   MediaDecodeFailure,
   MediaLoadCancelled,
   MpvMediaSource,
@@ -207,11 +208,7 @@ export class PlayerController extends EventEmitter {
         }
       });
       ipc.on("log-message", (event: { text?: string }) => {
-        if (
-          /error while decoding|failed to initialize.*decoder|could not open codec/i.test(
-            event.text ?? "",
-          )
-        )
+        if (isDecoderError(event.text ?? ""))
           onMediaFailure(new MediaDecodeFailure("MPV could not decode the media"));
       });
       await ipc.command(["request_log_messages", "error"]);
@@ -335,8 +332,7 @@ export class PlayerController extends EventEmitter {
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
     this.state = { ...this.requireState(), positionSeconds, ended: false };
-    if (active.media.transcoded)
-      await this.reloadConverted(active, positionSeconds, this.requireState().paused);
+    if (active.media.transcoded) await this.reloadConverted(active, positionSeconds);
     else await this.motion(active, ["seek", positionSeconds, "absolute+exact"]);
     this.assertActive(sessionId);
     this.publish();
@@ -437,7 +433,7 @@ export class PlayerController extends EventEmitter {
     active.pendingMotion += 1;
     active.motionRevision += 1;
     try {
-      await active.media.select(kind, streamId, state.positionSeconds, state.paused);
+      await active.media.select(kind, streamId, state.positionSeconds);
       this.assertActive(active.session.sessionId);
       this.state = {
         ...this.requireState(),
@@ -460,21 +456,17 @@ export class PlayerController extends EventEmitter {
     active.recovering = true;
     try {
       const state = this.requireState();
-      await this.reloadConverted(active, state.positionSeconds, state.paused);
+      await this.reloadConverted(active, state.positionSeconds);
     } finally {
       active.recovering = false;
     }
   }
 
-  private async reloadConverted(
-    active: ActiveSession,
-    position: number,
-    paused: boolean,
-  ): Promise<void> {
+  private async reloadConverted(active: ActiveSession, position: number): Promise<void> {
     active.pendingMotion += 1;
     active.motionRevision += 1;
     try {
-      await active.media.convert(position, paused);
+      await active.media.convert(position);
       this.assertActive(active.session.sessionId);
       this.state = {
         ...this.requireState(),
@@ -501,11 +493,7 @@ export class PlayerController extends EventEmitter {
     await this.command(active, ["set_property", "audio-channels", output]);
     this.assertActive(sessionId);
     if (active.media.transcoded) {
-      await this.reloadConverted(
-        active,
-        this.requireState().positionSeconds,
-        this.requireState().paused,
-      );
+      await this.reloadConverted(active, this.requireState().positionSeconds);
       this.audioSettings.update({ audioOutput: output });
       this.state = { ...this.requireState(), audioOutput: output };
       this.publish();

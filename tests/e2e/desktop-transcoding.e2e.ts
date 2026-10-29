@@ -6,7 +6,7 @@ import { NetworkProxy } from "./support/proxy";
 import { repository } from "./support/server";
 
 test.use({ mpvFaults: true });
-for (const kind of ["video", "audio"] as const)
+for (const kind of ["video", "audio", "both"] as const)
   test(`desktop falls back for an unavailable ${kind} decoder, seeks and closes converted playback`, async ({
     server,
     admin,
@@ -25,9 +25,9 @@ for (const kind of ["video", "audio"] as const)
       "-map",
       "0:a",
       "-c:v",
-      kind === "video" ? "mpeg4" : "libx264",
+      kind !== "audio" ? "mpeg4" : "libx264",
       "-c:a",
-      kind === "audio" ? "ac3" : "aac",
+      kind !== "video" ? "ac3" : "aac",
       join(library.path, "Film.mkv"),
     ]);
     await server.scan(admin.accessToken, library.id);
@@ -37,7 +37,13 @@ for (const kind of ["video", "audio"] as const)
       await connectDesktop(page, proxy);
       const overlay = app.windows().find((window) => window.url().includes("overlay=1"));
       if (!overlay) throw new Error("Player overlay is missing");
-      await mpvWire(app).restrictDecoders(kind === "video" ? { video: "h264" } : { audio: "aac" });
+      await mpvWire(app).restrictDecoders(
+        kind === "both"
+          ? { video: "h264", audio: "aac" }
+          : kind === "video"
+            ? { video: "h264" }
+            : { audio: "aac" },
+      );
       await page.getByRole("link", { name: "movies", exact: true }).click();
       await page
         .getByRole("button", { name: "Play Film", exact: true })
@@ -86,6 +92,26 @@ for (const kind of ["video", "audio"] as const)
         .poll(() => page.evaluate(() => window.lumen.player.state()))
         .toMatchObject({ paused: true, positionSeconds: 9 });
 
+      if (kind === "both") {
+        await page.evaluate((id) => window.lumen.player.pause(id, false), sessionId);
+        await mpvWire(app).arm("hold-unpause");
+        const seeking = page.evaluate((id) => window.lumen.player.seek(id, 6), sessionId);
+        void seeking.catch(() => undefined);
+        try {
+          await expect
+            .poll(async () => (await mpvWire(app).snapshot()).captured?.outcome)
+            .toBe("held");
+          await page.evaluate((id) => window.lumen.player.pause(id, true), sessionId);
+        } finally {
+          await mpvWire(app).release();
+          await seeking;
+        }
+        expect(await mpvWire(app).command(["get_property", "pause"])).toBe(true);
+        expect((await mpvWire(app).snapshot()).expired).toEqual([]);
+        await expect
+          .poll(() => page.evaluate(() => window.lumen.player.state()))
+          .toMatchObject({ paused: true });
+      }
       await page.evaluate(() => window.lumen.player.stop());
       await expect.poll(() => page.evaluate(() => window.lumen.player.state())).toBeNull();
       await expect
@@ -104,7 +130,7 @@ for (const kind of ["video", "audio"] as const)
     }
   });
 
-for (const scenario of ["disabled", "cancel", "runtime-disabled"] as const)
+for (const scenario of ["disabled", "cancel", "runtime-disabled", "unsupported"] as const)
   test(`desktop ${scenario} conversion ends without repeated retries or an abandoned request`, async ({
     server,
     admin,
@@ -114,7 +140,7 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled"] as const)
       "Film.mkv": "playback-ac3.mkv",
     });
     const identity = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
-    if (scenario !== "cancel" && identity.capabilities?.transcoding) {
+    if (scenario.includes("disabled") && identity.capabilities?.transcoding) {
       const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
         token: admin.accessToken,
       });
@@ -134,6 +160,17 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled"] as const)
         response.once("close", () => {
           cancelled = true;
         });
+        return true;
+      };
+    if (scenario === "unsupported")
+      proxy.intercept = async (request, response) => {
+        if (request.url !== "/api/v1/server") return false;
+        response.writeHead(200, { "content-type": "application/json" }).end(
+          JSON.stringify({
+            ...identity,
+            capabilities: { ...identity.capabilities, transcoding: false },
+          }),
+        );
         return true;
       };
     const { page, app } = desktop;
@@ -156,8 +193,9 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled"] as const)
         await mpvWire(app).command(["set_property", "aid", "no"]);
         await mpvWire(app).command(["set_property", "aid", 1]);
       }
-      if (!identity.capabilities?.transcoding) {
+      if (!identity.capabilities?.transcoding || scenario === "unsupported") {
         await expect(overlay.getByText(/This server does not support transcoding/)).toBeVisible();
+        expect(proxy.requests.some((request) => request.path.includes("transcode=1"))).toBe(false);
       } else if (scenario === "cancel") {
         await expect.poll(() => pending).toBe(true);
         await page.evaluate(() => window.lumen.player.stop());

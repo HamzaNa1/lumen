@@ -6,6 +6,8 @@ import type { PlaybackBridge } from "./PlaybackBridge";
 
 export class MediaDecodeFailure extends Error {}
 export class MediaLoadCancelled extends Error {}
+export const isDecoderError = (message: string): boolean =>
+  /error while decoding|failed to initialize.*decoder|could not open codec/i.test(message);
 export const mediaFailure = (message: string): Error =>
   /decod|codec|file format|unrecognized format/i.test(message)
     ? new MediaDecodeFailure(message)
@@ -54,46 +56,41 @@ export class MpvMediaSource {
 
   async start(position: number): Promise<void> {
     try {
-      await this.load(false, position, true);
+      await this.load(false, position);
     } catch (cause) {
       if (!(cause instanceof MediaDecodeFailure)) throw cause;
-      await this.convert(position, true);
+      await this.convert(position);
     }
   }
 
-  convert(position: number, paused: boolean): Promise<void> {
+  convert(position: number): Promise<void> {
     if (!this.options.client.supportsTranscoding)
       return Promise.reject(
         new Error(
           "This server does not support transcoding. Update the server to play this media.",
         ),
       );
-    return this.load(true, position, paused);
+    return this.load(true, position);
   }
 
-  async select(
-    kind: TrackKind,
-    streamId: string | null,
-    position: number,
-    paused: boolean,
-  ): Promise<void> {
+  async select(kind: TrackKind, streamId: string | null, position: number): Promise<void> {
     if (kind === "subtitle" && this.transcoded && streamId !== null)
       throw new Error("Subtitles are unavailable during server transcoding");
     if (kind === "audio" && this.transcoded) {
       this.audioId = streamId;
-      await this.convert(position, paused);
+      await this.convert(position);
       return;
     }
     const trackId = streamId === null ? "no" : this.trackIds.get(streamId);
     if (trackId === undefined) throw new Error("Stream is unavailable");
+    if (kind === "audio") this.audioId = streamId;
     await this.options.ipc.command(["set_property", kind === "audio" ? "aid" : "sid", trackId]);
     if (kind === "audio") {
-      this.audioId = streamId;
       try {
         await this.checkDecoders();
       } catch (cause) {
         if (!(cause instanceof MediaDecodeFailure)) throw cause;
-        await this.convert(position, paused);
+        await this.convert(position);
       }
     } else this.subtitleId = streamId;
   }
@@ -105,9 +102,8 @@ export class MpvMediaSource {
     if (this.capability !== null) this.options.bridge.revoke(this.capability);
   }
 
-  private load(converted: boolean, position: number, paused: boolean): Promise<void> {
+  private load(converted: boolean, position: number): Promise<void> {
     const revision = ++this.revision;
-    this.paused = paused;
     this.transcoded = converted;
     this.loading = true;
     this.loadAbort?.abort();
@@ -166,6 +162,7 @@ export class MpvMediaSource {
         this.capability = registered.capability;
         await ipc.command(["set_property", "pause", "yes"]);
         assertCurrent();
+        let decoderError: MediaDecodeFailure | null = null;
         let detach = () => {};
         const loaded = new Promise<void>((resolve, reject) => {
           const finish = (cause?: unknown) => {
@@ -175,7 +172,15 @@ export class MpvMediaSource {
           const onLoaded = () => finish();
           const onEnd = (event: { reason?: string; file_error?: string }) => {
             if (event.reason === "error")
-              finish(transferError ?? mediaFailure(event.file_error ?? "Media load failed"));
+              finish(
+                transferError ??
+                  decoderError ??
+                  mediaFailure(event.file_error ?? "Media load failed"),
+              );
+          };
+          const onLog = (event: { text?: string }) => {
+            if (isDecoderError(event.text ?? ""))
+              decoderError = new MediaDecodeFailure("MPV could not decode the media");
           };
           const onAbort = () => finish(new MediaLoadCancelled("Playback request was cancelled"));
           const timer = setTimeout(
@@ -186,10 +191,12 @@ export class MpvMediaSource {
             clearTimeout(timer);
             ipc.off("file-loaded", onLoaded);
             ipc.off("end-file", onEnd);
+            ipc.off("log-message", onLog);
             abort.signal.removeEventListener("abort", onAbort);
           };
           ipc.on("file-loaded", onLoaded);
           ipc.on("end-file", onEnd);
+          ipc.on("log-message", onLog);
           abort.signal.addEventListener("abort", onAbort, { once: true });
         });
         void loaded.catch(() => {});
@@ -238,8 +245,12 @@ export class MpvMediaSource {
         assertCurrent();
         if (!converted && position > 0) await ipc.command(["seek", position, "absolute+exact"]);
         assertCurrent();
-        await ipc.command(["set_property", "pause", this.paused ? "yes" : "no"]);
-        assertCurrent();
+        let appliedPause: boolean;
+        do {
+          appliedPause = this.paused;
+          await ipc.command(["set_property", "pause", appliedPause ? "yes" : "no"]);
+          assertCurrent();
+        } while (appliedPause !== this.paused);
         this.options.diagnostics.record("media_delivery", {
           transcoded: converted,
           startSeconds: position,

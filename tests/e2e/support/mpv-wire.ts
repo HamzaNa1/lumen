@@ -15,7 +15,7 @@ export interface WireEntry {
 }
 interface Wire {
   restrictDecoders(value: { video?: string; audio?: string }): void;
-  arm(mode: "hold-speed" | "fail-speed" | "hold-sample", speed?: number): number;
+  arm(mode: "hold-speed" | "fail-speed" | "hold-sample" | "hold-unpause", speed?: number): number;
   snapshot(): { captured: WireEntry | null; commands: WireEntry[]; expired: number[] };
   release(): void;
   command(args: (string | number)[]): Promise<unknown>;

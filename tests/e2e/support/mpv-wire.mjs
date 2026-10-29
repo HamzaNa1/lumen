@@ -13,7 +13,6 @@ let nextProbeId = -1;
 let nextEntryId = 0;
 let connectionId = 0;
 const commands = [];
-const events = [];
 const expired = [];
 let captured = null;
 
@@ -50,7 +49,7 @@ globalThis.__lumenMpvWire = {
     return nextEntryId;
   },
   snapshot() {
-    return { captured, commands, expired, events };
+    return { captured, commands, expired };
   },
   release() {
     mode = null;
@@ -152,10 +151,6 @@ net.createConnection = (...args) => {
       incoming = incoming.slice(newline + 1);
       if (!line.trim()) continue;
       const frame = JSON.parse(line);
-      if (frame.event === "log-message" || frame.event === "end-file") {
-        events.push(frame);
-        if (events.length > 64) events.shift();
-      }
       const probe = connected.probes.get(frame.request_id);
       if (probe) {
         probe(frame);
@@ -168,7 +163,13 @@ net.createConnection = (...args) => {
         entry.error = frame.error ?? "success";
         if (entry.command[0] === "expand-text") entry.sample = frame.data;
       }
-      if (mode === "hold-sample" && entry?.command[0] === "expand-text") {
+      if (
+        (mode === "hold-sample" && entry?.command[0] === "expand-text") ||
+        (mode === "hold-unpause" &&
+          entry?.command[0] === "set_property" &&
+          entry.command[1] === "pause" &&
+          entry.command[2] === "no")
+      ) {
         mode = null;
         hold(entry, () => emit("data", `${line}\n`));
       } else emit("data", `${line}\n`);
