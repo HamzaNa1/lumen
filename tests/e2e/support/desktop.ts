@@ -88,7 +88,12 @@ export async function launchDesktop(profile: string, mpvFaults = false) {
         : []),
     ],
     cwd: join(repository, "apps/desktop"),
-    env: { ...environment, LUMEN_E2E_PROFILE: profile, LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "" },
+    env: {
+      ...environment,
+      LUMEN_E2E_PROFILE: profile,
+      LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "",
+      LUMEN_E2E_SILENT_AUDIO: "1",
+    },
   });
 }
 export async function mainDesktopPage(app: ElectronApplication): Promise<Page> {

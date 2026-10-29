@@ -73,6 +73,8 @@ export class MpvProcess {
       "--load-scripts=no",
       "--idle=yes",
       "--no-terminal",
+      // Keep decoding and the playback clock active without opening a speaker device in E2E.
+      ...(process.env.LUMEN_E2E_SILENT_AUDIO === "1" ? ["--ao=null"] : []),
       ...mpvPitchArguments,
       ...(process.platform === "win32" ? [`--lumen-parent-pid=${process.pid}`] : []),
       // Read ahead of playback whatever the source, paused or not: a watch group waits for it.
