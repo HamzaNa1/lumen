@@ -24,7 +24,7 @@
     },
     "apps/desktop": {
       "name": "lumen-desktop",
-      "version": "0.0.31",
+      "version": "0.0.32",
       "dependencies": {
         "koffi": "3.3.1",
       },
@@ -54,7 +54,7 @@
     },
     "apps/server": {
       "name": "lumen-server",
-      "version": "0.0.29",
+      "version": "0.0.30",
       "dependencies": {
         "@effect/platform-bun": "4.0.0-beta.83",
         "@effect/sql-sqlite-bun": "4.0.0-beta.83",
