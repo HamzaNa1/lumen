@@ -76,23 +76,18 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           .poll(() => page.evaluate(() => window.lumen.player.state()))
           .toMatchObject({ itemId: film, paused: false });
         await expect.poll(() => wire.command(["get_property", "time-pos"])).toBeGreaterThan(1.2);
-        if (scenario !== "hold-sample") {
-          // Startup synchronization can still seek after MPV starts advancing. Let it converge
-          // before injecting a competing seek, otherwise it can erase the intended drift.
+        if (scenario !== "hold-sample" && (await timeline()).length > 0) {
+          // Wait for the controller to observe advancing playback after startup seeking.
+          // A real clock may retain soft drift, which does not need to reach zero first.
           await expect
             .poll(async () => {
-              const seeking = await wire.command(["get_property", "seeking"]);
-              const buffering = await wire.command(["get_property", "paused-for-cache"]);
-              const position = await wire.command(["get_property", "time-pos"]);
-              const playback = owner.status.group?.playback;
-              return seeking === false &&
-                buffering === false &&
-                typeof position === "number" &&
-                playback
-                ? Math.abs(position - watchPosition(playback, owner.serverNow))
-                : Number.POSITIVE_INFINITY;
+              const sample = (await timeline()).findLast(
+                (event) =>
+                  event.kind === "watch_synchronization" && event.fields.event === "drift_sample",
+              );
+              return sample?.fields.advancing === true && sample.fields.seek === false;
             })
-            .toBeLessThan(0.35);
+            .toBe(true);
         }
         if (scenario === "hold-sample") {
           await wire.arm("hold-sample");
