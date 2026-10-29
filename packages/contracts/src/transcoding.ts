@@ -1,5 +1,7 @@
 import { Schema } from "effect";
 
+export const TRANSCODING_LIMITS = { threads: 256, maxJobs: 128, gpuJobs: 32 } as const;
+
 const limit = (maximum: number) => Schema.Int.check(Schema.isBetween({ minimum: 1, maximum }));
 export const TranscodingSettings = Schema.Struct({
   enabled: Schema.Boolean,
@@ -9,9 +11,9 @@ export const TranscodingSettings = Schema.Struct({
     Schema.isMaxLength(1024),
     Schema.isPattern(/^[^\0]+$/),
   ),
-  threads: limit(256),
-  maxJobs: limit(128),
-  gpuJobs: limit(32),
+  threads: limit(TRANSCODING_LIMITS.threads),
+  maxJobs: limit(TRANSCODING_LIMITS.maxJobs),
+  gpuJobs: limit(TRANSCODING_LIMITS.gpuJobs),
   gpus: Schema.Array(Schema.String),
   encoder: Schema.Literals(["cpu", "nvenc", "vaapi"]),
 }).check(

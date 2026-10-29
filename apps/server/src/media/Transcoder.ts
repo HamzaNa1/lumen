@@ -74,7 +74,13 @@ export class Transcoder {
     const previous = [...this.jobs].filter((job) => job.sessionId === media.sessionId);
     for (const job of previous) job.stop();
     await Promise.all(previous.map((job) => job.finished));
-    const config = await this.settings();
+    let config: TranscodingSettings;
+    try {
+      config = await this.settings();
+    } catch (cause) {
+      if (this.starts.get(media.sessionId)?.id === pending) this.starts.delete(media.sessionId);
+      throw cause;
+    }
     if (this.starts.get(media.sessionId)?.id !== pending)
       throw badRequest("Playback request was superseded");
     this.starts.delete(media.sessionId);

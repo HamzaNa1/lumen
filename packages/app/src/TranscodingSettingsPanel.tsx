@@ -1,4 +1,4 @@
-import type { TranscodingSettings } from "@lumen/contracts";
+import { TRANSCODING_LIMITS, type TranscodingSettings } from "@lumen/contracts";
 import { Button, Form, SelectField, SwitchField, TextField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -20,6 +20,7 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
   });
   const value = draft ?? settings.data;
   const change = (patch: Partial<TranscodingSettings>) => {
+    if (update.isPending) return;
     if (value) setDraft({ ...value, ...patch });
     update.reset();
   };
@@ -47,12 +48,14 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
           </p>
           <fieldset disabled={update.isPending}>
             <SwitchField
+              disabled={update.isPending}
               label="Enable transcoding"
               checked={value.enabled}
               onCheckedChange={(enabled) => change({ enabled })}
               description="Compatible media always plays directly."
             />
             <SelectField
+              disabled={update.isPending}
               label="Video encoder"
               value={value.encoder}
               options={[
@@ -83,7 +86,7 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
                 label="CPU threads per job"
                 type="number"
                 min={1}
-                max={256}
+                max={TRANSCODING_LIMITS.threads}
                 value={String(value.threads)}
                 onValueChange={(text) => change({ threads: Number(text) })}
                 required
@@ -92,7 +95,7 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
                 label="Maximum concurrent jobs"
                 type="number"
                 min={1}
-                max={128}
+                max={TRANSCODING_LIMITS.maxJobs}
                 value={String(value.maxJobs)}
                 onValueChange={(text) => change({ maxJobs: Number(text) })}
                 required
@@ -102,7 +105,7 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
                   label="Maximum jobs per GPU"
                   type="number"
                   min={1}
-                  max={32}
+                  max={TRANSCODING_LIMITS.gpuJobs}
                   value={String(value.gpuJobs)}
                   onValueChange={(text) => change({ gpuJobs: Number(text) })}
                   required
@@ -110,6 +113,7 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
               ) : null}
             </div>
             <SwitchField
+              disabled={update.isPending}
               label="Allow software video encoding"
               checked={value.softwareVideo}
               onCheckedChange={(softwareVideo) => change({ softwareVideo })}

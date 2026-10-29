@@ -289,8 +289,27 @@ test("administrators configure transcoding from Settings and persist changes", a
   const panel = page.getByRole("region", { name: "Server transcoding" });
   await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeChecked();
   await panel.getByLabel("CPU threads per job", { exact: true }).fill("3");
+  let finishSave = () => {};
+  const saveGate = new Promise<void>((resolve) => {
+    finishSave = resolve;
+  });
+  await page.route("**/api/v1/admin/transcoding-settings", async (route) => {
+    const response = await route.fetch();
+    await saveGate;
+    await route.fulfill({ response });
+  });
   await panel.getByRole("button", { name: "Save transcoding settings" }).click();
+  try {
+    await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeDisabled();
+    await expect(
+      panel.getByRole("switch", { name: /^Allow software video encoding/ }),
+    ).toBeDisabled();
+  } finally {
+    finishSave();
+  }
+
   await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
+  await page.unroute("**/api/v1/admin/transcoding-settings");
   await page.reload();
   await expect(panel.getByLabel("CPU threads per job", { exact: true })).toHaveValue("3");
   await panel.scrollIntoViewIfNeeded();
