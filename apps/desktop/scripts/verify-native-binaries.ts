@@ -1,13 +1,8 @@
 import { createHash } from "node:crypto";
-import {
-  accessSync,
-  constants,
-  existsSync,
-  readdirSync,
-  readFileSync,
-  writeFileSync,
-} from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { accessSync, constants, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, relative, sep } from "node:path";
+import { verifyMacosLibraries } from "./lib/macos-libraries";
+import { nativeFiles } from "./lib/native-files";
 
 interface NativeManifest {
   readonly version: 1;
@@ -30,6 +25,33 @@ if (found === undefined) {
 if (platform !== "win32" && platform !== "darwin") accessSync(found, constants.X_OK);
 
 const root = dirname(found);
+if (platform === "darwin") {
+  verifyMacosLibraries(root);
+  const { load } = await import("koffi");
+  const library = load(found);
+  try {
+    const create = library.func("void *mpv_create(void)");
+    const setOption = library.func("int mpv_set_option_string(void *, const char *, const char *)");
+    const initialize = library.func("int mpv_initialize(void *)");
+    const destroy = library.func("void mpv_terminate_destroy(void *)");
+    const handle = create();
+    if (!handle) throw new Error("Bundled libmpv could not create a player");
+    try {
+      for (const [name, value] of [
+        ["config", "no"],
+        ["vo", "null"],
+        ["ao", "null"],
+      ])
+        if (setOption(handle, name, value) < 0)
+          throw new Error(`Bundled libmpv rejected smoke-test option ${name}`);
+      if (initialize(handle) < 0) throw new Error("Bundled libmpv could not initialize a player");
+    } finally {
+      destroy(handle);
+    }
+  } finally {
+    library.unload();
+  }
+}
 if (platform === "win32") {
   for (const name of [
     "Lumen Video Helper.exe",
@@ -49,18 +71,12 @@ if (platform === "win32") {
 }
 const manifestPath = join(root, manifestName);
 const relativePath = (path: string): string => relative(root, path).split(sep).join("/");
-const nativeFiles = (directory: string): ReadonlyArray<string> =>
-  readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(directory, entry.name);
-    if (entry.isDirectory()) return nativeFiles(path);
-    if (!entry.isFile() || entry.name === manifestName) return [];
-    return [path];
-  });
 const digest = (path: string): string =>
   createHash("sha256").update(readFileSync(path)).digest("hex");
 const currentFiles = (): Record<string, string> =>
   Object.fromEntries(
     [...nativeFiles(root)]
+      .filter((path) => basename(path) !== manifestName)
       .sort((left, right) => relativePath(left).localeCompare(relativePath(right)))
       .map((path) => [relativePath(path), digest(path)]),
   );

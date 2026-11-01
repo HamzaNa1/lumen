@@ -41,6 +41,7 @@ runs:
         mkdir -p "$native_dir/lib"
         cp "$(brew --prefix mpv)/lib/libmpv.dylib" "$native_dir/libmpv.dylib"
         dylibbundler -od -b -x "$native_dir/libmpv.dylib" -d "$native_dir/lib" -p '@loader_path/lib/'
+        bun apps/desktop/scripts/prepare-macos-libraries.ts "$native_dir"
     - name: Configure MSVC (Windows)
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
