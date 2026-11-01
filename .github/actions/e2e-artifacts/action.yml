@@ -10,6 +10,23 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Collect macOS native crash reports
+      if: ${{ runner.os == 'macOS' }}
+      continue-on-error: true
+      shell: bash
+      run: |
+        mkdir -p test-results/native-crashes
+        shopt -s nullglob
+        reports=(
+          "$HOME"/Library/Logs/DiagnosticReports/Electron*.ips
+          "$HOME"/Library/Logs/DiagnosticReports/Electron*.crash
+          /Library/Logs/DiagnosticReports/Electron*.ips
+          /Library/Logs/DiagnosticReports/Electron*.crash
+        )
+        if (( ${#reports[@]} )); then
+          cp "${reports[@]}" test-results/native-crashes/
+        fi
+        system_profiler SPDisplaysDataType > test-results/native-crashes/displays.txt
     - uses: actions/upload-artifact@v4
       with:
         name: e2e-${{ inputs.name }}
