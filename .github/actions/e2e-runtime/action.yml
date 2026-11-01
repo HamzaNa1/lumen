@@ -19,7 +19,11 @@ runs:
         pactl info
     - if: runner.os == 'macOS'
       shell: bash
-      run: brew install ffmpeg mpv
+      run: |
+        brew install ffmpeg mpv
+        # Apple's virtual GPU crashes when MoltenVK uploads heap-backed textures.
+        # Keep real Vulkan rendering, using ordinary Metal resource allocations.
+        echo 'MVK_CONFIG_USE_MTLHEAP=0' >> "$GITHUB_ENV"
     - if: runner.os == 'Windows'
       shell: pwsh
       run: choco install ffmpeg mpv -y --no-progress
