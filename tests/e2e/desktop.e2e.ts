@@ -106,3 +106,54 @@ test("native media decodes, seeks, changes volume and audio, survives replacemen
   await expect.poll(() => page.evaluate(() => window.lumen.player.state())).toBeNull();
   expect((await app.windows()).length).toBeGreaterThanOrEqual(1);
 });
+
+test("native playback prevents display sleep across fullscreen and releases it when inactive", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const { page, app } = desktop;
+  const blockers = await app.evaluateHandle(({ powerSaveBlocker }) => {
+    const requests: { id: number; type: string }[] = [];
+    const start = powerSaveBlocker.start.bind(powerSaveBlocker);
+    powerSaveBlocker.start = (type) => {
+      const id = start(type);
+      requests.push({ id, type });
+      return id;
+    };
+    return {
+      active: () => requests.filter(({ id }) => powerSaveBlocker.isStarted(id)),
+      count: () => requests.length,
+    };
+  });
+  const active = () => blockers.evaluate((observer) => observer.active());
+  await connectDesktop(page, server);
+  expect(await active()).toEqual([]);
+  await page.getByRole("link", { name: "movies", exact: true }).click();
+  await page.getByRole("button", { name: "Play Film", exact: true }).first().click({ force: true });
+  await expect.poll(active).toEqual([{ id: expect.any(Number), type: "prevent-display-sleep" }]);
+  const initial = await active();
+  for (const full of [true, false, true]) {
+    await page.evaluate((enabled) => window.lumen.player.fullscreen(enabled), full);
+    await expect.poll(() => page.evaluate(() => window.lumen.player.fullscreenState())).toBe(full);
+    expect(await active()).toEqual(initial);
+  }
+  expect(await blockers.evaluate((observer) => observer.count())).toBe(1);
+  const state = await page.evaluate(() => window.lumen.player.state());
+  const sessionId = state?.sessionId ?? "";
+  await page.evaluate((id) => window.lumen.player.pause(id, true), sessionId);
+  expect(await active()).toEqual([]);
+  await page.evaluate((id) => window.lumen.player.pause(id, false), sessionId);
+  await expect.poll(active).toHaveLength(1);
+  await page.evaluate((id) => window.lumen.player.seek(id, 10_000), sessionId);
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ ended: true });
+  await expect.poll(active).toEqual([]);
+  await page.evaluate((itemId) => window.lumen.player.start(itemId), state?.itemId ?? "");
+  await expect.poll(active).toHaveLength(1);
+  await page.evaluate(() => window.lumen.player.stop());
+  expect(await active()).toEqual([]);
+  await blockers.dispose();
+});

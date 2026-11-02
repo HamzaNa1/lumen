@@ -18,7 +18,7 @@ import type {
   PlayerState,
   TrackKind,
 } from "@lumen/contracts";
-import { app } from "electron";
+import { app, powerSaveBlocker } from "electron";
 import type { ServerClient } from "../api/ServerClient";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
@@ -93,6 +93,7 @@ export class PlayerController extends EventEmitter {
   private starved = false;
   private intentionalPause = false;
   private lastBufferSampleMs = 0;
+  private displaySleepBlocker: number | null = null;
 
   constructor(options: PlayerControllerOptions) {
     super();
@@ -687,6 +688,7 @@ export class PlayerController extends EventEmitter {
     const state = this.state;
     this.active = null;
     this.state = null;
+    this.syncDisplaySleepBlocker();
     this.starved = false;
     this.intentionalPause = false;
     active?.reporter.retire();
@@ -865,7 +867,18 @@ export class PlayerController extends EventEmitter {
     return this.state;
   }
 
+  private syncDisplaySleepBlocker(): void {
+    const playing = this.state !== null && !this.state.paused && !this.state.ended;
+    if (playing && this.displaySleepBlocker === null) {
+      this.displaySleepBlocker = powerSaveBlocker.start("prevent-display-sleep");
+    } else if (!playing && this.displaySleepBlocker !== null) {
+      powerSaveBlocker.stop(this.displaySleepBlocker);
+      this.displaySleepBlocker = null;
+    }
+  }
+
   private publish(): void {
+    this.syncDisplaySleepBlocker();
     if (this.state !== null) this.onState(this.state);
   }
 
