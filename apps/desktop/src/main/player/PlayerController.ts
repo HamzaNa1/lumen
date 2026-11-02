@@ -5,6 +5,7 @@ import {
   measuredSize,
   PlaybackDiagnostics,
   PlaybackSessionReporter,
+  PlaybackUnavailableError,
   type PlayerBuffer,
   TrackSelectionController,
   type WatchPlaybackSample,
@@ -90,6 +91,7 @@ export class PlayerController extends EventEmitter {
   private startGeneration = 0;
   private stopping: Promise<void> | null = null;
   private diagnostics = new PlaybackDiagnostics();
+  private diagnosticsItemId: string | null = null;
   private starved = false;
   private intentionalPause = false;
   private lastBufferSampleMs = 0;
@@ -113,7 +115,9 @@ export class PlayerController extends EventEmitter {
     const generation = ++this.startGeneration;
     await this.stopActive();
     if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-    const diagnostics = new PlaybackDiagnostics();
+    const diagnostics =
+      this.diagnosticsItemId === input.itemId ? this.diagnostics : new PlaybackDiagnostics();
+    this.diagnosticsItemId = input.itemId;
     this.diagnostics = diagnostics;
     diagnostics.record("playback_start", {});
     const session = await input.client.startPlayback(input.itemId).catch((cause: unknown) => {
@@ -199,6 +203,13 @@ export class PlayerController extends EventEmitter {
         } else this.failActive(active, cause);
       };
       ipc.on("end-file", (event: { reason?: string; file_error?: string }) => {
+        diagnostics.record("media_end", {
+          reason: ["eof", "error", "stop", "quit", "redirect"].includes(event.reason ?? "")
+            ? (event.reason ?? "unknown")
+            : "unknown",
+          positionSeconds: this.state?.positionSeconds ?? null,
+          loading: active.media.loading,
+        });
         if (event.reason === "error")
           onMediaFailure(mediaFailure(event.file_error ?? "Media playback failed"));
         else if (
@@ -615,6 +626,9 @@ export class PlayerController extends EventEmitter {
       { command: (args) => this.command(active, args) },
       this.requireState(),
     );
+    if (sample === null && this.active === active && active.motionRevision === revision) {
+      await this.assertMediaLoaded(active);
+    }
     return this.active === active &&
       active.motionRevision === revision &&
       active.pendingMotion === 0
@@ -669,8 +683,27 @@ export class PlayerController extends EventEmitter {
     try {
       return await active.ipc.command(args);
     } catch (cause) {
+      this.diagnostics.record("mpv_command_failure", {
+        command: String(args[0]),
+        property: args[0] === "get_property" || args[0] === "set_property" ? String(args[1]) : null,
+        transport: cause instanceof MpvIpcFailure,
+      });
       if (cause instanceof MpvIpcFailure) this.failActive(active, cause);
+      else await this.assertMediaLoaded(active);
       throw cause;
+    }
+  }
+
+  private async assertMediaLoaded(active: ActiveSession): Promise<void> {
+    if (this.active !== active || !active.media.ready || active.pendingMotion > 1) return;
+    const revision = active.motionRevision;
+    const idle = await active.ipc
+      .command(["get_property", "idle-active"], CACHE_STATE_TIMEOUT_MS)
+      .catch(() => null);
+    if (this.active !== active || !active.media.ready || active.motionRevision !== revision) return;
+    if (idle === true) {
+      this.diagnostics.record("media_unavailable", { sessionId: active.session.sessionId });
+      throw new PlaybackUnavailableError();
     }
   }
 

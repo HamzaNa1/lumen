@@ -2,7 +2,7 @@ import { watchPosition } from "@lumen/contracts";
 import { WatchGroupClient } from "../../packages/client/src/index";
 import { connectDesktop, expect, test } from "./support/desktop";
 import { mpvWire, type WireEntry } from "./support/mpv-wire";
-import { NetworkProxy } from "./support/proxy";
+import { latch, NetworkProxy } from "./support/proxy";
 
 const isSpeed = (entry: WireEntry) =>
   entry.command[0] === "set_property" && entry.command[1] === "speed";
@@ -240,3 +240,198 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
       }
     },
   );
+
+for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runtime"] as const)
+  test(`watch playback reloads unloaded media: ${recovery}`, async ({
+    server,
+    admin,
+    desktop,
+  }, testInfo) => {
+    const library = await server.library(admin.accessToken, "movies", [], {
+      "Film.mp4": "playback-sync.mp4",
+      "Other.mp4": "playback-sync.mp4",
+    });
+    const items = await server.items(admin.accessToken, library.id);
+    const itemId = items.find((item) => item.title === "Film")?.id ?? "";
+    const other = items.find((item) => item.title === "Other")?.id ?? "";
+    const owner = new WatchGroupClient(
+      { serverOrigin: server.origin, watchAuthentication: () => ({ token: admin.accessToken }) },
+      () => {},
+      false,
+    );
+    const proxy = await new NetworkProxy(server.origin).start();
+    const { page, app } = desktop;
+    const wire = mpvWire(app);
+    owner.connect();
+    try {
+      await expect.poll(() => owner.status.connection).toBe("connected");
+      await owner.action({ type: "create", name: "Recovery", password: "" });
+      await connectDesktop(page, proxy);
+      await page.evaluate(
+        (groupId) => window.lumen.watch.action({ type: "join", groupId, password: "" }),
+        owner.status.group?.id ?? "",
+      );
+      await owner.action({ type: "play", itemId, positionSeconds: recovery === "end" ? 58 : 2 });
+      await expect
+        .poll(() => page.evaluate(() => window.lumen.player.state()))
+        .toMatchObject({ itemId, paused: false });
+      const original = await page.evaluate(() => window.lumen.player.state());
+      const group = owner.status.group;
+      const member = (await page.evaluate(() => window.lumen.watch.state())).memberId;
+      if (recovery === "end") {
+        await expect
+          .poll(() => page.evaluate(() => window.lumen.player.state()))
+          .toMatchObject({ ended: true });
+        // A status refresh must not treat normal completion as a broken player.
+        await page.evaluate(() => window.lumen.watch.action({ type: "list" }));
+        await expect
+          .poll(
+            async () =>
+              (await wire.snapshot()).commands.filter((entry) => entry.command[0] === "expand-text")
+                .length,
+          )
+          .toBeGreaterThan(5);
+        expect((await page.evaluate(() => window.lumen.watch.state())).error).toBeNull();
+        expect((await page.evaluate(() => window.lumen.player.state()))?.sessionId).toBe(
+          original?.sessionId,
+        );
+        await owner.action({ type: "seek", itemId, positionSeconds: 3 });
+        await expect
+          .poll(() => wire.command(["get_property", "time-pos"]).catch(() => Infinity))
+          .toBeLessThan(10);
+        return;
+      }
+      if (recovery === "runtime") {
+        let sessionId = original?.sessionId;
+        for (let failure = 0; failure < 4; failure++) {
+          await wire.command(["quit"]).catch(() => undefined);
+          if (failure < 3) {
+            await expect
+              .poll(
+                async () => {
+                  const state = await page.evaluate(() => window.lumen.player.state());
+                  return state !== null && state.sessionId !== sessionId && !state.paused;
+                },
+                { timeout: 15000 },
+              )
+              .toBe(true);
+            sessionId = (await page.evaluate(() => window.lumen.player.state()))?.sessionId;
+          }
+        }
+        await expect
+          .poll(async () => (await page.evaluate(() => window.lumen.watch.state())).error)
+          .toContain("Retry playback");
+        await page.evaluate(() => window.lumen.watch.retry());
+        await expect
+          .poll(() => page.evaluate(() => window.lumen.player.state()))
+          .toMatchObject({ itemId, paused: false });
+        expect(
+          (await page.evaluate(() => window.lumen.player.timeline())).some(
+            (event) => event.kind === "playback_failure",
+          ),
+        ).toBe(true);
+        expect((await page.evaluate(() => window.lumen.watch.state())).memberId).toBe(member);
+        return;
+      }
+      let attempts = 0;
+      const held = latch();
+      const release = latch();
+      proxy.intercept = async (request, response) => {
+        if (request.method !== "POST" || request.url !== "/api/v1/playback/sessions") return false;
+        attempts++;
+        if (recovery === "exhaustion") {
+          response.writeHead(503, { "Content-Type": "application/json" });
+          response.end(JSON.stringify({ message: "Injected media outage" }));
+          return true;
+        }
+        if (recovery === "leave" || recovery === "replace") {
+          if (attempts === 1) {
+            held.release();
+            await release.promise;
+          }
+        }
+        return false;
+      };
+      await wire.command(["stop"]);
+      if (recovery === "exhaustion") {
+        await expect
+          .poll(async () => (await page.evaluate(() => window.lumen.watch.state())).error, {
+            timeout: 15000,
+          })
+          .toContain("Retry playback");
+        expect(attempts).toBe(3);
+        // Move past every backoff deadline, then deliver another group status.
+        const clock = await app.evaluateHandle(() => Date.now);
+        try {
+          await app.evaluate(() => {
+            const now = Date.now;
+            Date.now = () => now() + 60_000;
+          });
+          await page.evaluate(() => window.lumen.watch.action({ type: "list" }));
+        } finally {
+          await app.evaluate((_electron, now) => {
+            Date.now = now;
+          }, clock);
+          await clock.dispose();
+        }
+        expect(attempts).toBe(3);
+        proxy.intercept = async () => false;
+        await page.evaluate(() => window.lumen.watch.retry());
+      }
+      if (recovery === "leave" || recovery === "replace") {
+        try {
+          await held.promise;
+          if (recovery === "leave")
+            await page.evaluate(() => window.lumen.watch.action({ type: "leave" }));
+          else await owner.action({ type: "play", itemId: other, positionSeconds: 4 });
+          if (recovery === "leave") {
+            await expect.poll(() => page.evaluate(() => window.lumen.player.state())).toBeNull();
+            await expect
+              .poll(async () => (await page.evaluate(() => window.lumen.watch.state())).group)
+              .toBeNull();
+          } else {
+            await expect
+              .poll(() => page.evaluate(() => window.lumen.player.state()))
+              .toMatchObject({ itemId: other, paused: false });
+            await expect.poll(() => wire.command(["get_property", "time-pos"])).toBeGreaterThan(4);
+          }
+        } finally {
+          proxy.intercept = async () => false;
+          release.release();
+        }
+        return;
+      }
+      await expect
+        .poll(
+          async () => {
+            const state = await page.evaluate(() => window.lumen.player.state());
+            return (
+              state !== null &&
+              state.sessionId !== original?.sessionId &&
+              state.itemId === itemId &&
+              !state.paused
+            );
+          },
+          { timeout: 15000 },
+        )
+        .toBe(true);
+      await expect.poll(() => wire.command(["get_property", "time-pos"])).toBeGreaterThan(2);
+      expect(owner.status.group?.revision).toBe(group?.revision);
+      expect((await page.evaluate(() => window.lumen.watch.state())).memberId).toBe(member);
+      await testInfo.attach("recovery-proof", {
+        body: JSON.stringify(
+          {
+            before: original,
+            after: await page.evaluate(() => window.lumen.player.state()),
+            watch: await page.evaluate(() => window.lumen.watch.state()),
+          },
+          null,
+          2,
+        ),
+        contentType: "application/json",
+      });
+    } finally {
+      owner.close();
+      await proxy.close();
+    }
+  });
