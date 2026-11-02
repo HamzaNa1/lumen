@@ -91,7 +91,12 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       if (window && !window.isDestroyed()) window.webContents.send("watch:state", status);
     }
   });
-  dependencies.window.once("closed", () => watch.close());
+  const onPlayerFailure = (message: string) => watch.playerFailed(new Error(message));
+  dependencies.player.on("failure", onPlayerFailure);
+  dependencies.window.once("closed", () => {
+    dependencies.player.off("failure", onPlayerFailure);
+    watch.close();
+  });
   const commands = viewerPlayback(watch, {
     start: (itemId, startAtSeconds) =>
       dependencies.player.start({

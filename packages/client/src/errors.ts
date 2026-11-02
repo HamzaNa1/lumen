@@ -92,3 +92,11 @@ export const assertCompatibleApi = (apiVersion: string): void => {
     throw new IncompatibleServerError(apiVersion);
   }
 };
+
+/** The session exists, but its media is no longer loaded in the local player. */
+export class PlaybackUnavailableError extends Error {
+  constructor() {
+    super("Playback was interrupted. Reloading media…");
+    this.name = "PlaybackUnavailableError";
+  }
+}

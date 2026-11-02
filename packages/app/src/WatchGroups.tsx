@@ -431,6 +431,20 @@ export const WatchGroups = ({
           {visibleError}
         </p>
       )}
+      {status.error !== null && group?.playback != null && connected ? (
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={busy}
+          onClick={() => {
+            void runtime.watch
+              .retry()
+              .catch((cause: unknown) => setError(errorMessage(cause, "Could not retry playback")));
+          }}
+        >
+          Retry playback
+        </Button>
+      ) : null}
       {group !== null ? (
         <ActiveGroup
           group={group}

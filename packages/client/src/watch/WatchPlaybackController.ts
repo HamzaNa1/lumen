@@ -7,7 +7,7 @@ import {
   type WatchStatus,
   watchPosition,
 } from "@lumen/contracts";
-import { PlaybackUnsupportedError } from "../errors.ts";
+import { PlaybackUnavailableError, PlaybackUnsupportedError } from "../errors.ts";
 import type { PlaybackDiagnosticEvent } from "../playback/PlaybackDiagnostics.ts";
 import { type WatchConnection, WatchGroupClient } from "./WatchGroupClient.ts";
 import {
@@ -56,6 +56,8 @@ export interface WatchPlayer<Server extends WatchServer> {
 }
 
 const SYNCHRONIZE_INTERVAL_MS = 500;
+const MAX_FAILURES = 4;
+const RECOVERY_STABILITY_MS = 30_000;
 // A group holding for this viewer should hear that its position has buffered without delay.
 const READINESS_INTERVAL_MS = 100;
 
@@ -74,6 +76,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private connectionId: string | null = null;
   private server: Server | null = null;
   private syncing = false;
+  private cancelStart: (() => void) | null = null;
   /** The group changed while it was being applied, and has to be applied again. */
   private resync = false;
   private appliedRevision = -1;
@@ -84,6 +87,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private stoppedAfterFailure = false;
   private retryAt = 0;
   private failures = 0;
+  private healthySince: number | null = null;
+  private restartSessionId: string | null = null;
   private surfaceReady = false;
   private speed = 1;
   private speedSessionId: string | null = null;
@@ -125,6 +130,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.server = server;
     this.connectionId = connectionId;
     const onStatus = (status: WatchStatus): void => {
+      if (
+        status.group?.id !== this.status.group?.id ||
+        status.group?.playback?.itemId !== this.status.group?.playback?.itemId
+      )
+        this.cancelStart?.();
       if (status.group?.id !== this.status.group?.id) this.reported = null;
       const released =
         status.group?.id === this.status.group?.id &&
@@ -161,6 +171,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
 
   disconnect(): void {
     this.generation += 1;
+    this.cancelStart?.();
     this.correction.reset();
     this.pendingStop = null;
     this.stoppedPlayback = null;
@@ -172,6 +183,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     this.connectionId = null;
     client?.close();
     this.playbackError = null;
+    this.restartSessionId = null;
+    this.healthySince = null;
     this.stoppedAfterFailure = false;
     this.appliedGroup = null;
     this.startedPlayback = false;
@@ -220,6 +233,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
 
   async stop(): Promise<void> {
     this.generation += 1;
+    this.cancelStart?.();
     this.correction.reset();
     const client = this.client;
     const group = this.status.group;
@@ -262,6 +276,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   }
 
   retry(): void {
+    if (this.playbackError !== null) {
+      this.generation += 1;
+      this.restartSessionId = this.player.getState()?.sessionId ?? null;
+    }
+    this.healthySince = null;
     this.retryAt = 0;
     this.failures = 0;
     void this.synchronize();
@@ -279,13 +298,19 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private recordFailure(cause: unknown): void {
     this.correction.reset();
     void this.resetSpeed().catch(() => undefined);
+    this.healthySince = null;
+    this.failures += 1;
+    if (cause instanceof PlaybackUnavailableError)
+      this.restartSessionId = this.player.getState()?.sessionId ?? null;
     // A file this device cannot play will not start working on its own: wait for the group
     // to move on, or for the viewer to ask again.
     this.retryAt =
-      cause instanceof PlaybackUnsupportedError
+      cause instanceof PlaybackUnsupportedError || this.failures >= MAX_FAILURES
         ? Number.POSITIVE_INFINITY
-        : Date.now() + Math.min(10_000, 1000 * 2 ** this.failures++);
+        : Date.now() + Math.min(10_000, 1000 * 2 ** (this.failures - 1));
     this.playbackError = cause instanceof Error ? cause.message : "Could not synchronize playback";
+    if (this.failures >= MAX_FAILURES)
+      this.playbackError = "Playback could not recover. Retry playback to try again.";
     this.status = { ...this.status, error: this.playbackError };
     this.onStatus(this.status);
   }
@@ -462,6 +487,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       return;
     }
     this.syncing = true;
+    let failuresBefore = this.failures;
     try {
       if (this.appliedGroup !== group.id) {
         this.correction.reset();
@@ -473,6 +499,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         this.heldPosition = null;
         this.retryAt = 0;
         this.failures = 0;
+        failuresBefore = 0;
       }
       const playback = group.playback;
       let state = this.player.getState();
@@ -490,15 +517,35 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
         await this.resetSpeed(current);
         return;
       }
+      if (state !== null && state.sessionId === this.restartSessionId) {
+        await this.player.stop();
+        if (!current()) return;
+        this.restartSessionId = null;
+        this.appliedRevision = -1;
+        state = null;
+      }
       if (state === null || state.itemId !== playback.itemId) {
         this.startedPlayback = true;
-        await this.player.start({
-          server: this.server,
-          connectionId: this.connectionId,
-          itemId: playback.itemId,
-          startAtSeconds: watchPosition(playback, client.serverNow),
-          paused: true,
+        const cancelled = new Promise<never>((_resolve, reject) => {
+          this.cancelStart = () => {
+            void this.player.stop().catch(() => undefined);
+            reject(new Error("Playback request was cancelled"));
+          };
         });
+        try {
+          await Promise.race([
+            this.player.start({
+              server: this.server,
+              connectionId: this.connectionId,
+              itemId: playback.itemId,
+              startAtSeconds: watchPosition(playback, client.serverNow),
+              paused: true,
+            }),
+            cancelled,
+          ]);
+        } finally {
+          this.cancelStart = null;
+        }
         this.correction.reset();
         if (
           this.generation !== generation ||
@@ -620,7 +667,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       if (!current()) return;
       this.appliedRevision = group.revision;
       this.heldPosition = playback.waitingFor === undefined ? null : playback.positionSeconds;
-      this.failures = 0;
+      this.healthySince ??= Date.now();
+      if (Date.now() - this.healthySince >= RECOVERY_STABILITY_MS) this.failures = 0;
       this.playbackError = null;
       this.stoppedAfterFailure = false;
       if (this.status.error !== null) {
@@ -635,7 +683,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       if (buffered) this.reportReady(client, group);
       else this.checkReadinessSoon();
     } catch (cause) {
-      if (current()) this.recordFailure(cause);
+      if (current() && this.failures === failuresBefore) this.recordFailure(cause);
     } finally {
       if (!current()) await this.resetSpeed().catch(() => undefined);
       this.syncing = false;

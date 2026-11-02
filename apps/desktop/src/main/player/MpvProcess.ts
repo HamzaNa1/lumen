@@ -72,6 +72,9 @@ export class MpvProcess {
       "--no-config",
       "--load-scripts=no",
       "--idle=yes",
+      // Keep completed media seekable without changing the shared pause state.
+      "--keep-open=yes",
+      "--keep-open-pause=no",
       "--ytdl=no",
       "--force-window=yes",
       "--no-terminal",
