@@ -267,6 +267,9 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
       await expect.poll(() => owner.status.connection).toBe("connected");
       await owner.action({ type: "create", name: "Recovery", password: "" });
       await connectDesktop(page, proxy);
+      await expect
+        .poll(() => page.evaluate(async () => (await window.lumen.watch.state()).connection))
+        .toBe("connected");
       await page.evaluate(
         (groupId) => window.lumen.watch.action({ type: "join", groupId, password: "" }),
         owner.status.group?.id ?? "",
@@ -431,7 +434,22 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
         contentType: "application/json",
       });
     } finally {
-      owner.close();
-      await proxy.close();
+      try {
+        await testInfo.attach("recovery-state", {
+          body: JSON.stringify(
+            await page.evaluate(async () => ({
+              player: await window.lumen.player.state(),
+              watch: await window.lumen.watch.state(),
+              timeline: await window.lumen.player.timeline(),
+            })),
+            null,
+            2,
+          ),
+          contentType: "application/json",
+        });
+      } finally {
+        owner.close();
+        await proxy.close();
+      }
     }
   });

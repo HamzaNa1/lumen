@@ -292,6 +292,9 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
    * would be passed on to the whole group.
    */
   playerFailed(cause: unknown): void {
+    // A dying player can reject a command before reporting its terminal failure. The rejected
+    // command already scheduled recovery; a failure during the next attempt counts again.
+    if (this.playbackError !== null && !this.syncing && Date.now() < this.retryAt) return;
     if (this.status.group?.playback != null) this.recordFailure(cause);
   }
 
