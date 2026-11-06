@@ -9,6 +9,7 @@ import {
   sweepGeneratedArtwork,
 } from "../media/GeneratedArtwork";
 import { backgroundTask } from "./JobLogging";
+import { pruneScanHistory } from "./ScanHistory";
 import { enqueueServerJob, LIBRARY_WATCHER_JOB } from "./ServerJobs";
 
 // The library watcher tick enqueues durable work for the job worker.
@@ -45,6 +46,11 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
     const logger = (yield* ServerLogger).child({ component: "scheduler" });
     const database = yield* Database;
     const definitions: ReadonlyArray<ScheduledJobDefinition> = [
+      {
+        name: "scan-history-retention",
+        intervalMs: 60_000,
+        run: (nowMs) => pruneScanHistory(database, nowMs),
+      },
       {
         name: LIBRARY_WATCHER_JOB,
         intervalMs: config?.libraryWatchIntervalMs ?? 60_000,

@@ -1,3 +1,4 @@
+import type { ScanRunStats } from "@lumen/contracts";
 import { sql } from "drizzle-orm";
 import {
   check,
@@ -883,6 +884,9 @@ export const scanRuns = sqliteTable(
     errorCode: text("error_code"),
     errorMessage: text("error_message"),
     createdAtMs: createdAt(),
+    stats: text("stats_json", { mode: "json" }).$type<ScanRunStats>(),
+    filesPrunedAtMs: nullableTimestamp("files_pruned_at_ms"),
+    jobsPrunedAtMs: nullableTimestamp("jobs_pruned_at_ms"),
   },
   (table) => [
     foreignKey({
@@ -892,6 +896,13 @@ export const scanRuns = sqliteTable(
     }).onDelete("cascade"),
     index("scan_runs_library_created_idx").on(table.libraryId, table.createdAtMs),
     index("scan_runs_status_idx").on(table.status, table.createdAtMs),
+    index("scan_runs_files_retention_idx").on(table.filesPrunedAtMs, table.finishedAtMs, table.id),
+    index("scan_runs_jobs_retention_idx")
+      .on(table.jobsPrunedAtMs, table.finishedAtMs, table.id)
+      .where(sql`${table.filesPrunedAtMs} is not null and ${table.stats} is not null`),
+    index("scan_runs_finished_idx")
+      .on(table.finishedAtMs, table.id)
+      .where(sql`${table.filesPrunedAtMs} is not null and ${table.jobsPrunedAtMs} is not null`),
     check("scan_runs_mode_chk", sql`${table.mode} in ('full', 'incremental', 'refresh')`),
     check(
       "scan_runs_status_chk",
@@ -948,6 +959,9 @@ export const scanJobs = sqliteTable(
     uniqueIndex("scan_jobs_run_dedupe_uq").on(table.runId, table.dedupeKey),
     index("scan_jobs_claim_idx").on(table.status, table.priority, table.availableAtMs),
     index("scan_jobs_run_status_idx").on(table.runId, table.status),
+    index("scan_jobs_source_idx").on(table.sourceId),
+    index("scan_jobs_parent_idx").on(table.parentJobId),
+    index("scan_jobs_run_source_operation_idx").on(table.runId, table.sourceId, table.operation),
     check(
       "scan_jobs_operation_chk",
       sql`${table.operation} in ('discover', 'probe', 'artwork', 'metadata', 'analyze', 'cleanup')`,
