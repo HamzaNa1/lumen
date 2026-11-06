@@ -3,6 +3,138 @@ import { join } from "node:path";
 import { expect, test } from "./support/cli";
 import { repository } from "./support/server";
 
+test("the E2E runner installs Electron only when selected projects can launch it", async ({
+  workspace,
+}) => {
+  cpSync(join(repository, "tests/e2e"), join(workspace.root, "tests/e2e"), { recursive: true });
+  workspace.write("package.json", { scripts: { playwright: "bun -e 'process.exit(0)'" } });
+  workspace.write("apps/desktop/node_modules/electron/install.js", "process.exit(81);\n");
+  for (const projects of [
+    ["--project", "api"],
+    ["--project=tooling"],
+    ["--project", "chromium", "firefox", "webkit"],
+    ["--project", "api", "--project", "tooling"],
+  ]) {
+    const result = workspace.script("test-e2e", ["source", "--no-build", ...projects]);
+    expect(result.status, result.stderr).toBe(0);
+  }
+  for (const projects of [
+    [],
+    ["--project", "native"],
+    ["--project", "chromium", "native"],
+    ["--project=chromium", "--project=native"],
+    ["--project", "*"],
+  ])
+    expect(workspace.script("test-e2e", ["source", "--no-build", ...projects]).status).not.toBe(0);
+});
+
+test("CI change detection follows workspace dependents and fails open for unknown changes or missing history", async ({
+  workspace,
+}) => {
+  workspace.write("packages/client/package.json", {
+    name: "client",
+    dependencies: { "packages-contracts": "workspace:*" },
+  });
+  workspace.write("packages/app/package.json", {
+    name: "app",
+    dependencies: { client: "workspace:*" },
+  });
+  workspace.write("apps/desktop/package.json", {
+    name: "desktop",
+    devDependencies: { app: "workspace:*" },
+  });
+  workspace.git("add", ".");
+  workspace.git("commit", "-m", "Workspace dependency graph");
+  const classify = (base: string, event = "pull_request") => {
+    const result = workspace.script("ci-changes", [], {
+      GITHUB_EVENT_NAME: event,
+      CI_BASE_SHA: base,
+      CI_HEAD_SHA: workspace.git("rev-parse", "HEAD"),
+      GITHUB_OUTPUT: "",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    return Object.fromEntries(
+      result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => line.split("=")),
+    );
+  };
+  const all = { coverage: "true", desktop: "true", server: "true" };
+  for (const [path, expected] of [
+    ["README.md", { coverage: "false", desktop: "false", server: "false" }],
+    ["apps/server/src/main.ts", { coverage: "true", desktop: "false", server: "true" }],
+    ["apps/desktop/src/main.ts", { coverage: "true", desktop: "true", server: "false" }],
+    ["packages/contracts/src/ipc.ts", all],
+    ["packages/client/src/index.ts", all],
+    ["new-workspace/source.ts", all],
+    [".github/workflows/checks.yml", all],
+    ["bun.lock", all],
+  ] as const) {
+    const base = workspace.git("rev-parse", "HEAD");
+    workspace.write(path, "changed\n");
+    workspace.git("add", path);
+    workspace.git("commit", "-m", `Change ${path}`);
+    expect(classify(base)).toEqual(expected);
+  }
+  const beforeRename = workspace.git("rev-parse", "HEAD");
+  workspace.git("mv", "apps/desktop/src/main.ts", "docs-moved.md");
+  workspace.git("commit", "-m", "Move source out of desktop");
+  expect(classify(beforeRename)).toEqual(all);
+  expect(classify("f".repeat(40))).toEqual(all);
+  expect(classify(workspace.git("rev-parse", "HEAD"), "push")).toEqual(all);
+  const beforeDelete = workspace.git("rev-parse", "HEAD");
+  workspace.git("rm", "packages/client/package.json");
+  workspace.git("commit", "-m", "Remove workspace manifest");
+  expect(classify(beforeDelete)).toEqual(all);
+});
+
+test("the required CI gate rejects failures, cancellations, missing results and unplanned skips", async ({
+  workspace,
+}) => {
+  const workflow = JSON.parse(
+    workspace.run("bun", [
+      "-e",
+      "console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())))",
+      join(repository, ".github/workflows/checks.yml"),
+    ]),
+  ) as { jobs: Record<string, { needs?: string[]; steps: { run?: string }[] }> };
+  const gate = workflow.jobs.check;
+  if (!gate?.needs || !gate.steps[0]?.run) throw new Error("Missing required CI gate");
+  expect([...gate.needs].sort()).toEqual(
+    Object.keys(workflow.jobs)
+      .filter((job) => job !== "check")
+      .sort(),
+  );
+  workspace.write("gate.sh", gate.steps[0].run);
+  const flags = { coverage: "true", desktop: "true", server: "true" };
+  const results: Record<string, { result: string; outputs?: typeof flags }> = Object.fromEntries(
+    gate.needs.map((job) => [job, { result: "success" }]),
+  );
+  results.changes = { result: "success", outputs: flags };
+  const run = () => workspace.command("bash", ["gate.sh"], { RESULTS: JSON.stringify(results) });
+  expect(run().status).toBe(0);
+  for (const job of gate.needs) {
+    for (const state of ["failure", "cancelled", "skipped", ""]) {
+      results[job] = { ...results[job], result: state };
+      expect(run().status, `${job}: ${state}`).not.toBe(0);
+    }
+    results[job] = { ...results[job], result: "success" };
+  }
+  results.changes = {
+    result: "success",
+    outputs: { coverage: "false", desktop: "false", server: "false" },
+  };
+  for (const job of gate.needs.filter((job) => !["changes", "quality"].includes(job)))
+    results[job] = { result: "skipped" };
+  expect(run().status).toBe(0);
+  results.quality = { result: "skipped" };
+  expect(run().status).not.toBe(0);
+  results.quality = { result: "success" };
+  results.changes = { result: "success", outputs: { ...flags, desktop: "invalid" } };
+  expect(run().status).not.toBe(0);
+});
+
 test("Playwright discovery assigns every E2E suite, selects product owners and fails on missing or unowned tests", async ({
   workspace,
 }) => {
@@ -14,6 +146,29 @@ test("Playwright discovery assigns every E2E suite, selects product owners and f
   }
   // Discovery must resolve the same packages without starting servers or building either product.
   symlinkSync(join(repository, "node_modules"), join(workspace.root, "node_modules"), "junction");
+  const discoverNative = (shard?: string) => {
+    const result = workspace.command(
+      "bun",
+      [
+        "run",
+        "playwright",
+        "test",
+        "--list",
+        "--project",
+        "native",
+        "--no-deps",
+        ...(shard ? ["--shard", shard] : []),
+      ],
+      { LUMEN_BROWSER_PRODUCT: "source" },
+    );
+    expect(result.status, result.stderr).toBe(0);
+    return result.stdout.split("\n").filter((line) => line.includes("[native]"));
+  };
+  const native = discoverNative();
+  const shards = [1, 2, 3].flatMap((shard) => discoverNative(`${shard}/3`));
+  expect(shards.length).toBeGreaterThan(0);
+  expect(new Set(shards).size).toBe(shards.length);
+  expect(shards.sort()).toEqual(native.sort());
   for (const product of ["source", "server", "desktop"]) {
     const result = workspace.command("bun", ["run", "playwright", "test", "--list"], {
       LUMEN_BROWSER_PRODUCT: product,

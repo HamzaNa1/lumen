@@ -4,6 +4,9 @@ runs:
   using: composite
   steps:
     - uses: ./.github/actions/e2e-runtime
+      with:
+        browsers: chromium
+        native: 'true'
     - name: Check desktop types
       shell: pwsh
       run: |

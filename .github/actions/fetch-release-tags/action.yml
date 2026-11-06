@@ -1,0 +1,9 @@
+name: Released product trees
+description: Fetch release tag snapshots without downloading their full histories.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      # checkout's fetch-tags option only auto-follows tags in shallow history.
+      # Compatibility needs older tag trees to create the released workspaces.
+      run: git fetch --depth=1 --no-recurse-submodules origin '+refs/tags/*:refs/tags/*'

@@ -1,0 +1,27 @@
+name: Ubuntu package mirrors
+description: Use fallback Ubuntu mirrors and bounded network timeouts on hosted Linux runners.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        sudo mkdir -p /etc/apt/mirrors
+        printf '%b\n' \
+          'https://archive.ubuntu.com/ubuntu/\tpriority:1' \
+          'https://azure.archive.ubuntu.com/ubuntu/\tpriority:2' \
+          'https://security.ubuntu.com/ubuntu/\tpriority:3' | sudo tee /etc/apt/mirrors/lumen.list
+        sudo python3 - <<'PY'
+        from pathlib import Path
+        import re
+        paths = [Path('/etc/apt/sources.list'), *Path('/etc/apt/sources.list.d').glob('*.sources'), *Path('/etc/apt/sources.list.d').glob('*.list')]
+        for path in paths:
+            if path.exists():
+                source = path.read_text()
+                updated = re.sub(r'https?://(?:(?:azure\.)?archive|security)\.ubuntu\.com/ubuntu/?', 'mirror+file:/etc/apt/mirrors/lumen.list', source)
+                if source != updated:
+                    path.write_text(updated)
+        PY
+        printf '%s\n' \
+          'Acquire::http::Timeout "15";' \
+          'Acquire::https::Timeout "15";' \
+          'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/80-lumen-network
