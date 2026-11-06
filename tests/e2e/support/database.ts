@@ -1,4 +1,11 @@
+import { existsSync } from "node:fs";
+import { readdir } from "node:fs/promises";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
+
+// Drizzle applies, in name order, every folder that contains a migration.sql.
+export const listMigrations = async (folder: string): Promise<string[]> =>
+  (await readdir(folder)).filter((name) => existsSync(join(folder, name, "migration.sql"))).sort();
 
 export function openDatabase(
   path: string,

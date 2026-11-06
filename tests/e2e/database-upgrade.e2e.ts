@@ -1,17 +1,11 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync } from "node:fs";
-import { readdir, readFile, rm } from "node:fs/promises";
+import { readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
-import { openDatabase } from "./support/database";
+import { listMigrations, openDatabase } from "./support/database";
 import { expect, password, repository, test } from "./support/server";
 
-const shippedMigrations = async () => {
-  const folder = join(repository, "packages/database/drizzle");
-  return (await readdir(folder))
-    .filter((name) => existsSync(join(folder, name, "migration.sql")))
-    .sort();
-};
+const shippedMigrations = () => listMigrations(join(repository, "packages/database/drizzle"));
 
 // Recreates a database left by an earlier release that had applied only the first migrations.
 const openMigratedThrough = async (path: string, through: number) => {
@@ -250,6 +244,30 @@ test("server reports timed startup phases and validates foreign keys only for an
     ...served,
   ]);
   expect(restarted[5]).toMatchObject({ applied: 0 });
+
+  // A fully migrated database from a release before validation was recorded is checked once.
+  await server.stop();
+  const legacy = openDatabase(server.databasePath);
+  try {
+    legacy.exec("DROP TABLE __lumen_foreign_key_validation");
+  } finally {
+    legacy.close();
+  }
+  for (const expected of [
+    ["database_foreign_key_check_started", "database_foreign_key_check_completed"],
+    ["database_foreign_key_check_skipped"],
+  ]) {
+    const before = server.log.length;
+    await server.start();
+    const events = startupEvents(server.log.slice(before));
+    expect(events.find(({ event }) => event === "database_migrations_completed")).toMatchObject({
+      applied: 0,
+    });
+    expect(
+      events.map(({ event }) => event).filter((event) => event.includes("foreign_key")),
+    ).toEqual(expected);
+    await server.stop();
+  }
 });
 
 test("server keeps refusing to serve after committed migrations fail foreign key validation", async ({

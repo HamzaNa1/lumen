@@ -1,9 +1,8 @@
 import { execFileSync, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
-import { cp, mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openDatabase } from "./support/database";
+import { listMigrations, openDatabase } from "./support/database";
 import { expect, repository, test } from "./support/server";
 
 test("database client commits a full music transaction, exposes it to another process and atomically claims persisted work", async ({
@@ -55,14 +54,12 @@ test("migrations validate foreign keys once per migration state and never record
   const shipped = join(repository, "packages/database/drizzle");
   const migrations = join(root, "drizzle");
   const filename = join(root, "catalog.sqlite");
-  const names = (await readdir(shipped))
-    .filter((name) => existsSync(join(shipped, name, "migration.sql")))
-    .sort();
+  const names = await listMigrations(shipped);
   const ship = async (count: number) => {
     for (const name of names.slice(0, count))
       await cp(join(shipped, name), join(migrations, name), { recursive: true });
   };
-  const start = (killAt?: string) => {
+  const start = (interference?: string) => {
     const result = spawnSync(
       "bun",
       [
@@ -71,15 +68,20 @@ test("migrations validate foreign keys once per migration state and never record
         join(repository, "tests/e2e/support/database/migrate-entry.ts"),
         filename,
         migrations,
-        ...(killAt === undefined ? [] : [killAt]),
+        ...(interference === undefined ? [] : [interference]),
       ],
       { encoding: "utf8", timeout: 15000 },
     );
-    const events: { type: string; applied?: number; violations?: number; durationMs?: number }[] =
-      result.stdout
-        .split("\n")
-        .filter((line) => line.length > 0)
-        .map((line) => JSON.parse(line));
+    const events: {
+      type: string;
+      applied?: number;
+      violations?: number;
+      durationMs?: number;
+      blocked?: boolean;
+    }[] = result.stdout
+      .split("\n")
+      .filter((line) => line.length > 0)
+      .map((line) => JSON.parse(line));
     return { status: result.status, signal: result.signal, events, stderr: result.stderr };
   };
   const types = (run: ReturnType<typeof start>) => run.events.map((event) => event.type);
@@ -91,8 +93,15 @@ test("migrations validate foreign keys once per migration state and never record
     await mkdir(migrations);
     await ship(names.length - 2);
 
-    const first = start();
+    // Validation holds the write lock, so a concurrent writer waits instead of committing
+    // mid-check and leaving the record unwritable.
+    const first = start("write:foreign_key_check_started");
     expect(first.status, first.stderr).toBe(0);
+    expect(first.events.find(({ type }) => type === "concurrent_write")).toEqual({
+      type: "concurrent_write",
+      blocked: true,
+    });
+    first.events = first.events.filter(({ type }) => type !== "concurrent_write");
     expect(types(first)).toEqual(validated);
     expect(first.events[3]).toMatchObject({ applied: names.length - 2 });
     for (const event of first.events.filter(({ type }) => type.endsWith("_completed")))
@@ -105,7 +114,7 @@ test("migrations validate foreign keys once per migration state and never record
 
     // The new migration commits, then the process dies while validation is running.
     await ship(names.length - 1);
-    const interrupted = start("foreign_key_check_started");
+    const interrupted = start("kill:foreign_key_check_started");
     expect(interrupted.signal).toBe("SIGKILL");
     expect(types(interrupted)).toEqual([...opened, "foreign_key_check_started"]);
     expect(interrupted.events[3]).toMatchObject({ applied: 1 });

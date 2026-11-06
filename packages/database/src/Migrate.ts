@@ -62,6 +62,10 @@ const validateForeignKeys = (
     `);
     const durationMs = yield* database.transaction((transaction) =>
       Effect.gen(function* () {
+        // The client only issues a deferred BEGIN. Writing first takes the write lock before any
+        // read, so the check and its record share one snapshot and another writer committing
+        // mid-check waits for us instead of making the final upgrade to a writer fail.
+        yield* transaction.run(sql`UPDATE __lumen_foreign_key_validation SET id = id WHERE 0`);
         const migrationState = createHash("sha256")
           .update((yield* appliedMigrationHashes(transaction)).join("\n"))
           .digest("hex");
@@ -114,7 +118,8 @@ export const migrateDatabase = ({
     const startedAt = performance.now();
     const before = (yield* appliedMigrationHashes(database)).length;
     yield* database.run(sql`PRAGMA foreign_keys = OFF`);
-    yield* migrate(database, { migrationsFolder }).pipe(
+    // Suspended so that reading the migration files, which throws synchronously, is also covered.
+    yield* Effect.suspend(() => migrate(database, { migrationsFolder })).pipe(
       Effect.ensuring(Effect.orDie(database.run(sql`PRAGMA foreign_keys = ON`))),
     );
     observe({
