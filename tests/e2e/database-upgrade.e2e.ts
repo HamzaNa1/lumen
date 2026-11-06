@@ -1,19 +1,60 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { readdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { openDatabase } from "./support/database";
 import { expect, password, repository, test } from "./support/server";
+
+const shippedMigrations = async () => {
+  const folder = join(repository, "packages/database/drizzle");
+  return (await readdir(folder))
+    .filter((name) => existsSync(join(folder, name, "migration.sql")))
+    .sort();
+};
+
+// Recreates a database left by an earlier release that had applied only the first migrations.
+const openMigratedThrough = async (path: string, through: number) => {
+  for (const suffix of ["", "-wal", "-shm"]) await rm(`${path}${suffix}`, { force: true });
+  const database = openDatabase(path);
+  try {
+    database.exec(
+      "CREATE TABLE __drizzle_migrations(id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at NUMERIC, name TEXT, applied_at TEXT)",
+    );
+    for (const name of (await shippedMigrations()).slice(0, through)) {
+      const sql = await readFile(
+        join(repository, "packages/database/drizzle", name, "migration.sql"),
+        "utf8",
+      );
+      database.exec(sql);
+      database
+        .prepare("INSERT INTO __drizzle_migrations(hash,name) VALUES(?,?)")
+        .run(createHash("sha256").update(sql).digest("hex"), name);
+    }
+    return database;
+  } catch (cause) {
+    database.close();
+    throw cause;
+  }
+};
+
+const startupEvents = (log: readonly string[]) =>
+  log
+    .join("")
+    .split("\n")
+    .filter((line) => line.startsWith("{"))
+    .map((line) => JSON.parse(line) as { event: string; durationMs?: number; applied?: number })
+    .filter(({ event }) =>
+      /^(server_starting|server_services|server_listening|database_)/.test(event),
+    );
 
 for (const through of [3, 6, 8, 9])
   test(`server upgrades a persisted database after migration ${through} without losing identities, search or watch state`, async ({
     server,
   }) => {
     await server.stop();
-    for (const suffix of ["", "-wal", "-shm"])
-      await rm(`${server.databasePath}${suffix}`, { force: true });
-    const before = openDatabase(server.databasePath);
-    const migrations = (await readdir(join(repository, "packages/database/drizzle"))).sort();
+    const before = await openMigratedThrough(server.databasePath, through);
+    const migrations = await shippedMigrations();
     const library = crypto.randomUUID();
     const root = crypto.randomUUID();
     const source = crypto.randomUUID();
@@ -21,19 +62,6 @@ for (const through of [3, 6, 8, 9])
     const user = crypto.randomUUID();
     const item = crypto.randomUUID();
     try {
-      before.exec(
-        "CREATE TABLE __drizzle_migrations(id INTEGER PRIMARY KEY, hash TEXT NOT NULL, created_at NUMERIC, name TEXT, applied_at TEXT)",
-      );
-      for (const name of migrations.slice(0, through)) {
-        const sql = await readFile(
-          join(repository, "packages/database/drizzle", name, "migration.sql"),
-          "utf8",
-        );
-        before.exec(sql);
-        before
-          .prepare("INSERT INTO __drizzle_migrations(hash,name) VALUES(?,?)")
-          .run(createHash("sha256").update(sql).digest("hex"), name);
-      }
       before
         .prepare(
           "INSERT INTO libraries(id,name,slug,created_at_ms,updated_at_ms) VALUES(?,'Archive','archive',1,1)",
@@ -189,4 +217,78 @@ test("legacy refresh exchange is one-use, revokes the old session and survives r
   await server.api("/auth/me", { token: next.accessToken });
   await server.api("/auth/me", { token: admin.accessToken, status: 401 });
   await server.api("/auth/migrate-session", { status: 401, body: { refreshToken } });
+});
+
+test("server reports timed startup phases and validates foreign keys only for an unvalidated migration state", async ({
+  server,
+}) => {
+  const migrated = [
+    "server_starting",
+    "server_services_initializing",
+    "database_open_started",
+    "database_open_completed",
+    "database_migrations_started",
+    "database_migrations_completed",
+  ];
+  const served = ["server_services_initialized", "server_listening"];
+  const first = startupEvents(server.log);
+  expect(first.map(({ event }) => event)).toEqual([
+    ...migrated,
+    "database_foreign_key_check_started",
+    "database_foreign_key_check_completed",
+    ...served,
+  ]);
+  for (const { event, durationMs } of first)
+    if (/_(completed|initialized|listening)$/.test(event))
+      expect(durationMs, event).toBeGreaterThanOrEqual(0);
+  const logged = server.log.length;
+  await server.restart();
+  const restarted = startupEvents(server.log.slice(logged));
+  expect(restarted.map(({ event }) => event)).toEqual([
+    ...migrated,
+    "database_foreign_key_check_skipped",
+    ...served,
+  ]);
+  expect(restarted[5]).toMatchObject({ applied: 0 });
+});
+
+test("server keeps refusing to serve after committed migrations fail foreign key validation", async ({
+  server,
+}) => {
+  await server.stop();
+  const migrations = await shippedMigrations();
+  const before = await openMigratedThrough(server.databasePath, 9);
+  try {
+    before.exec("PRAGMA foreign_keys = OFF");
+    before.exec(
+      "INSERT INTO devices(id,user_id,name,platform,last_seen_at_ms,created_at_ms) VALUES('orphan','absent','Orphan','web',1,1)",
+    );
+  } finally {
+    before.close();
+  }
+  for (const applied of [migrations.length - 9, 0]) {
+    const logged = server.log.length;
+    await expect(server.start()).rejects.toThrow(/Server exited \(1\)/);
+    const events = startupEvents(server.log.slice(logged));
+    expect(events.map(({ event }) => event)).toContain("database_foreign_key_check_failed");
+    expect(events.map(({ event }) => event)).not.toContain("server_listening");
+    expect(events.find(({ event }) => event === "database_migrations_completed")).toMatchObject({
+      applied,
+    });
+  }
+  const db = openDatabase(server.databasePath);
+  try {
+    expect(db.prepare("SELECT count(*) AS count FROM __drizzle_migrations").get()?.count).toBe(
+      migrations.length,
+    );
+    db.exec("DELETE FROM devices WHERE id = 'orphan'");
+  } finally {
+    db.close();
+  }
+  const logged = server.log.length;
+  await server.start();
+  expect(startupEvents(server.log.slice(logged)).map(({ event }) => event)).toContain(
+    "database_foreign_key_check_completed",
+  );
+  expect(await server.api("/auth/setup")).toEqual({ setupRequired: true });
 });

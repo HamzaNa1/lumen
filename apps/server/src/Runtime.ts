@@ -75,7 +75,7 @@ export const makeLayers = (
   config: ServerConfig,
   logger: Logger = createLogger({ level: config.logLevel, format: config.logFormat }),
 ) => {
-  const database = makeDatabaseLayers(config);
+  const database = makeDatabaseLayers(config, logger);
   const repositories = RepositoriesLive(database);
   const dependencies = Layer.mergeAll(database, repositories);
   const access = AccessControlLive.pipe(Layer.provide(dependencies));
@@ -202,6 +202,10 @@ const startConfiguredServer = async (
     ),
     Effect.provide(serviceLayer),
   ) as Effect.Effect<never, unknown, never>;
+  // Bun's SQLite calls are synchronous, so the database work inside this fork can block the
+  // event loop, including the timer below, for as long as a migration or validation runs.
+  logger.info("server_services_initializing");
+  const servicesStartedAt = performance.now();
   const serviceFiber = Effect.runFork(serviceProgram);
   serviceFiber.addObserver((exit) => {
     if (Exit.isFailure(exit)) rejectServices(Cause.squash(exit.cause));
@@ -219,6 +223,9 @@ const startConfiguredServer = async (
       }),
     ]);
     clearTimeout(startupTimeout);
+    logger.info("server_services_initialized", {
+      durationMs: Math.round(performance.now() - servicesStartedAt),
+    });
     for (const path of [
       config.databasePath,
       `${config.databasePath}-wal`,

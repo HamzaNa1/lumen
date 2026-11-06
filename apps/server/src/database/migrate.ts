@@ -1,26 +1,20 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { DatabaseWithMigrationsLive } from "@lumen/database";
 import { Effect } from "effect";
 import { makeServerConfig } from "../config/ServerConfig";
 import { createLogger } from "../core/Logger";
+import { makeDatabaseLayers } from "./DatabaseLayer";
 
-let logger = createLogger().child({ component: "database" });
+let logger = createLogger();
 
 const program = Effect.gen(function* () {
   const config = yield* makeServerConfig();
-  logger = createLogger({ level: config.logLevel, format: config.logFormat }).child({
-    component: "database",
-  });
-  logger.info("database_migration_started");
+  logger = createLogger({ level: config.logLevel, format: config.logFormat });
   yield* Effect.promise(() => mkdir(dirname(config.databasePath), { recursive: true }));
-  yield* Effect.scoped(
-    Effect.provide(Effect.void, DatabaseWithMigrationsLive({ filename: config.databasePath })),
-  );
-  logger.info("database_migration_completed");
+  yield* Effect.scoped(Effect.provide(Effect.void, makeDatabaseLayers(config, logger)));
 });
 
 await Effect.runPromise(program).catch((cause) => {
-  logger.error("database_migration_failed", {}, cause);
+  logger.child({ component: "database" }).error("database_migration_failed", {}, cause);
   process.exitCode = 1;
 });
