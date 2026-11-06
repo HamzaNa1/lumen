@@ -19,6 +19,7 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "metadata-provider.e2e.ts": { runtime: "api", products: ["server"] },
   "playback-state.e2e.ts": { runtime: "api", products: ["server"] },
   "scanner-transactions.e2e.ts": { runtime: "api", products: ["server"] },
+  "scan-retention.e2e.ts": { runtime: "api", products: ["server"] },
   "scan-recovery.e2e.ts": { runtime: "api", products: ["server"] },
   "rate-limit-races.e2e.ts": { runtime: "api", products: ["server"] },
   "server-failures.e2e.ts": { runtime: "api", products: ["server"] },

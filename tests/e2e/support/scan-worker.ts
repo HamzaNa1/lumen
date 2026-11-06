@@ -28,7 +28,7 @@ export class ScanWorker {
     expect(ready[0], log.join("")).toEqual({ ready: true });
     return new ScanWorker(child, log);
   }
-  async call(action: "run" | "claim" | "recover" | "backfill", nowMs = Date.now()) {
+  async call(action: "run" | "claim" | "recover" | "backfill" | "maintain", nowMs = Date.now()) {
     const id = crypto.randomUUID();
     const reply = once(this.child, "message", { signal: AbortSignal.timeout(20000) });
     this.child.send({ id, action, nowMs });

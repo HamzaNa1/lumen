@@ -539,6 +539,7 @@ export const serverScanSeen = sqliteTable(
   },
   (table) => [
     primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] }),
+    index("server_scan_seen_source_idx").on(table.sourceId),
     check(
       "server_scan_seen_change_chk",
       sql`${table.change} in ('new', 'changed', 'moved', 'unchanged')`,

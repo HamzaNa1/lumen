@@ -2,6 +2,7 @@ import { type DatabaseClient, type DatabaseTransaction, scanJobs, scanRuns } fro
 import { and, asc, count, eq, inArray, isNotNull, lt, notExists, or, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { newUuid } from "../core/Security";
+import { scanRunStats } from "../services/ScanStatistics";
 import { retryDelayMs } from "./ServerJobs";
 
 // Library scan work stored in `scan_runs` and `scan_jobs`. A run is active while
@@ -193,10 +194,12 @@ const finishRunIfDone = Effect.fn("ScanJobs.finishRunIfDone")(function* (
   // The clock may sit behind the times already stored on the run; its timestamp
   // constraints must hold regardless or the run could never be finished.
   const finishedAtMs = sql<number>`max(${nowMs}, ${scanRuns.createdAtMs}, coalesce(${scanRuns.startedAtMs}, 0))`;
+  const stats = yield* scanRunStats(transaction, runId);
   const [finished] = yield* transaction
     .update(scanRuns)
     .set({
       ...outcome,
+      stats,
       startedAtMs: sql`coalesce(${scanRuns.startedAtMs}, ${finishedAtMs})`,
       finishedAtMs,
     })
