@@ -13,13 +13,16 @@ import {
   libraries,
   mediaSources,
   outboxEvents,
+  scanJobs,
   scanRuns,
+  serverScanSeen,
   trackArtists,
   tracks,
 } from "@lumen/database";
-import { and, asc, eq, inArray, isNotNull, notExists, notInArray, or } from "drizzle-orm";
+import { and, asc, eq, inArray, isNotNull, isNull, notExists, notInArray, or } from "drizzle-orm";
 import { Effect } from "effect";
 import { queueArtworkSweep } from "../media/GeneratedArtwork";
+import { scanRunStats } from "./ScanStatistics";
 
 type Transaction = DatabaseTransaction;
 
@@ -219,6 +222,33 @@ export const purgeSources = Effect.fn("CatalogPurge.purgeSources")(function* (
 
 const purgeSourceBatch = (transaction: Transaction, removedIds: string[]) =>
   Effect.gen(function* () {
+    // Source deletion cascades through old sightings and jobs. Preserve affected legacy
+    // summaries in this same transaction, even if retention has not reached them yet.
+    const affectedRuns = transaction
+      .select({ id: serverScanSeen.runId })
+      .from(serverScanSeen)
+      .where(inArray(serverScanSeen.sourceId, removedIds))
+      .union(
+        transaction
+          .select({ id: scanJobs.runId })
+          .from(scanJobs)
+          .where(inArray(scanJobs.sourceId, removedIds)),
+      );
+    const legacyRuns = yield* transaction
+      .select({ id: scanRuns.id })
+      .from(scanRuns)
+      .where(
+        and(
+          inArray(scanRuns.id, affectedRuns),
+          isNull(scanRuns.stats),
+          inArray(scanRuns.status, ["succeeded", "failed", "cancelled"]),
+        ),
+      );
+    for (const run of legacyRuns) {
+      const stats = yield* scanRunStats(transaction, run.id);
+      yield* transaction.update(scanRuns).set({ stats }).where(eq(scanRuns.id, run.id));
+    }
+
     const removed = new Set(removedIds);
     const links = yield* transaction
       .select({ itemId: catalogItemSources.itemId, sourceId: catalogItemSources.sourceId })

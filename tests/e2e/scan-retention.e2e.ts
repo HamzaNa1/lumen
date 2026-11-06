@@ -220,3 +220,33 @@ test("job retention deletes children in bounded batches before their parent", as
     db.close();
   }
 });
+
+test("source deletion snapshots legacy history atomically before foreign-key cascades", async ({
+  server,
+  admin,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(token, "movies", ["Film.mp4"]);
+  const db = openDatabase(server.databasePath);
+  try {
+    const sourceId = String(db.prepare("SELECT id FROM media_sources LIMIT 1").get()?.id);
+    const id = history(db, library.id, sourceId, Date.now() - day);
+    const before = await server.api<{ stats: unknown }>(`/scans/${id}`, { token });
+    expect(before.stats).toMatchObject({ discovered: 1, probesEnqueued: 1 });
+    db.exec(`CREATE TRIGGER interrupt_snapshot BEFORE UPDATE OF stats_json ON scan_runs
+      WHEN OLD.id='${id}' BEGIN SELECT RAISE(ABORT,'injected snapshot failure'); END`);
+    await server.api(`/roots/${library.rootId}`, { token, method: "DELETE", status: 500 });
+    expect(run(db, id)?.stats_json).toBeNull();
+    expect(count(db, "server_scan_seen", id)).toBe(1);
+    expect(count(db, "scan_jobs", id)).toBe(2);
+    db.exec("DROP TRIGGER interrupt_snapshot");
+    await server.api(`/roots/${library.rootId}`, { token, method: "DELETE" });
+    expect(count(db, "server_scan_seen", id)).toBe(0);
+    expect(count(db, "scan_jobs", id)).toBe(0);
+    const after = await server.api<{ stats: unknown }>(`/scans/${id}`, { token });
+    expect(after.stats).toEqual(before.stats);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
