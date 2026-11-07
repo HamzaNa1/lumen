@@ -21,17 +21,23 @@ permissions:
   contents: read
 jobs:
   server:
-    name: Server image
+    name: Server image / ${{ matrix.arch }}
     if: ${{ inputs.product == 'all' || inputs.product == 'server' }}
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
+      - uses: ./.github/actions/build-server-image
         with:
-          bun-version: 1.4.4
-      - run: docker build --file apps/server/Dockerfile --tag lumen-server:check .
-      - run: bun scripts/smoke-server-image.ts lumen-server:check
+          arch: ${{ matrix.arch }}
   desktop:
     name: Desktop / ${{ matrix.runner }}
     if: ${{ inputs.product == 'all' || inputs.product == 'desktop' }}

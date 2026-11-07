@@ -48,15 +48,11 @@ elif [[ "$RUNNER_OS" == macOS ]]; then
   brew install "${packages[@]}"
 elif [[ "$RUNNER_OS" == Windows ]]; then
   packages=(ffmpeg)
-  if [[ "$E2E_NATIVE" == true ]]; then packages+=(mpv); fi
+  # Windows native tests use the renamed MPV executable from bundle-mpv.
   choco install "${packages[@]}" -y --no-progress --cache-location "$(cygpath -w "$HOME/.cache/chocolatey")"
 fi
 
 if (( ${#browsers[@]} )); then
-  if [[ "$RUNNER_OS" == Windows ]]; then
-    # Chromium media playback requires Media Foundation on Windows Server runners.
-    bun run playwright install-deps "${browsers[@]}"
-  fi
   PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS=1 bun run playwright install --only-shell "${browsers[@]}"
 fi
 if [[ "$E2E_NATIVE" == true ]]; then
