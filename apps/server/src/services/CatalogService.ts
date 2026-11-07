@@ -435,6 +435,8 @@ export const makeCatalogService = Effect.gen(function* () {
           indexNumber: catalogItems.indexNumber,
           indexNumberEnd: catalogItems.indexNumberEnd,
           // An episode sits in a season of its show, or directly in the show.
+          seriesId: sql<string | null>`case ${parent.kind}
+            when 'show' then ${parent.id} when 'season' then ${show.id} end`,
           seriesTitle: sql<string | null>`case ${parent.kind}
             when 'show' then ${parent.title} when 'season' then ${show.title} end`,
           seasonNumber: sql<

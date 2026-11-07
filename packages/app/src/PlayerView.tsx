@@ -41,7 +41,7 @@ export const PlayerView = ({
   // The controls can be drawn where no account's caches are, so the still keeps to its own.
   const nextStill = useArtwork(nextEpisode?.artwork, ["player"]).data ?? null;
   const playingItemId = display?.itemId ?? null;
-  const show = description?.show ?? null;
+  const show = display?.show ?? null;
   // Loaded with the player rather than with the drawer, which then has nothing to wait for.
   useShowEpisodes(show?.id ?? null);
   const [showDrawerOpen, setShowDrawerOpen] = useState(false);

@@ -89,6 +89,10 @@ test("episode ranges, seasons, next-up and manual watch state survive a full res
     [1, null],
   ]);
   const [pilot, combined, overlap, after] = episodes;
+  for (const episode of [pilot, after])
+    expect(await server.api(`/items/${episode?.id}`, { token })).toMatchObject({
+      item: { seriesId: show?.id, seriesTitle: "Serial" },
+    });
   const next = () => server.api(`/items/${show?.id}/next-up`, { token });
   expect(await next()).toMatchObject({ item: { id: pilot?.id } });
   const mark = (item: Item | undefined) =>

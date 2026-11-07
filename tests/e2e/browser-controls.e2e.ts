@@ -141,3 +141,61 @@ test("the player describes what is playing all at once, once every detail is kno
   await expect(page.getByRole("button", { name: "Episodes", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next episode", exact: true })).toBeVisible();
 });
+
+test("a movie is described by the item it was started from, without waiting on any lookup", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  await signIn(page, server);
+  const lookups: string[] = [];
+  await page.route(
+    (url) =>
+      /\/api\/v1\/items\/[^/]+$/.test(url.pathname) || url.pathname.endsWith("/adjacent-episodes"),
+    (route) => {
+      lookups.push(route.request().url());
+      return route.abort();
+    },
+  );
+  await openMovie(page, server, library.id);
+  await expect(
+    page.locator(".media-player-header").getByRole("heading", { name: "Film", exact: true }),
+  ).toBeVisible();
+  expect(lookups).toEqual([]);
+});
+
+test("an older server that does not name an episode's show still offers its episodes", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "shows", [
+    "Serial/Season 1/Serial S01E01 - Opening.mp4",
+    "Serial/Season 1/Serial S01E02 - Sequel.mp4",
+  ]);
+  await signIn(page, server);
+  await page.route(
+    (url) => /\/api\/v1\/items\/[^/]+$/.test(url.pathname),
+    async (route) => {
+      const response = await route.fetch();
+      const details = await response.json();
+      delete details.item.seriesId;
+      await route.fulfill({ response, json: details });
+    },
+  );
+  await page.goto(`${server.origin}web/library/${library.id}`);
+  for (const name of ["Serial", "Season 1", "Opening"])
+    await page
+      .getByRole("button", { name: `Play ${name}`, exact: true })
+      .first()
+      .click({ force: true });
+  await playing(page);
+  const header = page.locator(".media-player-header");
+  await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  await expect(header.locator(".media-player-title p")).toContainText("S01E01");
+  await page.getByRole("button", { name: "Episodes", exact: true }).click();
+  await expect(
+    page.getByRole("complementary", { name: "Episodes" }).getByRole("article"),
+  ).toHaveCount(2);
+});

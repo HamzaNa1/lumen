@@ -110,6 +110,8 @@ export const CatalogItemDetails = Schema.Struct({
     indexNumber: Schema.NullOr(Schema.Number),
     /** The last episode a file holding several consecutive episodes covers. */
     indexNumberEnd: Schema.optional(Schema.NullOr(Schema.Number)),
+    /** The show an episode or season sits under; left out by servers older than this field. */
+    seriesId: Schema.optional(Schema.NullOr(Uuid)),
     seriesTitle: Schema.optional(Schema.NullOr(Schema.String)),
     seasonNumber: Schema.optional(Schema.NullOr(Schema.Number)),
     /** The year an episode's season came out, or its show's where the season's is not known. */
@@ -269,8 +271,6 @@ export type ShowSummary = Schema.Schema.Type<typeof ShowSummary>;
 export const PlayingDescription = Schema.Struct({
   title: Schema.String,
   context: Schema.String,
-  /** The show the episode playing belongs to; null for anything that is not an episode of one. */
-  show: Schema.NullOr(ShowSummary),
   hasPreviousEpisode: Schema.Boolean,
   /** The episode after the one playing, where there is one. */
   nextEpisode: Schema.NullOr(
@@ -289,6 +289,11 @@ export const PlayerDisplay = Schema.Struct({
   itemId: Schema.NullOr(Uuid),
   /** Null while any of it is still being looked up, so the controls never show part of it. */
   description: Schema.NullOr(PlayingDescription),
+  /**
+   * The show the episode playing belongs to. Never known before the description, but it can
+   * follow it where the server makes the show a lookup of its own.
+   */
+  show: Schema.NullOr(ShowSummary),
   duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   loading: Schema.Boolean,
   error: Schema.NullOr(Schema.String),
