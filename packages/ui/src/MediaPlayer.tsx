@@ -48,7 +48,8 @@ interface MediaPlayerProps {
   readonly onRetryTrackMemory?: () => void;
   /** The settings panel closed, so the errors it was showing are no longer wanted. */
   readonly onDismissErrors?: () => void;
-  readonly title: string;
+  /** Left out while what is playing is still being described. */
+  readonly title?: string;
   readonly subtitle?: string;
   readonly paused: boolean;
   readonly loading: boolean;
@@ -223,7 +224,7 @@ export const MediaPlayer = ({
           <ArrowLeft aria-hidden="true" size={21} />
         </Button>
         <div className="media-player-title">
-          <h1>{title}</h1>
+          {title === undefined ? null : <h1>{title}</h1>}
           {subtitle === undefined || subtitle === "" ? null : <p>{subtitle}</p>}
         </div>
         {headerActions}

@@ -73,7 +73,8 @@ export const backdropOf = (item: {
   readonly backdropRevision?: string | null | undefined;
 }): ArtworkRef | null => artworkRef(item.backdropId, item.backdropRevision);
 
-export const CatalogItem = Schema.Struct({
+/** A catalog item, without the place in its show that an episode can carry. */
+export const CatalogItemBase = Schema.Struct({
   id: Uuid,
   libraryId: Uuid,
   title: Schema.String.check(Schema.isMinLength(1)),
@@ -92,6 +93,35 @@ export const CatalogItem = Schema.Struct({
   indexNumberEnd: Schema.optional(
     Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   ),
+});
+export type CatalogItemBase = Schema.Schema.Type<typeof CatalogItemBase>;
+
+/** The show an episode belongs to. */
+export const ShowSummary = Schema.Struct({
+  id: Uuid,
+  title: Schema.String,
+});
+export type ShowSummary = Schema.Schema.Type<typeof ShowSummary>;
+
+/**
+ * Where an episode sits in its show: everything the player says about it beyond the episode
+ * itself, sent with the episode so that starting it needs no lookup.
+ */
+export const EpisodePlacement = Schema.Struct({
+  show: ShowSummary,
+  /** Null for an episode filed directly under its show. */
+  seasonNumber: Schema.NullOr(Schema.Number),
+  /** The year the episode's season came out, or its show's where the season's is not known. */
+  seasonYear: Schema.NullOr(Schema.Number),
+  previous: Schema.NullOr(CatalogItemBase),
+  next: Schema.NullOr(CatalogItemBase),
+});
+export type EpisodePlacement = Schema.Schema.Type<typeof EpisodePlacement>;
+
+export const CatalogItem = Schema.Struct({
+  ...CatalogItemBase.fields,
+  /** Sent with an episode of a show; left out for anything else and by older servers. */
+  placement: Schema.optional(EpisodePlacement),
 });
 export type CatalogItem = Schema.Schema.Type<typeof CatalogItem>;
 
@@ -131,6 +161,8 @@ export const CatalogItemDetails = Schema.Struct({
     externalIdsJson: Schema.String,
     backdropId: Schema.NullOr(Uuid),
     backdropRevision: ArtworkRevision,
+    /** Sent with an episode of a show; left out for anything else and by older servers. */
+    placement: Schema.optional(EpisodePlacement),
   }),
   sources: Schema.Array(Schema.Unknown),
   watchState: Schema.NullOr(
@@ -258,14 +290,10 @@ export const PlaybackInfo = Schema.Struct({
 });
 export type PlaybackInfo = Schema.Schema.Type<typeof PlaybackInfo>;
 
-export const PlayerDisplay = Schema.Struct({
-  /** What is playing, once known. */
-  itemId: Schema.NullOr(Uuid),
+/** Everything the player says about what is playing, which it shows all at once. */
+export const PlayingDescription = Schema.Struct({
   title: Schema.String,
   context: Schema.String,
-  duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  loading: Schema.Boolean,
-  error: Schema.NullOr(Schema.String),
   hasPreviousEpisode: Schema.Boolean,
   /** The episode after the one playing, where there is one. */
   nextEpisode: Schema.NullOr(
@@ -276,6 +304,22 @@ export const PlayerDisplay = Schema.Struct({
       artwork: Schema.NullOr(ArtworkRef),
     }),
   ),
+});
+export type PlayingDescription = Schema.Schema.Type<typeof PlayingDescription>;
+
+export const PlayerDisplay = Schema.Struct({
+  /** What is playing, once known. */
+  itemId: Schema.NullOr(Uuid),
+  /** Null while any of it is still being looked up, so the controls never show part of it. */
+  description: Schema.NullOr(PlayingDescription),
+  /**
+   * The show the episode playing belongs to. Never known before the description, but it can
+   * follow it where an older server makes the show a lookup of its own.
+   */
+  show: Schema.NullOr(ShowSummary),
+  duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  loading: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
 });
 export type PlayerDisplay = Schema.Schema.Type<typeof PlayerDisplay>;
 

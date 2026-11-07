@@ -1,12 +1,7 @@
 import type { CatalogRuntime } from "@lumen/client/runtime";
-import type { CatalogItem } from "@lumen/contracts";
+import type { CatalogItem, CatalogItemDetails, ShowSummary } from "@lumen/contracts";
 
 type Catalog = Pick<CatalogRuntime, "itemDetails" | "itemChildren">;
-
-export interface ShowSummary {
-  readonly id: string;
-  readonly title: string;
-}
 
 /** A show's episodes under one season; `season` is null for episodes filed under the show itself. */
 export interface EpisodeGroup {
@@ -17,12 +12,14 @@ export interface EpisodeGroup {
 // An episode sits under its show, or under a season of it.
 const levelsAboveEpisode = 2;
 
-/** The show an episode belongs to; null for anything that is not an episode of a show. */
+/**
+ * The show an episode belongs to, for servers too old to place an episode in its show: found by
+ * walking up from the episode. Null for anything that is not an episode of a show.
+ */
 export const showOfEpisode = async (
   catalog: Catalog,
-  itemId: string,
+  item: CatalogItemDetails["item"],
 ): Promise<ShowSummary | null> => {
-  const { item } = await catalog.itemDetails(itemId);
   if (item.kind !== "episode") return null;
   let parentId = item.parentId;
   for (let level = 0; level < levelsAboveEpisode && parentId !== null; level++) {

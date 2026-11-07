@@ -4,6 +4,7 @@ import { asc, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
+import { placeEpisodes } from "./EpisodePlacement";
 import { homeCardColumns, homeItems, latestEpisodesQuery, nextUpQuery } from "./HomeQueries";
 
 export interface HomeServiceShape {
@@ -43,6 +44,8 @@ export const makeHomeService = Effect.gen(function* () {
         .where(inArray(libraries.id, libraryIds))
         .orderBy(asc(libraries.name), asc(libraries.id));
       const latest: HomeContent["latest"][number][] = [];
+      const place = (items: ReadonlyArray<CatalogItem>) =>
+        placeEpisodes(db, principal.user.id, items);
       const resume = (audio: boolean) =>
         db.all<CatalogItem>(sql`
       WITH items AS (${homeItems(principal.user.id, libraryIds)})
@@ -51,10 +54,12 @@ export const makeHomeService = Effect.gen(function* () {
         AND ${audio ? sql`kind = 'track'` : sql`kind IN ('movie', 'episode')`}
       ORDER BY activity DESC, id DESC LIMIT 12
     `);
-      const continueWatching = yield* resume(false);
+      const continueWatching = yield* place(yield* resume(false));
       const continueListening = yield* resume(true);
-      const nextUp = yield* db.all<CatalogItem>(
-        nextUpQuery(principal.user.id, libraryIds, nowMs - 365 * 86400000),
+      const nextUp = yield* place(
+        yield* db.all<CatalogItem>(
+          nextUpQuery(principal.user.id, libraryIds, nowMs - 365 * 86400000),
+        ),
       );
       for (const library of accessibleLibraries) {
         const items = yield* db.all<CatalogItem>(
@@ -68,7 +73,11 @@ export const makeHomeService = Effect.gen(function* () {
       `,
         );
         if (items.length > 0)
-          latest.push({ libraryId: library.id, libraryName: library.name, items });
+          latest.push({
+            libraryId: library.id,
+            libraryName: library.name,
+            items: yield* place(items),
+          });
       }
       return {
         ...result,

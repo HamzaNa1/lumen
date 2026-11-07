@@ -89,6 +89,22 @@ test("episode ranges, seasons, next-up and manual watch state survive a full res
     [1, null],
   ]);
   const [pilot, combined, overlap, after] = episodes;
+  // Every episode comes with its place in the show, so playing it needs no lookup.
+  expect(pilot).toMatchObject({
+    placement: {
+      show: { id: show?.id, title: "Serial" },
+      seasonNumber: 1,
+      seasonYear: 2021,
+      previous: null,
+      next: { id: combined?.id },
+    },
+  });
+  expect(after).toMatchObject({
+    placement: { seasonNumber: 2, previous: { id: overlap?.id }, next: null },
+  });
+  expect(await server.api(`/items/${after?.id}`, { token })).toMatchObject({
+    item: { placement: { show: { id: show?.id }, previous: { id: overlap?.id } } },
+  });
   const next = () => server.api(`/items/${show?.id}/next-up`, { token });
   expect(await next()).toMatchObject({ item: { id: pilot?.id } });
   const mark = (item: Item | undefined) =>
@@ -100,8 +116,8 @@ test("episode ranges, seasons, next-up and manual watch state survive a full res
   await mark(pilot);
   expect(await next()).toMatchObject({ item: { id: combined?.id } });
   expect(await server.api(`/items/${combined?.id}/adjacent-episodes`, { token })).toMatchObject({
-    previous: { id: pilot?.id },
-    next: { id: after?.id },
+    previous: { id: pilot?.id, placement: { next: { id: combined?.id } } },
+    next: { id: after?.id, placement: { previous: { id: overlap?.id } } },
   });
   expect(await server.api(`/items/${after?.id}/adjacent-episodes`, { token })).toMatchObject({
     previous: { id: overlap?.id },

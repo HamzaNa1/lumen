@@ -2,7 +2,7 @@ import type { PlayerAction, PlayerDisplay, PlayerState } from "@lumen/contracts"
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
-import { ShowDrawer, ShowDrawerButton, usePlayingShow, useShowEpisodes } from "./ShowDrawer";
+import { ShowDrawer, ShowDrawerButton, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, WatchGroups, waitingSummary } from "./WatchGroups";
 import { useArtwork } from "./Workspace";
@@ -36,11 +36,12 @@ export const PlayerView = ({
   const [controlsVisible, setControlsVisible] = useState(true);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
-  const nextEpisode = display?.nextEpisode ?? null;
+  const description = display?.description ?? null;
+  const nextEpisode = description?.nextEpisode ?? null;
   // The controls can be drawn where no account's caches are, so the still keeps to its own.
   const nextStill = useArtwork(nextEpisode?.artwork, ["player"]).data ?? null;
   const playingItemId = display?.itemId ?? null;
-  const show = usePlayingShow(playingItemId);
+  const show = display?.show ?? null;
   // Loaded with the player rather than with the drawer, which then has nothing to wait for.
   useShowEpisodes(show?.id ?? null);
   const [showDrawerOpen, setShowDrawerOpen] = useState(false);
@@ -142,8 +143,9 @@ export const PlayerView = ({
             )}
           </div>
         }
-        title={display.title}
-        subtitle={display.context}
+        {...(description === null
+          ? {}
+          : { title: description.title, subtitle: description.context })}
         paused={player?.paused ?? true}
         loading={display.loading}
         error={display.error}
@@ -201,7 +203,7 @@ export const PlayerView = ({
         onSeek={seek}
         onPrevious={() => {
           if (
-            display.hasPreviousEpisode &&
+            description?.hasPreviousEpisode === true &&
             (player?.positionSeconds ?? 0) < previousEpisodeWindowSeconds
           )
             onAction("previous-episode");

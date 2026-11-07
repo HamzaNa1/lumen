@@ -1,11 +1,10 @@
-import {
-  type AccountSummary,
-  type CatalogItem,
-  type PlayerAction,
-  type PlayerDisplay,
-  type PlayerState,
-  posterOf,
-  type WatchStatus,
+import type {
+  AccountSummary,
+  CatalogItem,
+  PlayerAction,
+  PlayerDisplay,
+  PlayerState,
+  WatchStatus,
 } from "@lumen/contracts";
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -13,13 +12,13 @@ import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-rout
 import { CircleAlert, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
-import { episodeContext, errorMessage, playingContext } from "./format";
+import { errorMessage } from "./format";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
+import { usePlayingDescription } from "./usePlayingDescription";
 import {
   ACCOUNTS_KEY,
-  itemDetailsQuery,
   itemPage,
   refreshWatchProgress,
   WorkspaceContext,
@@ -281,46 +280,23 @@ export const App = (): React.ReactElement => {
   const watchPlayback = watchStatus?.group?.playback;
   const watchTitle = watchPlayback?.title;
   const playingId = playingItem?.id ?? watchPlayback?.itemId;
-  // Every way into the player names the item, but only some know the show it belongs to.
-  const playingDetails = useQuery(
-    itemDetailsQuery(runtime, scope ?? [], scope === null ? null : playingId),
-  );
-  const playingItemContext =
-    playingDetails.data === undefined ? "" : playingContext(playingDetails.data.item);
-  const adjacentEpisodes = useQuery({
-    queryKey: [...(scope ?? []), "adjacent-episodes", playingId],
-    queryFn: () => runtime.catalog.adjacentEpisodes(playingId ?? ""),
-    enabled: scope !== null && playingId != null,
-  }).data;
+  const { description, show, adjacentEpisodes } = usePlayingDescription({
+    runtime,
+    scope,
+    playingId: playingId ?? null,
+    playingItem,
+    watchTitle,
+  });
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
       itemId: playingId ?? null,
-      title: playingItem?.title ?? watchTitle ?? "Now playing",
-      context: playingItemContext,
+      description,
+      show,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
-      hasPreviousEpisode: adjacentEpisodes?.previous != null,
-      nextEpisode:
-        adjacentEpisodes?.next == null
-          ? null
-          : {
-              title: adjacentEpisodes.next.title,
-              // The show is the one already playing, so only the episode's place in it is said.
-              context: episodeContext({ ...adjacentEpisodes.next, seriesTitle: null }),
-              artwork: posterOf(adjacentEpisodes.next),
-            },
     }),
-    [
-      adjacentEpisodes,
-      playingItemContext,
-      playingId,
-      playingItem,
-      playerUnavailable,
-      playbackLoading,
-      playbackError,
-      watchTitle,
-    ],
+    [description, show, playingId, playingItem, playerUnavailable, playbackLoading, playbackError],
   );
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
