@@ -74,3 +74,39 @@ test("two browser players hold for a slow member, recover drift, replace media a
     await second.close();
   }
 });
+
+test("a movie started in a watch group keeps the description it started with as the group takes it over", async ({
+  server,
+  admin,
+  page,
+  connect,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const film = (await server.items(admin.accessToken, library.id))[0]?.id;
+  const owner = await connect(admin.accessToken);
+  await owner.action({ type: "create", name: "Together", password: "" });
+  await signIn(page, server);
+  await page.locator(".watch-group-trigger").click();
+  await page.getByRole("button", { name: /Together.*Join/ }).click();
+  await expect(page.locator(".watch-group-trigger.is-active")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect.poll(() => owner.status.group?.members.length).toBe(2);
+  const lookups: string[] = [];
+  await page.route(
+    (url) =>
+      /\/api\/v1\/items\/[^/]+$/.test(url.pathname) || url.pathname.endsWith("/adjacent-episodes"),
+    (route) => {
+      lookups.push(route.request().url());
+      return route.abort();
+    },
+  );
+  // Loading a page anew would leave the group, so the library is reached from within the app.
+  await page.getByRole("link", { name: "movies", exact: true }).click();
+  await page.getByRole("button", { name: "Play Film", exact: true }).first().click({ force: true });
+  await expect.poll(() => owner.status.group?.playback?.itemId).toBe(film);
+  await playing(page);
+  await expect(
+    page.locator(".media-player-header").getByRole("heading", { name: "Film", exact: true }),
+  ).toBeVisible();
+  expect(lookups).toEqual([]);
+});

@@ -1,4 +1,4 @@
-import { openMovie, pause, playing, signIn } from "./support/browser";
+import { openMovie, pause, playing, signIn, startPlayback } from "./support/browser";
 import { expect, test } from "./support/server";
 
 test("video gestures preserve focus, double-click fullscreen never pauses, timeline seeks and controls hide", async ({
@@ -74,12 +74,7 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
     "Serial/Season 2/Serial S02E01 - Return.mp4",
   ]);
   await signIn(page, server);
-  await page.goto(`${server.origin}web/library/${library.id}`);
-  for (const name of ["Serial", "Season 1", "Together"])
-    await page
-      .getByRole("button", { name: `Play ${name}`, exact: true })
-      .first()
-      .click({ force: true });
+  await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
   await playing(page);
   await page.getByRole("button", { name: "Episodes", exact: true }).click();
   const drawer = page.getByRole("complementary", { name: "Episodes" });
@@ -104,42 +99,86 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   await playing(page);
 });
 
+const twoEpisodes = [
+  "Serial/Season 1/Serial S01E01 - Opening.mp4",
+  "Serial/Season 1/Serial S01E02 - Sequel.mp4",
+];
+const openingEpisode = ["Serial", "Season 1", "Opening"];
+const itemDetails = (url: URL): boolean => /\/api\/v1\/items\/[^/]+$/.test(url.pathname);
+const adjacentEpisodes = (url: URL): boolean => url.pathname.endsWith("/adjacent-episodes");
+
 test("the player describes what is playing all at once, once every detail is known", async ({
   server,
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", [
-    "Serial/Season 1/Serial S01E01 - Opening.mp4",
-    "Serial/Season 1/Serial S01E02 - Sequel.mp4",
-  ]);
+  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
   await signIn(page, server);
-  let releaseAdjacent = (): void => undefined;
-  const adjacentHeld = new Promise<void>((resolve) => {
-    releaseAdjacent = resolve;
-  });
-  await page.route("**/api/v1/items/*/adjacent-episodes", async (route) => {
-    await adjacentHeld;
+  const loaded = new Set<string>();
+  page.on("requestfinished", (request) => loaded.add(new URL(request.url()).pathname));
+  const adjacentRequested = Promise.withResolvers<string>();
+  const adjacentHeld = Promise.withResolvers<void>();
+  await page.route(adjacentEpisodes, async (route) => {
+    adjacentRequested.resolve(new URL(route.request().url()).pathname);
+    await adjacentHeld.promise;
     await route.continue();
   });
-  await page.goto(`${server.origin}web/library/${library.id}`);
-  for (const name of ["Serial", "Season 1", "Opening"])
-    await page
-      .getByRole("button", { name: `Play ${name}`, exact: true })
-      .first()
-      .click({ force: true });
-  await playing(page);
+  await startPlayback(page, server, library.id, openingEpisode);
+  // The episode's own details are in; only its neighbours are still being looked up.
+  const episodeDetails = (await adjacentRequested.promise).replace(/\/adjacent-episodes$/, "");
+  await expect.poll(() => loaded.has(episodeDetails)).toBe(true);
   const header = page.locator(".media-player-header");
   await expect(header.getByRole("button", { name: "Back", exact: true })).toBeVisible();
   await expect(header.getByRole("heading")).toHaveCount(0);
   await expect(header.locator(".media-player-title p")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Episodes", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Next episode", exact: true })).toHaveCount(0);
-  releaseAdjacent();
+  adjacentHeld.resolve();
   await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
   await expect(header.locator(".media-player-title p")).toContainText("S01E01");
   await expect(page.getByRole("button", { name: "Episodes", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Next episode", exact: true })).toBeVisible();
+  await playing(page);
+});
+
+test("a stalled lookup does not hold back what is known, and what it brings fills in after", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
+  await signIn(page, server);
+  const adjacentHeld = Promise.withResolvers<void>();
+  await page.route(adjacentEpisodes, async (route) => {
+    await adjacentHeld.promise;
+    await route.continue();
+  });
+  await startPlayback(page, server, library.id, openingEpisode);
+  const header = page.locator(".media-player-header");
+  await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  await expect(header.locator(".media-player-title p")).toContainText("S01E01");
+  await expect(page.getByRole("button", { name: "Episodes", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next episode", exact: true })).toHaveCount(0);
+  adjacentHeld.resolve();
+  await expect(page.getByRole("button", { name: "Next episode", exact: true })).toBeVisible();
+});
+
+test("an episode whose details cannot be read is described by the item it was started from", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
+  await signIn(page, server);
+  await startPlayback(page, server, library.id, ["Serial", "Season 1"]);
+  await page.route(itemDetails, (route) => route.abort());
+  await page
+    .getByRole("button", { name: "Play Opening", exact: true })
+    .first()
+    .click({ force: true });
+  const header = page.locator(".media-player-header");
+  await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  await expect(header.locator(".media-player-title p")).toContainText("E01");
 });
 
 test("a movie is described by the item it was started from, without waiting on any lookup", async ({
@@ -151,8 +190,7 @@ test("a movie is described by the item it was started from, without waiting on a
   await signIn(page, server);
   const lookups: string[] = [];
   await page.route(
-    (url) =>
-      /\/api\/v1\/items\/[^/]+$/.test(url.pathname) || url.pathname.endsWith("/adjacent-episodes"),
+    (url) => itemDetails(url) || adjacentEpisodes(url),
     (route) => {
       lookups.push(route.request().url());
       return route.abort();
@@ -170,26 +208,15 @@ test("an older server that does not name an episode's show still offers its epis
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", [
-    "Serial/Season 1/Serial S01E01 - Opening.mp4",
-    "Serial/Season 1/Serial S01E02 - Sequel.mp4",
-  ]);
+  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
   await signIn(page, server);
-  await page.route(
-    (url) => /\/api\/v1\/items\/[^/]+$/.test(url.pathname),
-    async (route) => {
-      const response = await route.fetch();
-      const details = await response.json();
-      delete details.item.seriesId;
-      await route.fulfill({ response, json: details });
-    },
-  );
-  await page.goto(`${server.origin}web/library/${library.id}`);
-  for (const name of ["Serial", "Season 1", "Opening"])
-    await page
-      .getByRole("button", { name: `Play ${name}`, exact: true })
-      .first()
-      .click({ force: true });
+  await page.route(itemDetails, async (route) => {
+    const response = await route.fetch();
+    const details = await response.json();
+    delete details.item.seriesId;
+    await route.fulfill({ response, json: details });
+  });
+  await startPlayback(page, server, library.id, openingEpisode);
   await playing(page);
   const header = page.locator(".media-player-header");
   await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();

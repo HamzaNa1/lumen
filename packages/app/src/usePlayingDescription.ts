@@ -7,13 +7,19 @@ import {
   type ShowSummary,
 } from "@lumen/contracts";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { episodeContext, playingContext } from "./format";
 import { namedShow, showOfEpisode } from "./ShowEpisodes";
 import { itemDetailsQuery } from "./Workspace";
 
+/**
+ * How long the player waits for every detail before it shows what it has and fills in the rest
+ * as it arrives, so a stalled lookup never leaves it blank.
+ */
+const describeWithinMs = 1_500;
+
 export interface Playing {
-  /** Null until every part of it is known, so the player never shows part of it. */
+  /** Null until every part of it is known or the wait for it runs out. */
   readonly description: PlayingDescription | null;
   /** Null until the description is known, and for anything that is not an episode of a show. */
   readonly show: ShowSummary | null;
@@ -40,7 +46,12 @@ export const usePlayingDescription = ({
   readonly playingItem: CatalogItem | null;
   readonly watchTitle: string | undefined;
 }): Playing => {
-  const describedByItem = playingItem !== null && playingItem.kind !== "episode";
+  // Starting playback in a watch group hands it to the group, which forgets the item it was
+  // started from. The item still describes what plays, so it is kept for as long as that plays.
+  const [startedItem, setStartedItem] = useState(playingItem);
+  if (playingItem !== null && playingItem !== startedItem) setStartedItem(playingItem);
+  const startedFrom = playingItem ?? (startedItem?.id === playingId ? startedItem : null);
+  const describedByItem = startedFrom !== null && startedFrom.kind !== "episode";
   const lookupId = scope === null || describedByItem ? null : playingId;
   const details = useQuery(itemDetailsQuery(runtime, scope ?? [], lookupId));
   const adjacent = useQuery({
@@ -57,12 +68,22 @@ export const usePlayingDescription = ({
     enabled: detailsItem !== undefined && named === undefined,
   });
 
+  const [waitedOutFor, setWaitedOutFor] = useState<string | null>(null);
+  useEffect(() => {
+    if (lookupId === null) return;
+    const timer = setTimeout(() => setWaitedOutFor(lookupId), describeWithinMs);
+    return () => clearTimeout(timer);
+  }, [lookupId]);
+
   // Each lookup that fails leaves its part out, so a failure never holds the rest back.
-  const described = lookupId === null || (!details.isPending && !adjacent.isPending);
-  const title = playingItem?.title ?? watchTitle ?? "Now playing";
+  const described =
+    lookupId === null || waitedOutFor === lookupId || (!details.isPending && !adjacent.isPending);
+  const title = startedFrom?.title ?? watchTitle ?? "Now playing";
   const description = useMemo<PlayingDescription | null>(() => {
     if (!described) return null;
-    const contextOf = describedByItem ? playingItem : detailsItem;
+    // An episode's details say more of where it sits than the item it was started from, which
+    // still says something while they are missing.
+    const contextOf = describedByItem ? startedFrom : (detailsItem ?? startedFrom);
     const next = adjacent.data?.next ?? null;
     return {
       title,
@@ -78,7 +99,7 @@ export const usePlayingDescription = ({
               artwork: posterOf(next),
             },
     };
-  }, [adjacent.data, described, describedByItem, detailsItem, playingItem, title]);
+  }, [adjacent.data, described, describedByItem, detailsItem, startedFrom, title]);
 
   const show =
     description === null ? null : named !== undefined ? named : (walkedShow.data ?? null);

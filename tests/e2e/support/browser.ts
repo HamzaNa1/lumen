@@ -33,12 +33,22 @@ export async function playing(page: Page) {
     })
     .toBe(true);
 }
-export async function openMovie(page: Page, server: Server, libraryId: string, title = "Film") {
+/** Presses Play on each title in turn, from the library down: a show or season opens, the last plays. */
+export async function startPlayback(
+  page: Page,
+  server: Server,
+  libraryId: string,
+  titles: readonly string[],
+) {
   await page.goto(`${server.origin}web/library/${libraryId}`);
-  await page
-    .getByRole("button", { name: `Play ${title}`, exact: true })
-    .first()
-    .click({ force: true });
+  for (const title of titles)
+    await page
+      .getByRole("button", { name: `Play ${title}`, exact: true })
+      .first()
+      .click({ force: true });
+}
+export async function openMovie(page: Page, server: Server, libraryId: string, title = "Film") {
+  await startPlayback(page, server, libraryId, [title]);
   await playing(page);
 }
 export async function pause(page: Page) {
