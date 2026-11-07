@@ -20,15 +20,25 @@ test("desktop connects through real IPC, persists its account and window, and ne
   expect(await page.evaluate(() => window.lumen.library.list())).toHaveLength(1);
   const desktopWindow = await app.browserWindow(page);
   const area = await app.evaluate(({ screen }) => screen.getPrimaryDisplay().workArea);
+  const { bounds, minimum } = await desktopWindow.evaluate((window) => ({
+    bounds: window.getBounds(),
+    minimum: window.getMinimumSize(),
+  }));
+  const [minWidth, minHeight] = minimum;
   const size = {
-    width: Math.max(1024, Math.min(1100, area.width)),
-    height: Math.max(680, Math.min(750, area.height)),
+    width: bounds.width === minWidth ? Math.max(minWidth, Math.min(1100, area.width)) : minWidth,
+    height:
+      bounds.height === minHeight ? Math.max(minHeight, Math.min(750, area.height)) : minHeight,
   };
+  expect(bounds, "The persistence test must change the window size").not.toMatchObject(size);
   await desktopWindow.evaluate((window, bounds) => window.setBounds(bounds), {
     x: area.x,
     y: area.y,
     ...size,
   });
+  await expect
+    .poll(() => desktopWindow.evaluate((window) => window.getBounds()))
+    .toMatchObject(size);
   await expect
     .poll(async () =>
       JSON.parse(
