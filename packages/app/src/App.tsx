@@ -4,6 +4,7 @@ import {
   type PlayerAction,
   type PlayerDisplay,
   type PlayerState,
+  type PlayingDescription,
   posterOf,
   type WatchStatus,
 } from "@lumen/contracts";
@@ -16,6 +17,7 @@ import { ConnectPage } from "./ConnectPage";
 import { episodeContext, errorMessage, playingContext } from "./format";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
+import { showOfEpisode } from "./ShowEpisodes";
 import { Sidebar } from "./Sidebar";
 import {
   ACCOUNTS_KEY,
@@ -285,42 +287,55 @@ export const App = (): React.ReactElement => {
   const playingDetails = useQuery(
     itemDetailsQuery(runtime, scope ?? [], scope === null ? null : playingId),
   );
-  const playingItemContext =
-    playingDetails.data === undefined ? "" : playingContext(playingDetails.data.item);
+  const playingShow = useQuery({
+    queryKey: [...(scope ?? []), "show-of", playingId],
+    queryFn: () =>
+      playingDetails.data === undefined
+        ? null
+        : showOfEpisode(runtime.catalog, playingDetails.data.item),
+    enabled: playingDetails.data !== undefined,
+  });
   const adjacentEpisodes = useQuery({
     queryKey: [...(scope ?? []), "adjacent-episodes", playingId],
     queryFn: () => runtime.catalog.adjacentEpisodes(playingId ?? ""),
     enabled: scope !== null && playingId != null,
-  }).data;
+  });
+  // Each lookup that fails leaves its part out, so a failure never holds the rest back.
+  const described =
+    playingId == null ||
+    scope === null ||
+    (!playingDetails.isPending &&
+      (playingDetails.isError || !playingShow.isPending) &&
+      !adjacentEpisodes.isPending);
+  const playingTitle = playingItem?.title ?? watchTitle ?? "Now playing";
+  const description = useMemo<PlayingDescription | null>(() => {
+    if (!described) return null;
+    const next = adjacentEpisodes.data?.next ?? null;
+    return {
+      title: playingTitle,
+      context: playingDetails.data === undefined ? "" : playingContext(playingDetails.data.item),
+      show: playingShow.data ?? null,
+      hasPreviousEpisode: adjacentEpisodes.data?.previous != null,
+      nextEpisode:
+        next === null
+          ? null
+          : {
+              title: next.title,
+              // The show is the one already playing, so only the episode's place in it is said.
+              context: episodeContext({ ...next, seriesTitle: null }),
+              artwork: posterOf(next),
+            },
+    };
+  }, [adjacentEpisodes.data, described, playingDetails.data, playingShow.data, playingTitle]);
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
       itemId: playingId ?? null,
-      title: playingItem?.title ?? watchTitle ?? "Now playing",
-      context: playingItemContext,
+      description,
       duration: playingItem?.durationMs == null ? null : Math.floor(playingItem.durationMs / 1_000),
       loading: playbackLoading,
       error: playerUnavailable ? playbackError : null,
-      hasPreviousEpisode: adjacentEpisodes?.previous != null,
-      nextEpisode:
-        adjacentEpisodes?.next == null
-          ? null
-          : {
-              title: adjacentEpisodes.next.title,
-              // The show is the one already playing, so only the episode's place in it is said.
-              context: episodeContext({ ...adjacentEpisodes.next, seriesTitle: null }),
-              artwork: posterOf(adjacentEpisodes.next),
-            },
     }),
-    [
-      adjacentEpisodes,
-      playingItemContext,
-      playingId,
-      playingItem,
-      playerUnavailable,
-      playbackLoading,
-      playbackError,
-      watchTitle,
-    ],
+    [description, playingId, playingItem, playerUnavailable, playbackLoading, playbackError],
   );
   useEffect(() => {
     if (onPlayerRoute && presentation.kind === "external") void presentation.display(playerDisplay);
@@ -333,7 +348,7 @@ export const App = (): React.ReactElement => {
   }, []);
   // An episode that plays through is followed by the next. In a watch group every member's
   // player gets there and asks; the group moves on for the first and ignores the rest.
-  const nextEpisode = adjacentEpisodes?.next ?? null;
+  const nextEpisode = adjacentEpisodes.data?.next ?? null;
   useEffect(() => {
     if (player?.ended === true && player.itemId === playingId && nextEpisode !== null)
       playEpisode(nextEpisode, player.itemId);
@@ -350,7 +365,7 @@ export const App = (): React.ReactElement => {
         void router.navigate({ href: returnTo.current, replace: true });
       } else if (action === "previous-episode" || action === "next-episode") {
         const episode =
-          action === "next-episode" ? adjacentEpisodes?.next : adjacentEpisodes?.previous;
+          action === "next-episode" ? adjacentEpisodes.data?.next : adjacentEpisodes.data?.previous;
         if (episode != null && playingId != null) playEpisode(episode, playingId);
       } else if (playingItem !== null) void beginPlayback(playingItem);
       else if (watchRef.current?.group?.playback != null) {
@@ -360,7 +375,7 @@ export const App = (): React.ReactElement => {
       }
     },
     [
-      adjacentEpisodes,
+      adjacentEpisodes.data,
       beginPlayback,
       playEpisode,
       playingId,

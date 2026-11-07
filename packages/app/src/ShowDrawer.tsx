@@ -1,28 +1,17 @@
-import { type CatalogItem, posterOf } from "@lumen/contracts";
+import { type CatalogItem, posterOf, type ShowSummary } from "@lumen/contracts";
 import { Button, MediaCard } from "@lumen/ui";
 import { useQuery } from "@tanstack/react-query";
 import { CircleAlert, ListVideo, LoaderCircle, X } from "lucide-react";
 import { type RefObject, useEffect, useLayoutEffect, useRef } from "react";
 import { episodeCode, episodeSubtitle } from "./format";
 import { useRuntime } from "./Runtime";
-import { type EpisodeGroup, episodesOfShow, type ShowSummary, showOfEpisode } from "./ShowEpisodes";
+import { type EpisodeGroup, episodesOfShow } from "./ShowEpisodes";
 import { useArtwork, watchedFraction } from "./Workspace";
 
 const DRAWER_ID = "show-drawer";
 
 // The player's controls may live in a window of their own, with no workspace to scope a cache by.
 const playerScope = ["player"] as const;
-
-/** The show whose episode is playing; null while unknown and for anything that is not an episode. */
-export const usePlayingShow = (itemId: string | null): ShowSummary | null => {
-  const runtime = useRuntime();
-  const show = useQuery({
-    queryKey: [...playerScope, "show", itemId],
-    queryFn: () => showOfEpisode(runtime.catalog, itemId ?? ""),
-    enabled: itemId !== null,
-  });
-  return show.data ?? null;
-};
 
 /**
  * Every episode of a show. The player reads it as soon as it knows the show, so the drawer opens

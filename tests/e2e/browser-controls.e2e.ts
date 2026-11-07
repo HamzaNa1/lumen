@@ -103,3 +103,41 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   await expect(page.getByRole("region", { name: "Media player" })).toContainText("Return");
   await playing(page);
 });
+
+test("the player describes what is playing all at once, once every detail is known", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "shows", [
+    "Serial/Season 1/Serial S01E01 - Opening.mp4",
+    "Serial/Season 1/Serial S01E02 - Sequel.mp4",
+  ]);
+  await signIn(page, server);
+  let releaseAdjacent = (): void => undefined;
+  const adjacentHeld = new Promise<void>((resolve) => {
+    releaseAdjacent = resolve;
+  });
+  await page.route("**/api/v1/items/*/adjacent-episodes", async (route) => {
+    await adjacentHeld;
+    await route.continue();
+  });
+  await page.goto(`${server.origin}web/library/${library.id}`);
+  for (const name of ["Serial", "Season 1", "Opening"])
+    await page
+      .getByRole("button", { name: `Play ${name}`, exact: true })
+      .first()
+      .click({ force: true });
+  await playing(page);
+  const header = page.locator(".media-player-header");
+  await expect(header.getByRole("button", { name: "Back", exact: true })).toBeVisible();
+  await expect(header.getByRole("heading")).toHaveCount(0);
+  await expect(header.locator(".media-player-title p")).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Episodes", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "Next episode", exact: true })).toHaveCount(0);
+  releaseAdjacent();
+  await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+  await expect(header.locator(".media-player-title p")).toContainText("S01E01");
+  await expect(page.getByRole("button", { name: "Episodes", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Next episode", exact: true })).toBeVisible();
+});

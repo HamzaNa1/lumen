@@ -258,14 +258,19 @@ export const PlaybackInfo = Schema.Struct({
 });
 export type PlaybackInfo = Schema.Schema.Type<typeof PlaybackInfo>;
 
-export const PlayerDisplay = Schema.Struct({
-  /** What is playing, once known. */
-  itemId: Schema.NullOr(Uuid),
+/** The show an episode belongs to. */
+export const ShowSummary = Schema.Struct({
+  id: Uuid,
+  title: Schema.String,
+});
+export type ShowSummary = Schema.Schema.Type<typeof ShowSummary>;
+
+/** Everything the player says about what is playing, which it shows all at once. */
+export const PlayingDescription = Schema.Struct({
   title: Schema.String,
   context: Schema.String,
-  duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
-  loading: Schema.Boolean,
-  error: Schema.NullOr(Schema.String),
+  /** The show the episode playing belongs to; null for anything that is not an episode of one. */
+  show: Schema.NullOr(ShowSummary),
   hasPreviousEpisode: Schema.Boolean,
   /** The episode after the one playing, where there is one. */
   nextEpisode: Schema.NullOr(
@@ -276,6 +281,17 @@ export const PlayerDisplay = Schema.Struct({
       artwork: Schema.NullOr(ArtworkRef),
     }),
   ),
+});
+export type PlayingDescription = Schema.Schema.Type<typeof PlayingDescription>;
+
+export const PlayerDisplay = Schema.Struct({
+  /** What is playing, once known. */
+  itemId: Schema.NullOr(Uuid),
+  /** Null while any of it is still being looked up, so the controls never show part of it. */
+  description: Schema.NullOr(PlayingDescription),
+  duration: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  loading: Schema.Boolean,
+  error: Schema.NullOr(Schema.String),
 });
 export type PlayerDisplay = Schema.Schema.Type<typeof PlayerDisplay>;
 
