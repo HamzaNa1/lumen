@@ -1,33 +1,54 @@
 name: E2E runtime
 description: Install the real browser and media runtimes used by the E2E suite.
+inputs:
+  browsers:
+    description: Space-separated Playwright browsers; empty skips browser downloads.
+    default: ''
+  native:
+    description: Install the Electron, MPV, display and audio runtimes.
+    default: 'false'
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: ./.github/actions/setup-dependencies
       with:
-        node-version: 24
-    - if: runner.os == 'Linux'
-      shell: bash
-      run: sudo apt-get update && sudo apt-get install -y ffmpeg mpv xvfb openbox x11-utils pulseaudio pulseaudio-utils
-    - name: Provide an audio output device for headless Linux playback
+        electron: ${{ inputs.native }}
+    - uses: ./.github/actions/setup-apt-mirrors
       if: runner.os == 'Linux'
+    - name: Resolve browser cache
+      if: inputs.browsers != ''
+      id: browsers
+      shell: bash
+      run: |
+        bun -e 'console.log("version=" + (await Bun.file("node_modules/@playwright/test/package.json").json()).version)' >> "$GITHUB_OUTPUT"
+        bun -e 'import { homedir } from "node:os"; import { join } from "node:path"; console.log("PLAYWRIGHT_BROWSERS_PATH=" + join(homedir(), ".cache/ms-playwright"))' >> "$GITHUB_ENV"
+    - uses: actions/cache@v4
+      if: inputs.browsers != ''
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageOS }}-${{ steps.browsers.outputs.version }}-${{ inputs.browsers }}-shell
+    - uses: actions/cache@v4
+      if: runner.os == 'Windows'
+      with:
+        path: ~/.cache/chocolatey
+        key: chocolatey-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-${{ hashFiles('scripts/setup-e2e-runtime.sh') }}
+    - name: Install media and browser runtimes
+      shell: bash
+      env:
+        E2E_BROWSERS: ${{ inputs.browsers }}
+        E2E_NATIVE: ${{ inputs.native }}
+      run: bash scripts/setup-e2e-runtime.sh
+    - name: Provide an audio output device for headless Linux playback
+      if: runner.os == 'Linux' && (inputs.native == 'true' || inputs.browsers != '')
       shell: bash
       run: |
         pulseaudio --start --exit-idle-time=-1
         pactl load-module module-null-sink sink_name=lumen_e2e rate=48000 channels=2
         pactl set-default-sink lumen_e2e
         pactl info
-    - if: runner.os == 'macOS'
+    - if: runner.os == 'macOS' && inputs.native == 'true'
       shell: bash
       run: |
-        brew install ffmpeg mpv
         # Apple's virtual GPU crashes when MoltenVK uploads heap-backed textures.
         # Keep real Vulkan rendering, using ordinary Metal resource allocations.
         echo 'MVK_CONFIG_USE_MTLHEAP=0' >> "$GITHUB_ENV"
-    - if: runner.os == 'Windows'
-      shell: pwsh
-      run: choco install ffmpeg mpv -y --no-progress
-    - shell: bash
-      run: bunx playwright install --with-deps chromium firefox webkit
-    - shell: bash
-      run: bun apps/desktop/node_modules/electron/install.js

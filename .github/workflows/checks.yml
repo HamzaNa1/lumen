@@ -9,16 +9,66 @@ concurrency:
   group: checks-${{ github.ref }}
   cancel-in-progress: true
 jobs:
+  changes:
+    name: Affected jobs
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      coverage: ${{ steps.changes.outputs.coverage }}
+      desktop: ${{ steps.changes.outputs.desktop }}
+      server: ${{ steps.changes.outputs.server }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Fetch commit ancestry for a reliable merge-base, but only materialize
+          # the manifests and classifier. Missing diffs default to all checks.
+          fetch-depth: 0
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /package.json
+            /apps/*/package.json
+            /packages/*/package.json
+            /scripts/ci-changes.ts
+            /scripts/lib/ci-changes.ts
+            /scripts/lib/products.ts
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - id: changes
+        env:
+          CI_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: bun scripts/ci-changes.ts
+  quality:
+    name: Quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-dependencies
+      - run: bun run lint
+      - name: Build and typecheck
+        run: |
+          bun run typecheck &
+          types_pid=$!
+          status=0
+          bun run build || status=$?
+          wait "$types_pid" || status=$?
+          exit "$status"
+      - name: Tooling E2E
+        run: bun scripts/test-e2e.ts source --project tooling --no-deps --no-build
+      - uses: ./.github/actions/e2e-artifacts
+        if: ${{ !cancelled() }}
+        with:
+          name: quality
   server:
     name: Server / Linux
+    needs: changes
+    if: needs.changes.outputs.coverage == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
       - uses: ./.github/actions/e2e-runtime
       - run: bun scripts/e2e-coverage.ts collect api
       - uses: ./.github/actions/e2e-artifacts
@@ -28,6 +78,8 @@ jobs:
           coverage-project: api
   chromium:
     name: Chromium / Linux
+    needs: changes
+    if: needs.changes.outputs.coverage == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: chromium
@@ -35,6 +87,8 @@ jobs:
       coverage: true
   firefox:
     name: Firefox / Linux
+    needs: changes
+    if: needs.changes.outputs.coverage == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: firefox
@@ -42,6 +96,8 @@ jobs:
       coverage: true
   webkit:
     name: WebKit / Linux
+    needs: changes
+    if: needs.changes.outputs.coverage == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: webkit
@@ -49,18 +105,26 @@ jobs:
       coverage: true
   desktop-macos:
     name: Desktop / macOS
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: native
       runner: macos-26
+      shards: '[1,2,3]'
   desktop-windows:
     name: Desktop / Windows
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: native
       runner: windows-latest
+      shards: '[1,2,3]'
   desktop-linux:
     name: Desktop / Linux
+    needs: changes
+    if: needs.changes.outputs.coverage == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: native
@@ -68,29 +132,34 @@ jobs:
       coverage: true
   release-compatibility:
     name: Release compatibility
+    needs: changes
+    if: needs.changes.outputs.server == 'true' || needs.changes.outputs.desktop == 'true'
     uses: ./.github/workflows/release-compatibility.yml
-  packaging:
-    name: Packaging
+    with:
+      product: ${{ needs.changes.outputs.server == 'true' && needs.changes.outputs.desktop == 'true' && 'all' || needs.changes.outputs.server == 'true' && 'server' || 'desktop' }}
+  packaging-server:
+    name: Server packaging
+    needs: changes
+    if: needs.changes.outputs.server == 'true'
     uses: ./.github/workflows/packaging.yml
-  quality:
-    # Preserve a stable required check; a skipped or failed dependency must fail this gate.
-    name: check
-    if: ${{ !cancelled() }}
-    needs: [server, chromium, firefox, webkit, desktop-macos, desktop-windows, desktop-linux, release-compatibility, packaging]
+    with:
+      product: server
+  packaging-desktop:
+    name: Desktop packaging
+    needs: changes
+    if: needs.changes.outputs.desktop == 'true'
+    uses: ./.github/workflows/packaging.yml
+    with:
+      product: desktop
+  coverage:
+    name: Coverage budgets
+    needs: [changes, server, chromium, firefox, webkit, desktop-linux]
+    if: ${{ !cancelled() && needs.changes.outputs.coverage == 'true' }}
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-      - run: bun install --frozen-lockfile
-      - uses: ./.github/actions/e2e-runtime
-      - run: bun run lint
-      - run: bun run typecheck
-      - run: bun run build
-      - name: Tooling E2E
-        run: bun scripts/test-e2e.ts source --project tooling --no-deps --no-build
+      - uses: ./.github/actions/setup-dependencies
       - name: Download Linux coverage shards
         uses: actions/download-artifact@v4
         with:
@@ -99,15 +168,6 @@ jobs:
           merge-multiple: true
       - name: Enforce complete-suite coverage budgets
         run: bun scripts/e2e-coverage.ts merge
-      - name: Require all nine verification jobs
-        if: ${{ !cancelled() }}
-        env:
-          RESULTS: ${{ toJSON(needs) }}
-        run: bun -e 'for (const [job, result] of Object.entries(JSON.parse(process.env.RESULTS))) if (result.result !== "success") throw new Error(`${job} ${result.result}`)'
-      - uses: ./.github/actions/e2e-artifacts
-        if: ${{ !cancelled() }}
-        with:
-          name: quality
       - uses: actions/upload-artifact@v4
         if: ${{ !cancelled() }}
         with:
@@ -118,3 +178,29 @@ jobs:
             coverage/shards/
           retention-days: 14
           if-no-files-found: error
+  check:
+    # Keep the branch-protection status stable. No checkout or runtime install.
+    name: check
+    if: ${{ always() }}
+    needs: [changes, quality, server, chromium, firefox, webkit, desktop-macos, desktop-windows, desktop-linux, release-compatibility, packaging-server, packaging-desktop, coverage]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every selected job
+        env:
+          RESULTS: ${{ toJSON(needs) }}
+        run: |
+          jq -e '
+            . as $jobs | .changes.outputs as $flags |
+            {changes: "true", quality: "true",
+             server: $flags.coverage, chromium: $flags.coverage,
+             firefox: $flags.coverage, webkit: $flags.coverage,
+             "desktop-linux": $flags.coverage, coverage: $flags.coverage,
+             "desktop-macos": $flags.desktop, "desktop-windows": $flags.desktop,
+             "packaging-desktop": $flags.desktop, "packaging-server": $flags.server,
+             "release-compatibility": (if $flags.server == "true" or $flags.desktop == "true" then "true" else "false" end)} |
+            to_entries | all(.[];
+              (.value == "true" or .value == "false") and
+              ($jobs[.key].result == "success" or
+               (.value == "false" and $jobs[.key].result == "skipped")))
+          ' <<< "$RESULTS"

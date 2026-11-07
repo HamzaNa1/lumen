@@ -21,7 +21,7 @@ export const createVerificationWorkspace = ({
   for (const path of [
     "tests",
     "scripts",
-    ".github/rulesets",
+    ".github",
     "tooling",
     "biome.json",
     "playwright.config.ts",

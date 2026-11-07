@@ -43,12 +43,12 @@ jobs:
         runner: [ubuntu-24.04, macos-26, windows-latest]
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/fetch-release-tags
+      - uses: ./.github/actions/setup-dependencies
         with:
-          fetch-depth: 0
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: 1.4.4
-      - run: bun scripts/install-product.ts desktop
+          electron: 'true'
+      - uses: ./.github/actions/setup-apt-mirrors
+        if: runner.os == 'Linux'
       - run: bun run check:desktop typecheck
       - uses: ./.github/actions/bundle-mpv
       - run: bun run --cwd apps/desktop build

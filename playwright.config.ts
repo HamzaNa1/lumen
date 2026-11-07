@@ -35,7 +35,7 @@ export default defineConfig({
   timeout: 60_000,
   expect: { timeout: 10_000 },
   fullyParallel: true,
-  workers: 2,
+  workers: process.env.LUMEN_E2E_WORKERS ? Number(process.env.LUMEN_E2E_WORKERS) : 2,
   forbidOnly: true,
   retries: 0,
   outputDir: output,

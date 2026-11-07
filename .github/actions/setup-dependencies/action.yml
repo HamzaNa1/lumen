@@ -1,0 +1,33 @@
+name: Project dependencies
+description: Install pinned tools and restore download caches before installing dependencies.
+inputs:
+  electron:
+    description: Restore Electron downloads for jobs that launch or package the desktop app.
+    default: 'false'
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 24
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.4
+    - name: Resolve download caches
+      id: versions
+      shell: bash
+      run: |
+        bun -e 'console.log("electron=" + (await Bun.file("apps/desktop/package.json").json()).devDependencies.electron)' >> "$GITHUB_OUTPUT"
+        bun -e 'import { homedir } from "node:os"; import { join } from "node:path"; console.log("BUN_INSTALL_CACHE_DIR=" + join(homedir(), ".bun/install/cache")); console.log("electron_config_cache=" + join(homedir(), ".cache/electron"))' >> "$GITHUB_ENV"
+    - uses: actions/cache@v4
+      with:
+        path: ~/.bun/install/cache
+        key: bun-${{ runner.os }}-${{ runner.arch }}-1.4.4-${{ hashFiles('bun.lock') }}
+        restore-keys: bun-${{ runner.os }}-${{ runner.arch }}-1.4.4-
+    - uses: actions/cache@v4
+      if: inputs.electron == 'true'
+      with:
+        path: ~/.cache/electron
+        key: electron-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.electron }}
+    - shell: bash
+      run: bun install --frozen-lockfile
