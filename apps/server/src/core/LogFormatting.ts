@@ -7,8 +7,19 @@ const messages: Readonly<Record<string, string>> = {
   server_stopping: "Stopping Lumen server",
   server_stopped: "Server stopped after {durationMs}",
   server_stop_failed: "Server failed to shut down cleanly",
-  database_migration_started: "Applying database migrations",
-  database_migration_completed: "Database migrations completed",
+  server_services_initializing: "Initializing server services",
+  server_services_initialized: "Server services initialized in {durationMs}",
+  database_open_started: "Opening database",
+  database_open_completed: "Database opened in {durationMs}",
+  database_migrations_started: "Applying pending database migrations",
+  database_migrations_completed: "Applied {applied} database migrations in {durationMs}",
+  database_foreign_key_check_started:
+    "Validating foreign keys for the current migration state; large databases can take minutes",
+  database_foreign_key_check_completed: "Foreign key validation passed in {durationMs}",
+  database_foreign_key_check_skipped:
+    "Skipping foreign key validation; the current migration state already passed it",
+  database_foreign_key_check_failed:
+    "Foreign key validation found {violations} violations after {durationMs}",
   database_migration_failed: "Database migration failed",
   http_request: "{method} {route} responded {status} in {durationMs}",
   job_worker_started: "Background job worker started",
@@ -51,7 +62,7 @@ const sources: Readonly<Record<string, string>> = {
   ingest: "Library/Ingest",
   libraries: "Library/Manager",
   events: "Events",
-  database: "Database/Migrations",
+  database: "Database",
 };
 
 const operations: Readonly<Record<string, string>> = {

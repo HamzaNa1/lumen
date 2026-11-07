@@ -158,11 +158,17 @@ test("migration CLI creates a usable database and emits bounded text logs on suc
     );
   const success = run(server.databasePath);
   expect(success.status, success.stderr).toBe(0);
-  expect(success.stdout).toContain("migration");
+  expect(success.stdout).toContain("[Database] Applying pending database migrations");
+  // The CLI shares the server's validation record, so neither repeats the other's check.
+  expect(success.stdout).toContain("[Database] Skipping foreign key validation");
   const failure = run(server.root);
   expect(failure.status).toBe(1);
   expect(failure.stdout + failure.stderr).not.toContain(server.root);
+  const logged = server.log.length;
   await server.start({ LUMEN_LOG_FORMAT: "text" });
+  const startup = server.log.slice(logged).join("");
+  expect(startup).toContain("Skipping foreign key validation");
+  expect(startup).toMatch(/Server services initialized in \d/);
   await server.register();
   expect(await server.api("/auth/setup")).toEqual({ setupRequired: false });
   await server.stop();
