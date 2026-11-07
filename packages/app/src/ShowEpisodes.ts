@@ -12,27 +12,15 @@ export interface EpisodeGroup {
 // An episode sits under its show, or under a season of it.
 const levelsAboveEpisode = 2;
 
-type ItemDetails = CatalogItemDetails["item"];
-
 /**
- * The show an episode belongs to, as its details name it; null for anything that is not an
- * episode of a show, and undefined where the server is too old to say.
+ * The show an episode belongs to, for servers too old to place an episode in its show: found by
+ * walking up from the episode. Null for anything that is not an episode of a show.
  */
-export const namedShow = (item: ItemDetails): ShowSummary | null | undefined => {
-  if (item.kind !== "episode") return null;
-  if (item.seriesId === undefined) return undefined;
-  return item.seriesId === null || item.seriesTitle == null
-    ? null
-    : { id: item.seriesId, title: item.seriesTitle };
-};
-
-/** The show an episode belongs to, found by walking up from it where its details do not name it. */
 export const showOfEpisode = async (
   catalog: Catalog,
-  item: ItemDetails,
+  item: CatalogItemDetails["item"],
 ): Promise<ShowSummary | null> => {
-  const named = namedShow(item);
-  if (named !== undefined) return named;
+  if (item.kind !== "episode") return null;
   let parentId = item.parentId;
   for (let level = 0; level < levelsAboveEpisode && parentId !== null; level++) {
     const parent = (await catalog.itemDetails(parentId)).item;

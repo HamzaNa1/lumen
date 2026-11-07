@@ -5,7 +5,6 @@ import {
   artworkAssignments,
   buildFtsMatch,
   catalogFts,
-  catalogItemArtwork,
   catalogItemFts,
   catalogItemMetadata,
   catalogItemSources,
@@ -19,7 +18,6 @@ import {
   tracks,
 } from "@lumen/database";
 import { and, asc, eq, exists, inArray, isNull, or, sql } from "drizzle-orm";
-import { alias } from "drizzle-orm/sqlite-core";
 import { Context, Effect, Layer, type Schema } from "effect";
 import { badRequest, forbidden, notFound } from "../core/Errors";
 import type {
@@ -33,6 +31,14 @@ import type {
 import { decodeMetadataList, decodeMetadataMap } from "../media/MetadataJson";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
+import {
+  completedFor,
+  itemArtwork,
+  lastEpisode,
+  resumePositionSeconds,
+  showPlacement,
+} from "./CatalogColumns";
+import { placeEpisodes, showEpisodes } from "./EpisodePlacement";
 import { firstUnwatchedEpisode, nextEpisode, previousEpisode } from "./EpisodeSequence";
 
 type WatchInput = Schema.Schema.Type<typeof WatchStateBody>;
@@ -41,48 +47,6 @@ type PaginationInput = Schema.Schema.Type<typeof PaginationQuery>;
 type SearchInput = Schema.Schema.Type<typeof SearchQuery>;
 type ItemMetadataInput = Schema.Schema.Type<typeof ItemMetadataBody>;
 type ItemWatchInput = Schema.Schema.Type<typeof ItemWatchStateBody>;
-
-type ArtworkRole = "poster" | "still" | "backdrop";
-
-/**
- * One of an item's images, preferring the earlier role: its artwork ID, or the content hash a
- * client names to fetch exactly those bytes.
- */
-const itemArtwork = (column: "id" | "revision", roles: ReadonlyArray<ArtworkRole>) => sql<
-  string | null
->`(
-  select ${column === "id" ? artwork.id : artwork.contentHash} from ${catalogItemArtwork}
-  join ${artwork} on ${artwork.id} = ${catalogItemArtwork.artworkId}
-  where ${catalogItemArtwork.itemId} = ${catalogItems.id}
-    and ${catalogItemArtwork.role} in (${sql.join(
-      roles.map((role) => sql`${role}`),
-      sql`, `,
-    )})
-  order by ${catalogItemArtwork.role} limit 1
-)`;
-
-// Entries starting at the same episode list a single episode before a file of several.
-const lastEpisode = sql`coalesce(${catalogItems.indexNumberEnd}, ${catalogItems.indexNumber})`;
-
-// Where the viewer left off; finished items have nothing to resume.
-const resumePositionSeconds = sql<
-  number | null
->`case when ${itemWatchStates.completed} then null else ${itemWatchStates.positionSeconds} end`;
-
-// A season is watched only when it has episodes and every episode is watched.
-// Derive it from children so new episodes and individual undo actions stay accurate.
-const completedFor = (userId: string) =>
-  sql<boolean>`case
-  when ${catalogItems.kind} = 'season' then
-    exists (select 1 from catalog_items e where e.parent_id = ${catalogItems.id}
-      and e.library_id = ${catalogItems.libraryId} and e.kind = 'episode')
-    and not exists (select 1 from catalog_items e
-      left join item_watch_states w on w.item_id = e.id and w.user_id = ${userId}
-      where e.parent_id = ${catalogItems.id} and e.library_id = ${catalogItems.libraryId}
-        and e.kind = 'episode' and coalesce(w.completed, 0) = 0)
-  else coalesce((select w.completed from item_watch_states w
-    where w.item_id = ${catalogItems.id} and w.user_id = ${userId}), 0)
-  end`.mapWith(Boolean);
 
 const encodeCursor = (offset: number): string =>
   Buffer.from(String(offset), "utf8").toString("base64url");
@@ -331,50 +295,10 @@ export const makeCatalogService = Effect.gen(function* () {
       .limit(input.limit + 1)
       .offset(offset);
     return {
-      items: rows.slice(0, input.limit),
+      items: yield* placeEpisodes(database, principal.user.id, rows.slice(0, input.limit)),
       nextCursor: rows.length > input.limit ? encodeCursor(offset + input.limit) : null,
     };
   });
-
-  const season = alias(catalogItems, "season");
-  /** A show's episodes in watching order, whether they sit in seasons or directly in the show. */
-  const showEpisodes = (showId: string, userId: string) =>
-    database
-      .select({
-        id: catalogItems.id,
-        libraryId: catalogItems.libraryId,
-        parentId: catalogItems.parentId,
-        title: catalogItems.title,
-        kind: catalogItems.kind,
-        indexNumber: catalogItems.indexNumber,
-        indexNumberEnd: catalogItems.indexNumberEnd,
-        seasonNumber: season.indexNumber,
-        durationMs: sql<number | null>`${catalogItems.durationSeconds} * 1000`,
-        year: catalogItems.year,
-        artworkId: itemArtwork("id", ["still"]),
-        artworkRevision: itemArtwork("revision", ["still"]),
-        completed: completedFor(userId),
-        resumePositionSeconds,
-      })
-      .from(catalogItems)
-      .leftJoin(season, eq(season.id, catalogItems.parentId))
-      .leftJoin(
-        itemWatchStates,
-        and(eq(itemWatchStates.itemId, catalogItems.id), eq(itemWatchStates.userId, userId)),
-      )
-      .where(
-        and(
-          or(eq(season.parentId, showId), eq(catalogItems.parentId, showId)),
-          eq(catalogItems.kind, "episode"),
-        ),
-      )
-      .orderBy(
-        asc(sql`coalesce(${season.indexNumber}, 0)`),
-        asc(catalogItems.indexNumber),
-        asc(lastEpisode),
-        asc(catalogItems.sortTitle),
-        asc(catalogItems.id),
-      );
 
   const nextUp: CatalogServiceShape["nextUp"] = Effect.fn("Catalog.nextUp")(
     function* (principal, itemId, nowMs) {
@@ -385,45 +309,46 @@ export const makeCatalogService = Effect.gen(function* () {
         .get();
       if (show == null || show.kind !== "show") return yield* notFound("Series not found");
       yield* access.requireLibrary(principal, show.libraryId, "library:read", nowMs);
-      const episodes = yield* showEpisodes(itemId, principal.user.id);
-      return { item: firstUnwatchedEpisode(episodes) };
+      const episodes = yield* showEpisodes(database, itemId, principal.user.id);
+      const item = firstUnwatchedEpisode(episodes);
+      if (item === null) return { item };
+      const [placed] = yield* placeEpisodes(database, principal.user.id, [item]);
+      return { item: placed ?? item };
     },
   );
 
   const adjacentEpisodes: CatalogServiceShape["adjacentEpisodes"] = Effect.fn(
     "Catalog.adjacentEpisodes",
   )(function* (principal, itemId, nowMs) {
-    const parent = alias(catalogItems, "parent");
+    const place = showPlacement();
     const item = yield* database
-      .select({
-        libraryId: catalogItems.libraryId,
-        kind: catalogItems.kind,
-        parentId: catalogItems.parentId,
-        parentKind: parent.kind,
-        grandparentId: parent.parentId,
-      })
+      .select({ libraryId: catalogItems.libraryId, kind: catalogItems.kind, showId: place.showId })
       .from(catalogItems)
-      .leftJoin(parent, eq(parent.id, catalogItems.parentId))
+      .leftJoin(place.parent, place.onParent)
+      .leftJoin(place.show, place.onShow)
       .where(eq(catalogItems.id, itemId))
       .get();
     if (item == null) return yield* notFound("Item not found");
     yield* access.requireLibrary(principal, item.libraryId, "library:read", nowMs);
-    const showId =
-      item.kind !== "episode"
-        ? null
-        : item.parentKind === "season"
-          ? item.grandparentId
-          : item.parentId;
-    if (showId === null) return { previous: null, next: null };
-    const episodes = yield* showEpisodes(showId, principal.user.id);
+    if (item.kind !== "episode" || item.showId === null) return { previous: null, next: null };
+    const episodes = yield* showEpisodes(database, item.showId, principal.user.id);
     const index = episodes.findIndex((episode) => episode.id === itemId);
-    return { previous: previousEpisode(episodes, index), next: nextEpisode(episodes, index) };
+    const previous = previousEpisode(episodes, index);
+    const next = nextEpisode(episodes, index);
+    // Placed in turn, so moving on to either is described as soon as it plays.
+    const placed = yield* placeEpisodes(
+      database,
+      principal.user.id,
+      [previous, next].filter((episode) => episode !== null),
+    );
+    const placedOf = (episode: (typeof episodes)[number] | null) =>
+      episode === null ? null : (placed.find((entry) => entry.id === episode.id) ?? episode);
+    return { previous: placedOf(previous), next: placedOf(next) };
   });
 
   const itemDetails: CatalogServiceShape["itemDetails"] = Effect.fn("Catalog.itemDetails")(
     function* (principal, itemId, metadataProviderConfigured, nowMs) {
-      const parent = alias(catalogItems, "parent");
-      const show = alias(catalogItems, "show");
+      const place = showPlacement();
       const item = yield* database
         .select({
           id: catalogItems.id,
@@ -434,17 +359,9 @@ export const makeCatalogService = Effect.gen(function* () {
           year: catalogItems.year,
           indexNumber: catalogItems.indexNumber,
           indexNumberEnd: catalogItems.indexNumberEnd,
-          // An episode sits in a season of its show, or directly in the show.
-          seriesId: sql<string | null>`case ${parent.kind}
-            when 'show' then ${parent.id} when 'season' then ${show.id} end`,
-          seriesTitle: sql<string | null>`case ${parent.kind}
-            when 'show' then ${parent.title} when 'season' then ${show.title} end`,
-          seasonNumber: sql<
-            number | null
-          >`case when ${parent.kind} = 'season' then ${parent.indexNumber} end`,
-          // A season without a year of its own is dated by its show.
-          seasonYear: sql<number | null>`case ${parent.kind}
-            when 'show' then ${parent.year} when 'season' then coalesce(${parent.year}, ${show.year}) end`,
+          seriesTitle: place.seriesTitle,
+          seasonNumber: place.seasonNumber,
+          seasonYear: place.seasonYear,
           overview: catalogItems.overview,
           completed: completedFor(principal.user.id),
           durationSeconds: catalogItems.durationSeconds,
@@ -463,18 +380,8 @@ export const makeCatalogService = Effect.gen(function* () {
         })
         .from(catalogItems)
         .leftJoin(catalogItemMetadata, eq(catalogItemMetadata.itemId, catalogItems.id))
-        .leftJoin(
-          parent,
-          and(eq(parent.id, catalogItems.parentId), eq(parent.libraryId, catalogItems.libraryId)),
-        )
-        .leftJoin(
-          show,
-          and(
-            eq(show.id, parent.parentId),
-            eq(show.libraryId, catalogItems.libraryId),
-            eq(show.kind, "show"),
-          ),
-        )
+        .leftJoin(place.parent, place.onParent)
+        .leftJoin(place.show, place.onShow)
         .where(eq(catalogItems.id, itemId))
         .get();
       if (item == null) return yield* notFound("Item not found");
@@ -507,8 +414,9 @@ export const makeCatalogService = Effect.gen(function* () {
         .from(itemFavorites)
         .where(and(eq(itemFavorites.userId, principal.user.id), eq(itemFavorites.itemId, item.id)))
         .get();
+      const [placed] = yield* placeEpisodes(database, principal.user.id, [item]);
       return {
-        item,
+        item: placed ?? item,
         sources: sourceRows.map((source) => ({
           ...source,
           available: source.available ?? true,
@@ -721,7 +629,7 @@ export const makeCatalogService = Effect.gen(function* () {
         .offset(offset);
       if (rows.length === 0) return yield* search(principal, input, nowMs);
       return {
-        items: rows.slice(0, input.limit),
+        items: yield* placeEpisodes(database, principal.user.id, rows.slice(0, input.limit)),
         nextCursor: rows.length > input.limit ? encodeCursor(offset + input.limit) : null,
       };
     },

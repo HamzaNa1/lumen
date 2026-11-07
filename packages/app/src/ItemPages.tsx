@@ -69,6 +69,7 @@ const catalogItem = ({ item, watchState }: CatalogItemDetails): CatalogItem => (
   completed: item.completed ?? watchState?.completed ?? false,
   resumePositionSeconds:
     watchState === null || watchState.completed ? null : watchState.positionSeconds,
+  ...(item.placement === undefined ? {} : { placement: item.placement }),
 });
 
 const yearOf = (year: number | null): string | null => (year === null ? null : String(year));
