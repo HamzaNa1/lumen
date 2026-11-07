@@ -17,6 +17,11 @@ jobs:
     with:
       product: desktop
       version: ${{ inputs.version }}
+  verify:
+    needs: preflight
+    uses: ./.github/workflows/release-verify.yml
+    with:
+      product: desktop
   native-desktop:
     needs: preflight
     strategy:
@@ -27,14 +32,15 @@ jobs:
     with:
       runner: ${{ matrix.runner }}
       project: native
+      shards: ${{ matrix.runner == 'ubuntu-24.04' && '[1]' || '[1,2,3]' }}
   package:
-    needs: [preflight, native-desktop]
+    needs: preflight
     uses: ./.github/workflows/packaging.yml
     with:
       product: desktop
       artifact-prefix: lumen-desktop-${{ needs.preflight.outputs.version }}
   publish:
-    needs: [preflight, native-desktop, package]
+    needs: [preflight, verify, native-desktop, package]
     runs-on: ubuntu-24.04
     permissions:
       contents: write

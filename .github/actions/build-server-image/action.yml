@@ -1,0 +1,54 @@
+name: Build and check server image
+description: Build natively with an architecture-scoped cache, smoke-test, and optionally push by digest.
+inputs:
+  arch:
+    description: Native runner architecture (amd64 or arm64).
+    required: true
+  push-image:
+    description: Registry image name; empty keeps the smoke-tested image local.
+    default: ''
+  version:
+    description: Release version for the OCI image label.
+    default: ''
+outputs:
+  digest:
+    description: Digest of the smoke-tested image pushed to the registry.
+    value: ${{ steps.push.outputs.digest }}
+runs:
+  using: composite
+  steps:
+    - uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.4.4
+    - uses: docker/setup-buildx-action@v4
+    - name: Build for the smoke test
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: apps/server/Dockerfile
+        platforms: linux/${{ inputs.arch }}
+        load: true
+        tags: lumen-server:check
+        cache-from: type=gha,scope=server-${{ inputs.arch }}
+        cache-to: type=gha,mode=max,scope=server-${{ inputs.arch }}
+        labels: |
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.version=${{ inputs.version }}
+    - name: Smoke-test the native image
+      shell: bash
+      run: bun scripts/smoke-server-image.ts lumen-server:check
+    - name: Push the checked image by digest
+      if: inputs.push-image != ''
+      id: push
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: apps/server/Dockerfile
+        platforms: linux/${{ inputs.arch }}
+        cache-from: type=gha,scope=server-${{ inputs.arch }}
+        outputs: type=image,name=${{ inputs.push-image }},push-by-digest=true,name-canonical=true,push=true
+        labels: |
+          org.opencontainers.image.source=https://github.com/${{ github.repository }}
+          org.opencontainers.image.revision=${{ github.sha }}
+          org.opencontainers.image.version=${{ inputs.version }}

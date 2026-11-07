@@ -19,7 +19,7 @@ permissions:
   contents: read
 jobs:
   test:
-    name: E2E
+    name: E2E (${{ matrix.shard }})
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 25
     strategy:

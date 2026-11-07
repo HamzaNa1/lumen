@@ -461,3 +461,117 @@ for (const product of ["server", "desktop"]) {
     expect(sharedFailure.stdout + sharedFailure.stderr).toContain("TS2322");
   });
 }
+
+test("release builds start after validation and publication remains gated by every verification job", async ({
+  workspace,
+}) => {
+  type Job = {
+    needs?: string | string[];
+    if?: string;
+    uses?: string;
+    steps?: { uses?: string; run?: string }[];
+  };
+  const workflow = (name: string) =>
+    JSON.parse(
+      workspace.run("bun", [
+        "-e",
+        "console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())))",
+        join(repository, `.github/workflows/${name}.yml`),
+      ]),
+    ) as { jobs: Record<string, Job> };
+  const preflight = workflow("release-preflight");
+  expect(Object.keys(preflight.jobs)).toEqual(["validate"]);
+  expect(preflight.jobs.validate?.steps?.map((step) => step.uses).filter(Boolean)).toEqual([
+    "actions/checkout@v4",
+    "oven-sh/setup-bun@v2",
+  ]);
+  const verify = workflow("release-verify");
+  expect(Object.keys(verify.jobs).sort()).toEqual(["browser", "product"]);
+  for (const job of Object.values(verify.jobs)) {
+    expect(job.needs).toBeUndefined();
+    expect(job.if).toBeUndefined();
+  }
+  for (const product of ["desktop", "server"]) {
+    const { jobs } = workflow(`release-${product}`);
+    expect(jobs.verify?.uses).toBe("./.github/workflows/release-verify.yml");
+    const parallel =
+      product === "desktop" ? ["verify", "native-desktop", "package"] : ["verify", "server-image"];
+    for (const name of parallel) expect(jobs[name]?.needs).toBe("preflight");
+    const dependencies = (name: string): string[] => {
+      const needs = jobs[name]?.needs ?? [];
+      return typeof needs === "string" ? [needs] : needs;
+    };
+    const ancestors = (name: string): string[] =>
+      dependencies(name).flatMap((dependency) => [dependency, ...ancestors(dependency)]);
+    const publishers =
+      product === "desktop" ? ["publish"] : ["server-manifest", "publish", "promote"];
+    for (const publisher of publishers) {
+      expect(ancestors(publisher)).toEqual(expect.arrayContaining(["preflight", ...parallel]));
+      // An always() or !cancelled() override could publish after a failed prerequisite.
+      expect(jobs[publisher]?.if ?? "").not.toMatch(/always\(|cancelled\(|failure\(/);
+    }
+  }
+});
+
+test("server manifest rejects incomplete or corrupt digests before tagging and exports the combined digest", async ({
+  workspace,
+}) => {
+  const workflow = JSON.parse(
+    workspace.run("bun", [
+      "-e",
+      "console.log(JSON.stringify(Bun.YAML.parse(await Bun.file(process.argv[1]).text())))",
+      join(repository, ".github/workflows/release-server.yml"),
+    ]),
+  ) as { jobs: Record<string, { steps: { id?: string; run?: string }[] }> };
+  const script = workflow.jobs["server-manifest"]?.steps.find(
+    (step) => step.id === "manifest",
+  )?.run;
+  if (!script) throw new Error("Missing manifest publication step");
+  workspace.write("manifest.sh", script);
+  const first = "a".repeat(64);
+  const second = "b".repeat(64);
+  const digest = `sha256:${"c".repeat(64)}`;
+  const run = (files: string[], result = digest) => {
+    rmSync(join(workspace.root, "digests"), { recursive: true, force: true });
+    workspace.write("digests/.keep", "");
+    for (const file of files) workspace.write(`digests/${file}`, "");
+    workspace.write("docker-calls", "");
+    workspace.write("output", "");
+    return workspace.command(
+      "bash",
+      [
+        "-c",
+        `docker() {
+          printf '%s\\n' "$*" >> "$CALLS"
+          if [[ "$*" == *inspect* ]]; then printf '{"digest":"%s"}\\n' "$MANIFEST_DIGEST"; fi
+        }
+        export -f docker
+        cd digests
+        bash -e -o pipefail ../manifest.sh`,
+      ],
+      {
+        IMAGE: "ghcr.io/example/lumen-server",
+        VERSION: "1.2.3-rc.1",
+        GITHUB_SHA: "d".repeat(40),
+        GITHUB_OUTPUT: join(workspace.root, "output"),
+        CALLS: join(workspace.root, "docker-calls"),
+        MANIFEST_DIGEST: result,
+      },
+    );
+  };
+  for (const files of [[], [first], [first, "invalid"], [first, second, "e".repeat(64)]]) {
+    expect(run(files).status).not.toBe(0);
+    expect(readFileSync(join(workspace.root, "docker-calls"), "utf8")).toBe("");
+  }
+  const result = run([first, second]);
+  expect(result.status, result.stderr).toBe(0);
+  const calls = readFileSync(join(workspace.root, "docker-calls"), "utf8");
+  expect(calls).toContain("--tag ghcr.io/example/lumen-server:1.2.3-rc.1");
+  expect(calls).toContain(`--tag ghcr.io/example/lumen-server:sha-${"d".repeat(40)}`);
+  for (const hash of [first, second])
+    expect(calls).toContain(`ghcr.io/example/lumen-server@sha256:${hash}`);
+  expect(calls).not.toContain(":latest");
+  expect(readFileSync(join(workspace.root, "output"), "utf8")).toBe(`digest=${digest}\n`);
+  expect(run([first, second], "invalid").status).not.toBe(0);
+  expect(readFileSync(join(workspace.root, "output"), "utf8")).toBe("");
+});

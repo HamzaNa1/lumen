@@ -89,4 +89,5 @@ export const releasePaths = (product: Product): string[] => [
   "scripts",
   `.github/workflows/release-${product}.yml`,
   ".github/workflows/release-preflight.yml",
+  ".github/workflows/release-verify.yml",
 ];
