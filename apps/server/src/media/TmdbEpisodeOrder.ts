@@ -1,6 +1,7 @@
 import { EpisodeOrderOptions } from "@lumen/contracts";
 import { Schema } from "effect";
 import { fetchTmdb } from "./TmdbClient";
+import type { TmdbSeasonEpisode } from "./TmdbEpisodeMatch";
 
 const orderTypes: Record<number, string> = {
   1: "Original air date",
@@ -21,6 +22,7 @@ const Group = Schema.Struct({
           order: Index,
           season_number: Index,
           episode_number: Index,
+          name: Schema.optional(Schema.NullOr(Schema.String)),
         }),
       ),
     }),
@@ -57,27 +59,25 @@ export const tmdbEpisodeOrders = async (
   });
 };
 
-/** Where each of a season's episodes sits in TMDb's own numbering under the selected order. */
-export const tmdbEpisodeCoordinates = async (
+/**
+ * Every episode the selected order places in a local season, with where TMDb itself files it. A
+ * season the order lists other than exactly once has no episodes, since none could be placed.
+ */
+export const tmdbEpisodeGroupSeason = async (
   groupId: string,
   seasonNumber: number,
-  episodeNumbers: ReadonlyArray<number>,
   key: string,
-): Promise<Array<{ seasonNumber: number; episodeNumber: number }>> => {
+): Promise<TmdbSeasonEpisode[]> => {
   const group = Schema.decodeUnknownSync(Group)(
     await fetchTmdb(`/tv/episode_group/${groupId}`, key),
   );
   const seasons = group.groups.filter((season) => season.order === seasonNumber);
-  return episodeNumbers.map((episodeNumber) => {
-    const episodes =
-      seasons.length === 1
-        ? (seasons[0]?.episodes.filter((episode) => episode.order === episodeNumber - 1) ?? [])
-        : [];
-    const episode = episodes.length === 1 ? episodes[0] : undefined;
-    if (episode === undefined)
-      throw new Error(
-        `Selected episode order has no unique match for S${seasonNumber}E${episodeNumber}. Choose another episode order.`,
-      );
-    return { seasonNumber: episode.season_number, episodeNumber: episode.episode_number };
-  });
+  const [season] = seasons;
+  if (seasons.length !== 1 || season === undefined) return [];
+  return season.episodes.map((episode) => ({
+    position: episode.order + 1,
+    seasonNumber: episode.season_number,
+    episodeNumber: episode.episode_number,
+    name: episode.name?.trim() || null,
+  }));
 };

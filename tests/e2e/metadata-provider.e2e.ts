@@ -3,6 +3,7 @@ import { once } from "node:events";
 import { readdir, readFile, utimes } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import { join } from "node:path";
+import { openDatabase } from "./support/database";
 import { test as base, expect, type Item, password, repository } from "./support/server";
 
 const test = base.extend<{ provider: HttpServer }>({
@@ -288,4 +289,126 @@ test("movie matching searches and deduplicates candidates, downloads real artwor
     .poll(async () => readdir(join(server.root, "artwork")), { timeout: 15000 })
     .toEqual([]);
   expect(await server.api("/search?q=Mine", { token })).toMatchObject({ items: [] });
+});
+
+// TMDb lists each two-parter once, while the files follow release numbering that splits them.
+const tmdbSeason = [
+  "Gossip Mill",
+  "The Long Night",
+  "Mafia Run",
+  "The Manager and the Salesman",
+  "Whistle Stop",
+  "Homecoming (1)",
+  "Homecoming (2)",
+  "Epilogue",
+  "Bonus Night",
+  "Last Call",
+  "The End",
+];
+const releasedFiles = [
+  // [file, title before TMDb names the season's episodes, title after, confidence after]
+  ["S02E01 - Gossip Mill WEBDL-1080p", "Gossip Mill", "Gossip Mill", 95],
+  ["S02E02-E03 - The Long Night WEBDL-1080p", "The Long Night / Mafia Run", "The Long Night", 90],
+  ["S02E04 - Mafia Run WEBDL-1080p", "The Manager and the Salesman", "Mafia Run", 90],
+  ["S02E05 - Manager and Salesman WEBDL-1080p", "Whistle Stop", "The Manager and the Salesman", 90],
+  ["S02E06 - Whistle Stop WEBDL-1080p", "Homecoming (1)", "Whistle Stop", 90],
+  ["S02E07 - Homecoming WEBDL-1080p", "Homecoming (2)", "Homecoming (1) / Homecoming (2)", 90],
+  ["S02E08", "Epilogue", "Epilogue", 95],
+  // A title naming no episode falls back to its number, unless another file's title claims it.
+  ["S02E09 - Le Retour WEBDL-1080p", "Bonus Night", "Le Retour", null],
+  ["S02E10 - Bonus Night WEBDL-1080p", "Last Call", "Bonus Night", 90],
+  ["S02E11 - Fin WEBDL-1080p", "The End", "The End", 80],
+  ["S02E12 - Encore WEBDL-1080p", "Encore", "Encore", null],
+] as const;
+
+test("episodes numbered differently from TMDb match by the title in their file name and refresh away earlier mismatches", async ({
+  server,
+  admin,
+  provider,
+}) => {
+  const token = admin.accessToken;
+  let named = false;
+  provider.on("request", (request, response) => {
+    const path = new URL(request.url ?? "/", "http://provider.test").pathname;
+    const episode = /^\/3\/tv\/77\/season\/2\/episode\/(\d+)$/u.exec(path)?.[1];
+    let body: unknown;
+    if (path === "/3/search/tv")
+      body = { results: [{ id: 77, name: "Paper Town", first_air_date: "2009-09-17" }] };
+    else if (path === "/3/tv/77") body = { name: "Paper Town", first_air_date: "2009-09-17" };
+    else if (path === "/3/tv/77/season/2")
+      body = {
+        name: "Season 2",
+        episodes: tmdbSeason.map((name, index) => ({
+          episode_number: index + 1,
+          name: named ? name : null,
+        })),
+      };
+    else if (episode !== undefined && tmdbSeason[Number(episode) - 1] !== undefined)
+      body = { name: tmdbSeason[Number(episode) - 1], overview: `Synopsis ${episode}` };
+    else {
+      response.writeHead(404).end();
+      return;
+    }
+    response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(body));
+  });
+  const library = await server.library(
+    token,
+    "shows",
+    releasedFiles.map(([file]) => `Paper Town/Season 2/Paper Town - ${file}.mp4`),
+  );
+  const show = (await server.items(token, library.id))[0];
+  const seasons = await server.api<{ items: Item[] }>(`/items/${show?.id}/children`, { token });
+  const episodes = async () =>
+    (await server.api<{ items: Item[] }>(`/items/${seasons.items[0]?.id}/children`, { token }))
+      .items;
+  const settled = async () =>
+    expect
+      .poll(
+        async () =>
+          (await server.api<{ status: string }[]>("/admin/jobs", { token })).every(
+            (job) => !["running", "queued"].includes(job.status),
+          ),
+        { timeout: 30000 },
+      )
+      .toBe(true);
+  const original = await episodes();
+  expect(original.map((item) => item.title)).toEqual(
+    releasedFiles.map(([file]) => file.split(" - ")[1]?.replace(" WEBDL-1080p", "") ?? "Episode 8"),
+  );
+  await server.api("/admin/metadata-settings", {
+    token,
+    method: "PUT",
+    body: { tmdbApiKey: "e2e-provider-key" },
+  });
+  await settled();
+  // Without episode names to compare, numbers alone place every file, as they did before titles.
+  expect((await episodes()).map((item) => item.title)).toEqual(
+    releasedFiles.map(([, numbered]) => numbered),
+  );
+  named = true;
+  await server.api(`/items/${show?.id}/refresh`, { token, status: 200, body: {} });
+  await settled();
+  const matched = await episodes();
+  expect(matched.map((item) => item.id)).toEqual(original.map((item) => item.id));
+  expect(matched.map((item) => item.title)).toEqual(releasedFiles.map(([, , titled]) => titled));
+  expect(matched[1]).toMatchObject({ indexNumber: 2, indexNumberEnd: 3 });
+  const db = openDatabase(server.databasePath);
+  try {
+    const records = matched.map((item) =>
+      db
+        .prepare("SELECT confidence FROM provider_records WHERE item_id = ? AND provider = 'tmdb'")
+        .all(item.id)
+        .map((row) => row.confidence),
+    );
+    expect(records).toEqual(
+      releasedFiles.map(([, , , confidence]) => (confidence === null ? [] : [confidence])),
+    );
+  } finally {
+    db.close();
+  }
+  expect(
+    (await server.api<{ status: string }[]>("/admin/jobs", { token })).filter(
+      (job) => job.status === "failed",
+    ),
+  ).toEqual([]);
 });

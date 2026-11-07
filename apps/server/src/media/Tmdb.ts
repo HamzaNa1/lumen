@@ -20,7 +20,7 @@ import {
   Repositories,
   seriesEpisodeOrders,
 } from "@lumen/database";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, ne, or } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import type { ServerConfig } from "../config/Config";
 import { readResponseBytes } from "../core/BoundedInput";
@@ -30,6 +30,7 @@ import { MetadataSettings } from "../services/MetadataSettings";
 import { generatedArtworkDir } from "./GeneratedArtwork";
 import { imageInfo } from "./ImageInfo";
 import { decodeMetadataList, decodeMetadataMap } from "./MetadataJson";
+import { revertToPathMetadata } from "./ProviderMetadata";
 import {
   fetchTmdb,
   num,
@@ -39,8 +40,10 @@ import {
   type TmdbObject,
   tmdbImageUrl,
 } from "./TmdbClient";
-import { tmdbEpisodeCoordinates, tmdbEpisodeOrders } from "./TmdbEpisodeOrder";
+import { type LocalEpisode, tmdbEpisode } from "./TmdbEpisodeMatch";
+import { tmdbEpisodeOrders } from "./TmdbEpisodeOrder";
 import { tmdbMatchCandidates, tmdbTitleExists } from "./TmdbMatch";
+import { parseVideoPath } from "./VideoPaths";
 
 type Item = {
   id: string;
@@ -107,6 +110,15 @@ const providerIds = (externalIds: Record<string, string>, origin: string | null)
   tmdbId: externalIds.tmdb ?? /\[(?:tmdbid|tmdb)-(\d+)\]/iu.exec(origin ?? "")?.[1] ?? null,
   imdbId: externalIds.imdb ?? /\[(?:imdbid|imdb)-(tt\d+)\]/iu.exec(origin ?? "")?.[1] ?? null,
 });
+/** What an episode entry's file says about it: the episodes it covers and its own title. */
+const localEpisode = (entry: {
+  indexNumber: number | null;
+  indexNumberEnd: number | null;
+  origin: string | null;
+}): LocalEpisode => ({
+  numbers: coveredEpisodeNumbers(entry),
+  title: entry.origin === null ? null : parseVideoPath("shows", entry.origin).episodeTitle,
+});
 const titleKind = (kind: string): "movie" | "tv" | null =>
   kind === "movie" ? "movie" : kind === "show" ? "tv" : null;
 /** Runs a TMDb request the user is waiting on, so an outage reads as one they can retry. */
@@ -118,6 +130,7 @@ const tmdbRequest = <A>(message: string, request: () => Promise<A>) =>
         ? cause
         : new ServerError({ status: 503, code: "service_unavailable", message, cause }),
   });
+type Lookup = { id: string; payload: TmdbObject | null; confidence: number } | null;
 const lookup = async (
   item: Item,
   parentProviderId: string | null,
@@ -125,7 +138,7 @@ const lookup = async (
   explicit: string | null,
   imdbId: string | null,
   episodeGroupId: string | null = null,
-): Promise<{ id: string; payload: TmdbObject | null; confidence: number } | null> => {
+): Promise<Lookup> => {
   if (item.kind === "movie" || item.kind === "show") {
     const kind = item.kind === "movie" ? "movie" : "tv";
     let id = explicit;
@@ -184,65 +197,7 @@ const lookup = async (
     }
     return { id: seasonPath, payload, confidence: 95 };
   }
-  const [seriesId, season] = parentProviderId.split(":");
-  const seasonNumber = Number(season);
-  if (!Number.isInteger(seasonNumber)) return null;
-  const episodeNumbers = coveredEpisodeNumbers(item);
-  const coordinates =
-    episodeGroupId === null
-      ? episodeNumbers.map((episodeNumber) => ({ seasonNumber, episodeNumber }))
-      : await tmdbEpisodeCoordinates(episodeGroupId, seasonNumber, episodeNumbers, key);
-  // Every episode a combined file covers must resolve; a failure leaves the entry's local
-  // metadata and range in place rather than describing only some of its episodes.
-  const episodes: TmdbObject[] = [];
-  for (const episode of coordinates)
-    episodes.push(
-      await fetchTmdb(
-        `/tv/${seriesId}/season/${episode.seasonNumber}/episode/${episode.episodeNumber}`,
-        key,
-      ),
-    );
-  return {
-    id: coordinates
-      .map((episode) => `${seriesId}:${episode.seasonNumber}:${episode.episodeNumber}`)
-      .join(","),
-    payload: combinedEpisode(episodes),
-    confidence: 95,
-  };
-};
-
-const distinct = (values: ReadonlyArray<string>): string[] => [...new Set(values)];
-
-/**
- * One entry's metadata from every episode its file covers: titles joined as "Part 1 / Part 2",
- * overviews in episode order, and the first episode's air date and still. The episodes' own
- * payloads are kept alongside.
- */
-const combinedEpisode = (episodes: ReadonlyArray<TmdbObject>): TmdbObject => {
-  const [first] = episodes;
-  if (first === undefined) throw new Error("TMDb returned no episodes");
-  if (episodes.length === 1) return first;
-  const names = episodes.map((episode) => str(episode.name));
-  const overviews = episodes
-    .map((episode) => str(episode.overview))
-    .filter((overview): overview is string => overview !== null);
-  const ratings = episodes
-    .map((episode) => num(episode.vote_average))
-    .filter((rating): rating is number => rating !== null && rating > 0);
-  return {
-    ...first,
-    // A title naming only some of the episodes would read as complete, so it needs every name.
-    name: names.every((name) => name !== null) ? distinct(names).join(" / ") : null,
-    overview: overviews.length === 0 ? null : distinct(overviews).join("\n\n"),
-    vote_average:
-      ratings.length === 0
-        ? null
-        : Math.round((ratings.reduce((sum, rating) => sum + rating, 0) / ratings.length) * 10) / 10,
-    still_path:
-      episodes.map((episode) => episode.still_path).find((path) => tmdbImageUrl("w780", path)) ??
-      null,
-    episodes,
-  };
+  return null;
 };
 
 export const makeTmdbProvider = (config: ServerConfig) =>
@@ -495,11 +450,53 @@ export const makeTmdbProvider = (config: ServerConfig) =>
             .get();
           const externalIds = decodeMetadataMap(old?.externalIdsJson ?? null);
           const { tmdbId, imdbId } = providerIds(externalIds, item.origin);
+          // An episode is placed among the season's other files, whose titles may claim the
+          // TMDb episode its number would otherwise point at.
+          const others =
+            item.kind === "episode" && item.parentId !== null
+              ? yield* database
+                  .select({
+                    indexNumber: catalogItems.indexNumber,
+                    indexNumberEnd: catalogItems.indexNumberEnd,
+                    origin: catalogItemOrigins.relativePath,
+                  })
+                  .from(catalogItems)
+                  .leftJoin(catalogItemOrigins, eq(catalogItemOrigins.itemId, catalogItems.id))
+                  .where(
+                    and(
+                      eq(catalogItems.parentId, item.parentId),
+                      eq(catalogItems.kind, "episode"),
+                      ne(catalogItems.id, item.id),
+                    ),
+                  )
+              : [];
+          const seasonProviderId: string | null = parentProviderId;
           const result = yield* Effect.tryPromise({
-            try: () => lookup(item, parentProviderId, apiKey, tmdbId, imdbId, episodeGroupId),
+            try: (): Promise<Lookup> =>
+              item.kind !== "episode"
+                ? lookup(item, parentProviderId, apiKey, tmdbId, imdbId, episodeGroupId)
+                : seasonProviderId === null || item.indexNumber === null
+                  ? Promise.resolve(null)
+                  : tmdbEpisode({
+                      seasonProviderId,
+                      entry: localEpisode(item),
+                      others: others.map(localEpisode),
+                      groupId: episodeGroupId,
+                      key: apiKey,
+                    }),
             catch: (cause) => cause,
           });
-          if (result === null) return;
+          if (result === null) {
+            // A refresh that can no longer place an episode leaves no earlier match standing, since
+            // that match may be the very mismatch the refresh was meant to correct.
+            if (item.kind === "episode" && item.origin !== null) {
+              const path = parseVideoPath("shows", item.origin);
+              yield* database.transaction((transaction) =>
+                revertToPathMetadata(transaction, item.id, { title: path.title, year: path.year }),
+              );
+            }
+            return;
+          }
           parentProviderId = result.id;
           if (item.kind === "show") {
             const order = yield* database
@@ -596,6 +593,17 @@ export const makeTmdbProvider = (config: ServerConfig) =>
                 fetchedAtMs,
               },
             });
+          // A refresh may place the entry on other TMDb episodes; the record of its old match no
+          // longer describes it.
+          yield* database
+            .delete(providerRecords)
+            .where(
+              and(
+                eq(providerRecords.itemId, itemId),
+                eq(providerRecords.provider, "tmdb"),
+                ne(providerRecords.providerItemId, result.id),
+              ),
+            );
           yield* database
             .update(catalogItems)
             .set({
