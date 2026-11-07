@@ -61,6 +61,35 @@ test("scanner interprets episode naming variants and malformed ranges through th
   }
 });
 
+const episodeTitles = [
+  ["Show - S01E01 - Gossip WEBDL-1080p", "Gossip"],
+  ["Show.S01E02.The.Meeting.1080p.WEB-DL.x264-GROUP", "The Meeting"],
+  ["Show - S01E03 - The Promotion [Bluray-720p]", "The Promotion"],
+  ["Show - S01E04-E05 - Niagara (HDTV-720p)", "Niagara"],
+  ["Show S01E06 - 11 Monkeys", "11 Monkeys"],
+  ["Show S01E07 - Web of Lies", "Web of Lies"],
+  ["Show S01E08 WEBRip-2160p", "Episode 8"],
+  ["Show S01E09.x265-2160", "Episode 9"],
+] as const;
+
+test("scanner titles episodes from their file names without release tags", async ({
+  server,
+  admin,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(
+    token,
+    "shows",
+    episodeTitles.map(([name]) => `Show/Season 1/${name}.mp4`),
+  );
+  const show = (await server.items(token, library.id))[0];
+  const seasons = await server.api<{ items: Item[] }>(`/items/${show?.id}/children`, { token });
+  const episodes = await server.api<{ items: Item[] }>(`/items/${seasons.items[0]?.id}/children`, {
+    token,
+  });
+  expect(episodes.items.map((item) => item.title)).toEqual(episodeTitles.map(([, title]) => title));
+});
+
 test("local NFO metadata and artwork update on scan, cache by revision and remain access controlled", async ({
   server,
   admin,

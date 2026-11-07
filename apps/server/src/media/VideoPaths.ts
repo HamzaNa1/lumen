@@ -18,6 +18,8 @@ export interface VideoPath {
   readonly episodeNumber: number | null;
   /** The last episode of a file holding several consecutive episodes; null for one episode. */
   readonly episodeNumberEnd: number | null;
+  /** The episode's own title as the file names it, without release tags; null when it has none. */
+  readonly episodeTitle: string | null;
   readonly warning: string | null;
 }
 
@@ -35,6 +37,23 @@ const name = (value: string) => ({
   providerId: /\[(?:tmdbid|tmdb)-(\d+)\]/iu.exec(value)?.[1] ?? null,
   imdbId: /\[(?:imdbid|imdb)-(tt\d+)\]/iu.exec(value)?.[1] ?? null,
 });
+
+// A release tag that ends an episode's title: a resolution, source or codec as release tools and
+// Sonarr's "{Quality Full}" write them, such as "1080p", "WEBDL-1080p", "[Bluray-720p]" or "x264".
+const releaseTag =
+  /(?:^|[\s([-])(?:\d{3,4}[pi]|4k|uhd|web[ -]?dl|web[ -]?rip|blu[ -]?ray|bd[ -]?rip|br[ -]?rip|remux|hdtv|sdtv|pdtv|dvd[ -]?rip|raw[ -]?hd|x26[45]|h[ .]?26[45]|hevc|xvid)(?=$|[\s)\]-])/iu;
+
+/** The episode title written after a file's coordinates, or null when only release tags follow. */
+const episodeTitleOf = (afterCoordinates: string): string | null => {
+  const spaced = afterCoordinates.replace(/[._]+/gu, " ");
+  const tag = releaseTag.exec(spaced);
+  return (
+    (tag === null ? spaced : spaced.slice(0, tag.index))
+      .replace(/^[\s-]+|[\s([-]+$/gu, "")
+      .replace(/\s+/gu, " ")
+      .trim() || null
+  );
+};
 
 // The season and first episode of "S03E10". Later episodes are read by `episodeCoordinates`.
 const firstEpisode = /(?:^|[^a-z\d])s(\d{1,2})e(\d{1,3})(?!\d)/giu;
@@ -123,6 +142,7 @@ export const parseVideoPath = (kind: "movies" | "shows", relativePath: string): 
       season: null,
       episodeNumber: null,
       episodeNumberEnd: null,
+      episodeTitle: null,
       warning: null,
     };
   }
@@ -140,10 +160,7 @@ export const parseVideoPath = (kind: "movies" | "shows", relativePath: string): 
   const episodeNumber = coordinates?.episode ?? null;
   const end = coordinates === null ? null : episodeEnd(coordinates);
   const afterCoordinates = coordinates === null ? stem : stem.slice(coordinates.end);
-  const episodeTitle = afterCoordinates
-    .replace(/[._]+/gu, " ")
-    .replace(/^[\s-]+/u, "")
-    .trim();
+  const episodeTitle = episodeTitleOf(afterCoordinates);
   const warning =
     showPath === ""
       ? "show_folder_missing"
@@ -166,6 +183,7 @@ export const parseVideoPath = (kind: "movies" | "shows", relativePath: string): 
     season,
     episodeNumber,
     episodeNumberEnd: end === "invalid" ? null : end,
+    episodeTitle,
     warning,
   };
 };
