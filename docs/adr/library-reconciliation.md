@@ -12,6 +12,8 @@ Batch inserts inside the transaction keep parameter counts bounded without sacri
 
 Migration backfills run statistics before dropping per-file history and cancels obsolete active discovery work while preserving probe and metadata jobs. Historical cleanup jobs remain stored for retention but are excluded from current job APIs, whose operation contract now contains discovery, probe, and metadata only. A manual `db:compact` command reclaims freed pages; startup never compacts the database.
 
+The backfill stores aggregated summaries in a temporary table with an explicit primary key. Depending on an automatic index over a materialized CTE produced repeated summary scans in Bun's SQLite planner on the lab database; the explicit index keeps lookup cost bounded across SQLite versions. A 25,000-run migration regression exercises this scale without a large media fixture.
+
 The read-only job-log response accepts operation names from other server versions, with a plain-text fallback label. Keeping this response restricted to currently executable operations breaks a new desktop connected to an older server that still returns cleanup jobs. Job creation and execution remain restricted to the current operation set.
 
 Pure diff cases run without filesystem or database access under the existing Playwright runner, alongside process tests for filesystem errors, transaction failure, leases, recovery, retention, and migration. This adds the requested unit seam without introducing a second CI test runner.

@@ -359,6 +359,50 @@ test("server keeps refusing to serve after committed migrations fail foreign key
   expect(await server.api("/auth/setup")).toEqual({ setupRequired: true });
 });
 
+test("reconciliation migration backfills a large run history within its startup budget", async ({
+  server,
+}) => {
+  await server.stop();
+  const before = await openMigratedThrough(
+    server.databasePath,
+    (await shippedMigrations()).length - 1,
+  );
+  try {
+    before.exec(`
+      BEGIN;
+      INSERT INTO libraries(id,name,slug,created_at_ms,updated_at_ms) VALUES('library','Library','library',1,1);
+      INSERT INTO library_roots(id,library_id,path,created_at_ms,updated_at_ms) VALUES('root','library','/offline',1,1);
+      INSERT INTO media_sources(id,library_id,root_id,relative_path,absolute_path,scanned_at_ms) VALUES('source','library','root','film.mp4','/offline/film.mp4',1);
+      WITH RECURSIVE history(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM history WHERE n < 25000)
+      INSERT INTO scan_runs(id,library_id,mode,status,created_at_ms,started_at_ms,finished_at_ms)
+      SELECT 'run-' || n, 'library', 'incremental', 'succeeded', 1, 1, 2 FROM history;
+      INSERT INTO server_scan_seen(run_id,source_id,seen_at_ms,change) SELECT id,'source',1,'unchanged' FROM scan_runs;
+      COMMIT;
+    `);
+  } finally {
+    before.close();
+  }
+  execFileSync("bun", ["apps/server/src/database/migrate.ts"], {
+    cwd: repository,
+    env: { ...process.env, LUMEN_DATABASE_PATH: server.databasePath, LUMEN_DATA_DIR: server.root },
+    timeout: 15000,
+    stdio: "pipe",
+  });
+  const db = openDatabase(server.databasePath);
+  try {
+    expect(
+      db
+        .prepare(
+          "SELECT count(*) AS count FROM scan_runs WHERE json_extract(stats_json, '$.unchanged') = 1 AND json_extract(stats_json, '$.skipped') = 1",
+        )
+        .get()?.count,
+    ).toBe(25000);
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  } finally {
+    db.close();
+  }
+});
+
 test("reconciliation migration backfills stats, cancels discovery, and removes per-file history", async ({
   server,
 }) => {

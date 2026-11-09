@@ -9,6 +9,8 @@ UPDATE scan_runs SET status = 'cancelled',
   finished_at_ms = max(created_at_ms, coalesce(started_at_ms, 0), unixepoch() * 1000)
 WHERE status IN ('queued', 'running');
 --> statement-breakpoint
+CREATE TEMP TABLE lumen_scan_run_stats (run_id text PRIMARY KEY, stats_json text NOT NULL);
+--> statement-breakpoint
 WITH pending AS MATERIALIZED (
   SELECT id FROM scan_runs NOT INDEXED WHERE stats_json IS NULL AND status IN ('succeeded', 'failed', 'cancelled')
 ), probes AS MATERIALIZED (
@@ -34,13 +36,19 @@ WITH pending AS MATERIALIZED (
     SELECT run_id, 0, 0, 0, 0, 0, 0, 0, 1 FROM probes
   ) GROUP BY run_id
 )
--- Sequential table scans avoid random UUID-index reads on legacy HDD databases.
-UPDATE scan_runs NOT INDEXED SET stats_json = coalesce((SELECT json_object(
+INSERT INTO lumen_scan_run_stats(run_id, stats_json)
+SELECT run_id, json_object(
   'discovered', discovered, 'new', new, 'changed', changed, 'moved', moved,
   'unchanged', unchanged, 'skipped', skipped, 'missing', missing, 'probesEnqueued', probes
-) FROM counts WHERE counts.run_id = scan_runs.id),
-'{"discovered":0,"new":0,"changed":0,"moved":0,"unchanged":0,"skipped":0,"missing":0,"probesEnqueued":0}')
-WHERE id IN (SELECT id FROM pending);
+) FROM counts;
+--> statement-breakpoint
+-- Explicitly index summaries: SQLite versions differ on indexing a materialized CTE here.
+UPDATE scan_runs NOT INDEXED SET stats_json = coalesce((
+  SELECT stats_json FROM lumen_scan_run_stats WHERE run_id = scan_runs.id
+), '{"discovered":0,"new":0,"changed":0,"moved":0,"unchanged":0,"skipped":0,"missing":0,"probesEnqueued":0}')
+WHERE stats_json IS NULL AND status IN ('succeeded', 'failed', 'cancelled');
+--> statement-breakpoint
+DROP TABLE lumen_scan_run_stats;
 --> statement-breakpoint
 DROP TABLE server_scan_seen;
 --> statement-breakpoint
