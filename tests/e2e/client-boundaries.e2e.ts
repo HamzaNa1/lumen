@@ -1,4 +1,5 @@
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { bearerCredentials, ServerApi } from "../../packages/client/src/ServerApi";
 import { latch, NetworkProxy } from "./support/proxy";
 import { expect, password, test } from "./support/server";
 
@@ -8,9 +9,11 @@ test("job logs retain operations returned by older and newer servers", async ({
 }) => {
   await server.library(admin.accessToken, "movies", ["Film.mp4"]);
   const proxy = await new NetworkProxy(server.origin).start();
-  const client = new ServerClient({ origin: proxy.origin });
+  const client = new ServerApi({
+    origin: proxy.origin,
+    credentials: bearerCredentials(() => admin.accessToken),
+  });
   try {
-    await client.login({ username: "admin", password }, crypto.randomUUID());
     const [job] = await client.jobLog();
     expect(job).toBeDefined();
     const entries = ["cleanup", "artwork", "analyze", "future-operation"].map((operation) => ({
@@ -25,7 +28,7 @@ test("job logs retain operations returned by older and newer servers", async ({
     };
     expect(await client.jobLog()).toEqual(entries);
   } finally {
-    client.setSession(null);
+    client.cancelPending();
     await proxy.close();
   }
 });
