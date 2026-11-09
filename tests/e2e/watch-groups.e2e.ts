@@ -84,6 +84,7 @@ test("membership cannot disclose or control inaccessible media, and ACL changes 
         libraryId: library.id,
         userId: user.id,
         capabilities,
+        // Server <= 0.0.34 requires this; newer servers ignore it. Drop once stable server >= 0.0.35.
         canDownload: false,
         expiresAtMs: null,
       },

@@ -135,6 +135,8 @@ export const CreateGrantBody = Schema.Struct({
   libraryId: Identifier,
   userId: Identifier,
   capabilities: Schema.Array(GrantCapability),
+  /** @deprecated Accepted for older clients; download permission belongs to the user. */
+  canDownload: Schema.optional(Schema.Boolean),
   expiresAtMs: Schema.NullOr(UtcMillis),
 });
 
