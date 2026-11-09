@@ -43,6 +43,7 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "desktop-lifecycle.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop-video-color.e2e.ts": { runtime: "native", products: ["desktop"] },
   "desktop-tracks.e2e.ts": { runtime: "native", products: ["desktop"] },
+  "downloads.e2e.ts": { runtime: "native", products: ["server", "desktop"] },
   "mixed-playback.e2e.ts": { runtime: "native", products: ["server", "desktop"] },
   "verification.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
   "protection.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },

@@ -2,7 +2,9 @@ import type { DownloadSettings } from "@lumen/contracts";
 
 const day = 24 * 3_600_000;
 
-const watchedDelayMs: Readonly<Record<DownloadSettings["deleteWatchedAfter"], number | null>> = {
+export const watchedRetentionMs: Readonly<
+  Record<DownloadSettings["deleteWatchedAfter"], number | null>
+> = {
   immediately: 0,
   "1d": day,
   "7d": 7 * day,
@@ -34,7 +36,7 @@ export const expiredDownloads = (
   settings: Pick<DownloadSettings, "deleteWatchedAfter" | "removeUnopenedAfter">,
   nowMs: number,
 ): ReadonlyArray<string> => {
-  const watchedDelay = watchedDelayMs[settings.deleteWatchedAfter];
+  const watchedDelay = watchedRetentionMs[settings.deleteWatchedAfter];
   const unopenedDelay = unopenedDelayMs[settings.removeUnopenedAfter];
   return downloads
     .filter((download) => {

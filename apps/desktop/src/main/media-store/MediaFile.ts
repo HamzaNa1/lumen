@@ -597,6 +597,11 @@ export class MediaFile extends EventEmitter {
     await this.save();
   }
 
+  /** Stops fetches a player started; a download's own fetches carry on. */
+  stopForeground(): void {
+    for (const fetch of this.fetches) if (!fetch.background) fetch.controller.abort();
+  }
+
   /** Stops fetches that only fill the file in the background. */
   stopBackground(): void {
     for (const fetch of this.fetches) if (fetch.background) fetch.controller.abort();

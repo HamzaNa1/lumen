@@ -6,6 +6,7 @@ import {
   type FetchLike,
   RequestCancelledError,
   ServerHttpError,
+  watchedRetentionMs,
 } from "@lumen/client";
 import {
   CatalogItem,
@@ -80,6 +81,8 @@ type StoredState = Schema.Schema.Type<typeof StoredState>;
 const SYNC_INTERVAL_MS = 6 * 3_600_000;
 const RETENTION_INTERVAL_MS = 3_600_000;
 const SPACE_CHECK_MS = 30_000;
+/** How soon cleanup looks again at a download it left alone because it was playing. */
+const PLAYING_RECHECK_MS = 5_000;
 const MAX_RETRY_MS = 5 * 60_000;
 /** Grants are renewed this long before they lapse. */
 const TICKET_MARGIN_MS = 24 * 3_600_000;
@@ -145,8 +148,14 @@ export class DownloadManager extends EventEmitter {
   private spaceWaiting = false;
   private timers: ReturnType<typeof setInterval>[] = [];
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  private retentionTimer: ReturnType<typeof setTimeout> | null = null;
   private publishTimer: ReturnType<typeof setTimeout> | null = null;
   private syncing = new Map<string, Promise<void>>();
+  /**
+   * Items watched to the end here since the app started, by connection. The server may not have
+   * heard yet, and cleanup may already have deleted their downloads.
+   */
+  private watchedHere = new Set<string>();
   private closed = false;
   private readonly clock: () => number;
 
@@ -217,6 +226,33 @@ export class DownloadManager extends EventEmitter {
       ...this.stored.current,
       downloads: this.downloads.map((entry) => ({ ...entry })),
     });
+    this.scheduleRetention();
+  }
+
+  /**
+   * Runs the cleanup rules when the next watched download falls due, rather than waiting for
+   * the hourly pass; one still playing is looked at again shortly after.
+   */
+  private scheduleRetention(): void {
+    if (this.closed) return;
+    const delay = watchedRetentionMs[this.settings.deleteWatchedAfter];
+    if (delay === null) return;
+    const due = this.downloads
+      .filter((download) => download.watchedAtMs !== null && !download.keep)
+      .map((download) =>
+        this.inUse(download)
+          ? this.clock() + PLAYING_RECHECK_MS
+          : (download.watchedAtMs ?? 0) + delay,
+      );
+    if (due.length === 0) return;
+    const wait = Math.max(0, Math.min(...due) - this.clock());
+    if (wait > RETENTION_INTERVAL_MS) return;
+    if (this.retentionTimer !== null) clearTimeout(this.retentionTimer);
+    this.retentionTimer = setTimeout(() => {
+      this.retentionTimer = null;
+      void this.applyRetention();
+    }, wait);
+    this.retentionTimer.unref?.();
   }
 
   private async saveTokens(): Promise<void> {
@@ -490,7 +526,9 @@ export class DownloadManager extends EventEmitter {
       let episode = await client.nextUp(rule.showId).catch(() => null);
       while (episode !== null && wanted.length < rule.episodes && !seen.has(episode.id)) {
         seen.add(episode.id);
-        if (episode.completed !== true) wanted.push(episode.id);
+        // An episode just watched here may not have reached the server yet.
+        const watchedHere = this.watchedHere.has(`${account.connectionId}/${episode.id}`);
+        if (episode.completed !== true && !watchedHere) wanted.push(episode.id);
         const neighbours = await client.adjacentEpisodes(episode.id).catch(() => null);
         episode = neighbours?.next ?? null;
       }
@@ -539,6 +577,7 @@ export class DownloadManager extends EventEmitter {
       this.clock(),
     );
     for (const id of expired) await this.remove(id);
+    this.scheduleRetention();
   }
 
   /** What the player reports as it plays: when the item was last opened, and when it was watched. */
@@ -552,6 +591,7 @@ export class DownloadManager extends EventEmitter {
       Math.round(state.positionSeconds * 1000),
       state.durationSeconds === null ? null : Math.round(state.durationSeconds * 1000),
     );
+    if (watched) this.watchedHere.add(`${connectionId}/${state.itemId}`);
     if (watched && download.watchedAtMs === null) {
       download.watchedAtMs = now;
       this.save();
@@ -954,6 +994,7 @@ export class DownloadManager extends EventEmitter {
     for (const timer of this.timers) clearInterval(timer);
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
     if (this.publishTimer !== null) clearTimeout(this.publishTimer);
+    if (this.retentionTimer !== null) clearTimeout(this.retentionTimer);
     this.running?.controller.abort();
     await this.running?.done;
     this.save();

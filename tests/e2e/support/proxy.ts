@@ -84,8 +84,9 @@ export class NetworkProxy {
     response.on("close", () => outbound.destroy());
     incoming.pipe(outbound);
   }
-  async start() {
-    await new Promise<void>((resolve) => this.http.listen(0, "127.0.0.1", resolve));
+  /** Listens on `port`, such as a closed proxy's, so clients that saved its address find it. */
+  async start(port = 0) {
+    await new Promise<void>((resolve) => this.http.listen(port, "127.0.0.1", resolve));
     const address = this.http.address();
     if (!address || typeof address === "string") throw new Error("Proxy did not listen");
     this.origin = `http://127.0.0.1:${address.port}/`;

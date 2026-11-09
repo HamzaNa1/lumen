@@ -60,6 +60,8 @@ const useDownloadState = () => {
     queryKey: DOWNLOADS_KEY,
     queryFn: () => runtime.downloads?.state() ?? null,
     enabled: runtime.downloads !== null,
+    // A local read, and the streaming cache changes it without telling anyone: always reread.
+    staleTime: 0,
   });
 };
 

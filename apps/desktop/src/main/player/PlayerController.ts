@@ -920,6 +920,9 @@ export class PlayerController extends EventEmitter {
         : await this.samplePosition(finalProgress.active, finalProgress.state);
     ipc?.close();
     const stoppingProcess = process?.stop().catch((cause: unknown) => this.emitError(cause));
+    // Where playback ended counts too: watching to the end may stop before the next report.
+    if (savedState !== null && finalProgress !== null)
+      this.onProgress?.({ connectionId: finalProgress.active.connectionId, state: savedState });
     if (savedState !== null) await reporter.saveProgress(savedState);
     await stoppingProcess;
     await reporter.end();
