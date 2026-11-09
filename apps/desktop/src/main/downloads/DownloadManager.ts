@@ -4,9 +4,8 @@ import { join } from "node:path";
 import {
   expiredDownloads,
   type FetchLike,
-  RequestCancelledError,
+  nextRetentionAtMs,
   ServerHttpError,
-  watchedRetentionMs,
 } from "@lumen/client";
 import {
   CatalogItem,
@@ -26,6 +25,7 @@ import {
 } from "@lumen/contracts";
 import { Schema } from "effect";
 import type { ServerClient } from "../api/ServerClient";
+import { ignoreFailure, reportFailure } from "../failures";
 import { SpaceExhausted } from "../media-store/ByteStore";
 import { MediaChanged, type MediaSpec } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
@@ -142,8 +142,8 @@ export class DownloadManager extends EventEmitter {
     readonly controller: AbortController;
     readonly done: Promise<void>;
   } | null = null;
-  private pumping = false;
-  private pumpAgain = false;
+  private pumping: Promise<void> = Promise.resolve();
+  private pumpQueued = false;
   private retryAt = new Map<string, { readonly atMs: number; readonly attempts: number }>();
   private spaceWaiting = false;
   private timers: ReturnType<typeof setInterval>[] = [];
@@ -199,13 +199,8 @@ export class DownloadManager extends EventEmitter {
     // What no download holds is streaming cache, trimmed to its budget.
     await options.store.enforceCache();
     options.store.onSpaceFreed = () => manager.spaceFreed();
-    manager.timers.push(
-      setInterval(() => void manager.applyRetention(), RETENTION_INTERVAL_MS),
-      setInterval(() => {
-        for (const connectionId of new Set(manager.downloads.map((entry) => entry.connectionId)))
-          if (options.clientFor(connectionId) !== null) void manager.connectionReady(connectionId);
-      }, SYNC_INTERVAL_MS),
-    );
+    // Servers that can be reached are checked in with regularly, not only on connecting.
+    manager.timers.push(setInterval(() => manager.syncReachable(), SYNC_INTERVAL_MS));
     for (const timer of manager.timers) timer.unref?.();
     await manager.applyRetention();
     manager.schedule();
@@ -229,29 +224,41 @@ export class DownloadManager extends EventEmitter {
     this.scheduleRetention();
   }
 
+  private syncReachable(): void {
+    for (const connectionId of new Set(this.downloads.map((entry) => entry.connectionId)))
+      if (this.options.clientFor(connectionId) !== null) void this.connectionReady(connectionId);
+  }
+
+  private retained() {
+    return this.downloads.map((download) => ({
+      id: download.id,
+      keep: download.keep,
+      inUse: this.inUse(download),
+      createdAtMs: download.createdAtMs,
+      completedAtMs: download.completedAtMs,
+      watchedAtMs: download.watchedAtMs,
+      lastOpenedAtMs: download.lastOpenedAtMs,
+    }));
+  }
+
   /**
-   * Runs the cleanup rules when the next watched download falls due, rather than waiting for
-   * the hourly pass; one still playing is looked at again shortly after.
+   * Runs the cleanup rules when the next download falls due. Waits are capped, so a long one
+   * is looked at again, and a clock changed meanwhile is caught up with.
    */
   private scheduleRetention(): void {
     if (this.closed) return;
-    const delay = watchedRetentionMs[this.settings.deleteWatchedAfter];
-    if (delay === null) return;
-    const due = this.downloads
-      .filter((download) => download.watchedAtMs !== null && !download.keep)
-      .map((download) =>
-        this.inUse(download)
-          ? this.clock() + PLAYING_RECHECK_MS
-          : (download.watchedAtMs ?? 0) + delay,
-      );
-    if (due.length === 0) return;
-    const wait = Math.max(0, Math.min(...due) - this.clock());
-    if (wait > RETENTION_INTERVAL_MS) return;
+    const now = this.clock();
+    const due = nextRetentionAtMs(this.retained(), this.settings, now, PLAYING_RECHECK_MS);
     if (this.retentionTimer !== null) clearTimeout(this.retentionTimer);
-    this.retentionTimer = setTimeout(() => {
-      this.retentionTimer = null;
-      void this.applyRetention();
-    }, wait);
+    this.retentionTimer = null;
+    if (due === null) return;
+    this.retentionTimer = setTimeout(
+      () => {
+        this.retentionTimer = null;
+        void this.applyRetention();
+      },
+      Math.min(RETENTION_INTERVAL_MS, Math.max(0, due - now)),
+    );
     this.retentionTimer.unref?.();
   }
 
@@ -377,7 +384,7 @@ export class DownloadManager extends EventEmitter {
     this.save();
     this.publish(true);
     this.schedule();
-    await this.saveArtwork(download, client).catch(() => undefined);
+    await this.saveArtwork(download, client).catch(ignoreFailure);
   }
 
   private async saveArtwork(download: Download, client: ServerClient): Promise<void> {
@@ -412,10 +419,10 @@ export class DownloadManager extends EventEmitter {
         void this.options
           .clientFor(download.connectionId)
           ?.deleteDownload(ticket.downloadId)
-          .catch(() => undefined);
+          .catch(ignoreFailure);
       this.tokens.delete(ticket.downloadId);
     }
-    await this.saveTokens().catch(() => undefined);
+    await this.saveTokens().catch(ignoreFailure);
     await rm(this.artworkPath(id), { force: true });
     this.publish(true);
     this.schedule();
@@ -537,8 +544,8 @@ export class DownloadManager extends EventEmitter {
       }
       for (const itemId of wanted)
         if (this.find(account.connectionId, itemId) === undefined)
-          await this.add(account, itemId, rule.showId).catch((cause: unknown) =>
-            console.error("Failed to download an episode for a show", cause),
+          await this.add(account, itemId, rule.showId).catch(
+            reportFailure("Failed to download an episode for a show"),
           );
       await this.removeMany(
         (download) =>
@@ -566,19 +573,7 @@ export class DownloadManager extends EventEmitter {
 
   /** Deletes what the viewer's cleanup rules say has had its time. */
   async applyRetention(): Promise<void> {
-    const expired = expiredDownloads(
-      this.downloads.map((download) => ({
-        id: download.id,
-        keep: download.keep,
-        inUse: this.inUse(download),
-        createdAtMs: download.createdAtMs,
-        completedAtMs: download.completedAtMs,
-        watchedAtMs: download.watchedAtMs,
-        lastOpenedAtMs: download.lastOpenedAtMs,
-      })),
-      this.settings,
-      this.clock(),
-    );
+    const expired = expiredDownloads(this.retained(), this.settings, this.clock());
     for (const id of expired) await this.remove(id);
     this.scheduleRetention();
   }
@@ -667,10 +662,7 @@ export class DownloadManager extends EventEmitter {
     const pending = this.syncing.get(connectionId);
     if (pending !== undefined) return pending;
     const syncing = this.sync(connectionId)
-      .catch((cause: unknown) => {
-        if (!(cause instanceof RequestCancelledError))
-          console.error("Failed to check downloads in with the server", cause);
-      })
+      .catch(reportFailure("Failed to check downloads in with the server"))
       .finally(() => {
         this.syncing.delete(connectionId);
         this.schedule();
@@ -778,19 +770,15 @@ export class DownloadManager extends EventEmitter {
 
   /** Runs the queue: the item being watched first, then in the order they were asked for. */
   schedule(): void {
-    if (this.closed) return;
-    if (this.pumping) {
-      this.pumpAgain = true;
-      return;
-    }
-    this.pumping = true;
-    void this.pump().finally(() => {
-      this.pumping = false;
-      if (this.pumpAgain) {
-        this.pumpAgain = false;
-        this.schedule();
-      }
-    });
+    if (this.closed || this.pumpQueued) return;
+    this.pumpQueued = true;
+    // One run at a time, and at most one more queued behind it, however often this is asked.
+    this.pumping = this.pumping
+      .then(() => {
+        this.pumpQueued = false;
+        return this.pump();
+      })
+      .catch(reportFailure("Failed to run downloads"));
   }
 
   /**
@@ -1003,6 +991,8 @@ export class DownloadManager extends EventEmitter {
 
   /** A client for playing an account's downloads while its server cannot be reached. */
   offlineClient(account: Account): PlaybackClient {
+    // Nothing reaches a server that cannot be reached.
+    const nowhere = async (): Promise<void> => undefined;
     return {
       serverOrigin: account.origin,
       serverId: account.serverId,
@@ -1013,10 +1003,10 @@ export class DownloadManager extends EventEmitter {
         if (session === null) throw new Error("This item is not downloaded");
         return session;
       },
-      heartbeat: async () => undefined,
+      heartbeat: nowhere,
       progress: async (_sessionId, state) =>
         this.recordOfflineProgress(account.connectionId, state),
-      stopPlayback: async () => undefined,
+      stopPlayback: nowhere,
       saveTrackChoice: async () => null,
     };
   }

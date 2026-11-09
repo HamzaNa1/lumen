@@ -517,7 +517,8 @@ export const DownloadsPage = (): React.ReactElement => {
         />
       </div>
     );
-  const watched = entries.filter((entry) => entry.watchedAtMs !== null).length;
+  // Downloads the viewer keeps stay through "Delete watched"; only "Delete all" takes them.
+  const watched = entries.filter((entry) => entry.watchedAtMs !== null && !entry.keep).length;
   const total = entries.reduce((sum, entry) => sum + entry.sizeBytes, 0);
   return (
     <div className="page downloads-page">

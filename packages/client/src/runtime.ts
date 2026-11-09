@@ -211,7 +211,7 @@ export interface DownloadsRuntime {
   readonly resume: (id: string) => Promise<void>;
   /** Exempts a download from automatic cleanup. */
   readonly keep: (id: string, keep: boolean) => Promise<void>;
-  /** Removes the active account's downloads, or only the watched ones. */
+  /** Removes the active account's downloads, or only the watched ones it is not keeping. */
   readonly removeAll: (watchedOnly: boolean) => Promise<void>;
   readonly clearCache: () => Promise<void>;
   readonly updateSettings: (patch: DownloadSettingsPatch) => Promise<DownloadSettings>;

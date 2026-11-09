@@ -3,6 +3,7 @@ import { EventEmitter, once } from "node:events";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ChunkMap, nextChunkToDownload } from "@lumen/client";
+import { ignoreFailure } from "../failures";
 import { DiskByteStore, MemoryByteStore, SpaceExhausted } from "./ByteStore";
 
 /** One revision of one file on one server: the unit bytes are kept and shared under. */
@@ -338,7 +339,7 @@ export class MediaFile extends EventEmitter {
   private async nextChange(signal: AbortSignal, timeoutMs: number): Promise<void> {
     const timeout = AbortSignal.timeout(timeoutMs);
     await once(this, "progress", { signal: AbortSignal.any([signal, timeout]) }).catch(
-      () => undefined,
+      ignoreFailure,
     );
   }
 
@@ -378,15 +379,8 @@ export class MediaFile extends EventEmitter {
   demand(offset: number): void {
     if (this.closed || this.changed || this.covered(offset)) return;
     const foreground = [...this.fetches].filter((fetch) => !fetch.background);
-    if (foreground.length >= MAX_FOREGROUND_FETCHES) {
-      // The fetch furthest from every reader is the one nobody is waiting on.
-      const distance = (fetch: Fetch) =>
-        Math.min(
-          ...[...this.readers].map((reader) => Math.abs(fetch.cursor - reader.position)),
-          Number.POSITIVE_INFINITY,
-        );
-      foreground.sort((a, b) => distance(b) - distance(a))[0]?.controller.abort();
-    }
+    // A player asks for new places as it seeks, so the oldest request is the one it has left.
+    if (foreground.length >= MAX_FOREGROUND_FETCHES) foreground[0]?.controller.abort();
     this.startFetch(offset, false);
   }
 
@@ -421,7 +415,7 @@ export class MediaFile extends EventEmitter {
         this.scheduleSave();
         this.emit("progress");
       });
-    if (!background) fetch.done.catch(() => undefined);
+    if (!background) fetch.done.catch(ignoreFailure);
     return fetch;
   }
 
@@ -444,7 +438,7 @@ export class MediaFile extends EventEmitter {
         signal: fetch.controller.signal,
       });
       if ([401, 403, 404].includes(response.status) && attempt === 0 && source.refresh) {
-        await response.body?.cancel().catch(() => undefined);
+        await response.body?.cancel().catch(ignoreFailure);
         const refreshed = await source.refresh();
         if (refreshed !== null) {
           source = refreshed;
@@ -452,7 +446,7 @@ export class MediaFile extends EventEmitter {
         }
       }
       if (response.status !== 206) {
-        await response.body?.cancel().catch(() => undefined);
+        await response.body?.cancel().catch(ignoreFailure);
         if (response.status === 200 || response.status === 416)
           throw new MediaChanged("The file changed");
         throw new Error(`Media request failed (HTTP ${response.status})`);
@@ -463,7 +457,7 @@ export class MediaFile extends EventEmitter {
         (etag !== null && etag !== this.spec.revision) ||
         range !== `bytes ${fetch.start}-${fetch.end - 1}/${this.spec.sizeBytes}`
       ) {
-        await response.body?.cancel().catch(() => undefined);
+        await response.body?.cancel().catch(ignoreFailure);
         throw new MediaChanged("The file changed on the server");
       }
       return response;
@@ -481,7 +475,7 @@ export class MediaFile extends EventEmitter {
     }
     if (response.body === null) throw new Error("Media response had no body");
     const body = response.body.getReader();
-    const onAbort = () => void body.cancel().catch(() => undefined);
+    const onAbort = () => void body.cancel().catch(ignoreFailure);
     fetch.controller.signal.addEventListener("abort", onAbort, { once: true });
     try {
       while (fetch.cursor < fetch.end) {
@@ -496,7 +490,7 @@ export class MediaFile extends EventEmitter {
             if (furthest < 0 && fetch.cursor - fetch.start <= this.geometry.chunkBytes * 2) break;
             await once(this, "reader", {
               signal: AbortSignal.any([fetch.controller.signal, AbortSignal.timeout(1_000)]),
-            }).catch(() => undefined);
+            }).catch(ignoreFailure);
           }
         }
         const chunk = this.disk.chunkOf(fetch.cursor);
@@ -515,7 +509,7 @@ export class MediaFile extends EventEmitter {
       if (fetch.cursor < fetch.end) throw new Error("Media response ended early");
     } finally {
       fetch.controller.signal.removeEventListener("abort", onAbort);
-      await body.cancel().catch(() => undefined);
+      await body.cancel().catch(ignoreFailure);
     }
   }
 
@@ -637,7 +631,7 @@ export class MediaFile extends EventEmitter {
     if (this.closed || this.saveTimer !== null) return;
     this.saveTimer = setTimeout(() => {
       this.saveTimer = null;
-      void this.save().catch(() => undefined);
+      void this.save().catch(ignoreFailure);
     }, 2_000);
     this.saveTimer.unref?.();
   }
@@ -664,15 +658,15 @@ export class MediaFile extends EventEmitter {
       await writeFile(temporary, JSON.stringify(index));
       await rename(temporary, path);
     });
-    this.saving = next.catch(() => undefined);
+    this.saving = next.catch(ignoreFailure);
     await next;
   }
 
   async close(): Promise<void> {
     if (this.closed) return;
     for (const fetch of this.fetches) fetch.controller.abort();
-    await Promise.all([...this.fetches].map((fetch) => fetch.done.catch(() => undefined)));
-    await this.save().catch(() => undefined);
+    await Promise.all([...this.fetches].map((fetch) => fetch.done.catch(ignoreFailure)));
+    await this.save().catch(ignoreFailure);
     this.closed = true;
     this.emit("progress");
     await this.store.close();
@@ -683,7 +677,7 @@ export class MediaFile extends EventEmitter {
   async destroy(): Promise<void> {
     this.closed = true;
     for (const fetch of this.fetches) fetch.controller.abort();
-    await Promise.all([...this.fetches].map((fetch) => fetch.done.catch(() => undefined)));
+    await Promise.all([...this.fetches].map((fetch) => fetch.done.catch(ignoreFailure)));
     if (this.saveTimer !== null) clearTimeout(this.saveTimer);
     this.emit("progress");
     await this.store.close();

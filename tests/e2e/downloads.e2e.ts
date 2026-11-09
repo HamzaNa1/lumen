@@ -6,7 +6,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
-import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
+import {
+  connectDesktop,
+  desktopPlayerPage,
+  expect,
+  launchDesktop,
+  mainDesktopPage,
+  test,
+} from "./support/desktop";
 import { NetworkProxy } from "./support/proxy";
 import { password, repository, type Server } from "./support/server";
 
@@ -245,9 +252,11 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
   desktop,
 }) => {
   await requireDownloads(server);
-  const { item } = await movies(server, admin.accessToken, ["Film"]);
+  const { item } = await movies(server, admin.accessToken, ["Film", "Other"]);
   const film = item("Film");
+  const other = item("Other");
   let proxy = await new NetworkProxy(server.origin).start();
+  const network = meter(proxy, () => server.origin);
   const port = Number(new URL(proxy.origin).port);
   const { page, profile } = desktop;
   await connectDesktop(page, proxy);
@@ -264,6 +273,15 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
     .getByRole("link", { name: "Downloads" })
     .click();
   await expect(page.getByRole("listitem", { name: "Film" })).toContainText("Downloaded");
+  // A second download is part way when the server goes.
+  const otherSize = (await readFile(other.path)).length;
+  network.allow(network.sent + otherSize * 0.3);
+  await page.evaluate((itemId) => window.lumen.downloads.add([itemId]), other.id);
+  await expect
+    .poll(async () => (await entryFor(page, other.id))?.downloadedBytes ?? 0, {
+      timeout: 30_000,
+    })
+    .toBeGreaterThan(otherSize * 0.15);
 
   // The server goes away entirely, and the app starts without it.
   await desktop.app.close();
@@ -279,6 +297,17 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
       timeout: 30_000,
     });
     await expect(offline.getByRole("listitem", { name: "Film" })).toBeVisible();
+    await expect(offline.getByRole("listitem", { name: "Other" })).toContainText(
+      "Waiting for the server",
+    );
+    // Its file's index, at the end, is not on the device yet: it cannot start, and says why
+    // instead of waiting for a server that is not there.
+    await offline.getByRole("button", { name: "Play Other", exact: true }).click();
+    await expect(
+      (await desktopPlayerPage(reopened)).getByText("This part of the media is not on this device"),
+    ).toBeVisible({ timeout: 30_000 });
+    expect(await offline.evaluate(() => window.lumen.player.state())).toBeNull();
+    await go(offline, "/downloads");
     await playFromDownloads(offline, "Film");
     await expect
       .poll(
@@ -319,9 +348,14 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
           ).watchState?.completed,
       )
       .toBe(true);
+    // Back online, the partial download carries on.
+    await expect
+      .poll(async () => (await entryFor(offline, other.id))?.status, { timeout: 60_000 })
+      .toBe("completed");
   } finally {
     await reopened.close();
-    await proxy.close();
+    // The proxy may already be down: it is closed on purpose while the app is offline.
+    await proxy.close().catch(() => undefined);
   }
 });
 
@@ -470,6 +504,18 @@ test("the free-space limit pauses downloads but never playback, and cleanup rule
     watchedAtMs: expect.any(Number),
   });
   expect(await heldFiles(profile)).toHaveLength(1);
+
+  // Cleaning up by hand: "Delete watched" leaves what the viewer keeps; "Delete all" does not.
+  await go(page, "/downloads");
+  await page.getByRole("button", { name: "Clean up" }).click();
+  await expect(page.getByRole("menuitem", { name: "Delete watched (0)" })).toHaveAttribute(
+    "aria-disabled",
+    "true",
+  );
+  await page.getByRole("menuitem", { name: "Delete all downloads" }).click();
+  await expect.poll(async () => (await downloads(page)).entries).toEqual([]);
+  expect(await heldFiles(profile)).toEqual([]);
+  await expect(page.getByText("Nothing downloaded yet")).toBeVisible();
 });
 
 test("the streaming cache keeps nothing by default, keeps recent streams within its size, and clears", async ({
@@ -865,6 +911,67 @@ test("a server without downloads offers none, and its streams play as before", a
     // Without a revision nothing is kept, even with the cache on.
     expect(await heldFiles(profile)).toEqual([]);
   } finally {
+    await proxy.close();
+  }
+});
+
+test("an interrupted download resumes after a crash, refetching what was half-written and renewing a lapsed grant", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  await requireDownloads(server);
+  const { item } = await movies(server, admin.accessToken, ["Film"]);
+  const film = item("Film");
+  const size = (await readFile(film.path)).length;
+  const proxy = await new NetworkProxy(server.origin).start();
+  const network = meter(proxy, () => server.origin);
+  network.allow(size * 0.6);
+  const { page, profile } = desktop;
+  const environment = {
+    LUMEN_E2E_MEDIA_CHUNK_BYTES: String(CHUNK),
+    LUMEN_E2E_MEDIA_SEGMENT_BYTES: String(SEGMENT),
+    LUMEN_E2E_DISK_FILE: diskFile,
+  };
+  let reopened: Awaited<ReturnType<typeof launchDesktop>> | null = null;
+  try {
+    await connectDesktop(page, proxy);
+    await page.evaluate((itemId) => window.lumen.downloads.add([itemId]), film.id);
+    await expect
+      .poll(async () => (await entryFor(page, film.id))?.downloadedBytes ?? 0, {
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(size * 0.4);
+    // Five weeks pass with the app in use: the download's grant lapses, the sign-in does not.
+    for (let days = 0; days < 35; days += 5) {
+      await server.advanceTime(5 * 24 * 3_600_000);
+      await page.evaluate(() => window.lumen.library.list());
+    }
+    await desktop.app.close();
+
+    // The crash: a segment shorter than its index records, and a folder no index describes.
+    const [held] = await heldFiles(profile);
+    const segments = (await readdir(held?.directory ?? ""))
+      .filter((name) => name.startsWith("seg-"))
+      .sort();
+    const last = join(held?.directory ?? "", segments.at(-1) ?? "");
+    await writeFile(last, (await readFile(last)).subarray(0, CHUNK / 2));
+    const stray = join(profile, "media", "server", "source", "revision");
+    await mkdir(stray, { recursive: true });
+    await writeFile(join(stray, "seg-000000.bin"), "left behind");
+
+    network.allow(Number.POSITIVE_INFINITY);
+    reopened = await launchDesktop(profile, false, environment);
+    const restarted = await mainDesktopPage(reopened);
+    await expect
+      .poll(async () => (await entryFor(restarted, film.id))?.status, { timeout: 60_000 })
+      .toBe("completed");
+    const files = await heldFiles(profile);
+    expect(files).toHaveLength(1);
+    expect(files[0]?.bytes.equals(await readFile(film.path))).toBe(true);
+    expect(await readdir(join(profile, "media", "server")).catch(() => [])).toEqual([]);
+  } finally {
+    await reopened?.close();
     await proxy.close();
   }
 });

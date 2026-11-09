@@ -600,7 +600,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const connectionId = activeConnectionId(dependencies);
     await dependencies.downloads.removeMany(
       (download) =>
-        download.connectionId === connectionId && (!watchedOnly || download.watchedAtMs !== null),
+        download.connectionId === connectionId &&
+        (!watchedOnly || (download.watchedAtMs !== null && !download.keep)),
     );
   });
   handle("downloads:clear-cache", async () => dependencies.downloads.clearCache());

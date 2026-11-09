@@ -170,7 +170,6 @@ export const makeDownloadGrants = Effect.fnUntraced(function* (options: {
               id: downloadGrants.id,
               trackId: downloadGrants.trackId,
               itemId: downloadGrants.itemId,
-              expiresAtMs: downloadGrants.expiresAtMs,
               revokedAtMs: downloadGrants.revokedAtMs,
               size: mediaSources.fileSizeBytes,
               modifiedAtMs: sql<number>`coalesce(${mediaSources.modifiedAtMs}, 0)`,
@@ -214,11 +213,12 @@ export const makeDownloadGrants = Effect.fnUntraced(function* (options: {
         expiresAtMs: null,
         completed: row?.completed === 1,
       };
+      // A grant that lapsed while the device was away is renewed below if it is still allowed:
+      // the lapse only stops a stale token from fetching, it does not take the download back.
       if (
         row === undefined ||
         row.revokedAtMs !== null ||
         row.deviceRevokedAtMs !== null ||
-        row.expiresAtMs <= nowMs ||
         row.size === null
       ) {
         results.push(revoked);

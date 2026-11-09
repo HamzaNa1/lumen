@@ -1,5 +1,6 @@
 import { type FileHandle, open, readdir, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
+import { ignoreFailure } from "../failures";
 
 /** A write needed a new segment and the disk was too full to allow it. */
 export class SpaceExhausted extends Error {
@@ -125,7 +126,7 @@ export class DiskByteStore implements ByteStore {
     this.dirty.clear();
     for (const index of pending) {
       const handle = this.handles.get(index);
-      if (handle !== undefined) await (await handle).datasync().catch(() => undefined);
+      if (handle !== undefined) await (await handle).datasync().catch(ignoreFailure);
     }
   }
 
@@ -135,7 +136,7 @@ export class DiskByteStore implements ByteStore {
     this.handles.delete(index);
     this.dirty.delete(index);
     this.known.delete(index);
-    await (await handle?.catch(() => null))?.close().catch(() => undefined);
+    await (await handle?.catch(() => null))?.close().catch(ignoreFailure);
     await rm(join(this.directory, segmentName(index)), { force: true });
   }
 
@@ -143,7 +144,7 @@ export class DiskByteStore implements ByteStore {
     const handles = [...this.handles.values()];
     this.handles.clear();
     for (const handle of handles)
-      await (await handle.catch(() => null))?.close().catch(() => undefined);
+      await (await handle.catch(() => null))?.close().catch(ignoreFailure);
   }
 }
 
@@ -155,12 +156,6 @@ export class MemoryByteStore implements ByteStore {
   private readonly chunks = new Map<number, Buffer>();
 
   constructor(private readonly chunkBytes: number) {}
-
-  get bytes(): number {
-    let total = 0;
-    for (const chunk of this.chunks.values()) total += chunk.length;
-    return total;
-  }
 
   async write(offset: number, data: Uint8Array): Promise<void> {
     let written = 0;

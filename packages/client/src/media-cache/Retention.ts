@@ -30,30 +30,56 @@ export interface RetainedDownload {
   readonly lastOpenedAtMs: number | null;
 }
 
+type RetentionSettings = Pick<DownloadSettings, "deleteWatchedAfter" | "removeUnopenedAfter">;
+
+/** When the cleanup rules make a download due for deletion, or null when they never do. */
+const dueAtMs = (download: RetainedDownload, settings: RetentionSettings): number | null => {
+  if (download.keep) return null;
+  const watchedDelay = watchedRetentionMs[settings.deleteWatchedAfter];
+  const unopenedDelay = unopenedDelayMs[settings.removeUnopenedAfter];
+  const touchedAtMs = Math.max(
+    download.lastOpenedAtMs ?? 0,
+    download.completedAtMs ?? download.createdAtMs,
+  );
+  const times = [
+    watchedDelay === null || download.watchedAtMs === null
+      ? null
+      : download.watchedAtMs + watchedDelay,
+    unopenedDelay === null ? null : touchedAtMs + unopenedDelay,
+  ].filter((time): time is number => time !== null);
+  return times.length === 0 ? null : Math.min(...times);
+};
+
 /** The downloads the viewer's cleanup rules say to delete now. Space is never a reason. */
 export const expiredDownloads = (
   downloads: ReadonlyArray<RetainedDownload>,
-  settings: Pick<DownloadSettings, "deleteWatchedAfter" | "removeUnopenedAfter">,
+  settings: RetentionSettings,
   nowMs: number,
-): ReadonlyArray<string> => {
-  const watchedDelay = watchedRetentionMs[settings.deleteWatchedAfter];
-  const unopenedDelay = unopenedDelayMs[settings.removeUnopenedAfter];
-  return downloads
+): ReadonlyArray<string> =>
+  downloads
     .filter((download) => {
-      if (download.keep || download.inUse) return false;
-      if (
-        watchedDelay !== null &&
-        download.watchedAtMs !== null &&
-        nowMs - download.watchedAtMs >= watchedDelay
-      )
-        return true;
-      const touchedAtMs = Math.max(
-        download.lastOpenedAtMs ?? 0,
-        download.completedAtMs ?? download.createdAtMs,
-      );
-      return unopenedDelay !== null && nowMs - touchedAtMs >= unopenedDelay;
+      const due = dueAtMs(download, settings);
+      return !download.inUse && due !== null && due <= nowMs;
     })
     .map((download) => download.id);
+
+/**
+ * When cleanup next has something to delete. One playing now is looked at again after
+ * `inUseRecheckMs`, since it goes as soon as playback stops.
+ */
+export const nextRetentionAtMs = (
+  downloads: ReadonlyArray<RetainedDownload>,
+  settings: RetentionSettings,
+  nowMs: number,
+  inUseRecheckMs: number,
+): number | null => {
+  const times = downloads
+    .map((download) => {
+      const due = dueAtMs(download, settings);
+      return due === null ? null : download.inUse ? Math.max(due, nowMs + inUseRecheckMs) : due;
+    })
+    .filter((time): time is number => time !== null);
+  return times.length === 0 ? null : Math.min(...times);
 };
 
 export interface CachedSegment {

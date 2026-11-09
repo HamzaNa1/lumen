@@ -22,7 +22,7 @@ interface SyncResult {
 
 const day = 24 * 3_600_000;
 
-test("download grants fetch exact original bytes independently of playback sessions and renew on sync", async ({
+test("download grants fetch exact original bytes independently of playback sessions, lapse without check-ins and renew on sync", async ({
   server,
   admin,
 }) => {
@@ -107,6 +107,7 @@ test("download grants fetch exact original bytes independently of playback sessi
   expect((await server.request(again.streamPath, { headers: current })).status).toBe(200);
   await advanceDays(11);
   expect((await server.request(again.streamPath, { headers: current })).status).toBe(404);
+  // Lapsing only stops the token; a device back after a month keeps what it may still have.
   expect(
     (
       await server.api<{ downloads: SyncResult[] }>("/downloads/sync", {
@@ -115,7 +116,8 @@ test("download grants fetch exact original bytes independently of playback sessi
         body: { downloads: [{ downloadId: again.downloadId, revision: again.revision }] },
       })
     ).downloads,
-  ).toEqual([expect.objectContaining({ status: "revoked" })]);
+  ).toEqual([expect.objectContaining({ status: "valid" })]);
+  expect((await server.request(again.streamPath, { headers: current })).status).toBe(200);
 });
 
 test("changed files, revoked downloads, devices, permissions and library access withdraw download grants", async ({

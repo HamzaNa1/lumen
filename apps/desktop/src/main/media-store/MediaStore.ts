@@ -1,7 +1,8 @@
-import { mkdir, readdir, rm, statfs } from "node:fs/promises";
+import { mkdir, readdir, rm, rmdir, statfs } from "node:fs/promises";
 import { join } from "node:path";
 import { segmentsOverBudget } from "@lumen/client";
 import type { StorageUsage } from "@lumen/contracts";
+import { ignoreFailure, reportFailure } from "../failures";
 import { MediaFile, type MediaGeometry, type MediaSpec, mediaKey } from "./MediaFile";
 
 export interface DiskSpace {
@@ -66,17 +67,26 @@ export class MediaStore {
       space,
       options.fetchImpl ?? fetch,
     );
-    for (const server of await listDirectories(options.root))
-      for (const source of await listDirectories(join(options.root, server)))
+    // Anything no readable index describes is left from an interrupted write: it goes, and so
+    // do folders it leaves empty.
+    for (const server of await listDirectories(options.root)) {
+      for (const source of await listDirectories(join(options.root, server))) {
         for (const revision of await listDirectories(join(options.root, server, source))) {
           const directory = join(options.root, server, source, revision);
           const spec = await MediaFile.describe(directory);
-          if (spec === null || mediaKey(spec) !== `${server}/${source}/${revision}`) {
-            await rm(directory, { recursive: true, force: true });
-            continue;
-          }
-          await store.open(spec).catch(() => rm(directory, { recursive: true, force: true }));
+          const opened =
+            spec !== null &&
+            mediaKey(spec) === `${server}/${source}/${revision}` &&
+            (await store.open(spec).then(
+              () => true,
+              () => false,
+            ));
+          if (!opened) await rm(directory, { recursive: true, force: true });
         }
+        await rmdir(join(options.root, server, source)).catch(ignoreFailure);
+      }
+      await rmdir(join(options.root, server)).catch(ignoreFailure);
+    }
     return store;
   }
 
@@ -156,10 +166,6 @@ export class MediaStore {
     this.onSpaceFreed();
   }
 
-  async diskSpace(): Promise<DiskSpace> {
-    return this.space();
-  }
-
   minimumFreeBytes(totalBytes: number): number {
     return Math.ceil((totalBytes * this.minimumFreePercent) / 100);
   }
@@ -213,7 +219,7 @@ export class MediaStore {
   enforceCache(): Promise<void> {
     if (this.enforcing !== null) return this.enforcing;
     const enforcing = this.trimCache(this.cacheBudgetBytes)
-      .catch((cause: unknown) => console.error("Failed to trim the streaming cache", cause))
+      .catch(reportFailure("Failed to trim the streaming cache"))
       .finally(() => {
         if (this.enforcing === enforcing) this.enforcing = null;
       });
