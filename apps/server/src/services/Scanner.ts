@@ -49,8 +49,7 @@ export interface ScannerShape {
 // A transient read error cannot establish absence. Only ENOENT/ENOTDIR permit deletion.
 const stillMissing = async (path: string): Promise<boolean> => {
   try {
-    await lstat(path);
-    return false;
+    return !(await lstat(path)).isFile();
   } catch (cause) {
     return ["ENOENT", "ENOTDIR"].includes((cause as NodeJS.ErrnoException).code ?? "");
   }

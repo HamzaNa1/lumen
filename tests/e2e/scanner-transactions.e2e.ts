@@ -1,4 +1,4 @@
-import { mkdir, rename, writeFile } from "node:fs/promises";
+import { mkdir, rename, symlink, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import { openDatabase } from "./support/database";
@@ -494,6 +494,27 @@ test("a user scan starting after watcher observation prevents the watcher apply"
       revision,
     );
     expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 1 });
+  } finally {
+    await worker.close();
+    db.close();
+  }
+});
+
+test("a symlink replacing an indexed file is ignored and its old source is removed", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["First.mp4", "Second.mp4"]);
+  await server.stop();
+  await rename(join(library.path, "First.mp4"), join(server.root, "held.mp4"));
+  await symlink(join(library.path, "Second.mp4"), join(library.path, "First.mp4"));
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server);
+  try {
+    expect((await worker.call("watch")).result).toBe(1);
+    expect(db.prepare("SELECT relative_path FROM media_sources").all()).toEqual([
+      { relative_path: "Second.mp4" },
+    ]);
   } finally {
     await worker.close();
     db.close();
