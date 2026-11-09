@@ -3,6 +3,7 @@ import { createRootRoute, createRoute, createRouter } from "@tanstack/react-rout
 import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
 import { App } from "./App";
 import { HomePage, LibraryIndexPage, LibraryPage, SearchPage } from "./BrowsePages";
+import { DownloadsPage } from "./Downloads";
 import { EpisodePage, ItemPage, SeasonPage, ShowPage } from "./ItemPages";
 import { JobLogPage } from "./JobLogPage";
 import { PlayerPage } from "./PlayerPage";
@@ -53,6 +54,11 @@ const playerRoute = createRoute({
   path: "/player",
   component: PlayerPage,
 });
+const downloadsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/downloads",
+  component: DownloadsPage,
+});
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
@@ -84,6 +90,7 @@ const routeTree = rootRoute.addChildren([
   seasonRoute,
   episodeRoute,
   playerRoute,
+  downloadsRoute,
   settingsRoute,
   adminRoute,
   adminUsersRoute,

@@ -57,6 +57,8 @@ interface MediaPlayerProps {
   readonly position: number;
   readonly duration: number | null;
   readonly bufferedRanges: ReadonlyArray<BufferedRange>;
+  /** What of the file is kept on this device, drawn apart from what is buffered. */
+  readonly downloadedRanges?: ReadonlyArray<BufferedRange>;
   readonly volume: number;
   readonly muted: boolean;
   readonly streams: ReadonlyArray<PlayableStream>;
@@ -106,6 +108,34 @@ interface MediaPlayerProps {
   readonly onSelectSubtitle: (streamId: string | null) => void;
 }
 
+/** Stretches of the timeline drawn on the seek bar, such as what is buffered. */
+const timelineRanges = ({
+  className,
+  ranges,
+  duration,
+}: {
+  readonly className: string;
+  readonly ranges: ReadonlyArray<BufferedRange>;
+  readonly duration: number | null;
+}): ReadonlyArray<React.ReactElement | null> =>
+  duration === null || duration <= 0
+    ? []
+    : ranges.map(({ startSeconds, endSeconds }) => {
+        const start = Math.min(duration, Math.max(0, startSeconds));
+        const end = Math.min(duration, Math.max(0, endSeconds));
+        return end > start ? (
+          <span
+            key={`${startSeconds}-${endSeconds}`}
+            className={className}
+            style={{
+              left: `${(start / duration) * 100}%`,
+              width: `${((end - start) / duration) * 100}%`,
+            }}
+            aria-hidden="true"
+          />
+        ) : null;
+      });
+
 export const MediaPlayer = ({
   headerActions,
   trackMemoryError,
@@ -121,6 +151,7 @@ export const MediaPlayer = ({
   position,
   duration,
   bufferedRanges,
+  downloadedRanges = [],
   volume,
   muted,
   streams,
@@ -347,23 +378,16 @@ export const MediaPlayer = ({
                   </span>
                 ) : null}
                 <Slider.Track className="media-slider-track">
-                  {duration === null || duration <= 0
-                    ? null
-                    : bufferedRanges.map(({ startSeconds, endSeconds }) => {
-                        const start = Math.min(duration, Math.max(0, startSeconds));
-                        const end = Math.min(duration, Math.max(0, endSeconds));
-                        return end > start ? (
-                          <span
-                            key={`${startSeconds}-${endSeconds}`}
-                            className="media-slider-buffered"
-                            style={{
-                              left: `${(start / duration) * 100}%`,
-                              width: `${((end - start) / duration) * 100}%`,
-                            }}
-                            aria-hidden="true"
-                          />
-                        ) : null;
-                      })}
+                  {timelineRanges({
+                    className: "media-slider-downloaded",
+                    ranges: downloadedRanges,
+                    duration,
+                  })}
+                  {timelineRanges({
+                    className: "media-slider-buffered",
+                    ranges: bufferedRanges,
+                    duration,
+                  })}
                   <Slider.Indicator className="media-slider-indicator" />
                   <Slider.Thumb className="media-slider-thumb" />
                 </Slider.Track>

@@ -19,7 +19,7 @@ export {
   SegmentedControl,
   type SegmentOption,
 } from "./Menu";
-export { formatPlayerTime } from "./PlayerFormatting";
+export { formatBytes, formatPlayerTime } from "./PlayerFormatting";
 export { Popover, PopoverTitle } from "./Popover";
 export { Shell } from "./Shell";
 export { EmptyState, StatusState } from "./StatusState";

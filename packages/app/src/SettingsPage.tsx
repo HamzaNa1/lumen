@@ -3,6 +3,7 @@ import { Button, Form, Modal, SelectField, TextField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { DownloadSettingsSection } from "./Downloads";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
 import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
@@ -179,6 +180,7 @@ export const SettingsPage = (): React.ReactElement => {
           <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
         </div>
       </section>
+      <DownloadSettingsSection />
       {account.role === "admin" ? (
         <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
       ) : null}

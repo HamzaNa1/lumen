@@ -6,6 +6,9 @@ import {
   type CatalogItem,
   CatalogItemDetails,
   type CatalogItemPage,
+  DownloadSyncResponse,
+  type DownloadSyncResult,
+  DownloadTicket,
   EpisodeOrderOptions,
   type EpisodeOrderSelection,
   EpisodePlacement,
@@ -117,6 +120,7 @@ export interface CreateUserInput {
   readonly password: string;
   readonly role?: UserRole | undefined;
   readonly libraryAccess?: LibraryAccess | undefined;
+  readonly canDownload?: boolean | undefined;
 }
 
 export interface UpdateUserInput {
@@ -125,6 +129,7 @@ export interface UpdateUserInput {
   readonly role?: UserRole | undefined;
   readonly libraryAccess?: LibraryAccess | undefined;
   readonly isActive?: boolean | undefined;
+  readonly canDownload?: boolean | undefined;
 }
 
 export interface CreateLibraryInput {
@@ -317,6 +322,15 @@ export class ServerApi {
 
   get supportsAdjacentEpisodes(): boolean {
     return this.serverIdentity?.capabilities?.adjacentEpisodes === true;
+  }
+
+  get supportsDownloads(): boolean {
+    return this.serverIdentity?.capabilities?.downloads === true;
+  }
+
+  /** The server this client talks to, once it has said who it is. */
+  get serverId(): string | null {
+    return this.serverIdentity?.serverId ?? null;
   }
 
   /**
@@ -551,6 +565,44 @@ export class ServerApi {
       `/api/v1/items/${encodeURIComponent(itemId)}/watch-state`,
       jsonBody("PUT", { positionSeconds: 0, completed }),
     );
+  }
+
+  /** Progress seen while offline; the server keeps whichever of it and its own state is newer. */
+  async saveOfflineProgress(
+    itemId: string,
+    progress: {
+      readonly positionSeconds: number;
+      readonly completed: boolean;
+      readonly observedAtMs: number;
+    },
+  ): Promise<void> {
+    await this.request(
+      `/api/v1/items/${encodeURIComponent(itemId)}/watch-state`,
+      jsonBody("PUT", progress),
+    );
+  }
+
+  // Downloads
+
+  async createDownload(itemId: string): Promise<DownloadTicket> {
+    return this.request("/api/v1/downloads", jsonBody("POST", { itemId }), DownloadTicket);
+  }
+
+  async syncDownloads(
+    downloads: ReadonlyArray<{ readonly downloadId: string; readonly revision: string }>,
+  ): Promise<ReadonlyArray<DownloadSyncResult>> {
+    const response: DownloadSyncResponse = await this.request(
+      "/api/v1/downloads/sync",
+      jsonBody("POST", { downloads }),
+      DownloadSyncResponse,
+    );
+    return response.downloads;
+  }
+
+  async deleteDownload(downloadId: string): Promise<void> {
+    await this.request(`/api/v1/downloads/${encodeURIComponent(downloadId)}`, {
+      method: "DELETE",
+    });
   }
 
   async search(query: string, libraryId: string | null = null): Promise<unknown> {

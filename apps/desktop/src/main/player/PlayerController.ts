@@ -21,6 +21,7 @@ import type {
 } from "@lumen/contracts";
 import { app, powerSaveBlocker } from "electron";
 import type { ServerClient } from "../api/ServerClient";
+import type { MediaStore } from "../media-store/MediaStore";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
 import type { CompositorSurface } from "./CompositorSurface";
@@ -37,6 +38,7 @@ import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
 import { sampleMpvPlayback } from "./MpvSynchronization";
 import type { PlaybackBridge } from "./PlaybackBridge";
+import type { PlaybackClient } from "./PlaybackClient";
 
 export interface PlayerControllerOptions {
   readonly bridge: PlaybackBridge;
@@ -44,11 +46,18 @@ export interface PlayerControllerOptions {
   readonly onState: (state: PlayerState | null) => void;
   /** Where the viewer's volumes and audio output are kept; forgotten on exit when omitted. */
   readonly audioSettings?: AudioSettingsStore;
+  /** Keeps the bytes of what plays; without it every stream is proxied as it arrives. */
+  readonly store?: MediaStore;
+  /** Told what plays and how far it has got, on the reporting cadence. */
+  readonly onProgress?: (playback: {
+    readonly connectionId: string;
+    readonly state: PlayerState;
+  }) => void;
 }
 
 interface ActiveSession {
   readonly session: PlayerSession;
-  readonly client: ServerClient;
+  readonly client: PlaybackClient;
   readonly connectionId: string;
   readonly process: MpvProcess;
   readonly ipc: MpvIpc;
@@ -84,6 +93,8 @@ export class PlayerController extends EventEmitter {
   private readonly surface: MpvSurface | CompositorSurface;
   private readonly onState: (state: PlayerState | null) => void;
   private readonly audioSettings: AudioSettingsStore;
+  private readonly store: MediaStore | undefined;
+  private readonly onProgress: PlayerControllerOptions["onProgress"];
   private active: ActiveSession | null = null;
   private startingProcess: MpvProcess | null = null;
   private state: PlayerState | null = null;
@@ -103,10 +114,12 @@ export class PlayerController extends EventEmitter {
     this.surface = options.surface;
     this.onState = options.onState;
     this.audioSettings = options.audioSettings ?? AudioSettingsStore.inMemory();
+    this.store = options.store;
+    this.onProgress = options.onProgress;
   }
 
   async start(input: {
-    readonly client: ServerClient;
+    readonly client: PlaybackClient;
     readonly connectionId: string;
     readonly itemId: string;
     /** Resume point; playback starts from the beginning when omitted. */
@@ -169,6 +182,7 @@ export class PlayerController extends EventEmitter {
         connectionId: input.connectionId,
         diagnostics,
         active: () => this.active?.session === session,
+        ...(this.store === undefined ? {} : { store: this.store }),
       });
       const active: ActiveSession = {
         session,
@@ -659,6 +673,13 @@ export class PlayerController extends EventEmitter {
     return this.state;
   }
 
+  /** The account and item playing now. */
+  nowPlaying(): { readonly connectionId: string; readonly itemId: string } | null {
+    return this.active === null
+      ? null
+      : { connectionId: this.active.connectionId, itemId: this.active.session.itemId };
+  }
+
   getActiveState(sessionId: string): PlayerState {
     this.assertActive(sessionId);
     return this.requireState();
@@ -794,6 +815,7 @@ export class PlayerController extends EventEmitter {
           })) ?? state.bufferedRanges,
         paused: paused === true,
         ended: ended === true,
+        downloadedRanges: this.downloadedRanges(active, state.durationSeconds),
       };
       if (seeking !== null && pausedForCache !== null) {
         // A seek waits on data just as a drained cache does, so the viewer sees both as buffering.
@@ -845,7 +867,25 @@ export class PlayerController extends EventEmitter {
 
   /** Reports the session to the server on the slower heartbeat / saved-progress cadence. */
   async tick(): Promise<void> {
-    if (this.active !== null && this.state !== null) await this.active.reporter.tick(this.state);
+    if (this.active === null || this.state === null) return;
+    this.onProgress?.({ connectionId: this.active.connectionId, state: this.state });
+    await this.active.reporter.tick(this.state);
+  }
+
+  /** What of a downloaded file is on this device, as stretches of its timeline. */
+  private downloadedRanges(
+    active: ActiveSession,
+    durationSeconds: number | null,
+  ): PlayerState["downloadedRanges"] {
+    const file = active.media.heldFile;
+    if (file === null || file.pins === 0 || durationSeconds === null || durationSeconds <= 0)
+      return [];
+    // Bytes map to time only on average; it is close enough to show what is downloaded.
+    const secondsPerByte = durationSeconds / file.spec.sizeBytes;
+    return file.heldRanges().map(([start, end]) => ({
+      startSeconds: start * secondsPerByte,
+      endSeconds: end * secondsPerByte,
+    }));
   }
 
   private async samplePosition(active: ActiveSession, state: PlayerState): Promise<PlayerState> {

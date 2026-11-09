@@ -7,6 +7,9 @@ import type {
   CatalogItemDetails,
   CatalogItemPage,
   ConnectionInput,
+  DownloadSettings,
+  DownloadSettingsPatch,
+  DownloadState,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
   HomeContent,
@@ -196,6 +199,31 @@ export interface PlaybackRuntime {
   readonly nativeAudio: NativeAudioRuntime | null;
 }
 
+/** Media kept on this device to play later, and the streaming cache. */
+export interface DownloadsRuntime {
+  readonly state: () => Promise<DownloadState>;
+  readonly onChange: (callback: () => void) => Unsubscribe;
+  /** Downloads items of the active account, in order. */
+  readonly add: (itemIds: ReadonlyArray<string>) => Promise<void>;
+  readonly remove: (id: string) => Promise<void>;
+  readonly pause: (id: string) => Promise<void>;
+  /** Resumes a paused download, or retries a failed one. */
+  readonly resume: (id: string) => Promise<void>;
+  /** Exempts a download from automatic cleanup. */
+  readonly keep: (id: string, keep: boolean) => Promise<void>;
+  /** Removes the active account's downloads, or only the watched ones. */
+  readonly removeAll: (watchedOnly: boolean) => Promise<void>;
+  readonly clearCache: () => Promise<void>;
+  readonly updateSettings: (patch: DownloadSettingsPatch) => Promise<DownloadSettings>;
+  /** Keeps a show's next unwatched episodes downloaded; null stops doing so. */
+  readonly showRule: (
+    show: { readonly id: string; readonly title: string },
+    episodes: number | null,
+  ) => Promise<void>;
+  /** The artwork kept with a download, as something an image element can load. */
+  readonly artwork: (id: string) => Promise<string | null>;
+}
+
 export interface WatchRuntime {
   readonly state: () => Promise<WatchStatus>;
   readonly action: (action: WatchAction) => Promise<WatchStatus>;
@@ -213,4 +241,6 @@ export interface LumenRuntime {
   readonly artwork: ArtworkRuntime;
   readonly playback: PlaybackRuntime;
   readonly watch: WatchRuntime;
+  /** Null where media cannot be kept on the device. */
+  readonly downloads: DownloadsRuntime | null;
 }

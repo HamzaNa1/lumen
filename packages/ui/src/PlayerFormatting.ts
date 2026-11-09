@@ -100,6 +100,10 @@ const decimalUnits = (value: number, units: ReadonlyArray<string>): string => {
   return `${unit === 0 || scaled >= 1_000 ? Math.round(scaled) : scaled.toPrecision(3)} ${units[unit]}`;
 };
 
+/** A size in bytes, such as "1.50 GB". */
+export const formatBytes = (bytes: number): string =>
+  decimalUnits(bytes, ["B", "kB", "MB", "GB", "TB"]);
+
 const formatSize = (size: Dimensions | null): string | null =>
   size === null ? null : `${size.width}×${size.height}`;
 
@@ -141,7 +145,7 @@ export const playbackInfoSections = (info: PlaybackInfo): ReadonlyArray<Playback
     ]),
     section("Original media info", [
       ["Container", media?.container],
-      ["Size", sizeBytes === null ? null : decimalUnits(sizeBytes, ["B", "kB", "MB", "GB", "TB"])],
+      ["Size", sizeBytes === null ? null : formatBytes(sizeBytes)],
       [
         "Bitrate",
         sizeBytes === null || info.durationSeconds === null || info.durationSeconds <= 0

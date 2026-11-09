@@ -86,7 +86,7 @@ await bridge.listen();
 const diagnostics = new PlaybackDiagnostics();
 const media = bridge.register({
   connectionId: "transport",
-  serverClient: new ServerClient({ origin: server.url.origin }),
+  serverOrigin: new ServerClient({ origin: server.url.origin }).serverOrigin,
   streamPath: "/asset",
   bearer: "boundary-grant",
   active: () => true,

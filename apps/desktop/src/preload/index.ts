@@ -70,6 +70,21 @@ const api: DesktopBridge = {
     scanStatus: (runId) => invoke("admin:scanStatus", runId),
     jobLog: () => invoke("admin:jobLog"),
   },
+  downloads: {
+    state: () => invoke("downloads:state"),
+    onChange: subscribe("downloads:changed"),
+    add: (itemIds) => invoke("downloads:add", itemIds),
+    remove: (id) => invoke("downloads:remove", id),
+    pause: (id) => invoke("downloads:pause", id),
+    resume: (id) => invoke("downloads:resume", id),
+    keep: (id, keep) => invoke("downloads:keep", { id, keep }),
+    removeAll: (watchedOnly) => invoke("downloads:remove-all", watchedOnly),
+    clearCache: () => invoke("downloads:clear-cache"),
+    updateSettings: (patch) => invoke("downloads:update-settings", patch),
+    showRule: (show, episodes) =>
+      invoke("downloads:show-rule", { showId: show.id, title: show.title, episodes }),
+    artwork: (id) => invoke("downloads:artwork", id),
+  },
   player: {
     inline: process.platform === "win32",
     onFailure: subscribe("player:failure"),

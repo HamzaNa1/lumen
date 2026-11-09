@@ -1,11 +1,14 @@
 import { join } from "node:path";
-import { app, type BrowserWindow, nativeTheme, screen, session } from "electron";
+import { app, type BrowserWindow, nativeTheme, powerSaveBlocker, screen, session } from "electron";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
+import { createTokenVault } from "./accounts/TokenVault";
 import type { ServerClient } from "./api/ServerClient";
 import { ArtworkCache } from "./artwork/ArtworkCache";
+import { DownloadManager } from "./downloads/DownloadManager";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
 import { openMainWindowState, placeMainWindow, rememberMainWindowState } from "./MainWindowState";
+import { openMediaStore } from "./media-store/openMediaStore";
 import { AudioSettingsStore } from "./player/AudioSettingsStore";
 import { CompositorSurface } from "./player/CompositorSurface";
 import { MpvSurface } from "./player/MpvSurface";
@@ -20,6 +23,8 @@ let mainWindow: BrowserWindow | null = null;
 let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
 let surface: MpvSurface | CompositorSurface | null = null;
+let downloads: DownloadManager | null = null;
+let closingDownloads: Promise<void> | null = null;
 let quitting = false;
 let closingPlayback: Promise<void> | null = null;
 
@@ -64,6 +69,9 @@ const bootstrap = async (): Promise<void> => {
   );
   bridge = new PlaybackBridge();
   await bridge.listen();
+  const store = await openMediaStore(join(app.getPath("userData"), "media"));
+  const clients = new Map<string, ServerClient>();
+  const artwork = new ArtworkCache((partition) => session.fromPartition(partition));
   mainWindow = createMainWindow({
     preloadPath,
     bounds: placeMainWindow(windowState.current, {
@@ -79,10 +87,33 @@ const bootstrap = async (): Promise<void> => {
     process.platform === "win32"
       ? new CompositorSurface(mainWindow)
       : new MpvSurface(mainWindow, overlay);
+  const playing = { current: null as PlayerController | null };
+  downloads = await DownloadManager.open({
+    directory: join(app.getPath("userData"), "downloads"),
+    store,
+    clientFor: (connectionId) => clients.get(connectionId) ?? null,
+    artworkTransport: (connectionId) => artwork.transportFor(connectionId),
+    nowPlaying: () => playing.current?.nowPlaying() ?? null,
+    vault: await createTokenVault("download-grants.bin"),
+  });
+  const manager = downloads;
+  // A download in progress keeps the computer from sleeping, as playback does the display.
+  let suspensionBlocker: number | null = null;
+  manager.on("change", () => {
+    const active = manager.isDownloading;
+    if (active && suspensionBlocker === null)
+      suspensionBlocker = powerSaveBlocker.start("prevent-app-suspension");
+    else if (!active && suspensionBlocker !== null) {
+      powerSaveBlocker.stop(suspensionBlocker);
+      suspensionBlocker = null;
+    }
+  });
   player = new PlayerController({
     bridge,
     surface,
     audioSettings,
+    store,
+    onProgress: ({ connectionId, state }) => manager.observePlayback(connectionId, state),
     onState: (state) => {
       if (mainWindow && !mainWindow.isDestroyed())
         mainWindow.webContents.send("player:state", state);
@@ -90,6 +121,7 @@ const bootstrap = async (): Promise<void> => {
         overlay.window.webContents.send("player:state", state);
     },
   });
+  playing.current = player;
   player.on("failure", (message: string) => {
     if (!mainWindow?.isDestroyed()) mainWindow?.webContents.send("player:failure", message);
   });
@@ -107,15 +139,15 @@ const bootstrap = async (): Promise<void> => {
   mainWindow.once("closed", () => {
     void player?.stop().catch((cause: unknown) => console.error("Failed to stop playback", cause));
   });
-  const clients = new Map<string, ServerClient>();
   const updates = new AppUpdates((version) => {
     mainWindow?.webContents.send("updates:ready", version);
   });
   registerIpcHandlers({
     registry,
     clients,
-    artwork: new ArtworkCache((partition) => session.fromPartition(partition)),
+    artwork,
     player,
+    downloads,
     bridge,
     installationId,
     window: mainWindow,
@@ -151,6 +183,23 @@ app.on("before-quit", (event) => {
     event.preventDefault();
     quitting = true;
     void stopPlayerBeforeClose().finally(() => app.quit());
+    return;
+  }
+  // Downloads record what they hold before the app goes, so nothing is fetched twice.
+  if (downloads !== null && closingDownloads === null) {
+    event.preventDefault();
+    const closing = downloads;
+    closingDownloads = Promise.race([
+      closing.close().catch((cause: unknown) => console.error("Failed to stop downloads", cause)),
+      new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+    ]).finally(() => {
+      downloads = null;
+      app.quit();
+    });
+    return;
+  }
+  if (closingDownloads !== null && downloads !== null) {
+    event.preventDefault();
     return;
   }
   surface?.dispose();

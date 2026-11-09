@@ -658,6 +658,7 @@ const UserDialog = ({
     user?.libraryAccess ?? defaultLibraryAccess,
   );
   const [isActive, setIsActive] = useState(user?.isActive ?? true);
+  const [canDownload, setCanDownload] = useState(user?.canDownload ?? true);
   const save = useMutation({
     mutationFn: async () => {
       if (user === null) {
@@ -667,6 +668,7 @@ const UserDialog = ({
           password,
           role,
           libraryAccess,
+          canDownload,
         });
       } else {
         await runtime.admin.updateUser({
@@ -676,6 +678,7 @@ const UserDialog = ({
           role,
           libraryAccess,
           isActive,
+          canDownload,
         });
       }
     },
@@ -686,6 +689,7 @@ const UserDialog = ({
         setDisplayName("");
         setRole("user");
         setLibraryAccess(defaultLibraryAccess);
+        setCanDownload(true);
       }
       onOpenChange(false);
       await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "users"] });
@@ -740,6 +744,14 @@ const UserDialog = ({
           onAccessChange={setLibraryAccess}
           scope={scope}
         />
+        {role === "admin" ? null : (
+          <SwitchField
+            label="Can download"
+            description="Lets them keep movies and episodes on their devices to watch later."
+            checked={canDownload}
+            onCheckedChange={setCanDownload}
+          />
+        )}
         {user === null ? null : (
           <SwitchField
             label="Can sign in"

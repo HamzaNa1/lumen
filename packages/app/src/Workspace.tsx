@@ -19,6 +19,7 @@ import {
 } from "@tanstack/react-query";
 import { Check, CircleCheck, LoaderCircle } from "lucide-react";
 import { createContext, type ReactNode, useContext } from "react";
+import { DownloadBadge } from "./Downloads";
 import { errorMessage } from "./format";
 import { useRuntime } from "./Runtime";
 
@@ -27,6 +28,8 @@ export const ACCOUNTS_KEY = ["accounts"] as const;
 
 export interface WorkspaceValue {
   readonly account: AccountSummary;
+  /** The server cannot be reached; what is downloaded still plays. */
+  readonly offline: boolean;
   readonly scope: readonly unknown[];
   readonly openItem: (item: CatalogItem) => void;
   readonly playItem: (item: CatalogItem) => void;
@@ -172,6 +175,7 @@ export const CatalogCard = ({
   const artwork = useArtwork(posterOf(item), scope);
   return (
     <MediaCard
+      badge={<DownloadBadge itemId={item.id} />}
       title={item.title}
       subtitle={subtitle}
       detail={detail}

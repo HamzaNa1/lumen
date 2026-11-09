@@ -3,6 +3,7 @@ import {
   ArtworkRef,
   AudioOutput,
   ConnectionInput,
+  DownloadSettingsPatch,
   EpisodeOrderSelection,
   IpcPlayerSurfaceBounds,
   LibraryAccess,
@@ -22,7 +23,9 @@ import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
 import { type AccountSession, ServerClient, ServerHttpError } from "../api/ServerClient";
 import type { ArtworkCache } from "../artwork/ArtworkCache";
+import type { Account, DownloadManager } from "../downloads/DownloadManager";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
+import { type PlaybackClient, withOfflineFallback } from "../player/PlaybackClient";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
 import type { PlayerOverlayWindow } from "../player/PlayerOverlayWindow";
 import { playerFullscreen } from "../player/PlayerWindowState";
@@ -63,6 +66,7 @@ export interface IpcDependencies {
   readonly clients: Map<string, ServerClient>;
   readonly artwork: ArtworkCache;
   readonly player: PlayerController;
+  readonly downloads: DownloadManager;
   readonly bridge: PlaybackBridge;
   readonly installationId: string;
   readonly window: BrowserWindow;
@@ -76,6 +80,27 @@ const activeClient = (dependencies: IpcDependencies): ServerClient => {
   const client = dependencies.clients.get(account.connectionId);
   if (client === undefined) throw new Error("Active connection is unavailable");
   return client;
+};
+
+const activeAccount = (dependencies: IpcDependencies): Account => {
+  const account = dependencies.registry.active();
+  if (account === null) throw new Error("No active connection");
+  return { connectionId: account.connectionId, serverId: account.serverId, origin: account.origin };
+};
+
+/**
+ * Plays from the server while it can be reached, and from this device's downloads when it
+ * cannot, including when the app started without reaching it.
+ */
+const playbackClient = (dependencies: IpcDependencies): PlaybackClient => {
+  const account = activeAccount(dependencies);
+  const offline = dependencies.downloads.offlineClient(account);
+  const online = dependencies.clients.get(account.connectionId);
+  return online === undefined
+    ? offline
+    : withOfflineFallback(online, offline, (itemId) =>
+        dependencies.downloads.hasOffline(account.connectionId, itemId),
+      );
 };
 
 const activeConnectionId = (dependencies: IpcDependencies): string => {
@@ -92,15 +117,21 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
   });
   const onPlayerFailure = (message: string) => watch.playerFailed(new Error(message));
+  const onDownloadsChange = () => {
+    if (!dependencies.window.isDestroyed())
+      dependencies.window.webContents.send("downloads:changed");
+  };
+  dependencies.downloads.on("change", onDownloadsChange);
   dependencies.player.on("failure", onPlayerFailure);
   dependencies.window.once("closed", () => {
     dependencies.player.off("failure", onPlayerFailure);
+    dependencies.downloads.off("change", onDownloadsChange);
     watch.close();
   });
   const commands = viewerPlayback(watch, {
     start: (itemId, startAtSeconds) =>
       dependencies.player.start({
-        client: activeClient(dependencies),
+        client: playbackClient(dependencies),
         connectionId: activeConnectionId(dependencies),
         itemId,
         ...(startAtSeconds === undefined ? {} : { startAtSeconds }),
@@ -240,6 +271,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     dependencies.clients.set(connectionId, client);
     watch.connect(client, connectionId);
     discoveredServers.delete(client.serverOrigin);
+    void dependencies.downloads.connectionReady(connectionId);
     return dependencies.registry.list();
   });
   handle("accounts:activate", async (_event, raw) => {
@@ -252,6 +284,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
     await dependencies.registry.activate(connectionId);
     watch.connect(client, connectionId);
+    void dependencies.downloads.connectionReady(connectionId);
     return dependencies.registry.list();
   });
   handle("accounts:remove", async (_event, raw) => {
@@ -261,6 +294,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     else dependencies.clients.get(connectionId)?.cancelPending();
     dependencies.clients.delete(connectionId);
     await dependencies.registry.remove(connectionId);
+    // Media kept for an account goes with it; nothing of it should outlive the sign-out.
+    await dependencies.downloads.removeConnection(connectionId).catch((cause: unknown) => {
+      console.error("Failed to remove a removed connection's downloads", cause);
+    });
     // The connection is already gone; images left behind cost disk space, not correctness.
     await dependencies.artwork.forget(connectionId).catch((cause: unknown) => {
       console.error("Failed to clear a removed connection's artwork", cause);
@@ -343,6 +380,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
           password: Schema.String,
           role: Schema.optional(UserRole),
           libraryAccess: Schema.optional(LibraryAccess),
+          canDownload: Schema.optional(Schema.Boolean),
         }),
         raw,
       ),
@@ -357,6 +395,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         role: Schema.optional(UserRole),
         libraryAccess: Schema.optional(LibraryAccess),
         isActive: Schema.optional(Schema.Boolean),
+        canDownload: Schema.optional(Schema.Boolean),
       }),
       raw,
     );
@@ -535,6 +574,55 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     await watch.stop();
     return { ok: true };
   });
+  handle("downloads:state", async () => dependencies.downloads.state());
+  handle("downloads:add", async (_event, raw) => {
+    const itemIds = decode(Schema.Array(Schema.String).check(Schema.isMaxLength(500)), raw);
+    const account = activeAccount(dependencies);
+    for (const itemId of itemIds) await dependencies.downloads.add(account, itemId);
+  });
+  handle("downloads:remove", async (_event, raw) =>
+    dependencies.downloads.remove(decode(Schema.String, raw)),
+  );
+  handle("downloads:pause", async (_event, raw) =>
+    dependencies.downloads.pause(decode(Schema.String, raw)),
+  );
+  handle("downloads:resume", async (_event, raw) =>
+    dependencies.downloads.resume(decode(Schema.String, raw)),
+  );
+  handle("downloads:keep", async (_event, raw) => {
+    const input = decode(Schema.Struct({ id: Schema.String, keep: Schema.Boolean }), raw);
+    dependencies.downloads.setKeep(input.id, input.keep);
+  });
+  handle("downloads:remove-all", async (_event, raw) => {
+    const watchedOnly = decode(Schema.Boolean, raw);
+    const connectionId = activeConnectionId(dependencies);
+    await dependencies.downloads.removeMany(
+      (download) =>
+        download.connectionId === connectionId && (!watchedOnly || download.watchedAtMs !== null),
+    );
+  });
+  handle("downloads:clear-cache", async () => dependencies.downloads.clearCache());
+  handle("downloads:update-settings", async (_event, raw) =>
+    dependencies.downloads.updateSettings(decode(DownloadSettingsPatch, raw)),
+  );
+  handle("downloads:show-rule", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({
+        showId: Schema.String,
+        title: Schema.String,
+        episodes: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 10 }))),
+      }),
+      raw,
+    );
+    await dependencies.downloads.setShowRule(
+      activeAccount(dependencies),
+      { id: input.showId, title: input.title },
+      input.episodes,
+    );
+  });
+  handle("downloads:artwork", async (_event, raw) =>
+    dependencies.downloads.artwork(decode(Schema.String, raw)),
+  );
   handle("updates:ready", async () => dependencies.updates.ready);
   handle("updates:install", async () => dependencies.updates.install());
 };

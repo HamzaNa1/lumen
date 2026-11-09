@@ -176,6 +176,25 @@ export const CatalogItemDetails = Schema.Struct({
 });
 export type CatalogItemDetails = Schema.Schema.Type<typeof CatalogItemDetails>;
 
+/** The catalog item a details response describes, as lists and the player take it. */
+export const catalogItemOf = ({ item, watchState }: CatalogItemDetails): CatalogItem => ({
+  id: item.id,
+  libraryId: item.libraryId,
+  parentId: item.parentId,
+  title: item.title,
+  kind: item.kind,
+  year: item.year,
+  indexNumber: item.indexNumber,
+  indexNumberEnd: item.indexNumberEnd ?? null,
+  artworkId: item.artworkId,
+  artworkRevision: item.artworkRevision,
+  durationMs: item.durationSeconds === null ? null : item.durationSeconds * 1_000,
+  completed: item.completed ?? watchState?.completed ?? false,
+  resumePositionSeconds:
+    watchState === null || watchState.completed ? null : watchState.positionSeconds,
+  ...(item.placement === undefined ? {} : { placement: item.placement }),
+});
+
 export const CatalogItemPage = Schema.Struct({
   items: Schema.Array(CatalogItem),
   nextCursor: Schema.NullOr(Schema.String),

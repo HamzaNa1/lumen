@@ -4,11 +4,13 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import type { PlaybackDiagnostics } from "@lumen/client";
-import type { ServerClient } from "../api/ServerClient";
+import { decideRange } from "@lumen/contracts";
+import type { MediaFile } from "../media-store/MediaFile";
 
-interface Capability {
+/** A stream proxied as it is: converted media, which has no bytes worth keeping. */
+interface ProxiedCapability {
   readonly connectionId: string;
-  readonly serverClient: ServerClient;
+  readonly serverOrigin: string;
   readonly streamPath: string;
   readonly bearer: string;
   readonly active: () => boolean;
@@ -16,6 +18,16 @@ interface Capability {
   readonly sessionId?: string;
   readonly onStatus?: (status: number) => void;
 }
+
+/** A file served from what this device holds, fetching what it lacks as the player asks. */
+interface HeldCapability {
+  readonly file: MediaFile;
+  readonly active: () => boolean;
+  readonly diagnostics?: PlaybackDiagnostics;
+  readonly sessionId?: string;
+}
+
+type Capability = ProxiedCapability | HeldCapability;
 interface Transfer {
   readonly controller: AbortController;
   readonly response: ServerResponse;
@@ -130,6 +142,10 @@ export class PlaybackBridge {
       response.writeHead(405, { allow: "GET, HEAD" }).end();
       return;
     }
+    if ("file" in entry) {
+      await this.serveHeld(capability, entry, request, response);
+      return;
+    }
     const controller = new AbortController();
     let settle = (): void => undefined;
     const transfer: Transfer = {
@@ -171,7 +187,7 @@ export class PlaybackBridge {
       method: request.method ?? "GET",
     });
     try {
-      upstream = await fetch(new URL(entry.streamPath, entry.serverClient.serverOrigin), {
+      upstream = await fetch(new URL(entry.streamPath, entry.serverOrigin), {
         method: request.method,
         headers: forwardedHeaders(request, entry.bearer, requestId),
         redirect: "manual",
@@ -281,6 +297,116 @@ export class PlaybackBridge {
         termination,
       });
       settle();
+    }
+  }
+
+  private track(capability: string, response: ServerResponse) {
+    const controller = new AbortController();
+    let settle = (): void => undefined;
+    const transfer: Transfer = {
+      controller,
+      response,
+      done: new Promise((resolve) => {
+        settle = resolve;
+      }),
+    };
+    const active = this.transfers.get(capability) ?? new Set<Transfer>();
+    active.add(transfer);
+    this.transfers.set(capability, active);
+    return {
+      controller,
+      finish: () => {
+        active.delete(transfer);
+        if (active.size === 0) this.transfers.delete(capability);
+        settle();
+      },
+    };
+  }
+
+  /**
+   * Answers from the held file. The length is known before any byte is, so every response is
+   * length-delimited, and the player cannot tell held bytes from ones fetched while it waits.
+   */
+  private async serveHeld(
+    capability: string,
+    entry: HeldCapability,
+    request: IncomingMessage,
+    response: ServerResponse,
+  ): Promise<void> {
+    const { file } = entry;
+    const { sizeBytes, revision, mimeType } = file.spec;
+    const { controller, finish } = this.track(capability, response);
+    const disconnect = (): void => {
+      if (!response.writableFinished) controller.abort();
+    };
+    request.once("aborted", disconnect);
+    response.once("close", disconnect);
+    const requestId = randomUUID();
+    const started = performance.now();
+    let bytesForwarded = 0;
+    let termination = "complete";
+    const ifRange = request.headers["if-range"];
+    const rangeHeader =
+      request.method === "HEAD" || (typeof ifRange === "string" && ifRange !== revision)
+        ? null
+        : (request.headers.range ?? null);
+    const range = decideRange(rangeHeader, sizeBytes);
+    entry.diagnostics?.record("bridge_request", {
+      requestId,
+      sessionId: entry.sessionId ?? null,
+      method: request.method ?? "GET",
+    });
+    try {
+      const common = {
+        "accept-ranges": "bytes",
+        "content-type": mimeType,
+        etag: revision,
+        "x-request-id": requestId,
+      };
+      if (range.kind === "unsatisfiable") {
+        response.writeHead(416, { ...common, "content-range": `bytes */${sizeBytes}` }).end();
+        return;
+      }
+      const partial = range.kind === "partial";
+      const start = partial ? range.start : 0;
+      const end = partial ? range.end + 1 : sizeBytes;
+      response.writeHead(partial ? 206 : 200, {
+        ...common,
+        "content-length": String(end - start),
+        ...(partial ? { "content-range": `bytes ${start}-${end - 1}/${sizeBytes}` } : {}),
+      });
+      if (request.method === "HEAD") {
+        response.end();
+        return;
+      }
+      const source = Readable.from(file.read(start, end, controller.signal), { objectMode: false });
+      const meter = new Transform({
+        transform(chunk: Uint8Array, _encoding, callback) {
+          bytesForwarded += chunk.byteLength;
+          callback(null, chunk);
+        },
+      });
+      await pipeline(source, meter, response, { signal: controller.signal });
+    } catch {
+      termination = controller.signal.aborted ? "cancel" : "upstream_failure";
+      if (!response.headersSent && !response.destroyed) response.writeHead(502).end();
+      else response.destroy();
+    } finally {
+      controller.abort();
+      request.off("aborted", disconnect);
+      response.off("close", disconnect);
+      entry.diagnostics?.record("bridge_transfer", {
+        requestId,
+        serverRequestId: null,
+        status: response.statusCode,
+        headerLatencyMs: null,
+        firstByteLatencyMs: null,
+        bytesForwarded,
+        expectedBytes: null,
+        transferDurationMs: performance.now() - started,
+        termination,
+      });
+      finish();
     }
   }
 }
