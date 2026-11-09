@@ -315,6 +315,15 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
       )
       .toBeGreaterThan(1);
     const state = await offline.evaluate(() => window.lumen.player.state());
+    // Pausing saves progress offline; finishing saves again, and only the latest is sent later.
+    await offline.evaluate(
+      (sessionId) => window.lumen.player.pause(sessionId, true),
+      state?.sessionId ?? "",
+    );
+    await offline.evaluate(
+      (sessionId) => window.lumen.player.pause(sessionId, false),
+      state?.sessionId ?? "",
+    );
     await offline.evaluate(
       ({ sessionId, position }) => window.lumen.player.seek(sessionId, position),
       { sessionId: state?.sessionId ?? "", position: (state?.durationSeconds ?? 30) - 1 },
