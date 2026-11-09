@@ -1,0 +1,37 @@
+{
+  "database": "Isolated lab backup on shared HDD",
+  "events": [
+    {
+      "event": "database_open_completed",
+      "durationMs": 746
+    },
+    {
+      "event": "database_migrations_completed",
+      "durationMs": 1055231,
+      "applied": 1
+    },
+    {
+      "event": "database_foreign_key_check_completed",
+      "durationMs": 35251
+    }
+  ],
+  "selectedStatementTimings": [
+    {
+      "statement": "WITH pending AS MATERIALIZED ( SELECT id FROM scan_runs NOT INDEXED WHERE stats_json IS NULL AND s",
+      "durationUntilNextPrepareMs": 407758
+    },
+    {
+      "statement": "-- Explicitly index summaries: SQLite versions differ on indexing a materialized CTE here. UPDATE sc",
+      "durationUntilNextPrepareMs": 15528
+    },
+    {
+      "statement": "DROP TABLE server_scan_seen;",
+      "durationUntilNextPrepareMs": 607259
+    },
+    {
+      "statement": "ALTER TABLE scan_runs DROP COLUMN files_pruned_at_ms;",
+      "durationUntilNextPrepareMs": 773
+    }
+  ],
+  "foreignKeyViolations": 0
+}
