@@ -601,7 +601,7 @@ export class DownloadManager extends EventEmitter {
       if (download.item.placement !== undefined && account !== null)
         void this.reconcileShows(account);
     } else if (previous === null || now - previous > 60_000) this.save();
-    // The viewer is watching it: it comes first.
+    // The viewer is watching it: it comes first, and may finish it.
     if (this.running?.id !== download.id && download.status !== "completed") this.schedule();
   }
 
@@ -790,7 +790,33 @@ export class DownloadManager extends EventEmitter {
     });
   }
 
+  /**
+   * Completes downloads whose files filled up some other way: playing a paused download keeps
+   * what it fetches, and can fetch all of it.
+   */
+  private async settleFilled(): Promise<void> {
+    const { store } = this.options;
+    for (const download of this.downloads) {
+      if (download.status === "completed" && download.next === null) continue;
+      if (this.running?.id === download.id) continue;
+      const target = download.next ?? download.ticket;
+      if (store.find(specOf(download.serverId, target))?.complete !== true) continue;
+      if (download.next !== null) {
+        await store.discard(specOf(download.serverId, download.ticket));
+        download.ticket = download.next;
+        download.next = null;
+      }
+      download.status = "completed";
+      download.pausedByUser = false;
+      download.reason = null;
+      download.completedAtMs ??= this.clock();
+      this.save();
+      this.publish(true);
+    }
+  }
+
   private async pump(): Promise<void> {
+    await this.settleFilled();
     const now = this.clock();
     const playing = this.options.nowPlaying();
     const candidates = this.downloads

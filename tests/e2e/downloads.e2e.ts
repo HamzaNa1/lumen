@@ -376,8 +376,7 @@ test("playback crosses from downloaded parts into missing ones and keeps the dow
       )
       .toBeGreaterThan(25);
 
-    // Resuming fills the rest while the item plays on.
-    await page.evaluate((id) => window.lumen.downloads.resume(id), paused?.id ?? "");
+    // The player reads ahead to the end, so watching fills the paused download, which completes.
     await expect
       .poll(async () => (await entryFor(page, film.id))?.status, { timeout: 60_000 })
       .toBe("completed");
