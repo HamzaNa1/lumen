@@ -1,0 +1,97 @@
+{
+  "implementation": "baseline",
+  "syntheticFiles": null,
+  "startupMs": 6132.972703000003,
+  "startup": [
+    {
+      "type": "open_started"
+    },
+    {
+      "type": "open_completed",
+      "durationMs": 1290
+    },
+    {
+      "type": "migrations_started"
+    },
+    {
+      "type": "migrations_completed",
+      "applied": 0,
+      "durationMs": 3841
+    },
+    {
+      "type": "foreign_key_check_skipped"
+    }
+  ],
+  "firstImportMs": null,
+  "applyMs": null,
+  "samples": [
+    {
+      "iteration": 0,
+      "elapsedMs": 254590.999222,
+      "runsStarted": 2,
+      "dataVersionBefore": {
+        "data_version": 2
+      },
+      "dataVersionAfter": {
+        "data_version": 3
+      },
+      "runsBefore": {
+        "count": 90853
+      },
+      "runsAfter": {
+        "count": 90855
+      }
+    },
+    {
+      "iteration": 1,
+      "elapsedMs": 78908.33721000003,
+      "runsStarted": 2,
+      "dataVersionBefore": {
+        "data_version": 3
+      },
+      "dataVersionAfter": {
+        "data_version": 4
+      },
+      "runsBefore": {
+        "count": 90855
+      },
+      "runsAfter": {
+        "count": 90857
+      }
+    },
+    {
+      "iteration": 2,
+      "elapsedMs": 55431.288109999965,
+      "runsStarted": 2,
+      "dataVersionBefore": {
+        "data_version": 4
+      },
+      "dataVersionAfter": {
+        "data_version": 5
+      },
+      "runsBefore": {
+        "count": 90857
+      },
+      "runsAfter": {
+        "count": 90859
+      }
+    },
+    {
+      "iteration": 3,
+      "elapsedMs": 50032.36565099994,
+      "runsStarted": 2,
+      "dataVersionBefore": {
+        "data_version": 5
+      },
+      "dataVersionAfter": {
+        "data_version": 6
+      },
+      "runsBefore": {
+        "count": 90859
+      },
+      "runsAfter": {
+        "count": 90861
+      }
+    }
+  ]
+}
