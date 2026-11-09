@@ -473,3 +473,29 @@ test("a same-root rename before device backfill preserves watch state", async ({
     watchState: { positionSeconds: 7 },
   });
 });
+
+test("a user scan starting after watcher observation prevents the watcher apply", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["First.mp4"]);
+  await server.stop();
+  await server.media(library.path, "Second.mp4");
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server);
+  try {
+    expect((await worker.call("prepare", Date.now(), library.id)).error).toBeUndefined();
+    enqueue(db, library.id, "discover", `discover:${library.id}`);
+    const version = db.prepare("PRAGMA data_version").get();
+    const revision = db.prepare("SELECT scan_revision FROM libraries WHERE id=?").get(library.id);
+    expect((await worker.call("apply")).result).toBe("inactive");
+    expect(db.prepare("PRAGMA data_version").get()).toEqual(version);
+    expect(db.prepare("SELECT scan_revision FROM libraries WHERE id=?").get(library.id)).toEqual(
+      revision,
+    );
+    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 1 });
+  } finally {
+    await worker.close();
+    db.close();
+  }
+});
