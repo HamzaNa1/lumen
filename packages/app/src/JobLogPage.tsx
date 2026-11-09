@@ -39,10 +39,7 @@ const modeLabels: Record<JobLogEntry["mode"], string> = {
 const operationLabels: Record<JobLogEntry["operation"], string> = {
   discover: "Discover files",
   probe: "Read media info",
-  artwork: "Fetch artwork",
   metadata: "Fetch metadata",
-  analyze: "Analyze",
-  cleanup: "Clean up",
 };
 
 const runStatus = (jobs: ReadonlyArray<JobLogEntry>): RunStatus => {

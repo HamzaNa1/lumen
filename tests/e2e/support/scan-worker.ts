@@ -28,10 +28,14 @@ export class ScanWorker {
     expect(ready[0], log.join("")).toEqual({ ready: true });
     return new ScanWorker(child, log);
   }
-  async call(action: "run" | "claim" | "recover" | "backfill" | "maintain", nowMs = Date.now()) {
+  async call(
+    action: "run" | "claim" | "recover" | "backfill" | "maintain" | "watch" | "prepare" | "apply",
+    nowMs = Date.now(),
+    libraryId?: string,
+  ) {
     const id = crypto.randomUUID();
     const reply = once(this.child, "message", { signal: AbortSignal.timeout(20000) });
-    this.child.send({ id, action, nowMs });
+    this.child.send({ id, action, nowMs, libraryId });
     const [message] = await reply;
     expect(message.id).toBe(id);
     return message as { id: string; result?: unknown; error?: string };

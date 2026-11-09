@@ -128,9 +128,11 @@ for (const through of [3, 6, 8, 9])
         migrations.length,
       );
       db.prepare("DELETE FROM media_sources WHERE id = ?").run(source);
-      expect(db.prepare("SELECT source_id FROM server_scan_missing").all()).toEqual([
-        { source_id: source },
-      ]);
+      expect(
+        JSON.parse(
+          String(db.prepare("SELECT stats_json FROM scan_runs WHERE id=?").get(run)?.stats_json),
+        ),
+      ).toMatchObject({ missing: 1 });
       expect(() =>
         db.exec(
           "INSERT INTO devices(id,user_id,name,platform,last_seen_at_ms,created_at_ms) VALUES('orphan','absent','Orphan','web',1,1)",
@@ -174,7 +176,7 @@ for (const through of [3, 6, 8, 9])
         expect(db.prepare("SELECT * FROM media_track_overrides").all()).toEqual([]);
       }
       db.prepare("DELETE FROM libraries WHERE id = ?").run(library);
-      expect(db.prepare("SELECT * FROM server_scan_missing").all()).toEqual([]);
+      expect(db.prepare("SELECT id FROM scan_runs WHERE library_id=?").all(library)).toEqual([]);
       expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
     } finally {
       db.close();
@@ -309,4 +311,98 @@ test("server keeps refusing to serve after committed migrations fail foreign key
     "database_foreign_key_check_completed",
   );
   expect(await server.api("/auth/setup")).toEqual({ setupRequired: true });
+});
+
+test("reconciliation migration backfills stats, cancels discovery, and removes per-file history", async ({
+  server,
+}) => {
+  await server.stop();
+  const migrations = await shippedMigrations();
+  const before = await openMigratedThrough(server.databasePath, migrations.length - 1);
+  try {
+    before.exec(`
+      INSERT INTO libraries(id,name,slug,created_at_ms,updated_at_ms) VALUES('library','Library','library',1,1);
+      INSERT INTO library_roots(id,library_id,path,created_at_ms,updated_at_ms) VALUES('root','library','/offline',1,1);
+      INSERT INTO media_sources(id,library_id,root_id,relative_path,absolute_path,scanned_at_ms) VALUES('source','library','root','film.mp4','/offline/film.mp4',1);
+      INSERT INTO scan_runs(id,library_id,mode,status,created_at_ms,started_at_ms,finished_at_ms) VALUES('finished','library','incremental','succeeded',1,1,2),('active','library','full','running',1,1,NULL),('preserved','library','full','succeeded',1,1,2);
+      UPDATE scan_runs SET stats_json='{"discovered":9}' WHERE id='preserved';
+      INSERT INTO server_scan_seen(run_id,source_id,seen_at_ms,change) VALUES('finished','source',1,'new');
+      INSERT INTO server_scan_missing(run_id,source_id,missing_at_ms) VALUES('finished','gone',1);
+      INSERT INTO scan_jobs(id,run_id,source_id,dedupe_key,operation,status,available_at_ms,started_at_ms,finished_at_ms) VALUES('probe','finished','source','probe','probe','succeeded',1,1,2);
+      INSERT INTO scan_jobs(id,run_id,dedupe_key,operation,available_at_ms) VALUES('discover','active','discover','discover',1),('cleanup','active','cleanup','cleanup',9007199254740991),('queued-probe','active','probe','probe',1),('metadata','active','metadata','metadata',1);
+    `);
+  } finally {
+    before.close();
+  }
+  execFileSync("bun", ["run", "db:migrate"], {
+    cwd: repository,
+    env: { ...process.env, LUMEN_DATABASE_PATH: server.databasePath, LUMEN_DATA_DIR: server.root },
+    stdio: "pipe",
+  });
+  const db = openDatabase(server.databasePath);
+  try {
+    expect(
+      JSON.parse(
+        String(
+          db.prepare("SELECT stats_json FROM scan_runs WHERE id='finished'").get()?.stats_json,
+        ),
+      ),
+    ).toEqual({
+      discovered: 1,
+      new: 1,
+      changed: 0,
+      moved: 0,
+      unchanged: 0,
+      skipped: 0,
+      missing: 1,
+      probesEnqueued: 1,
+    });
+    expect(
+      JSON.parse(
+        String(
+          db.prepare("SELECT stats_json FROM scan_runs WHERE id='preserved'").get()?.stats_json,
+        ),
+      ),
+    ).toEqual({ discovered: 9 });
+    expect(db.prepare("SELECT status FROM scan_runs WHERE id='active'").get()).toEqual({
+      status: "cancelled",
+    });
+    expect(
+      db
+        .prepare("SELECT operation,status FROM scan_jobs WHERE run_id='active' ORDER BY operation")
+        .all(),
+    ).toEqual([
+      { operation: "cleanup", status: "cancelled" },
+      { operation: "discover", status: "cancelled" },
+      { operation: "metadata", status: "queued" },
+      { operation: "probe", status: "queued" },
+    ]);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM sqlite_master WHERE name IN ('server_scan_seen','server_scan_missing','server_library_watch_state')",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(
+      db
+        .prepare("SELECT name FROM pragma_table_info('scan_runs') WHERE name='files_pruned_at_ms'")
+        .all(),
+    ).toEqual([]);
+    expect(
+      db
+        .prepare(
+          "SELECT name FROM pragma_table_info('library_root_states') WHERE name='scan_generation'",
+        )
+        .all(),
+    ).toEqual([]);
+    expect(db.prepare("SELECT device FROM media_sources").get()).toEqual({ device: null });
+    expect(db.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+    db.exec("UPDATE library_roots SET is_enabled=0 WHERE id='root'");
+    expect(db.prepare("SELECT scan_revision FROM libraries").get()).toEqual({ scan_revision: 1 });
+    db.exec("UPDATE library_roots SET is_enabled=1 WHERE id='root'");
+    expect(db.prepare("SELECT scan_revision FROM libraries").get()).toEqual({ scan_revision: 2 });
+  } finally {
+    db.close();
+  }
 });

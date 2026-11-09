@@ -206,33 +206,29 @@ export const makeScanner = Effect.gen(function* () {
               { runId, libraryId, mode: "incremental", jobs: [] },
               nowMs,
             );
-            yield* transaction
-              .insert(scanJobs)
-              .values({
-                id: newUuid(),
-                runId,
-                dedupeKey: `discover:${libraryId}`,
-                operation: "discover",
-                status: "succeeded",
-                availableAtMs: nowMs,
-                startedAtMs: nowMs,
-                finishedAtMs: nowMs,
-                attempts: 1,
-              });
+            yield* transaction.insert(scanJobs).values({
+              id: newUuid(),
+              runId,
+              dedupeKey: `discover:${libraryId}`,
+              operation: "discover",
+              status: "succeeded",
+              availableAtMs: nowMs,
+              startedAtMs: nowMs,
+              finishedAtMs: nowMs,
+              attempts: 1,
+            });
           }
           for (let offset = 0; offset < plan.inserts.length; offset += 250) {
             const batch = plan.inserts.slice(offset, offset + 250);
-            yield* transaction
-              .insert(mediaSources)
-              .values(
-                batch.map((file) => ({
-                  ...file,
-                  id: sourceIds.get(file.absolutePath) as string,
-                  libraryId,
-                  kind: "local",
-                  scannedAtMs: nowMs,
-                })),
-              );
+            yield* transaction.insert(mediaSources).values(
+              batch.map((file) => ({
+                ...file,
+                id: sourceIds.get(file.absolutePath) as string,
+                libraryId,
+                kind: "local",
+                scannedAtMs: nowMs,
+              })),
+            );
           }
           for (const { source, file, changed } of plan.updates) {
             yield* transaction
@@ -263,15 +259,13 @@ export const makeScanner = Effect.gen(function* () {
             yield* transaction
               .insert(mediaSourceAvailability)
               .values(
-                available
-                  .slice(offset, offset + 250)
-                  .map((file) => ({
-                    sourceId: sourceIds.get(file.absolutePath) as string,
-                    isAvailable: true,
-                    lastSeenAtMs: nowMs,
-                    missingSinceMs: null,
-                    updatedAtMs: nowMs,
-                  })),
+                available.slice(offset, offset + 250).map((file) => ({
+                  sourceId: sourceIds.get(file.absolutePath) as string,
+                  isAvailable: true,
+                  lastSeenAtMs: nowMs,
+                  missingSinceMs: null,
+                  updatedAtMs: nowMs,
+                })),
               )
               .onConflictDoUpdate({
                 target: mediaSourceAvailability.sourceId,

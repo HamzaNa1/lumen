@@ -121,6 +121,8 @@ export const makeLayers = (
     playback,
     events,
     jobs,
+    scanner,
+    libraryWatcher,
     scheduledJobs,
     identity,
     serverName,

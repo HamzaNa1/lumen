@@ -1,4 +1,4 @@
-import { lstat, readdir } from "node:fs/promises";
+import fs from "node:fs/promises";
 import { join, relative } from "node:path";
 import type { ObservedFile, RootObservation } from "./LibraryDiff";
 
@@ -65,7 +65,7 @@ export const observeRoot = async (
       if (!entry.isDirectory() && (!entry.isFile() || !isMedia(entry.name))) continue;
       try {
         // Recheck the entry: it may have become a symlink since readdir.
-        const details = await lstat(absolutePath);
+        const details = await fs.lstat(absolutePath);
         if (details.isSymbolicLink()) continue;
         if (details.isDirectory()) await walk(absolutePath, await readEntries(absolutePath));
         else if (details.isFile())
@@ -101,4 +101,4 @@ export const observeRoot = async (
   };
 };
 
-const readEntries = (path: string) => readdir(path, { withFileTypes: true });
+const readEntries = (path: string) => fs.readdir(path, { withFileTypes: true });

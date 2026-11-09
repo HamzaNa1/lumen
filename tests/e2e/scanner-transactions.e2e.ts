@@ -40,17 +40,15 @@ async function drain(worker: ScanWorker, nowMs = Date.now() + 60000) {
   throw new Error("Scanner did not drain its work");
 }
 
-test("discovery rolls back source, availability and seen records when enqueueing its probe fails", async ({
-  server,
-  admin,
-}) => {
+test("a failed probe insert rolls back the whole library plan", async ({ server, admin }) => {
   const library = await server.library(admin.accessToken, "movies", ["First.mp4"]);
   await server.stop();
   await server.media(library.path, "Second.mp4");
   const db = openDatabase(server.databasePath);
   const worker = await ScanWorker.start(server);
   try {
-    const run = enqueue(db, library.id, "discover", `discover:${library.rootId}`);
+    const run = enqueue(db, library.id, "discover", `discover:${library.id}`);
+    const revision = db.prepare("SELECT scan_revision FROM libraries WHERE id=?").get(library.id);
     db.exec(
       "CREATE TRIGGER reject_probe BEFORE INSERT ON scan_jobs WHEN NEW.operation='probe' BEGIN SELECT RAISE(ABORT,'probe write fault'); END",
     );
@@ -62,11 +60,12 @@ test("discovery rolls back source, availability and seen records when enqueueing
     expect(db.prepare("SELECT count(*) AS n FROM media_source_availability").get()).toEqual({
       n: 1,
     });
-    expect(
-      db
-        .prepare("SELECT count(*) AS n FROM server_scan_seen WHERE run_id=? AND change='new'")
-        .get(run.runId),
-    ).toEqual({ n: 0 });
+    expect(db.prepare("SELECT scan_revision FROM libraries WHERE id=?").get(library.id)).toEqual(
+      revision,
+    );
+    expect(db.prepare("SELECT stats_json FROM scan_runs WHERE id=?").get(run.runId)).toEqual({
+      stats_json: null,
+    });
     db.exec("DROP TRIGGER reject_probe");
     await drain(worker);
     expect(job(db, run.jobId)).toMatchObject({ status: "succeeded", attempts: 2 });
@@ -238,71 +237,70 @@ for (const fails of [false, true])
     }
   });
 
-for (const exhausted of [false, true])
-  test(`cleanup cannot purge a moved source while another root's discovery ${exhausted ? "fails permanently" : "waits for retry"}`, async ({
-    server,
-    admin,
-  }) => {
-    const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
-    const original = await server.items(admin.accessToken, library.id);
-    const destination = join(server.root, "destination");
-    await mkdir(destination);
-    const rootId = crypto.randomUUID();
-    await server.api(`/libraries/${library.id}/roots`, {
-      token: admin.accessToken,
-      body: { id: rootId, libraryId: library.id, path: destination, priority: 1 },
-    });
-    await server.stop();
-    await rename(join(library.path, "Film.mp4"), join(destination, "Film.mp4"));
-    await writeFile(join(library.path, "mounted.txt"), "The volume is mounted");
-    const db = openDatabase(server.databasePath);
-    const worker = await ScanWorker.start(server);
-    try {
-      const run = enqueue(db, library.id, "discover", `discover:${library.rootId}`);
-      db.prepare("UPDATE scan_jobs SET priority=300 WHERE id=?").run(run.jobId);
-      const secondJob = crypto.randomUUID();
-      db.prepare(
-        "INSERT INTO scan_jobs(id,run_id,dedupe_key,operation,status,available_at_ms,max_attempts) VALUES(?,?,?,'discover','queued',1,?)",
-      ).run(secondJob, run.runId, `discover:${rootId}`, exhausted ? 1 : 3);
-      const source = db.prepare("SELECT id,root_id FROM media_sources").get();
-      db.exec(
-        "CREATE TRIGGER reject_seen BEFORE INSERT ON server_scan_seen BEGIN SELECT RAISE(ABORT,'seen write fault'); END",
-      );
-      expect((await worker.call("run")).error).toBeUndefined();
-      const cleanup = () =>
-        db
-          .prepare(
-            "SELECT status,available_at_ms FROM scan_jobs WHERE run_id=? AND operation='cleanup'",
-          )
-          .get(run.runId);
-      expect(cleanup()).toEqual({ status: "queued", available_at_ms: Number.MAX_SAFE_INTEGER });
-      expect((await worker.call("run")).error).toBeUndefined();
-      expect(job(db, secondJob)).toMatchObject({
-        status: exhausted ? "failed" : "queued",
-        attempts: 1,
-      });
-      expect((await worker.call("run")).result).toBe(false);
-      expect(db.prepare("SELECT id,root_id FROM media_sources").get()).toEqual(source);
-      expect(cleanup()?.status).toBe(exhausted ? "cancelled" : "queued");
-      db.exec("DROP TRIGGER reject_seen");
-      if (!exhausted) {
-        await drain(worker);
-        expect(job(db, secondJob)).toMatchObject({ status: "succeeded", attempts: 2 });
-        expect(db.prepare("SELECT id,root_id FROM media_sources").get()).toEqual({
-          id: source?.id,
-          root_id: rootId,
-        });
-        expect(cleanup()?.status).toBe("succeeded");
-      }
-    } finally {
-      await worker.close();
-      db.close();
-    }
-    await server.start();
-    expect(await server.items(admin.accessToken, library.id)).toEqual(original);
+test("a move from an unavailable root keeps the original source", async ({ server, admin }) => {
+  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const destination = join(server.root, "destination");
+  await mkdir(destination);
+  const rootId = crypto.randomUUID();
+  await server.api(`/libraries/${library.id}/roots`, {
+    token: admin.accessToken,
+    body: { id: rootId, libraryId: library.id, path: destination, priority: 1 },
   });
+  await server.stop();
+  const offline = `${library.path}-offline`;
+  await rename(library.path, offline);
+  await rename(join(offline, "Film.mp4"), join(destination, "Film.mp4"));
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server);
+  try {
+    const source = db.prepare("SELECT id,root_id FROM media_sources").get();
+    const run = enqueue(db, library.id, "discover", `discover:${library.id}`);
+    await drain(worker);
+    expect(
+      job(db, run.jobId),
+      JSON.stringify(db.prepare("SELECT error_message FROM scan_jobs WHERE id=?").get(run.jobId)),
+    ).toMatchObject({ status: "succeeded" });
+    expect(
+      db.prepare("SELECT id,root_id FROM media_sources WHERE id=?").get(String(source?.id)),
+    ).toEqual(source);
+    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 2 });
+    expect(
+      db
+        .prepare("SELECT is_available FROM library_root_states WHERE root_id=?")
+        .get(library.rootId),
+    ).toEqual({ is_available: 0 });
+  } finally {
+    await worker.close();
+    db.close();
+  }
+});
 
-test("an old cleanup cannot delete files discovered by a superseding scan generation", async ({
+test("a stale plan is rejected after another apply bumps the library revision", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["First.mp4"]);
+  await server.stop();
+  await server.media(library.path, "Second.mp4");
+  const db = openDatabase(server.databasePath);
+  const workers = await Promise.all([ScanWorker.start(server), ScanWorker.start(server)]);
+  try {
+    for (const worker of workers)
+      expect((await worker.call("prepare", Date.now(), library.id)).error).toBeUndefined();
+    expect((await workers[1]?.call("apply"))?.result).toBe("applied");
+    const revision = db.prepare("SELECT scan_revision FROM libraries WHERE id=?").get(library.id);
+    expect((await workers[0]?.call("apply"))?.result).toBe("stale");
+    expect(db.prepare("SELECT scan_revision FROM libraries WHERE id=?").get(library.id)).toEqual(
+      revision,
+    );
+    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 2 });
+  } finally {
+    await Promise.all(workers.map((worker) => worker.close()));
+    db.close();
+  }
+});
+
+test("no-op watcher checks write nothing, including after an incomplete ingest", async ({
   server,
   admin,
 }) => {
@@ -311,34 +309,141 @@ test("an old cleanup cannot delete files discovered by a superseding scan genera
   const db = openDatabase(server.databasePath);
   const worker = await ScanWorker.start(server);
   try {
-    const old = enqueue(db, library.id, "discover", `discover:${library.rootId}`);
+    db.exec("UPDATE media_sources SET content_fingerprint=NULL");
+    const version = db.prepare("PRAGMA data_version").get();
+    const runs = db.prepare("SELECT count(*) AS n FROM scan_runs").get();
+    for (let i = 0; i < 3; i++) expect((await worker.call("watch")).result).toBe(0);
+    expect(db.prepare("PRAGMA data_version").get()).toEqual(version);
+    expect(db.prepare("SELECT count(*) AS n FROM scan_runs").get()).toEqual(runs);
+    const run = enqueue(db, library.id, "discover", `discover:${library.id}`);
     expect((await worker.call("run")).error).toBeUndefined();
     expect(
       db
-        .prepare("SELECT status FROM scan_jobs WHERE run_id=? AND operation='cleanup'")
-        .get(old.runId),
-    ).toEqual({ status: "queued" });
-    await server.media(library.path, "Second.mp4");
-    db.prepare(
-      "UPDATE library_root_states SET scan_generation=scan_generation+1 WHERE root_id=?",
-    ).run(library.rootId);
-    const next = enqueue(db, library.id, "discover", `discover:${library.rootId}`);
-    db.prepare("UPDATE scan_jobs SET priority=400 WHERE id=?").run(next.jobId);
-    expect((await worker.call("run")).error).toBeUndefined();
-    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 2 });
-    await drain(worker);
-    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 2 });
-    await expect.poll(() => worker.log.join("")).toContain('"reason":"superseded"');
-    for (const runId of [old.runId, next.runId])
-      expect(db.prepare("SELECT status FROM scan_runs WHERE id=?").get(runId)).toEqual({
-        status: "succeeded",
-      });
+        .prepare("SELECT count(*) AS n FROM scan_jobs WHERE run_id=? AND operation='probe'")
+        .get(run.runId),
+    ).toEqual({ n: 1 });
   } finally {
     await worker.close();
     db.close();
   }
-  await server.start();
-  expect(
-    (await server.items(admin.accessToken, library.id)).map((item) => item.title).sort(),
-  ).toEqual(["First", "Second"]);
+});
+
+test("a file deleted mid-walk does not make the root unavailable", async ({ server, admin }) => {
+  const library = await server.library(admin.accessToken, "movies", ["First.mp4", "Vanishing.mp4"]);
+  await server.stop();
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server, {
+    LUMEN_E2E_VANISH_PATH: join(library.path, "Vanishing.mp4"),
+  });
+  try {
+    expect((await worker.call("watch")).result).toBe(1);
+    expect(
+      db
+        .prepare("SELECT is_available FROM library_root_states WHERE root_id=?")
+        .get(library.rootId),
+    ).toEqual({ is_available: 1 });
+    expect(db.prepare("SELECT relative_path FROM media_sources").all()).toEqual([
+      { relative_path: "First.mp4" },
+    ]);
+  } finally {
+    await worker.close();
+    db.close();
+  }
+});
+
+test("a path that reappears after observation survives the final missing-file check", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["First.mp4"]);
+  await server.stop();
+  await rename(join(library.path, "First.mp4"), join(server.root, "held.mp4"));
+  await writeFile(join(library.path, "mounted.txt"), "mounted");
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server);
+  try {
+    expect((await worker.call("prepare", Date.now(), library.id)).result).toMatchObject({
+      missing: 1,
+    });
+    await rename(join(server.root, "held.mp4"), join(library.path, "First.mp4"));
+    expect((await worker.call("apply")).result).toBe("applied");
+    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 1 });
+    expect(
+      JSON.parse(
+        String(
+          db.prepare("SELECT stats_json FROM scan_runs ORDER BY created_at_ms DESC LIMIT 1").get()
+            ?.stats_json,
+        ),
+      ),
+    ).toMatchObject({ missing: 0 });
+  } finally {
+    await worker.close();
+    db.close();
+  }
+});
+
+test("an unreadable subfolder preserves its sources without making the root unavailable", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", [
+    "First.mp4",
+    "private/Hidden.mp4",
+  ]);
+  await server.stop();
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server, {
+    LUMEN_E2E_UNREADABLE_PATH: join(library.path, "private"),
+  });
+  try {
+    expect((await worker.call("watch")).result).toBe(0);
+    expect(db.prepare("SELECT count(*) AS n FROM media_sources").get()).toEqual({ n: 2 });
+    expect(
+      db
+        .prepare("SELECT is_available FROM library_root_states WHERE root_id=?")
+        .get(library.rootId),
+    ).toEqual({ is_available: 1 });
+    expect(worker.log.join("")).toContain("scan_path_unreadable");
+  } finally {
+    await worker.close();
+    db.close();
+  }
+});
+
+test("retry after a committed discovery keeps its original statistics and probe jobs", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["First.mp4"]);
+  await server.stop();
+  await server.media(library.path, "Second.mp4");
+  const db = openDatabase(server.databasePath);
+  const worker = await ScanWorker.start(server);
+  try {
+    const run = enqueue(db, library.id, "discover", `discover:${library.id}`);
+    db.exec(
+      "CREATE TRIGGER reject_discovery_completion BEFORE UPDATE ON scan_jobs WHEN NEW.operation='discover' AND NEW.status='succeeded' BEGIN SELECT RAISE(ABORT,'completion write fault'); END",
+    );
+    const now = Date.now();
+    expect((await worker.call("run", now)).error).toContain("completion write fault");
+    const stats = db.prepare("SELECT stats_json FROM scan_runs WHERE id=?").get(run.runId);
+    expect(JSON.parse(String(stats?.stats_json))).toMatchObject({
+      new: 1,
+      unchanged: 1,
+      probesEnqueued: 1,
+    });
+    db.exec("DROP TRIGGER reject_discovery_completion");
+    await worker.call("recover", now + 5000);
+    await drain(worker, now + 5000);
+    expect(job(db, run.jobId)).toMatchObject({ status: "succeeded", attempts: 2 });
+    expect(db.prepare("SELECT stats_json FROM scan_runs WHERE id=?").get(run.runId)).toEqual(stats);
+    expect(
+      db
+        .prepare("SELECT count(*) AS n FROM scan_jobs WHERE run_id=? AND operation='probe'")
+        .get(run.runId),
+    ).toEqual({ n: 1 });
+  } finally {
+    await worker.close();
+    db.close();
+  }
 });

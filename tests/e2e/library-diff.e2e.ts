@@ -1,5 +1,9 @@
-import { expect, test } from "bun:test";
-import { diff, type ObservedFile, type SourceSnapshot } from "./LibraryDiff";
+import {
+  diff,
+  type ObservedFile,
+  type SourceSnapshot,
+} from "../../apps/server/src/services/LibraryDiff";
+import { expect, test } from "./support/server";
 
 const file: ObservedFile = {
   rootId: "a",

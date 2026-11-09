@@ -18,7 +18,6 @@ import {
   mediaSources,
   outboxEvents,
   playbackSessions,
-  scanRuns,
   tracks,
   users,
 } from "./schema";
@@ -72,7 +71,6 @@ export const libraryRootStates = sqliteTable(
     canonicalKey: text("canonical_key").notNull(),
     isAvailable: integer("is_available", { mode: "boolean" }).notNull().default(true),
     unavailableReason: text("unavailable_reason"),
-    scanGeneration: integer("scan_generation").notNull().default(0),
     lastSeenAtMs: integer("last_seen_at_ms"),
     updatedAtMs: millis("updated_at_ms"),
   },
@@ -526,43 +524,6 @@ export const serverIdentity = sqliteTable(
   (table) => [check("server_identity_singleton_chk", sql`${table.singleton} = 1`)],
 );
 
-export const serverScanSeen = sqliteTable(
-  "server_scan_seen",
-  {
-    runId: text("run_id")
-      .notNull()
-      .references(() => scanRuns.id, { onDelete: "cascade" }),
-    sourceId: text("source_id")
-      .notNull()
-      .references(() => mediaSources.id, { onDelete: "cascade" }),
-    seenAtMs: millis("seen_at_ms"),
-    change: text("change").notNull().default("unchanged"),
-  },
-  (table) => [
-    primaryKey({ name: "server_scan_seen_pk", columns: [table.runId, table.sourceId] }),
-    index("server_scan_seen_source_idx").on(table.sourceId),
-    check(
-      "server_scan_seen_change_chk",
-      sql`${table.change} in ('new', 'changed', 'moved', 'unchanged')`,
-    ),
-  ],
-);
-
-export const serverScanMissing = sqliteTable(
-  "server_scan_missing",
-  {
-    runId: text("run_id")
-      .notNull()
-      .references(() => scanRuns.id, { onDelete: "cascade" }),
-    // Historical scan statistics survive deletion of the missing source.
-    sourceId: text("source_id").notNull(),
-    missingAtMs: millis("missing_at_ms"),
-  },
-  (table) => [
-    primaryKey({ name: "server_scan_missing_pk", columns: [table.runId, table.sourceId] }),
-  ],
-);
-
 export const serverScheduledJobs = sqliteTable(
   "server_scheduled_jobs",
   {
@@ -579,14 +540,6 @@ export const serverScheduledJobs = sqliteTable(
     check("server_scheduled_jobs_interval_chk", sql`${table.intervalMs} > 0`),
   ],
 );
-
-export const serverLibraryWatchState = sqliteTable("server_library_watch_state", {
-  rootId: text("root_id")
-    .primaryKey()
-    .references(() => libraryRoots.id, { onDelete: "cascade" }),
-  modifiedAtMs: millis("modified_at_ms"),
-  checkedAtMs: millis("checked_at_ms"),
-});
 
 export const serverPlaybackWatchVersions = sqliteTable(
   "server_playback_watch_versions",
