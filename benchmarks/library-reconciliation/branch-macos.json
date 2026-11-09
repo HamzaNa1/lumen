@@ -1,0 +1,101 @@
+{
+  "implementation": "reconciler",
+  "syntheticFiles": 20000,
+  "startupMs": 51.09495899999999,
+  "startup": [
+    {
+      "type": "open_started"
+    },
+    {
+      "type": "open_completed",
+      "durationMs": 5
+    },
+    {
+      "type": "migrations_started"
+    },
+    {
+      "type": "migrations_completed",
+      "applied": 14,
+      "durationMs": 43
+    },
+    {
+      "type": "foreign_key_check_started"
+    },
+    {
+      "type": "foreign_key_check_completed",
+      "durationMs": 0
+    }
+  ],
+  "firstImportMs": 1248.7489170000001,
+  "applyMs": 949.855,
+  "samples": [
+    {
+      "iteration": 0,
+      "elapsedMs": 343.8985419999999,
+      "runsStarted": 0,
+      "dataVersionBefore": {
+        "data_version": 2
+      },
+      "dataVersionAfter": {
+        "data_version": 2
+      },
+      "runsBefore": {
+        "count": 1
+      },
+      "runsAfter": {
+        "count": 1
+      }
+    },
+    {
+      "iteration": 1,
+      "elapsedMs": 343.42604200000005,
+      "runsStarted": 0,
+      "dataVersionBefore": {
+        "data_version": 2
+      },
+      "dataVersionAfter": {
+        "data_version": 2
+      },
+      "runsBefore": {
+        "count": 1
+      },
+      "runsAfter": {
+        "count": 1
+      }
+    },
+    {
+      "iteration": 2,
+      "elapsedMs": 339.505083,
+      "runsStarted": 0,
+      "dataVersionBefore": {
+        "data_version": 2
+      },
+      "dataVersionAfter": {
+        "data_version": 2
+      },
+      "runsBefore": {
+        "count": 1
+      },
+      "runsAfter": {
+        "count": 1
+      }
+    },
+    {
+      "iteration": 3,
+      "elapsedMs": 339.1750830000001,
+      "runsStarted": 0,
+      "dataVersionBefore": {
+        "data_version": 2
+      },
+      "dataVersionAfter": {
+        "data_version": 2
+      },
+      "runsBefore": {
+        "count": 1
+      },
+      "runsAfter": {
+        "count": 1
+      }
+    }
+  ]
+}

@@ -16,10 +16,11 @@ const unreadable = process.env.LUMEN_E2E_UNREADABLE_PATH
   ? await fs.realpath(process.env.LUMEN_E2E_UNREADABLE_PATH)
   : undefined;
 if (unreadable) {
-  const original = fs.readdir;
-  fs.readdir = ((path, ...options) => {
-    if (String(path) === unreadable)
-      return Promise.reject(Object.assign(new Error("unreadable folder"), { code: "EACCES" }));
-    return original(path, ...options);
-  }) as typeof fs.readdir;
+  fs.readdir = new Proxy(fs.readdir, {
+    apply(original, receiver, args: Parameters<typeof fs.readdir>) {
+      if (String(args[0]) === unreadable)
+        return Promise.reject(Object.assign(new Error("unreadable folder"), { code: "EACCES" }));
+      return Reflect.apply(original, receiver, args);
+    },
+  });
 }
