@@ -46,7 +46,8 @@ export interface ScannerShape {
   ) => Effect.Effect<boolean, unknown>;
 }
 
-// A transient read error cannot establish absence. Only ENOENT/ENOTDIR permit deletion.
+// Keep reappeared regular files and paths whose existence cannot be checked.
+// Symlinks and other non-files are not catalog sources.
 const stillMissing = async (path: string): Promise<boolean> => {
   try {
     return !(await lstat(path)).isFile();

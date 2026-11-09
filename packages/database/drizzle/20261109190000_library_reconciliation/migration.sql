@@ -10,7 +10,12 @@ UPDATE scan_runs SET status = 'cancelled',
 WHERE status IN ('queued', 'running');
 --> statement-breakpoint
 WITH pending AS MATERIALIZED (
-  SELECT id FROM scan_runs WHERE stats_json IS NULL AND status IN ('succeeded', 'failed', 'cancelled')
+  SELECT id FROM scan_runs NOT INDEXED WHERE stats_json IS NULL AND status IN ('succeeded', 'failed', 'cancelled')
+), probes AS MATERIALIZED (
+  SELECT run_id, source_id FROM scan_jobs NOT INDEXED
+  WHERE operation = 'probe' AND run_id IN (SELECT id FROM pending)
+), probe_sources AS MATERIALIZED (
+  SELECT DISTINCT run_id, source_id FROM probes
 ), counts AS MATERIALIZED (
   SELECT run_id, sum(discovered) AS discovered, sum(new) AS new, sum(changed) AS changed,
     sum(moved) AS moved, sum(unchanged) AS unchanged, sum(skipped) AS skipped,
@@ -18,18 +23,19 @@ WITH pending AS MATERIALIZED (
   FROM (
     SELECT s.run_id, 1 AS discovered, s.change = 'new' AS new, s.change = 'changed' AS changed,
       s.change = 'moved' AS moved, s.change = 'unchanged' AS unchanged,
-      NOT EXISTS (SELECT 1 FROM scan_jobs j WHERE j.run_id = s.run_id AND j.source_id = s.source_id AND j.operation = 'probe') AS skipped,
-      0 AS missing, 0 AS probes FROM server_scan_seen s
+      p.source_id IS NULL AS skipped,
+      0 AS missing, 0 AS probes FROM server_scan_seen s NOT INDEXED
+    LEFT JOIN probe_sources p ON p.run_id = s.run_id AND p.source_id = s.source_id
     WHERE s.run_id IN (SELECT id FROM pending)
     UNION ALL
-    SELECT run_id, 0, 0, 0, 0, 0, 0, 1, 0 FROM server_scan_missing
+    SELECT run_id, 0, 0, 0, 0, 0, 0, 1, 0 FROM server_scan_missing NOT INDEXED
     WHERE run_id IN (SELECT id FROM pending)
     UNION ALL
-    SELECT run_id, 0, 0, 0, 0, 0, 0, 0, 1 FROM scan_jobs
-    WHERE operation = 'probe' AND run_id IN (SELECT id FROM pending)
+    SELECT run_id, 0, 0, 0, 0, 0, 0, 0, 1 FROM probes
   ) GROUP BY run_id
 )
-UPDATE scan_runs SET stats_json = coalesce((SELECT json_object(
+-- Sequential table scans avoid random UUID-index reads on legacy HDD databases.
+UPDATE scan_runs NOT INDEXED SET stats_json = coalesce((SELECT json_object(
   'discovered', discovered, 'new', new, 'changed', changed, 'moved', moved,
   'unchanged', unchanged, 'skipped', skipped, 'missing', missing, 'probesEnqueued', probes
 ) FROM counts WHERE counts.run_id = scan_runs.id),

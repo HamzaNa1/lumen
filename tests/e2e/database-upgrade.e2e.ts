@@ -328,7 +328,7 @@ test("reconciliation migration backfills stats, cancels discovery, and removes p
       UPDATE scan_runs SET stats_json='{"discovered":9}' WHERE id='preserved';
       INSERT INTO server_scan_seen(run_id,source_id,seen_at_ms,change) VALUES('finished','source',1,'new');
       INSERT INTO server_scan_missing(run_id,source_id,missing_at_ms) VALUES('finished','gone',1);
-      INSERT INTO scan_jobs(id,run_id,source_id,dedupe_key,operation,status,available_at_ms,started_at_ms,finished_at_ms) VALUES('probe','finished','source','probe','probe','succeeded',1,1,2);
+      INSERT INTO scan_jobs(id,run_id,source_id,dedupe_key,operation,status,available_at_ms,started_at_ms,finished_at_ms) VALUES('probe','finished','source','probe','probe','succeeded',1,1,2),('retry-probe','finished','source','retry-probe','probe','succeeded',1,1,2);
       INSERT INTO scan_jobs(id,run_id,dedupe_key,operation,available_at_ms) VALUES('discover','active','discover','discover',1),('cleanup','active','cleanup','cleanup',9007199254740991),('queued-probe','active','probe','probe',1),('metadata','active','metadata','metadata',1);
     `);
   } finally {
@@ -355,7 +355,7 @@ test("reconciliation migration backfills stats, cancels discovery, and removes p
       unchanged: 0,
       skipped: 0,
       missing: 1,
-      probesEnqueued: 1,
+      probesEnqueued: 2,
     });
     expect(
       JSON.parse(
