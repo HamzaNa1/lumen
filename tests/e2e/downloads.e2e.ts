@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import type { Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
 import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
 import { NetworkProxy } from "./support/proxy";
-import { password, type Server } from "./support/server";
+import { password, repository, type Server } from "./support/server";
 
 // Small chunks and segments make a few megabytes span many of each.
 const CHUNK = 64 * 1024;
@@ -154,18 +154,41 @@ const leavePlayer = async (page: Page) => {
  */
 const meter = (proxy: NetworkProxy, upstream: () => string) => {
   const waiting = new Set<() => void>();
+  const active = new Set<ServerResponse>();
+  const wakeAll = () => {
+    for (const wake of waiting) wake();
+    waiting.clear();
+  };
   const control = {
     sent: 0,
     allowance: Number.POSITIVE_INFINITY,
     ranges: [] as number[],
+    /** Answers media requests as an overloaded server would. */
+    failing: false,
+    /** Holds back media for paths it matches until it no longer does. */
+    blocked: (_path: string): boolean => false,
     allow(bytes: number) {
       control.allowance = Math.floor(bytes);
-      for (const wake of waiting) wake();
-      waiting.clear();
+      wakeAll();
+    },
+    block(predicate: (path: string) => boolean) {
+      control.blocked = predicate;
+      wakeAll();
+    },
+    /** Cuts every media transfer in progress, as a dropped connection does. */
+    breakAll() {
+      for (const response of active) response.destroy();
     },
   };
   proxy.intercept = async (request: IncomingMessage, response: ServerResponse) => {
     if (!request.url?.startsWith("/api/v1/media/")) return false;
+    const path = request.url;
+    if (control.failing) {
+      response.writeHead(503).end();
+      return true;
+    }
+    active.add(response);
+    response.on("close", () => active.delete(response));
     control.ranges.push(Number(/bytes=(\d+)-/u.exec(request.headers.range ?? "")?.[1] ?? 0));
     const abort = new AbortController();
     response.on("close", () => abort.abort());
@@ -183,7 +206,10 @@ const meter = (proxy: NetworkProxy, upstream: () => string) => {
         const chunk = await reader?.read();
         if (chunk === undefined || chunk.done) break;
         for (let offset = 0; offset < chunk.value.length; ) {
-          while (control.sent >= control.allowance && !response.destroyed)
+          while (
+            (control.sent >= control.allowance || control.blocked(path)) &&
+            !response.destroyed
+          )
             await new Promise<void>((resolve) => {
               waiting.add(resolve);
               response.once("close", () => resolve());
@@ -592,4 +618,106 @@ test("a show keeps its next unwatched episode downloaded as episodes are watched
     show?.id ?? "",
   );
   await expect.poll(async () => (await downloads(page)).entries).toEqual([]);
+});
+
+test("downloads retry an unreachable server, follow a file that changes mid-download, and give way to what is watched", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(token, "movies", []);
+  await mkdir(join(library.path, "Film"));
+  const filmPath = join(library.path, "Film", "Film.mp4");
+  makeFilm(filmPath, 30, 440);
+  await copyFile(
+    join(repository, "tests/fixtures/still.png"),
+    join(library.path, "Film", "poster.png"),
+  );
+  for (const [title, tone] of [
+    ["Other", 520],
+    ["Third", 600],
+  ] as const)
+    makeFilm(join(library.path, `${title}.mp4`), 30, tone);
+  await server.scan(token, library.id);
+  const items = await server.items(token, library.id);
+  const id = (title: string) => items.find((item) => item.title === title)?.id ?? "";
+  // The file a media request names, to hold back one download while others pass.
+  const otherStream = (await server.play(token, id("Other"))).streamUrl;
+  const size = (await readFile(filmPath)).length;
+  let proxy = await new NetworkProxy(server.origin).start();
+  const network = meter(proxy, () => server.origin);
+  const { page, profile } = desktop;
+  try {
+    await connectDesktop(page, proxy);
+    network.allow(size * 0.3);
+    await page.evaluate((itemId) => window.lumen.downloads.add([itemId]), id("Film"));
+    await expect
+      .poll(async () => (await entryFor(page, id("Film")))?.downloadedBytes ?? 0, {
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(size * 0.15);
+
+    // The server stops answering: the download waits and retries.
+    network.failing = true;
+    network.breakAll();
+    await expect
+      .poll(async () => await entryFor(page, id("Film")), { timeout: 30_000 })
+      .toMatchObject({ status: "waiting", reason: "Can’t reach the server. Retrying…" });
+
+    // Meanwhile the file is replaced. The bytes already held belong to the old file and go.
+    makeFilm(join(library.path, "Film", "New.mp4"), 24, 700);
+    await rm(filmPath);
+    await copyFile(join(library.path, "Film", "New.mp4"), filmPath);
+    await rm(join(library.path, "Film", "New.mp4"));
+    const later = new Date(Date.now() + 120_000);
+    await utimes(filmPath, later, later);
+    await server.scan(token, library.id);
+    network.failing = false;
+    network.allow(Number.POSITIVE_INFINITY);
+    await expect
+      .poll(async () => (await entryFor(page, id("Film")))?.status, { timeout: 60_000 })
+      .toBe("completed");
+    const held = await heldFiles(profile);
+    expect(held).toHaveLength(1);
+    expect(held[0]?.bytes.equals(await readFile(filmPath))).toBe(true);
+    await go(page, "/downloads");
+    await expect(page.getByRole("listitem", { name: "Film" }).locator("img")).toHaveAttribute(
+      "src",
+      /^data:image\/png;base64,/,
+    );
+
+    // One download at a time: the other waits its turn until the viewer starts watching it.
+    network.block((path) => path.startsWith(otherStream));
+    await page.evaluate((ids) => window.lumen.downloads.add(ids), [id("Other"), id("Third")]);
+    await expect.poll(async () => (await entryFor(page, id("Other")))?.status).toBe("downloading");
+    expect((await entryFor(page, id("Third")))?.status).toBe("queued");
+    await page.evaluate((ids) => window.lumen.downloads.add(ids), [id("Third")]);
+    expect((await downloads(page)).entries).toHaveLength(3);
+    await playFromDownloads(page, "Third");
+    await expect
+      .poll(async () => (await entryFor(page, id("Third")))?.status, { timeout: 60_000 })
+      .toBe("completed");
+    await leavePlayer(page);
+    // Back to the one that gave way; removing it mid-download stops it and frees its space.
+    await expect.poll(async () => (await entryFor(page, id("Other")))?.status).toBe("downloading");
+    const other = await entryFor(page, id("Other"));
+    await page.evaluate((entryId) => window.lumen.downloads.remove(entryId), other?.id ?? "");
+    await expect.poll(async () => await entryFor(page, id("Other"))).toBeUndefined();
+    await expect.poll(async () => (await heldFiles(profile)).length).toBe(2);
+
+    // The server vanishes while the app is open: a download still plays.
+    await proxy.close();
+    await playFromDownloads(page, "Film");
+    await expect
+      .poll(
+        async () => (await page.evaluate(() => window.lumen.player.state()))?.positionSeconds ?? 0,
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(2);
+    await leavePlayer(page);
+    proxy = await new NetworkProxy(server.origin).start();
+  } finally {
+    await proxy.close();
+  }
 });

@@ -58,6 +58,21 @@ test("download grants fetch exact original bytes independently of playback sessi
   });
   expect(part.status).toBe(206);
   expect(Buffer.from(await part.arrayBuffer())).toEqual(bytes.subarray(10, 20));
+  // A range header too long to be honest is ignored; a client holding the file revalidates it.
+  expect(
+    (
+      await server.request(ticket.streamPath, {
+        headers: { ...headers, range: `bytes=0-${"0".repeat(1100)}` },
+      })
+    ).status,
+  ).toBe(200);
+  expect(
+    (
+      await server.request(ticket.streamPath, {
+        headers: { ...headers, "if-modified-since": "Thu, 01 Jan 2099 00:00:00 GMT" },
+      })
+    ).status,
+  ).toBe(304);
   expect(
     (await server.request(`${ticket.streamPath}?transcode=1`, { headers })).status,
     "downloads never convert",

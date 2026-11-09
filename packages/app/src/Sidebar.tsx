@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { DeviceOnly } from "./Downloads";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { WatchGroups } from "./WatchGroups";
@@ -80,9 +81,11 @@ export const Sidebar = ({
             </>
           )}
           {runtime.downloads === null ? null : (
-            <Link className="nav-item" to="/downloads">
-              <NavLabel icon={ArrowDownToLine}>Downloads</NavLabel>
-            </Link>
+            <DeviceOnly>
+              <Link className="nav-item" to="/downloads">
+                <NavLabel icon={ArrowDownToLine}>Downloads</NavLabel>
+              </Link>
+            </DeviceOnly>
           )}
         </div>
         {offline ? null : (

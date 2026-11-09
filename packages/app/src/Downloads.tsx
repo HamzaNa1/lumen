@@ -41,6 +41,16 @@ import { PageHeader, useWorkspace } from "./Workspace";
 
 export const DOWNLOADS_KEY = ["downloads"] as const;
 
+/**
+ * Marks what only a device that keeps media shows. It takes no space of its own, and lets the
+ * desktop and browser apps be compared apart from it.
+ */
+export const DeviceOnly = ({ children }: { readonly children: ReactNode }): React.ReactElement => (
+  <span className="device-only" data-device-only="">
+    {children}
+  </span>
+);
+
 /** Keeps the download list current while the app is open. Mounted once, by the app shell. */
 export const useDownloadUpdates = (): void => {
   const runtime = useRuntime();

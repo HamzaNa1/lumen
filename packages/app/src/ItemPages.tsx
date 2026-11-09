@@ -12,7 +12,7 @@ import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack
 import { ChevronLeft, ChevronRight, Play, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { LoadMore } from "./BrowsePages";
-import { DownloadAllButton, DownloadButton, ShowDownloadRuleMenu } from "./Downloads";
+import { DeviceOnly, DownloadAllButton, DownloadButton, ShowDownloadRuleMenu } from "./Downloads";
 import {
   episodeCode,
   episodeCount,
@@ -290,7 +290,11 @@ const MovieDetails = ({ itemId }: { readonly itemId: string }): React.ReactEleme
           <>
             {playableKinds.has(item.kind) ? <PlayButton item={current} /> : null}
             {item.kind === "movie" ? <WatchedButton item={current} /> : null}
-            {item.kind === "movie" ? <DownloadButton item={current} /> : null}
+            {item.kind === "movie" ? (
+              <DeviceOnly>
+                <DownloadButton item={current} />
+              </DeviceOnly>
+            ) : null}
             {item.kind === "movie" && account.role === "admin" ? (
               <ItemSettings
                 itemId={item.id}
@@ -341,7 +345,9 @@ const ShowDetails = ({ itemId }: { readonly itemId: string }): React.ReactElemen
         actions={
           <>
             {next === null ? null : <PlayButton item={next} />}
-            <ShowDownloadRuleMenu show={{ id: item.id, title: item.title }} />
+            <DeviceOnly>
+              <ShowDownloadRuleMenu show={{ id: item.id, title: item.title }} />
+            </DeviceOnly>
             {account.role === "admin" ? (
               <ItemSettings
                 itemId={item.id}
@@ -450,7 +456,9 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
         actions={
           <>
             <WatchedButton item={catalogItem(details.data)} />
-            <DownloadAllButton items={list} label="Download season" />
+            <DeviceOnly>
+              <DownloadAllButton items={list} label="Download season" />
+            </DeviceOnly>
           </>
         }
       />
@@ -532,7 +540,9 @@ const EpisodeDetails = ({ itemId }: { readonly itemId: string }): React.ReactEle
           <>
             <PlayButton item={current} />
             <WatchedButton item={current} />
-            <DownloadButton item={current} />
+            <DeviceOnly>
+              <DownloadButton item={current} />
+            </DeviceOnly>
           </>
         }
       />
