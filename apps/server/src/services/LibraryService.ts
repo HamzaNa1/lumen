@@ -10,7 +10,6 @@ import {
   mediaSources,
   Repositories,
   scanRuns,
-  serverLibraryWatchState,
 } from "@lumen/database";
 import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { Schema } from "effect";
@@ -35,7 +34,6 @@ type UpdateLibraryInput = Schema.Schema.Type<typeof UpdateLibraryBody>;
 type RootInput = Schema.Schema.Type<typeof CreateRootBody>;
 type GrantInput = Schema.Schema.Type<typeof CreateGrantBody>;
 type ScanInput = Schema.Schema.Type<typeof StartScanBody>;
-type RootObservation = { readonly id: string; readonly modifiedAtMs: number };
 
 export interface LibraryServiceShape {
   readonly create: (input: LibraryInput, nowMs: number) => Effect.Effect<Library, unknown>;
@@ -52,11 +50,6 @@ export interface LibraryServiceShape {
   readonly upsertGrant: (input: GrantInput, nowMs: number) => Effect.Effect<LibraryGrant, unknown>;
   readonly startScan: (
     input: ScanInput,
-    nowMs: number,
-  ) => Effect.Effect<{ runId: string }, unknown>;
-  readonly startWatchedScan: (
-    input: ScanInput,
-    roots: ReadonlyArray<RootObservation>,
     nowMs: number,
   ) => Effect.Effect<{ runId: string }, unknown>;
 }
@@ -296,7 +289,6 @@ export const makeLibraryService = Effect.gen(function* () {
   const enqueueScan = Effect.fn("LibraryService.enqueueScan")(function* (
     input: ScanInput,
     nowMs: number,
-    observations: ReadonlyArray<RootObservation>,
   ) {
     const library = yield* database
       .select({ isEnabled: libraries.isEnabled })
@@ -343,15 +335,6 @@ export const makeLibraryService = Effect.gen(function* () {
           },
           nowMs,
         );
-        for (const observation of observations) {
-          yield* transaction
-            .update(serverLibraryWatchState)
-            .set({
-              modifiedAtMs: observation.modifiedAtMs,
-              checkedAtMs: nowMs,
-            })
-            .where(eq(serverLibraryWatchState.rootId, observation.id));
-        }
       }),
     );
     logger.info("scan_run_queued", {
@@ -363,10 +346,7 @@ export const makeLibraryService = Effect.gen(function* () {
     return { runId };
   });
 
-  const startScan: LibraryServiceShape["startScan"] = (input, nowMs) =>
-    enqueueScan(input, nowMs, []);
-  const startWatchedScan: LibraryServiceShape["startWatchedScan"] = (input, roots, nowMs) =>
-    enqueueScan(input, nowMs, roots);
+  const startScan: LibraryServiceShape["startScan"] = (input, nowMs) => enqueueScan(input, nowMs);
 
   return {
     create,
@@ -378,7 +358,6 @@ export const makeLibraryService = Effect.gen(function* () {
     deleteRoot,
     upsertGrant,
     startScan,
-    startWatchedScan,
   };
 });
 
