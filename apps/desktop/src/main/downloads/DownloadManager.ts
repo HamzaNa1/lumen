@@ -850,13 +850,18 @@ export class DownloadManager extends EventEmitter {
       download.status = "downloading";
       download.reason = null;
       this.publish(true);
+      // Why the server refused a fresh grant, which is what to tell the viewer if fetching stops.
+      let refusal: unknown = null;
       const removeSource = file.addSource({
         origin: client.serverOrigin,
         path: ticket.streamPath,
         token: this.tokens.get(ticket.downloadId) ?? "",
         kind: "download",
         refresh: async () => {
-          const renewed = await this.renewTicket(download, client).catch(() => null);
+          const renewed = await this.renewTicket(download, client).catch((cause: unknown) => {
+            refusal = cause;
+            return null;
+          });
           if (renewed === null || renewed.revision !== file.spec.revision) return null;
           return {
             origin: client.serverOrigin,
@@ -870,6 +875,9 @@ export class DownloadManager extends EventEmitter {
       file.on("progress", onProgress);
       try {
         await file.download(signal);
+      } catch (cause) {
+        // A grant the server would not renew explains the failed fetch better than its status.
+        throw refusal !== null && !isTransient(refusal) ? refusal : cause;
       } finally {
         removeSource();
         file.off("progress", onProgress);

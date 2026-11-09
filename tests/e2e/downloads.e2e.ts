@@ -721,3 +721,77 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
     await proxy.close();
   }
 });
+
+test("withdrawing download permission mid-download fails it with the server's reason, and removing a playing download keeps it playing", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const { item } = await movies(server, admin.accessToken, ["Film", "Other"]);
+  const film = item("Film");
+  const other = item("Other");
+  const size = (await readFile(film.path)).length;
+  const viewer = await server.api<{ id: string }>("/users", {
+    token: admin.accessToken,
+    body: { username: "viewer", displayName: "Viewer", password, libraryAccess: { scope: "all" } },
+  });
+  const proxy = await new NetworkProxy(server.origin).start();
+  const network = meter(proxy, () => server.origin);
+  const { page, profile } = desktop;
+  try {
+    await connectDesktop(page, proxy, "viewer");
+    network.allow(size * 0.3);
+    await page.evaluate((itemId) => window.lumen.downloads.add([itemId]), film.id);
+    await expect
+      .poll(async () => (await entryFor(page, film.id))?.downloadedBytes ?? 0, {
+        timeout: 30_000,
+      })
+      .toBeGreaterThan(size * 0.15);
+    await server.api(`/users/${viewer.id}`, {
+      token: admin.accessToken,
+      method: "PATCH",
+      status: 200,
+      body: { canDownload: false },
+    });
+    network.allow(Number.POSITIVE_INFINITY);
+    network.breakAll();
+    await expect
+      .poll(async () => await entryFor(page, film.id), { timeout: 30_000 })
+      .toMatchObject({ status: "failed", reason: "Downloads are turned off for you" });
+    await go(page, `/item/${other.id}`);
+    await page.getByRole("button", { name: "Download", exact: true }).click();
+    await expect(page.getByRole("alert")).toContainText("Downloads are turned off for you");
+
+    // Allowed again, the download resumes from where it stopped.
+    await server.api(`/users/${viewer.id}`, {
+      token: admin.accessToken,
+      method: "PATCH",
+      status: 200,
+      body: { canDownload: true },
+    });
+    const failed = await entryFor(page, film.id);
+    await page.evaluate((id) => window.lumen.downloads.resume(id), failed?.id ?? "");
+    await expect
+      .poll(async () => (await entryFor(page, film.id))?.status, { timeout: 60_000 })
+      .toBe("completed");
+
+    // Removing it while it plays frees its space; playback streams on.
+    await playFromDownloads(page, "Film");
+    await page.evaluate((id) => window.lumen.downloads.remove(id), failed?.id ?? "");
+    await expect.poll(async () => await entryFor(page, film.id)).toBeUndefined();
+    const position = (await page.evaluate(() => window.lumen.player.state()))?.positionSeconds ?? 0;
+    await expect
+      .poll(
+        async () => (await page.evaluate(() => window.lumen.player.state()))?.positionSeconds ?? 0,
+        {
+          timeout: 20_000,
+        },
+      )
+      .toBeGreaterThan(position + 2);
+    expect((await page.evaluate(() => window.lumen.player.state()))?.paused).toBe(false);
+    await leavePlayer(page);
+    await expect.poll(async () => (await heldFiles(profile)).length).toBe(0);
+  } finally {
+    await proxy.close();
+  }
+});
