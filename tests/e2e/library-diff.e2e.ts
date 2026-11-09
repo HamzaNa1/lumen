@@ -59,6 +59,18 @@ const cases: Array<{
   };
 }> = [
   {
+    name: "legacy same-root rename retains its source while learning its device",
+    sources: [{ ...source, device: null }],
+    files: [{ ...file, absolutePath: "/a/new.mp4", relativePath: "new.mp4" }],
+    expected: { new: 0, changed: 0, moved: 1, unchanged: 0, missing: 0, probesEnqueued: 0 },
+  },
+  {
+    name: "legacy sources cannot move across roots without a known device",
+    sources: [{ ...source, device: null }],
+    files: [{ ...file, rootId: "b", absolutePath: "/b/film.mp4" }],
+    expected: { new: 1, changed: 0, moved: 0, unchanged: 0, missing: 1, probesEnqueued: 1 },
+  },
+  {
     name: "move between roots",
     files: [{ ...file, rootId: "b", absolutePath: "/b/film.mp4" }],
     expected: { new: 0, changed: 0, moved: 1, unchanged: 0, missing: 0, probesEnqueued: 0 },

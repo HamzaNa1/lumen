@@ -1,6 +1,10 @@
 import { Schema } from "effect";
 import { NonEmptyText, UtcMillis, Uuid } from "./common.ts";
 
+export const scanJobOperations = ["discover", "probe", "metadata"] as const;
+export const ScanJobOperation = Schema.Literals(scanJobOperations);
+export type ScanJobOperation = Schema.Schema.Type<typeof ScanJobOperation>;
+
 export const ScanRunStatus = Schema.Literals([
   "queued",
   "running",
@@ -51,7 +55,7 @@ export const ScanJob = Schema.Struct({
   parentJobId: Schema.NullOr(Uuid),
   sourceId: Schema.NullOr(Uuid),
   dedupeKey: NonEmptyText,
-  operation: Schema.Literals(["discover", "probe", "metadata"]),
+  operation: ScanJobOperation,
   status: ScanJobStatus,
   priority: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000 })),
   attempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
@@ -72,7 +76,7 @@ export const JobLogEntry = Schema.Struct({
   libraryId: Uuid,
   libraryName: NonEmptyText,
   mode: Schema.Literals(["full", "incremental", "refresh"]),
-  operation: Schema.Literals(["discover", "probe", "metadata"]),
+  operation: ScanJobOperation,
   status: ScanJobStatus,
   attempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })),
@@ -106,7 +110,7 @@ export const CreateScanJob = Schema.Struct({
   parentJobId: Schema.NullOr(Uuid),
   sourceId: Schema.NullOr(Uuid),
   dedupeKey: NonEmptyText,
-  operation: Schema.Literals(["discover", "probe", "metadata"]),
+  operation: ScanJobOperation,
   priority: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 1000 })),
   maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })),
   availableAtMs: UtcMillis,

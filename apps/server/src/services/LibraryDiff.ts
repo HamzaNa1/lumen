@@ -89,6 +89,13 @@ const identity = (file: Pick<SourceSnapshot, "device" | "inode" | "fileSizeBytes
     ? null
     : JSON.stringify([file.device, file.inode, file.fileSizeBytes]);
 
+// Pre-migration sources have no device. Preserve legacy matching only inside their
+// own readable root; the next observation records the device and ends the exception.
+const legacyIdentity = (file: Pick<SourceSnapshot, "rootId" | "inode" | "fileSizeBytes">) =>
+  file.inode === null || file.fileSizeBytes === null
+    ? null
+    : JSON.stringify(["legacy", file.rootId, file.inode, file.fileSizeBytes]);
+
 export const diff = (
   observations: ReadonlyArray<RootObservation>,
   snapshot: LibrarySnapshot,
@@ -120,7 +127,7 @@ export const diff = (
   for (const source of [...snapshot.sources].sort((a, b) =>
     a.id < b.id ? -1 : a.id > b.id ? 1 : 0,
   )) {
-    const key = identity(source);
+    const key = source.device === null ? legacyIdentity(source) : identity(source);
     if (key === null || files.has(source.absolutePath) || !canRemove(source)) continue;
     const bucket = candidates.get(key) ?? [];
     bucket.push(source);
@@ -133,7 +140,10 @@ export const diff = (
   const probes: ObservedFile[] = [];
   const stats = emptyStats();
   for (const file of files.values()) {
-    const source = byPath.get(file.absolutePath) ?? candidates.get(identity(file) ?? "")?.shift();
+    const source =
+      byPath.get(file.absolutePath) ??
+      candidates.get(identity(file) ?? "")?.shift() ??
+      candidates.get(legacyIdentity(file) ?? "")?.shift();
     const moved = source !== undefined && source.absolutePath !== file.absolutePath;
     const changed =
       source !== undefined &&

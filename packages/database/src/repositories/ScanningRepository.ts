@@ -6,6 +6,7 @@ import {
   ScanJob,
   ScanRun,
   StartScan,
+  scanJobOperations,
   Uuid,
 } from "@lumen/contracts";
 import { and, asc, desc, eq, inArray, lte, sql } from "drizzle-orm";
@@ -148,7 +149,11 @@ export const makeScanningRepository = (database: DatabaseClient) => {
   const getJob = Effect.fn("ScanningRepository.getJob")(function* (input: unknown) {
     const value = yield* boundary(EntityId, input, "scanning.getJob");
     const row = yield* guard(
-      database.select(jobSelection).from(scanJobs).where(eq(scanJobs.id, value.id)).get(),
+      database
+        .select(jobSelection)
+        .from(scanJobs)
+        .where(and(eq(scanJobs.id, value.id), inArray(scanJobs.operation, [...scanJobOperations])))
+        .get(),
       "scanning.getJob",
     );
     return yield* boundary(ScanJob, row, "scanning.getJob.result");
@@ -160,7 +165,9 @@ export const makeScanningRepository = (database: DatabaseClient) => {
       database
         .select(jobSelection)
         .from(scanJobs)
-        .where(eq(scanJobs.runId, value.runId))
+        .where(
+          and(eq(scanJobs.runId, value.runId), inArray(scanJobs.operation, [...scanJobOperations])),
+        )
         .orderBy(asc(scanJobs.availableAtMs), asc(scanJobs.id)),
       "scanning.listJobs",
     );
@@ -188,6 +195,7 @@ export const makeScanningRepository = (database: DatabaseClient) => {
               .where(
                 and(
                   eq(scanJobs.status, "queued"),
+                  inArray(scanJobs.operation, [...scanJobOperations]),
                   lte(scanJobs.availableAtMs, value.nowMs),
                   value.operations.length === 0
                     ? sql`1 = 1`

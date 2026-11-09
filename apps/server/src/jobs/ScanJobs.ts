@@ -1,3 +1,4 @@
+import type { ScanJobOperation } from "@lumen/contracts";
 import { type DatabaseClient, type DatabaseTransaction, scanJobs, scanRuns } from "@lumen/database";
 import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
 import { Effect } from "effect";
@@ -10,7 +11,6 @@ import { retryDelayMs } from "./ServerJobs";
 // with what it implies for the run, so a crash cannot leave an active run whose
 // jobs have all ended.
 
-type ScanJobOperation = "discover" | "probe" | "metadata";
 type FinishedRunStatus = "succeeded" | "failed" | "cancelled";
 
 const activeStatuses = ["queued", "running"];

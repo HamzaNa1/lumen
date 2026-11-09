@@ -447,3 +447,29 @@ test("retry after a committed discovery keeps its original statistics and probe 
     db.close();
   }
 });
+
+test("a same-root rename before device backfill preserves watch state", async ({
+  server,
+  admin,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(token, "movies", ["Film.mp4"]);
+  const item = (await server.items(token, library.id))[0];
+  await server.api(`/items/${item?.id}/watch-state`, {
+    token,
+    method: "PUT",
+    body: { positionSeconds: 7, completed: false },
+  });
+  await server.stop();
+  const db = openDatabase(server.databasePath);
+  db.exec("UPDATE media_sources SET device=NULL");
+  db.close();
+  await rename(join(library.path, "Film.mp4"), join(library.path, "Renamed.mp4"));
+  await server.start();
+  expect(await server.scan(token, library.id)).toMatchObject({
+    stats: { moved: 1, missing: 0, probesEnqueued: 0 },
+  });
+  expect(await server.api(`/items/${item?.id}`, { token })).toMatchObject({
+    watchState: { positionSeconds: 7 },
+  });
+});

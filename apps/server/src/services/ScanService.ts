@@ -1,3 +1,4 @@
+import { scanJobOperations } from "@lumen/contracts";
 import { Database, libraries, scanJobs, scanRuns } from "@lumen/database";
 import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
@@ -40,12 +41,7 @@ export const makeScanService = Effect.gen(function* () {
     return yield* database
       .select()
       .from(scanJobs)
-      .where(
-        and(
-          eq(scanJobs.runId, runId),
-          inArray(scanJobs.operation, ["discover", "probe", "metadata"]),
-        ),
-      )
+      .where(and(eq(scanJobs.runId, runId), inArray(scanJobs.operation, [...scanJobOperations])))
       .orderBy(asc(scanJobs.availableAtMs), asc(scanJobs.id));
   });
   const listRecentJobs: ScanServiceShape["listRecentJobs"] = Effect.fn("Scans.listRecentJobs")(
@@ -70,7 +66,7 @@ export const makeScanService = Effect.gen(function* () {
         .from(scanJobs)
         .innerJoin(scanRuns, eq(scanRuns.id, scanJobs.runId))
         .innerJoin(libraries, eq(libraries.id, scanRuns.libraryId))
-        .where(inArray(scanJobs.operation, ["discover", "probe", "metadata"]))
+        .where(inArray(scanJobs.operation, [...scanJobOperations]))
         .orderBy(
           desc(sql`coalesce(${scanJobs.startedAtMs}, ${scanJobs.availableAtMs})`),
           desc(scanJobs.id),
