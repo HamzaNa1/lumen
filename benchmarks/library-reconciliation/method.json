@@ -18,7 +18,7 @@
     "isolation": "Production database was only read. Migration, compaction, server startup and benchmark writes used the copy.",
     "contention": "Shared HDD was busy. Baseline isolated checks took 50-255 seconds; live prior-24h discovery jobs averaged 3.88 seconds. These are separate measurements, not interchangeable timings.",
     "afterRunsPerDay": "Zero new runs over repeated unchanged checks; zero per day is a projection for an unchanged library, not a live 24-hour deployment measurement.",
-    "migration": "Measured on the isolated copy before compaction, after two interrupted earlier aggregation attempts. A sequential read warmed the copy\u2019s page cache during the final run after prolonged small-read I/O stalls; report the total elapsed time with this intervention, not as an uninterrupted cold-cache benchmark. SQLite recovered uncommitted work before the final attempt.",
+    "migration": "Final migration uses an explicitly indexed temporary summary table. Three earlier attempts were interrupted: aggregation variants exposed cold HDD reads and a Bun SQLite plan that repeatedly scanned materialized summaries. A sequential file read warmed the copy during the earlier attempt; caches remain uncontrolled for the final run. Final statement-prepare timestamps are logged without changing SQLite execution settings.",
     "startup": "Elapsed time reported by server_listening, using the database copy and the real server process",
     "cache": "Before/after measurements use the same isolated copy before and after migration/compaction. OS cache and competing HDD activity are uncontrolled; local synthetic results are the cleaner comparison.",
     "ioPressureSample": {
@@ -26,11 +26,10 @@
       "fullAvg60Percent": 66.49,
       "kernelDiskErrorsObserved": false
     },
-    "legacyRowidHighWatermarks": {
-      "scan_runs": 95843,
-      "scan_jobs": 194584,
-      "server_scan_seen": 8499564,
-      "server_scan_missing": 111
+    "legacyHistory": {
+      "runCount": 90861,
+      "runsMissingStats": 77009,
+      "seenRowidHighWatermark": 8499564
     }
   }
 }
