@@ -76,7 +76,8 @@ export const JobLogEntry = Schema.Struct({
   libraryId: Uuid,
   libraryName: NonEmptyText,
   mode: Schema.Literals(["full", "incremental", "refresh"]),
-  operation: ScanJobOperation,
+  // Read-only history must remain readable across server versions with different operations.
+  operation: NonEmptyText,
   status: ScanJobStatus,
   attempts: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   maxAttempts: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 })),

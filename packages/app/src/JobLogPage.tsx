@@ -146,7 +146,7 @@ const RunRows = ({ run }: { readonly run: ScanRunSummary }): React.ReactElement 
               <tr className="job-detail" key={job.id}>
                 <td>
                   <span className="job-detail-name">
-                    {operationLabels[job.operation]}
+                    {operationLabels[job.operation] ?? job.operation}
                     {error === null ? null : (
                       <span className="job-error" title={error}>
                         {error}

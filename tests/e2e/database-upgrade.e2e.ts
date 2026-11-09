@@ -1,11 +1,57 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, rm } from "node:fs/promises";
+import { readFile, rm, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { listMigrations, openDatabase } from "./support/database";
 import { expect, password, repository, test } from "./support/server";
 
 const shippedMigrations = () => listMigrations(join(repository, "packages/database/drizzle"));
+
+test("manual compaction reclaims deleted pages and preserves the catalog and accounts", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const items = await server.items(admin.accessToken, library.id);
+  await server.stop();
+  const before = openDatabase(server.databasePath);
+  try {
+    before.exec(
+      "CREATE TABLE disposable(bytes BLOB); INSERT INTO disposable VALUES(zeroblob(8000000)); DROP TABLE disposable; PRAGMA wal_checkpoint(TRUNCATE)",
+    );
+    expect(Number(before.prepare("PRAGMA freelist_count").get()?.freelist_count)).toBeGreaterThan(
+      0,
+    );
+  } finally {
+    before.close();
+  }
+  const size = (await stat(server.databasePath)).size;
+  const output = execFileSync(
+    "bun",
+    ["--preload", "./tests/e2e/support/process-coverage.ts", "apps/server/src/database/compact.ts"],
+    {
+      cwd: repository,
+      env: {
+        ...process.env,
+        LUMEN_DATABASE_PATH: server.databasePath,
+        LUMEN_DATA_DIR: server.root,
+        LUMEN_LOG_FORMAT: "json",
+      },
+      encoding: "utf8",
+    },
+  );
+  expect(output).toContain('"event":"database_compacted"');
+  expect((await stat(server.databasePath)).size).toBeLessThan(size / 2);
+  const after = openDatabase(server.databasePath);
+  try {
+    expect(after.prepare("PRAGMA freelist_count").get()?.freelist_count).toBe(0);
+    expect(after.prepare("PRAGMA foreign_key_check").all()).toEqual([]);
+  } finally {
+    after.close();
+  }
+  await server.start();
+  expect(await server.items(admin.accessToken, library.id)).toEqual(items);
+});
 
 // Recreates a database left by an earlier release that had applied only the first migrations.
 const openMigratedThrough = async (path: string, through: number) => {

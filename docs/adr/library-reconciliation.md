@@ -8,9 +8,11 @@ Match absolute paths first, then unmatched files by device, inode, and size, cho
 
 A library revision fences the entire plan. Capture it with root configuration before observation, verify it again after the snapshot, and compare-and-increment it as the transaction's first write. Database triggers increment the same revision when roots are added, removed, moved, enabled, or disabled, including writes outside LibraryService. Changing library enablement also invalidates plans. Retry stale plans once; sustained contention waits for the next check. A discovery retry after commit keeps its original statistics and probe jobs.
 
-Batch inserts inside the transaction keep parameter counts bounded without sacrificing atomicity. The local 20k-file benchmark measured a 0.95-second apply and 1.25-second first import, so splitting imports across transactions is unnecessary. Keep this decision measurable with the benchmark harness; substantially larger libraries can hold the writer longer.
+Batch inserts inside the transaction keep parameter counts bounded without sacrificing atomicity. The local 20k-file benchmark measured a 0.81-second apply and 1.12-second first import, so splitting imports across transactions is unnecessary. Keep this decision measurable with the benchmark harness; substantially larger libraries can hold the writer longer.
 
 Migration backfills run statistics before dropping per-file history and cancels obsolete active discovery work while preserving probe and metadata jobs. Historical cleanup jobs remain stored for retention but are excluded from current job APIs, whose operation contract now contains discovery, probe, and metadata only. A manual `db:compact` command reclaims freed pages; startup never compacts the database.
+
+The read-only job-log response accepts operation names from other server versions, with a plain-text fallback label. Keeping this response restricted to currently executable operations breaks a new desktop connected to an older server that still returns cleanup jobs. Job creation and execution remain restricted to the current operation set.
 
 Pure diff cases run without filesystem or database access under the existing Playwright runner, alongside process tests for filesystem errors, transaction failure, leases, recovery, retention, and migration. This adds the requested unit seam without introducing a second CI test runner.
 

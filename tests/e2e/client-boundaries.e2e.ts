@@ -2,6 +2,34 @@ import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { latch, NetworkProxy } from "./support/proxy";
 import { expect, password, test } from "./support/server";
 
+test("job logs retain operations returned by older and newer servers", async ({
+  server,
+  admin,
+}) => {
+  await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const proxy = await new NetworkProxy(server.origin).start();
+  const client = new ServerClient({ origin: proxy.origin });
+  try {
+    await client.login({ username: "admin", password }, crypto.randomUUID());
+    const [job] = await client.jobLog();
+    expect(job).toBeDefined();
+    const entries = ["cleanup", "artwork", "analyze", "future-operation"].map((operation) => ({
+      ...job,
+      id: crypto.randomUUID(),
+      operation,
+    }));
+    proxy.intercept = async (request, response) => {
+      if (!request.url?.startsWith("/api/v1/admin/jobs")) return false;
+      response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify(entries));
+      return true;
+    };
+    expect(await client.jobLog()).toEqual(entries);
+  } finally {
+    client.setSession(null);
+    await proxy.close();
+  }
+});
+
 test("real clients expose retry timing without resending mutations, reject incompatible discovery and discard retired session responses", async ({
   server,
   admin,
