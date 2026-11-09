@@ -30,7 +30,8 @@
     "test:browser:server": "bun scripts/test-browser.ts server",
     "test:browser:desktop": "bun scripts/test-browser.ts desktop",
     "test:coverage": "bun scripts/e2e-coverage.ts",
-    "test:e2e": "bun scripts/test-e2e.ts source"
+    "test:e2e": "bun scripts/test-e2e.ts source",
+    "db:compact": "bun run --cwd apps/server db:compact"
   },
   "devDependencies": {
     "@babel/core": "7.29.7",

@@ -1,0 +1,9 @@
+{
+  "databaseBytes": 1759649792,
+  "runsLast24h": 2841,
+  "discoveryJobMeanMsLast24h": 3878.9594785059903,
+  "discoveryJobsLast24h": 2838,
+  "platform": "Linux x64, ext4 on /dev/sda2, shared HDD",
+  "source": "Read-only queries against live database before creating a consistent SQLite backup",
+  "productionModified": false
+}

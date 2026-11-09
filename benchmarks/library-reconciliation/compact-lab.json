@@ -1,0 +1,6 @@
+{
+  "event": "database_compacted",
+  "durationMs": 54003,
+  "beforeBytes": 1759649792,
+  "afterBytes": 139554816
+}

@@ -1,6 +1,6 @@
 {
   "name": "lumen-server",
-  "version": "0.0.35",
+  "version": "0.0.36",
   "private": true,
   "type": "module",
   "scripts": {
@@ -9,7 +9,8 @@
     "build": "bun ../../scripts/typecheck.ts --noEmit",
     "typecheck": "bun ../../scripts/typecheck.ts --noEmit",
     "test": "bun ../../scripts/test-e2e.ts server",
-    "db:migrate": "bun src/database/migrate.ts"
+    "db:migrate": "bun src/database/migrate.ts",
+    "db:compact": "bun src/database/compact.ts"
   },
   "dependencies": {
     "@effect/platform-bun": "4.0.0-beta.83",

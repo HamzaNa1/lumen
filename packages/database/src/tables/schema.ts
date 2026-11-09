@@ -165,6 +165,7 @@ export const libraries = sqliteTable(
     name: text("name").notNull(),
     slug: text("slug").notNull(),
     isEnabled: integer("is_enabled", { mode: "boolean" }).notNull().default(true),
+    scanRevision: integer("scan_revision").notNull().default(0),
     createdAtMs: createdAt(),
     updatedAtMs: updatedAt(),
   },
@@ -249,6 +250,7 @@ export const mediaSources = sqliteTable(
     kind: text("kind").notNull().default("local"),
     fileSizeBytes: integer("file_size_bytes"),
     modifiedAtMs: nullableTimestamp("modified_at_ms"),
+    device: text("device"),
     inode: text("inode"),
     contentFingerprint: text("content_fingerprint"),
     scannedAtMs: timestamp("scanned_at_ms"),
@@ -266,7 +268,7 @@ export const mediaSources = sqliteTable(
     }).onDelete("cascade"),
     uniqueIndex("media_sources_id_library_uq").on(table.id, table.libraryId),
     uniqueIndex("media_sources_absolute_path_uq").on(table.absolutePath),
-    uniqueIndex("media_sources_library_relative_path_uq").on(table.libraryId, table.relativePath),
+    uniqueIndex("media_sources_root_relative_path_uq").on(table.rootId, table.relativePath),
     index("media_sources_library_scanned_idx").on(table.libraryId, table.scannedAtMs),
     index("media_sources_fingerprint_idx").on(table.contentFingerprint),
     check("media_sources_kind_chk", sql`${table.kind} in ('local', 'smb', 'nfs', 'remote')`),
@@ -885,7 +887,6 @@ export const scanRuns = sqliteTable(
     errorMessage: text("error_message"),
     createdAtMs: createdAt(),
     stats: text("stats_json", { mode: "json" }).$type<ScanRunStats>(),
-    filesPrunedAtMs: nullableTimestamp("files_pruned_at_ms"),
     jobsPrunedAtMs: nullableTimestamp("jobs_pruned_at_ms"),
   },
   (table) => [
@@ -896,13 +897,12 @@ export const scanRuns = sqliteTable(
     }).onDelete("cascade"),
     index("scan_runs_library_created_idx").on(table.libraryId, table.createdAtMs),
     index("scan_runs_status_idx").on(table.status, table.createdAtMs),
-    index("scan_runs_files_retention_idx").on(table.filesPrunedAtMs, table.finishedAtMs, table.id),
     index("scan_runs_jobs_retention_idx")
       .on(table.jobsPrunedAtMs, table.finishedAtMs, table.id)
-      .where(sql`${table.filesPrunedAtMs} is not null and ${table.stats} is not null`),
+      .where(sql`${table.stats} is not null`),
     index("scan_runs_finished_idx")
       .on(table.finishedAtMs, table.id)
-      .where(sql`${table.filesPrunedAtMs} is not null and ${table.jobsPrunedAtMs} is not null`),
+      .where(sql`${table.jobsPrunedAtMs} is not null`),
     check("scan_runs_mode_chk", sql`${table.mode} in ('full', 'incremental', 'refresh')`),
     check(
       "scan_runs_status_chk",

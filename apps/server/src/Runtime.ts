@@ -97,7 +97,7 @@ export const makeLayers = (
     Layer.provide(Layer.mergeAll(dependencies, metadataSettings)),
   );
   const libraryWatcher = LibraryWatcherLive.pipe(
-    Layer.provide(Layer.mergeAll(dependencies, libraries)),
+    Layer.provide(Layer.mergeAll(dependencies, scanner)),
   );
   const jobs = JobServiceLiveWithConfig(config).pipe(
     Layer.provide(
@@ -121,6 +121,8 @@ export const makeLayers = (
     playback,
     events,
     jobs,
+    scanner,
+    libraryWatcher,
     scheduledJobs,
     identity,
     serverName,

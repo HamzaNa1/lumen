@@ -9,6 +9,7 @@ import {
   providerRecords,
   Repositories,
   scanJobs,
+  scanRuns,
 } from "@lumen/database";
 import { and, asc, eq, inArray, notExists, sql } from "drizzle-orm";
 import { Cause, Clock, Context, Effect, Exit, Layer, Option } from "effect";
@@ -18,11 +19,10 @@ import { newUuid } from "../core/Security";
 import { MediaIngest } from "../media/MediaIngest";
 import { TmdbProvider } from "../media/Tmdb";
 import { MetadataSettings } from "../services/MetadataSettings";
-import { cleanupJobKey, parseCleanupJobKey, Scanner } from "../services/Scanner";
+import { Scanner } from "../services/Scanner";
 import { backgroundTask, logJobOutcome } from "./JobLogging";
 import { LibraryWatcher } from "./LibraryWatcher";
 import {
-  cleanupParkedAtMs,
   completeScanJob,
   failScanJob,
   insertScanRun,
@@ -189,8 +189,6 @@ export const makeJobService = (config?: ServerConfig) =>
     });
 
     const logSettlement = (runId: string, settlement: ScanRunSettlement) => {
-      if (settlement.cleanupsCancelled > 0)
-        logger.warn("scan_cleanup_skipped", { runId, reason: "discovery_failed" });
       if (settlement.run !== null)
         logger[settlement.run.status === "failed" ? "error" : "info"]("scan_run_finished", {
           runId,
@@ -258,31 +256,15 @@ export const makeJobService = (config?: ServerConfig) =>
 
     const runScanJob = Effect.fn("JobService.runScanJob")(function* (job: ScanJob) {
       if (job.operation === "discover") {
-        const rootId = job.dedupeKey.slice("discover:".length);
-        const discovery = yield* scanner.discover(job.runId, rootId);
-        if (!discovery.complete || discovery.generation === null) {
-          logger.warn("scan_cleanup_skipped", {
-            runId: job.runId,
-            rootId,
-            reason: "discovery_incomplete",
-          });
-          return noFollowUp;
-        }
-        return {
-          ...noFollowUp,
-          jobs: [
-            {
-              parentJobId: job.id,
-              sourceId: null,
-              dedupeKey: cleanupJobKey(rootId, discovery.generation),
-              operation: "cleanup",
-              priority: 200,
-              maxAttempts: 3,
-              availableAtMs: cleanupParkedAtMs,
-            },
-          ],
-        } satisfies ScanJobFollowUp;
+        const run = yield* database
+          .select({ libraryId: scanRuns.libraryId })
+          .from(scanRuns)
+          .where(eq(scanRuns.id, job.runId))
+          .get();
+        if (run !== undefined) yield* scanner.reconcile(run.libraryId, Date.now(), job);
+        return noFollowUp;
       }
+
       if (job.operation === "probe") {
         if (job.sourceId === null) throw new Error("Job has no source");
         if (Option.isSome(ingest)) yield* ingest.value.ingest(job.sourceId);
@@ -322,12 +304,6 @@ export const makeJobService = (config?: ServerConfig) =>
       if (job.operation === "metadata") {
         if (job.sourceId === null) throw new Error("Job has no source");
         if (Option.isSome(tmdb)) yield* tmdb.value.enrichSource(job.sourceId);
-      } else if (job.operation === "cleanup") {
-        const { rootId, generation } = parseCleanupJobKey(job.dedupeKey);
-        yield* scanner.cleanup(job.runId, rootId, generation);
-      } else if (job.operation === "artwork" || job.operation === "analyze") {
-        if (job.sourceId !== null && Option.isSome(ingest))
-          yield* ingest.value.ingest(job.sourceId);
       }
       return noFollowUp;
     });

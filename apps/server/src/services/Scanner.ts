@@ -1,188 +1,64 @@
-import { readdir, stat } from "node:fs/promises";
-import { join, relative } from "node:path";
+import { lstat } from "node:fs/promises";
 import {
   catalogItemOrigins,
   catalogItemSources,
   Database,
+  libraries,
   libraryRootStates,
   libraryRoots,
   mediaSourceAvailability,
   mediaSources,
   scanJobs,
   scanRuns,
-  serverScanMissing,
-  serverScanSeen,
   streams,
 } from "@lumen/database";
-import { and, eq, exists, inArray, isNull, notExists, or } from "drizzle-orm";
+import { and, eq, exists, inArray, isNull, notExists, or, sql } from "drizzle-orm";
 import { Context, Effect, Layer } from "effect";
 import { ServerLogger } from "../core/Logger";
-import { safePath } from "../core/Paths";
 import { newUuid } from "../core/Security";
-import { purgeSources, type SourcePurgeCounts } from "./CatalogPurge";
+import { type ClaimedScanJob, insertJobs, insertScanRun } from "../jobs/ScanJobs";
+import { purgeSources } from "./CatalogPurge";
+import { diff, hasChanges, type ReconcilePlan, type ScanMode } from "./LibraryDiff";
+import { observeRoot } from "./LibraryObservation";
 
-const mediaExtensions = new Set([
-  ".3g2",
-  ".3gp",
-  ".aac",
-  ".ac3",
-  ".aif",
-  ".aiff",
-  ".alac",
-  ".ape",
-  ".asf",
-  ".avi",
-  ".divx",
-  ".dts",
-  ".f4v",
-  ".flac",
-  ".flv",
-  ".m2ts",
-  ".m2v",
-  ".m4a",
-  ".m4v",
-  ".mka",
-  ".mkv",
-  ".mov",
-  ".mp2",
-  ".mp3",
-  ".mp4",
-  ".mpeg",
-  ".mpg",
-  ".mts",
-  ".mxf",
-  ".oga",
-  ".ogg",
-  ".ogv",
-  ".opus",
-  ".rm",
-  ".rmvb",
-  ".ts",
-  ".vob",
-  ".wav",
-  ".webm",
-  ".wma",
-  ".wmv",
-]);
-
-const isMedia = (path: string): boolean =>
-  mediaExtensions.has(path.slice(path.lastIndexOf(".")).toLowerCase());
-
-const existsFile = async (path: string): Promise<boolean> => {
-  try {
-    return (await stat(path)).isFile();
-  } catch {
-    return false;
-  }
-};
-
-const walk = async function* (
-  root: string,
-  current = root,
-): AsyncGenerator<{
-  absolutePath: string;
-  relativePath: string;
-  size: number;
-  modifiedAtMs: number;
-  inode: string;
-}> {
-  const entries = await readdir(current, { withFileTypes: true });
-  for (const entry of entries) {
-    const absolutePath = join(current, entry.name);
-    const relativePath = relative(root, absolutePath);
-    if (entry.isSymbolicLink()) continue;
-    if (entry.isDirectory()) {
-      yield* walk(root, absolutePath);
-      continue;
-    }
-    if (!entry.isFile() || !isMedia(entry.name)) continue;
-    const details = await stat(absolutePath);
-    if (!details.isFile()) continue;
-    yield {
-      absolutePath,
-      relativePath,
-      size: details.size,
-      modifiedAtMs: Math.trunc(details.mtimeMs),
-      inode: String(details.ino),
-    };
-  }
-};
-
-export const scanRoot = (
-  rootPath: string,
-): AsyncGenerator<{
-  absolutePath: string;
-  relativePath: string;
-  size: number;
-  modifiedAtMs: number;
-  inode: string;
-}> => walk(rootPath);
-
-export interface DiscoveryResult {
-  readonly discovered: number;
-  // True only when every file under the root was enumerated for this generation.
-  readonly complete: boolean;
-  readonly generation: number | null;
+export interface PreparedReconciliation {
+  readonly libraryId: string;
+  readonly revision: number;
+  readonly plan: ReconcilePlan;
+  readonly sourceIds: ReadonlyMap<string, string>;
 }
 
-export type CleanupSkipReason = "discovery_incomplete" | "root_unavailable" | "superseded";
-
-export type CleanupResult =
-  | ({ readonly skipped: null } & SourcePurgeCounts)
-  | { readonly skipped: CleanupSkipReason };
-
-const cleanupKeyPrefix = "cleanup:";
-export const cleanupJobKey = (rootId: string, generation: number): string =>
-  `${cleanupKeyPrefix}${rootId}:${generation}`;
-export const parseCleanupJobKey = (
-  key: string,
-): { readonly rootId: string; readonly generation: number | null } => {
-  const [rootId = "", generation] = key.slice(cleanupKeyPrefix.length).split(":");
-  const parsed = Number(generation);
-  return {
-    rootId,
-    generation: generation !== undefined && Number.isSafeInteger(parsed) ? parsed : null,
-  };
-};
-
-type SourceChange = "new" | "changed" | "moved" | "unchanged";
-
-interface FileState {
-  readonly fileSizeBytes: number | null;
-  readonly modifiedAtMs: number | null;
-  readonly inode: string | null;
-}
-
-/** A file is changed when its size, modification time, or inode differ from the stored source. */
-const classifyChange = (
-  stored: FileState | undefined,
-  found: FileState,
-  moved: boolean,
-): SourceChange => {
-  if (stored === undefined) return "new";
-  if (
-    stored.fileSizeBytes !== found.fileSizeBytes ||
-    stored.modifiedAtMs !== found.modifiedAtMs ||
-    stored.inode !== found.inode
-  )
-    return "changed";
-  return moved ? "moved" : "unchanged";
-};
-
+type ApplyResult = "applied" | "stale" | "inactive";
 export interface ScannerShape {
-  readonly discover: (runId: string, rootId: string) => Effect.Effect<DiscoveryResult, unknown>;
-  // Deletes sources that a complete discovery of `generation` did not see.
-  readonly cleanup: (
-    runId: string,
-    rootId: string,
-    generation: number | null,
-  ) => Effect.Effect<CleanupResult, unknown>;
+  readonly prepare: (
+    libraryId: string,
+    mode: ScanMode,
+  ) => Effect.Effect<PreparedReconciliation | null, unknown>;
+  readonly apply: (
+    prepared: PreparedReconciliation,
+    nowMs: number,
+    job?: ClaimedScanJob,
+  ) => Effect.Effect<ApplyResult, unknown>;
+  readonly reconcile: (
+    libraryId: string,
+    nowMs: number,
+    job?: ClaimedScanJob,
+  ) => Effect.Effect<boolean, unknown>;
 }
+
+// Keep reappeared regular files and paths whose existence cannot be checked.
+// Symlinks and other non-files are not catalog sources.
+const stillMissing = async (path: string): Promise<boolean> => {
+  try {
+    return !(await lstat(path)).isFile();
+  } catch (cause) {
+    return ["ENOENT", "ENOTDIR"].includes((cause as NodeJS.ErrnoException).code ?? "");
+  }
+};
 
 export const makeScanner = Effect.gen(function* () {
-  const logger = (yield* ServerLogger).child({ component: "scanner" });
   const database = yield* Database;
-  // Ingest sets the fingerprint last, so a missing one means an earlier probe never completed.
+  const logger = (yield* ServerLogger).child({ component: "scanner" });
   const ingestIncomplete = or(
     isNull(mediaSources.contentFingerprint),
     notExists(
@@ -199,321 +75,301 @@ export const makeScanner = Effect.gen(function* () {
     ),
   );
 
-  const discover: ScannerShape["discover"] = Effect.fn("Scanner.discover")(
-    function* (runId, rootId) {
-      const root = yield* database
-        .select({ path: libraryRoots.path, libraryId: libraryRoots.libraryId })
-        .from(libraryRoots)
-        .where(and(eq(libraryRoots.id, rootId), eq(libraryRoots.isEnabled, true)))
-        .get();
-      const incomplete = { discovered: 0, complete: false, generation: null };
-      if (root == null) return incomplete;
-      const state = yield* database
-        .select({ generation: libraryRootStates.scanGeneration })
-        .from(libraryRootStates)
-        .where(eq(libraryRootStates.rootId, rootId))
-        .get();
-      if (state == null) return incomplete;
-      const run = yield* database
-        .select({ mode: scanRuns.mode })
-        .from(scanRuns)
-        .where(eq(scanRuns.id, runId))
-        .get();
-      const probeAll = run?.mode !== "incremental";
-      let count = 0;
-      const files = yield* Effect.tryPromise(() => Array.fromAsync(scanRoot(root.path))).pipe(
-        Effect.tapError(() =>
-          database
-            .update(libraryRootStates)
-            .set({
-              isAvailable: false,
-              unavailableReason: "UNAVAILABLE",
-              updatedAtMs: Date.now(),
-            })
-            .where(eq(libraryRootStates.rootId, rootId)),
-        ),
-      );
-      if (files.length === 0) {
-        // An unmounted volume usually reads as an empty directory. Absence is
-        // not confirmed, so keep the catalog rather than purging the root.
-        // Any remaining entry (folders, sidecars) shows the root is mounted.
-        const indexed = yield* database
-          .select({ id: mediaSources.id })
-          .from(mediaSources)
-          .where(eq(mediaSources.rootId, rootId))
-          .limit(1)
-          .get();
-        const entries = indexed == null ? [] : yield* Effect.tryPromise(() => readdir(root.path));
-        if (indexed != null && entries.length === 0) {
-          yield* database
-            .update(libraryRootStates)
-            .set({ isAvailable: false, unavailableReason: "EMPTY", updatedAtMs: Date.now() })
-            .where(eq(libraryRootStates.rootId, rootId));
-          return { discovered: 0, complete: false, generation: state.generation };
-        }
-      }
-      const availableAtMs = Date.now();
-      yield* database
-        .update(libraryRootStates)
-        .set({
-          isAvailable: true,
-          unavailableReason: null,
-          lastSeenAtMs: availableAtMs,
-          updatedAtMs: availableAtMs,
-        })
-        .where(eq(libraryRootStates.rootId, rootId));
-      for (const file of files) {
-        const current = yield* database
-          .select({ generation: libraryRootStates.scanGeneration })
-          .from(libraryRootStates)
-          .where(eq(libraryRootStates.rootId, rootId))
-          .get();
-        if (current == null || current.generation !== state.generation)
-          return { discovered: count, complete: false, generation: state.generation };
-        const target = yield* safePath(root.path, file.relativePath);
-        const recorded = yield* database.transaction((transaction) =>
-          Effect.gen(function* () {
-            const sourceSelection = {
-              id: mediaSources.id,
-              absolutePath: mediaSources.absolutePath,
-              fileSizeBytes: mediaSources.fileSizeBytes,
-              modifiedAtMs: mediaSources.modifiedAtMs,
-              inode: mediaSources.inode,
-            };
-            let existing = yield* transaction
-              .select(sourceSelection)
-              .from(mediaSources)
-              .where(eq(mediaSources.absolutePath, target))
-              .get();
-            let moved = false;
-            if (existing == null) {
-              const candidates = yield* transaction
-                .select(sourceSelection)
-                .from(mediaSources)
-                .where(
-                  and(
-                    eq(mediaSources.libraryId, root.libraryId),
-                    eq(mediaSources.inode, file.inode),
-                    eq(mediaSources.fileSizeBytes, file.size),
-                    notExists(
-                      transaction
-                        .select({ value: serverScanSeen.sourceId })
-                        .from(serverScanSeen)
-                        .where(
-                          and(
-                            eq(serverScanSeen.runId, runId),
-                            eq(serverScanSeen.sourceId, mediaSources.id),
-                          ),
-                        ),
-                    ),
-                  ),
-                );
-              for (const candidate of candidates) {
-                if (!(yield* Effect.promise(() => existsFile(candidate.absolutePath)))) {
-                  existing = candidate;
-                  moved = true;
-                  break;
-                }
-              }
-            } else {
-              // A retried discovery must not reclassify a file this run already recorded.
-              const seen = yield* transaction
-                .select({ value: serverScanSeen.sourceId })
-                .from(serverScanSeen)
-                .where(
-                  and(eq(serverScanSeen.runId, runId), eq(serverScanSeen.sourceId, existing.id)),
-                )
-                .get();
-              if (seen != null) return false;
-            }
-            const sourceId = existing?.id ?? newUuid();
-            const change = classifyChange(
-              existing,
-              { fileSizeBytes: file.size, modifiedAtMs: file.modifiedAtMs, inode: file.inode },
-              moved,
-            );
-            // Unchanged media is re-probed only when an earlier ingest never completed.
-            const needsProbe =
-              probeAll ||
-              change === "new" ||
-              change === "changed" ||
-              (yield* transaction
-                .select({ id: mediaSources.id })
-                .from(mediaSources)
-                .where(and(eq(mediaSources.id, sourceId), ingestIncomplete))
-                .get()) != null;
-            if (existing == null) {
-              yield* transaction.insert(mediaSources).values({
-                id: sourceId,
-                libraryId: root.libraryId,
-                rootId,
-                relativePath: file.relativePath,
-                absolutePath: target,
-                kind: "local",
-                fileSizeBytes: file.size,
-                modifiedAtMs: file.modifiedAtMs,
-                inode: file.inode,
-                contentFingerprint: null,
-                scannedAtMs: Date.now(),
-              });
-            } else {
-              yield* transaction
-                .update(mediaSources)
-                .set({
-                  rootId,
-                  relativePath: file.relativePath,
-                  absolutePath: target,
-                  fileSizeBytes: file.size,
-                  modifiedAtMs: file.modifiedAtMs,
-                  inode: file.inode,
-                  // A changed file stays incomplete until its new probe succeeds.
-                  ...(change === "changed" ? { contentFingerprint: null } : {}),
-                  scannedAtMs: Date.now(),
-                })
-                .where(eq(mediaSources.id, sourceId));
-            }
-            if (moved) {
-              // Release the old path so a new file there can claim its own origin.
-              yield* transaction
-                .update(catalogItemOrigins)
-                .set({ rootId, relativePath: file.relativePath })
-                .where(
-                  inArray(
-                    catalogItemOrigins.itemId,
-                    transaction
-                      .select({ itemId: catalogItemSources.itemId })
-                      .from(catalogItemSources)
-                      .where(eq(catalogItemSources.sourceId, sourceId)),
-                  ),
-                );
-              // An earlier root's cleanup in this run may have recorded a move source as missing.
-              yield* transaction
-                .delete(serverScanMissing)
-                .where(
-                  and(eq(serverScanMissing.runId, runId), eq(serverScanMissing.sourceId, sourceId)),
-                );
-            }
-            const seenAtMs = Date.now();
-            yield* transaction
-              .insert(mediaSourceAvailability)
-              .values({
-                sourceId,
-                isAvailable: true,
-                lastSeenAtMs: seenAtMs,
-                missingSinceMs: null,
-                updatedAtMs: seenAtMs,
-              })
-              .onConflictDoUpdate({
-                target: mediaSourceAvailability.sourceId,
-                set: {
-                  isAvailable: true,
-                  lastSeenAtMs: seenAtMs,
-                  missingSinceMs: null,
-                  updatedAtMs: seenAtMs,
-                },
-              });
-            yield* transaction.insert(serverScanSeen).values({ runId, sourceId, seenAtMs, change });
-            if (needsProbe)
-              yield* transaction
-                .insert(scanJobs)
-                .values({
-                  id: newUuid(),
-                  runId,
-                  parentJobId: null,
-                  sourceId,
-                  dedupeKey: `probe:${sourceId}`,
-                  operation: "probe",
-                  status: "queued",
-                  priority: 500,
-                  attempts: 0,
-                  maxAttempts: 5,
-                  availableAtMs: seenAtMs,
-                })
-                .onConflictDoNothing();
-            return true;
-          }),
-        );
-        if (!recorded) continue;
-        count += 1;
-      }
-      return { discovered: count, complete: true, generation: state.generation };
-    },
-  );
-
-  const cleanup: ScannerShape["cleanup"] = Effect.fn("Scanner.cleanup")(
-    function* (runId, rootId, generation) {
-      const result: CleanupResult = yield* database.transaction((transaction) =>
+  const prepare: ScannerShape["prepare"] = Effect.fn("Scanner.prepare")(
+    function* (libraryId, mode) {
+      // Capture the root configuration before walking; a change during observation invalidates it.
+      const configuration = yield* database.transaction((transaction) =>
         Effect.gen(function* () {
-          if (generation === null) return { skipped: "discovery_incomplete" } as const;
-          const root = yield* transaction
+          const library = yield* transaction
+            .select({ revision: libraries.scanRevision })
+            .from(libraries)
+            .where(and(eq(libraries.id, libraryId), eq(libraries.isEnabled, true)))
+            .get();
+          if (library === undefined) return null;
+          const roots = yield* transaction
             .select({
-              isEnabled: libraryRoots.isEnabled,
+              id: libraryRoots.id,
+              path: libraryRoots.path,
               isAvailable: libraryRootStates.isAvailable,
-              generation: libraryRootStates.scanGeneration,
+              unavailableReason: libraryRootStates.unavailableReason,
             })
             .from(libraryRoots)
             .innerJoin(libraryRootStates, eq(libraryRootStates.rootId, libraryRoots.id))
-            .where(eq(libraryRoots.id, rootId))
+            .where(and(eq(libraryRoots.libraryId, libraryId), eq(libraryRoots.isEnabled, true)));
+          return { ...library, roots };
+        }),
+      );
+      if (configuration === null) return null;
+      const observations = yield* Effect.tryPromise(() =>
+        Promise.all(
+          configuration.roots.map((root) =>
+            observeRoot(root, (path, cause) =>
+              logger.warn("scan_path_unreadable", { libraryId, path }, cause),
+            ),
+          ),
+        ),
+      );
+      const snapshot = yield* database.transaction((transaction) =>
+        Effect.gen(function* () {
+          const library = yield* transaction
+            .select({ revision: libraries.scanRevision })
+            .from(libraries)
+            .where(eq(libraries.id, libraryId))
             .get();
-          if (root == null || !root.isEnabled || !root.isAvailable)
-            return { skipped: "root_unavailable" } as const;
-          if (root.generation !== generation) return { skipped: "superseded" } as const;
-          const removed = yield* transaction
-            .select({ id: mediaSources.id, isAvailable: mediaSourceAvailability.isAvailable })
+          const sources = yield* transaction
+            .select({
+              id: mediaSources.id,
+              rootId: mediaSources.rootId,
+              absolutePath: mediaSources.absolutePath,
+              relativePath: mediaSources.relativePath,
+              fileSizeBytes: mediaSources.fileSizeBytes,
+              modifiedAtMs: mediaSources.modifiedAtMs,
+              inode: mediaSources.inode,
+              device: mediaSources.device,
+              isAvailable: mediaSourceAvailability.isAvailable,
+            })
             .from(mediaSources)
             .leftJoin(
               mediaSourceAvailability,
               eq(mediaSourceAvailability.sourceId, mediaSources.id),
             )
-            .where(
-              and(
-                eq(mediaSources.rootId, rootId),
-                notExists(
-                  transaction
-                    .select({ value: serverScanSeen.sourceId })
-                    .from(serverScanSeen)
-                    .where(
-                      and(
-                        eq(serverScanSeen.runId, runId),
-                        eq(serverScanSeen.sourceId, mediaSources.id),
-                      ),
-                    ),
-                ),
-              ),
-            );
-          // Keep per-run missing statistics after the sources themselves are deleted.
-          // Older scans already counted unavailable tombstones as missing.
-          const missing = removed.filter((source) => source.isAvailable !== false);
-          const missingAtMs = Date.now();
-          for (let offset = 0; offset < missing.length; offset += 500) {
-            yield* transaction
-              .insert(serverScanMissing)
-              .values(
-                missing.slice(offset, offset + 500).map((source) => ({
-                  runId,
-                  sourceId: source.id,
-                  missingAtMs,
-                })),
-              )
-              .onConflictDoNothing();
-          }
-          const counts = yield* purgeSources(
-            transaction,
-            removed.map((source) => source.id),
-          );
-          return { skipped: null, ...counts };
+            .where(eq(mediaSources.libraryId, libraryId));
+          const incomplete = yield* transaction
+            .select({ id: mediaSources.id })
+            .from(mediaSources)
+            .where(and(eq(mediaSources.libraryId, libraryId), ingestIncomplete));
+          return {
+            revision: library?.revision,
+            sources,
+            incomplete: new Set(incomplete.map((source) => source.id)),
+            roots: configuration.roots,
+          };
         }),
       );
-      if (result.skipped === null)
-        logger.info("scan_cleanup_completed", { runId, rootId, ...result });
-      else logger.warn("scan_cleanup_skipped", { runId, rootId, reason: result.skipped });
-      return result;
+      // Keep the old revision so apply rejects a snapshot from a newer root configuration.
+      const plan = diff(observations, snapshot, mode);
+      const sourceIds = new Map(snapshot.sources.map((source) => [source.absolutePath, source.id]));
+      for (const move of plan.moves) sourceIds.set(move.file.absolutePath, move.source.id);
+      for (const file of plan.inserts) sourceIds.set(file.absolutePath, newUuid());
+      return { libraryId, revision: configuration.revision, plan, sourceIds };
     },
   );
 
-  return { discover, cleanup };
+  const apply: ScannerShape["apply"] = Effect.fn("Scanner.apply")(function* (prepared, nowMs, job) {
+    const { libraryId, revision, plan, sourceIds } = prepared;
+    return yield* database
+      .transaction((transaction) =>
+        Effect.gen(function* () {
+          // The first write obtains SQLite's write lock and fences every following mutation.
+          const [updated] = yield* transaction
+            .update(libraries)
+            .set({ scanRevision: sql`${libraries.scanRevision} + 1` })
+            .where(
+              and(
+                eq(libraries.id, libraryId),
+                eq(libraries.scanRevision, revision),
+                eq(libraries.isEnabled, true),
+              ),
+            )
+            .returning({ id: libraries.id });
+          if (updated === undefined) return "stale" as const;
+          if (job !== undefined) {
+            const owned = yield* transaction
+              .select({ id: scanJobs.id })
+              .from(scanJobs)
+              .where(
+                and(
+                  eq(scanJobs.id, job.id),
+                  eq(scanJobs.status, "running"),
+                  eq(scanJobs.lockedBy, job.lockedBy ?? ""),
+                ),
+              )
+              .get();
+            if (owned === undefined) return yield* Effect.fail(new Error("Discovery lease lost"));
+          } else {
+            const active = yield* transaction
+              .select({ id: scanRuns.id })
+              .from(scanRuns)
+              .where(
+                and(
+                  eq(scanRuns.libraryId, libraryId),
+                  inArray(scanRuns.status, ["queued", "running"]),
+                ),
+              )
+              .get();
+            if (active !== undefined) return yield* Effect.fail(new ActiveScan());
+          }
+          const runId = job?.runId ?? newUuid();
+          if (job === undefined) {
+            yield* insertScanRun(
+              transaction,
+              { runId, libraryId, mode: "incremental", jobs: [] },
+              nowMs,
+            );
+            yield* transaction.insert(scanJobs).values({
+              id: newUuid(),
+              runId,
+              dedupeKey: `discover:${libraryId}`,
+              operation: "discover",
+              status: "succeeded",
+              availableAtMs: nowMs,
+              startedAtMs: nowMs,
+              finishedAtMs: nowMs,
+              attempts: 1,
+            });
+          }
+          for (let offset = 0; offset < plan.inserts.length; offset += 250) {
+            const batch = plan.inserts.slice(offset, offset + 250);
+            yield* transaction.insert(mediaSources).values(
+              batch.map((file) => ({
+                ...file,
+                id: sourceIds.get(file.absolutePath) as string,
+                libraryId,
+                kind: "local",
+                scannedAtMs: nowMs,
+              })),
+            );
+          }
+          for (const { source, file, changed } of plan.updates) {
+            yield* transaction
+              .update(mediaSources)
+              .set({
+                ...file,
+                ...(changed ? { contentFingerprint: null } : {}),
+                scannedAtMs: nowMs,
+              })
+              .where(eq(mediaSources.id, source.id));
+          }
+          for (const { source, file } of plan.moves) {
+            yield* transaction
+              .update(catalogItemOrigins)
+              .set({ rootId: file.rootId, relativePath: file.relativePath })
+              .where(
+                inArray(
+                  catalogItemOrigins.itemId,
+                  transaction
+                    .select({ itemId: catalogItemSources.itemId })
+                    .from(catalogItemSources)
+                    .where(eq(catalogItemSources.sourceId, source.id)),
+                ),
+              );
+          }
+          const available = [...plan.inserts, ...plan.updates.map((update) => update.file)];
+          for (let offset = 0; offset < available.length; offset += 250) {
+            yield* transaction
+              .insert(mediaSourceAvailability)
+              .values(
+                available.slice(offset, offset + 250).map((file) => ({
+                  sourceId: sourceIds.get(file.absolutePath) as string,
+                  isAvailable: true,
+                  lastSeenAtMs: nowMs,
+                  missingSinceMs: null,
+                  updatedAtMs: nowMs,
+                })),
+              )
+              .onConflictDoUpdate({
+                target: mediaSourceAvailability.sourceId,
+                set: {
+                  isAvailable: true,
+                  lastSeenAtMs: nowMs,
+                  missingSinceMs: null,
+                  updatedAtMs: nowMs,
+                },
+              });
+          }
+          for (const root of plan.availability)
+            yield* transaction
+              .update(libraryRootStates)
+              .set({
+                isAvailable: root.reason === null,
+                unavailableReason: root.reason,
+                ...(root.reason === null ? { lastSeenAtMs: nowMs } : {}),
+                updatedAtMs: nowMs,
+              })
+              .where(eq(libraryRootStates.rootId, root.rootId));
+          yield* insertJobs(
+            transaction,
+            runId,
+            plan.probes.map((file) => {
+              const sourceId = sourceIds.get(file.absolutePath) as string;
+              return {
+                sourceId,
+                dedupeKey: `probe:${sourceId}`,
+                operation: "probe",
+                priority: 500,
+                maxAttempts: 5,
+              };
+            }),
+            nowMs,
+          );
+          const missing = [];
+          for (const source of plan.missing)
+            if (yield* Effect.promise(() => stillMissing(source.absolutePath)))
+              missing.push(source);
+          yield* purgeSources(
+            transaction,
+            missing.map((source) => source.id),
+          );
+          yield* transaction
+            .update(scanRuns)
+            .set({
+              stats: {
+                ...plan.stats,
+                missing: missing.filter((source) => source.isAvailable !== false).length,
+              },
+            })
+            .where(and(eq(scanRuns.id, runId), isNull(scanRuns.stats)));
+          if (job === undefined && plan.probes.length === 0)
+            yield* transaction
+              .update(scanRuns)
+              .set({ status: "succeeded", finishedAtMs: nowMs })
+              .where(eq(scanRuns.id, runId));
+          return "applied" as const;
+        }),
+      )
+      .pipe(
+        Effect.catchIf(
+          (cause) => cause instanceof ActiveScan,
+          () => Effect.succeed("inactive" as const),
+        ),
+      );
+  });
+
+  const reconcile: ScannerShape["reconcile"] = Effect.fn("Scanner.reconcile")(
+    function* (libraryId, nowMs, job) {
+      const run =
+        job === undefined
+          ? undefined
+          : yield* database
+              .select({ mode: scanRuns.mode, stats: scanRuns.stats })
+              .from(scanRuns)
+              .where(eq(scanRuns.id, job.runId))
+              .get();
+      // A crash after commit but before job completion must not repeat a full scan or replace its stats.
+      if (run?.stats != null) return false;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const prepared = yield* prepare(libraryId, {
+          mode: run?.mode === "full" ? "full" : "incremental",
+          userInitiated: job !== undefined,
+        });
+        if (prepared === null) return false;
+        const current = yield* database
+          .select({ revision: libraries.scanRevision })
+          .from(libraries)
+          .where(eq(libraries.id, libraryId))
+          .get();
+        if (current?.revision !== prepared.revision) continue;
+        if (job === undefined && !hasChanges(prepared.plan)) return false;
+        const result = yield* apply(prepared, nowMs, job);
+        if (result !== "stale") return result === "applied";
+      }
+      logger.warn("scan_plan_stale", { libraryId });
+      return false;
+    },
+  );
+  return { prepare, apply, reconcile };
 });
 
+class ActiveScan extends Error {}
 export class Scanner extends Context.Service<Scanner, ScannerShape>()("@lumen/server/Scanner") {}
-
 export const ScannerLive = Layer.effect(Scanner, makeScanner);

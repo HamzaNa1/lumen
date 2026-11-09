@@ -36,14 +36,11 @@ const modeLabels: Record<JobLogEntry["mode"], string> = {
   refresh: "Metadata refresh",
 };
 
-const operationLabels: Record<JobLogEntry["operation"], string> = {
-  discover: "Discover files",
-  probe: "Read media info",
-  artwork: "Fetch artwork",
-  metadata: "Fetch metadata",
-  analyze: "Analyze",
-  cleanup: "Clean up",
-};
+const operationLabels = new Map([
+  ["discover", "Discover files"],
+  ["probe", "Read media info"],
+  ["metadata", "Fetch metadata"],
+]);
 
 const runStatus = (jobs: ReadonlyArray<JobLogEntry>): RunStatus => {
   if (jobs.some((job) => job.status === "running")) return "running";
@@ -149,7 +146,7 @@ const RunRows = ({ run }: { readonly run: ScanRunSummary }): React.ReactElement 
               <tr className="job-detail" key={job.id}>
                 <td>
                   <span className="job-detail-name">
-                    {operationLabels[job.operation]}
+                    {operationLabels.get(job.operation) ?? job.operation}
                     {error === null ? null : (
                       <span className="job-error" title={error}>
                         {error}

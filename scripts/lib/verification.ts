@@ -10,6 +10,7 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "client-boundaries.e2e.ts": { runtime: "api", products: ["server", "desktop"] },
   "authentication.e2e.ts": { runtime: "api", products: ["server"] },
   "home-music.e2e.ts": { runtime: "api", products: ["server"] },
+  "library-diff.e2e.ts": { runtime: "api", products: ["server"] },
   "catalog.e2e.ts": { runtime: "api", products: ["server"] },
   "catalog-metadata.e2e.ts": { runtime: "api", products: ["server"] },
   "database-storage.e2e.ts": { runtime: "api", products: ["server"] },

@@ -1,14 +1,6 @@
-import {
-  type DatabaseClient,
-  type DatabaseTransaction,
-  scanJobs,
-  scanRuns,
-  serverScanMissing,
-  serverScanSeen,
-} from "@lumen/database";
+import { type DatabaseClient, type DatabaseTransaction, scanJobs, scanRuns } from "@lumen/database";
 import { and, asc, eq, inArray, isNotNull, isNull, lte, sql } from "drizzle-orm";
 import { Effect } from "effect";
-import { scanRunStats } from "../services/ScanStatistics";
 
 const dayMs = 24 * 60 * 60 * 1_000;
 const jobRetentionMs = 7 * dayMs;
@@ -26,37 +18,6 @@ const settled = () =>
       and ${scanJobs.status} in ('queued', 'running'))`,
   );
 
-const pruneFiles = (transaction: DatabaseTransaction, nowMs: number) =>
-  Effect.gen(function* () {
-    const [run] = yield* transaction
-      .select({ id: scanRuns.id, stats: scanRuns.stats })
-      .from(scanRuns)
-      .where(and(settled(), isNull(scanRuns.filesPrunedAtMs), lte(scanRuns.finishedAtMs, nowMs)))
-      .orderBy(asc(scanRuns.finishedAtMs), asc(scanRuns.id))
-      .limit(1);
-    if (run === undefined) return 0;
-    // Legacy terminal runs acquire their snapshot before the first detail is removed.
-    if (run.stats === null) {
-      const stats = yield* scanRunStats(transaction, run.id);
-      yield* transaction.update(scanRuns).set({ stats }).where(eq(scanRuns.id, run.id));
-    }
-    let removed = 0;
-    for (const table of [serverScanSeen, serverScanMissing]) {
-      const rows = yield* transaction.all(sql`
-        delete from ${table} where rowid in (
-          select rowid from ${table} where ${table.runId} = ${run.id} limit ${batchSize - removed}
-        ) returning rowid`);
-      removed += rows.length;
-    }
-    if (removed < batchSize) {
-      yield* transaction
-        .update(scanRuns)
-        .set({ filesPrunedAtMs: nowMs })
-        .where(eq(scanRuns.id, run.id));
-    }
-    return 1;
-  });
-
 const pruneJobs = (transaction: DatabaseTransaction, nowMs: number) =>
   Effect.gen(function* () {
     const [run] = yield* transaction
@@ -66,7 +27,6 @@ const pruneJobs = (transaction: DatabaseTransaction, nowMs: number) =>
         and(
           settled(),
           isNotNull(scanRuns.stats),
-          isNotNull(scanRuns.filesPrunedAtMs),
           isNull(scanRuns.jobsPrunedAtMs),
           lte(scanRuns.finishedAtMs, nowMs - jobRetentionMs),
         ),
@@ -105,12 +65,9 @@ const pruneRuns = (transaction: DatabaseTransaction, nowMs: number) =>
         and(
           settled(),
           isNotNull(scanRuns.stats),
-          isNotNull(scanRuns.filesPrunedAtMs),
           isNotNull(scanRuns.jobsPrunedAtMs),
           lte(scanRuns.finishedAtMs, nowMs - runRetentionMs),
           sql`not exists (select 1 from ${scanJobs} where ${scanJobs.runId} = ${scanRuns.id})`,
-          sql`not exists (select 1 from ${serverScanSeen} where ${serverScanSeen.runId} = ${scanRuns.id})`,
-          sql`not exists (select 1 from ${serverScanMissing} where ${serverScanMissing.runId} = ${scanRuns.id})`,
         ),
       )
       .orderBy(asc(scanRuns.finishedAtMs), asc(scanRuns.id))
@@ -132,10 +89,10 @@ export const pruneScanHistory = Effect.fn("ScanHistory.prune")(function* (
 ) {
   const deadline = performance.now() + 1_000;
   let batches = 0;
-  // Rotate phases so a large legacy file backlog does not starve job/run retention.
+  // Rotate phases so a large job backlog does not starve run retention.
   for (let pass = 0; pass < 100; pass += 1) {
     let progressed = false;
-    for (const prune of [pruneFiles, pruneJobs, pruneRuns]) {
+    for (const prune of [pruneJobs, pruneRuns]) {
       const count = yield* database.transaction((transaction) => prune(transaction, nowMs));
       progressed ||= count > 0;
       batches += 1;

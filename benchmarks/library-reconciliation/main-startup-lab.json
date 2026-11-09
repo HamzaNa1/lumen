@@ -1,0 +1,37 @@
+{
+  "implementation": "main",
+  "events": [
+    {
+      "event": "server_starting"
+    },
+    {
+      "event": "server_services_initializing"
+    },
+    {
+      "event": "database_open_started"
+    },
+    {
+      "event": "database_open_completed",
+      "durationMs": 118
+    },
+    {
+      "event": "database_migrations_started"
+    },
+    {
+      "event": "database_migrations_completed",
+      "durationMs": 1430,
+      "applied": 0
+    },
+    {
+      "event": "database_foreign_key_check_skipped"
+    },
+    {
+      "event": "server_services_initialized",
+      "durationMs": 1968
+    },
+    {
+      "event": "server_listening",
+      "durationMs": 3608
+    }
+  ]
+}

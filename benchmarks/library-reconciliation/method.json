@@ -1,0 +1,40 @@
+{
+  "baselineCommit": "6d80f06",
+  "runtime": "Bun 1.4.4",
+  "synthetic": {
+    "files": 20000,
+    "platform": "macOS arm64",
+    "scope": "Filesystem observation and durable source/availability/job writes; decoder work excluded",
+    "samples": 4,
+    "noOpSummary": "Median of four checks",
+    "baselineCheck": "Watcher enqueue plus discovery and cleanup, including final job/run settlement",
+    "branchCheck": "LibraryWatcher.check directly"
+  },
+  "lab": {
+    "platform": "Linux x64, ext4 /dev/sda2 shared HDD",
+    "libraries": 2,
+    "data": "A consistent SQLite backup of the live database; root paths remapped from container mount paths to the same host media",
+    "isolation": "Production database was only read. Migration, compaction, server startup and benchmark writes used the copy.",
+    "contention": "Shared HDD was busy. Baseline isolated checks took 50-255 seconds; live prior-24h discovery jobs averaged 3.88 seconds. These are separate measurements, not interchangeable timings.",
+    "afterRunsPerDay": "Zero new runs over repeated unchanged checks; zero per day is a projection for an unchanged library, not a live 24-hour deployment measurement.",
+    "migration": "Final migration uses an explicitly indexed temporary summary table. Three earlier attempts were interrupted: aggregation variants exposed cold HDD reads and a Bun SQLite plan that repeatedly scanned materialized summaries. A sequential file read warmed the copy during the earlier attempt; caches remain uncontrolled for the final run. Final statement-prepare timestamps are logged without changing SQLite execution settings.",
+    "startup": "Elapsed time reported by server_listening, using the database copy and the real server process",
+    "cache": "Before/after measurements use the same isolated copy before and after migration/compaction. OS cache and competing HDD activity are uncontrolled; local synthetic results are the cleaner comparison.",
+    "ioPressureSample": {
+      "someAvg60Percent": 77.73,
+      "fullAvg60Percent": 66.49,
+      "kernelDiskErrorsObserved": false
+    },
+    "legacyHistory": {
+      "runCount": 90861,
+      "runsMissingStats": 77009,
+      "seenRowidHighWatermark": 8499564
+    },
+    "sourcesAtLiveBaseline": 160,
+    "sourcesAfterProof": 195,
+    "media": "The copied database references real media on the host. The filesystem remained live during the exercise; live baseline and final source counts differ, so this is not a controlled identical-file workload.",
+    "noOpSummary": "Median of the final three checks for each implementation, excluding the first warm-up. Branch warm-up records device values and reconciles filesystem changes; later checks write nothing.",
+    "finalMigration": "17 min 35.231 s, followed by a successful 35.251 s foreign-key check. Summary aggregation took 407.758 s, indexed run updates 15.528 s, and dropping the seen table 607.259 s. Statement timings include preparation until the next statement is prepared.",
+    "compaction": "Manual VACUUM took 54.003 s and reduced 1,759,649,792 bytes to 139,554,816 bytes. The final proof copy is 139,915,264 bytes after reconciliation. Run/job history remains; the result is about 140 MB, above the initial tens-of-MB estimate."
+  }
+}
