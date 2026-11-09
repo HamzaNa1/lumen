@@ -12,7 +12,7 @@ import {
   scanRuns,
   serverLibraryWatchState,
 } from "@lumen/database";
-import { and, asc, count, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
 import { mapRepositoryError } from "../core/Cause";
@@ -222,7 +222,6 @@ export const makeLibraryService = Effect.gen(function* () {
             canonicalPath: rootPath,
             canonicalKey,
             isAvailable: true,
-            scanGeneration: 0,
             updatedAtMs: nowMs,
           });
           if (created === undefined)
@@ -326,28 +325,21 @@ export const makeLibraryService = Effect.gen(function* () {
           .get();
         if (active != null) return yield* conflict("Library scan is already running");
 
-        for (const root of enabledRoots) {
-          yield* transaction
-            .update(libraryRootStates)
-            .set({
-              scanGeneration: sql`${libraryRootStates.scanGeneration} + 1`,
-              updatedAtMs: nowMs,
-            })
-            .where(eq(libraryRootStates.rootId, root.id));
-        }
         yield* insertScanRun(
           transaction,
           {
             runId,
             libraryId: input.libraryId,
             mode: input.mode,
-            jobs: enabledRoots.map((root) => ({
-              sourceId: null,
-              dedupeKey: `discover:${root.id}`,
-              operation: "discover",
-              priority: 100,
-              maxAttempts: 3,
-            })),
+            jobs: [
+              {
+                sourceId: null,
+                dedupeKey: `discover:${input.libraryId}`,
+                operation: "discover",
+                priority: 100,
+                maxAttempts: 3,
+              },
+            ],
           },
           nowMs,
         );

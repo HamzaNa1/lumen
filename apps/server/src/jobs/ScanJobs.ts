@@ -1,5 +1,5 @@
 import { type DatabaseClient, type DatabaseTransaction, scanJobs, scanRuns } from "@lumen/database";
-import { and, asc, count, eq, inArray, isNotNull, lt, notExists, or, sql } from "drizzle-orm";
+import { and, asc, count, eq, inArray, isNotNull, lt, notExists, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { newUuid } from "../core/Security";
 import { scanRunStats } from "../services/ScanStatistics";
@@ -10,10 +10,7 @@ import { retryDelayMs } from "./ServerJobs";
 // with what it implies for the run, so a crash cannot leave an active run whose
 // jobs have all ended.
 
-// Cleanup jobs wait at this availability until settleCleanups releases them.
-export const cleanupParkedAtMs = Number.MAX_SAFE_INTEGER;
-
-type ScanJobOperation = "discover" | "probe" | "artwork" | "metadata" | "analyze" | "cleanup";
+type ScanJobOperation = "discover" | "probe" | "metadata";
 type FinishedRunStatus = "succeeded" | "failed" | "cancelled";
 
 const activeStatuses = ["queued", "running"];
@@ -61,8 +58,6 @@ export interface FinishedScanRun {
 }
 
 export interface ScanRunSettlement {
-  /** Parked cleanups cancelled because a discovery in the run failed. */
-  readonly cleanupsCancelled: number;
   /** The run, when this settlement ended it. */
   readonly run: FinishedScanRun | null;
 }
@@ -72,10 +67,10 @@ export interface ScanJobSettlement extends ScanRunSettlement {
   readonly owned: boolean;
 }
 
-const unsettled: ScanRunSettlement = { cleanupsCancelled: 0, run: null };
+const unsettled: ScanRunSettlement = { run: null };
 const notOwned: ScanJobSettlement = { owned: false, ...unsettled };
 
-const insertJobs = Effect.fn("ScanJobs.insertJobs")(function* (
+export const insertJobs = Effect.fn("ScanJobs.insertJobs")(function* (
   transaction: DatabaseTransaction,
   runId: string,
   jobs: ReadonlyArray<NewScanJob>,
@@ -116,37 +111,6 @@ export const insertScanRun = Effect.fn("ScanJobs.insertRun")(function* (
     createdAtMs: nowMs,
   });
   yield* insertJobs(transaction, run.runId, run.jobs, nowMs);
-});
-
-// A source moved between roots is only matched once the destination root is
-// discovered, so cleanups stay parked until every discovery in the run ends.
-// If any discovery failed, a moved source may be unmatched: delete nothing.
-const settleCleanups = Effect.fn("ScanJobs.settleCleanups")(function* (
-  transaction: DatabaseTransaction,
-  runId: string,
-  nowMs: number,
-) {
-  const discoveries = yield* transaction
-    .select({ status: scanJobs.status })
-    .from(scanJobs)
-    .where(and(eq(scanJobs.runId, runId), eq(scanJobs.operation, "discover")));
-  if (discoveries.some((job) => activeStatuses.includes(job.status))) return 0;
-  const parked = and(
-    eq(scanJobs.runId, runId),
-    eq(scanJobs.operation, "cleanup"),
-    eq(scanJobs.status, "queued"),
-    eq(scanJobs.availableAtMs, cleanupParkedAtMs),
-  );
-  if (discoveries.every((job) => job.status === "succeeded")) {
-    yield* transaction.update(scanJobs).set({ availableAtMs: nowMs }).where(parked);
-    return 0;
-  }
-  const cancelled = yield* transaction
-    .update(scanJobs)
-    .set({ status: "cancelled", availableAtMs: nowMs, startedAtMs: nowMs, finishedAtMs: nowMs })
-    .where(parked)
-    .returning({ id: scanJobs.id });
-  return cancelled.length;
 });
 
 // Failure outranks cancellation, which outranks success. A run without jobs did
@@ -194,7 +158,12 @@ const finishRunIfDone = Effect.fn("ScanJobs.finishRunIfDone")(function* (
   // The clock may sit behind the times already stored on the run; its timestamp
   // constraints must hold regardless or the run could never be finished.
   const finishedAtMs = sql<number>`max(${nowMs}, ${scanRuns.createdAtMs}, coalesce(${scanRuns.startedAtMs}, 0))`;
-  const stats = yield* scanRunStats(transaction, runId);
+  const existing = yield* transaction
+    .select({ stats: scanRuns.stats })
+    .from(scanRuns)
+    .where(eq(scanRuns.id, runId))
+    .get();
+  const stats = existing?.stats ?? (yield* scanRunStats(transaction, runId));
   const [finished] = yield* transaction
     .update(scanRuns)
     .set({
@@ -212,11 +181,9 @@ const settleRun = Effect.fn("ScanJobs.settleRun")(function* (
   transaction: DatabaseTransaction,
   runId: string,
   nowMs: number,
-  discoveryEnded: boolean,
 ) {
-  const cleanupsCancelled = discoveryEnded ? yield* settleCleanups(transaction, runId, nowMs) : 0;
   const run = yield* finishRunIfDone(transaction, runId, nowMs);
-  return { cleanupsCancelled, run } satisfies ScanRunSettlement;
+  return { run } satisfies ScanRunSettlement;
 });
 
 const heldBy = (job: { readonly id: string; readonly lockedBy: string | null }) =>
@@ -255,12 +222,7 @@ export const completeScanJob = Effect.fn("ScanJobs.complete")(function* (
       if (completed === undefined) return notOwned;
       yield* insertJobs(transaction, job.runId, followUp.jobs, nowMs);
       for (const run of followUp.runs) yield* insertScanRun(transaction, run, nowMs);
-      const settlement = yield* settleRun(
-        transaction,
-        job.runId,
-        nowMs,
-        job.operation === "discover",
-      );
+      const settlement = yield* settleRun(transaction, job.runId, nowMs);
       return { owned: true, ...settlement } satisfies ScanJobSettlement;
     }),
   );
@@ -288,12 +250,7 @@ export const failScanJob = Effect.fn("ScanJobs.fail")(function* (
         .returning({ id: scanJobs.id });
       if (failed === undefined) return notOwned;
       if (retry) return { owned: true, ...unsettled } satisfies ScanJobSettlement;
-      const settlement = yield* settleRun(
-        transaction,
-        job.runId,
-        nowMs,
-        job.operation === "discover",
-      );
+      const settlement = yield* settleRun(transaction, job.runId, nowMs);
       return { owned: true, ...settlement } satisfies ScanJobSettlement;
     }),
   );
@@ -353,7 +310,7 @@ export const recoverScanJobs = Effect.fn("ScanJobs.recover")(function* (
           .returning({ id: scanJobs.id });
         if (recovered === undefined) return null;
         if (retry) return unsettled;
-        return yield* settleRun(transaction, job.runId, input.nowMs, job.operation === "discover");
+        return yield* settleRun(transaction, job.runId, input.nowMs);
       }),
     );
     if (settlement === null) continue;
@@ -366,12 +323,7 @@ export const recoverScanJobs = Effect.fn("ScanJobs.recover")(function* (
   return { requeued, failed, settlements } satisfies ScanRecovery;
 });
 
-/**
- * Settles active runs that have no job left to run: parked cleanups whose
- * discoveries have ended are released or cancelled, and runs whose jobs have all
- * ended are finished. Each pass moves every run it visits forward, so a bounded
- * batch cannot be held up by the same runs twice.
- */
+/** Finishes active runs whose jobs have all ended. */
 export const reconcileScanRuns = Effect.fn("ScanJobs.reconcileRuns")(function* (
   database: DatabaseClient,
   input: { readonly nowMs: number; readonly limit: number },
@@ -386,15 +338,7 @@ export const reconcileScanRuns = Effect.fn("ScanJobs.reconcileRuns")(function* (
           database
             .select({ value: scanJobs.id })
             .from(scanJobs)
-            .where(
-              and(
-                eq(scanJobs.runId, scanRuns.id),
-                or(
-                  eq(scanJobs.status, "running"),
-                  and(eq(scanJobs.status, "queued"), lt(scanJobs.availableAtMs, cleanupParkedAtMs)),
-                ),
-              ),
-            ),
+            .where(and(eq(scanJobs.runId, scanRuns.id), inArray(scanJobs.status, activeStatuses))),
         ),
       ),
     )
@@ -403,7 +347,7 @@ export const reconcileScanRuns = Effect.fn("ScanJobs.reconcileRuns")(function* (
   const settlements: Array<ScanRunSettlement & { readonly runId: string }> = [];
   for (const run of stalled) {
     const settlement = yield* database.transaction((transaction) =>
-      settleRun(transaction, run.id, input.nowMs, true),
+      settleRun(transaction, run.id, input.nowMs),
     );
     settlements.push({ runId: run.id, ...settlement });
   }
