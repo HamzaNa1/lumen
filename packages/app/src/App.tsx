@@ -9,9 +9,10 @@ import type {
 import { Button, Shell } from "@lumen/ui";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
-import { CircleAlert, LoaderCircle, X } from "lucide-react";
+import { CircleAlert, LoaderCircle, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ConnectPage } from "./ConnectPage";
+import { useDownloadUpdates } from "./Downloads";
 import { errorMessage } from "./format";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
@@ -48,6 +49,10 @@ export const App = (): React.ReactElement => {
     "starting",
   );
   const [startupError, setStartupError] = useState<string | null>(null);
+  /** The last server could not be reached, but its downloads can still be watched. */
+  const [offline, setOffline] = useState(false);
+  const [reconnecting, setReconnecting] = useState(false);
+  useDownloadUpdates();
   const startupAttempted = useRef(false);
   const [signInAccount, setSignInAccount] = useState<AccountSummary | null>(null);
   const startingItemId = useRef<string | null>(null);
@@ -226,11 +231,36 @@ export const App = (): React.ReactElement => {
         queryClient.setQueryData(ACCOUNTS_KEY, result);
         setConnectionsView(null);
       })
-      .catch((cause) => {
-        setStartupError(errorMessage(cause, "Could not open server"));
+      .catch(async (cause) => {
+        const message = errorMessage(cause, "Could not open server");
+        // A server out of reach still leaves its downloads: open those instead of the sign-in.
+        const downloads =
+          message.includes("Sign-in required") || runtime.downloads === null
+            ? null
+            : await runtime.downloads.state().catch(() => null);
+        if (downloads?.entries.some((entry) => entry.connectionId === active.connectionId)) {
+          setOffline(true);
+          setConnectionsView(null);
+          void router.navigate({ to: "/downloads", replace: true });
+          return;
+        }
+        setStartupError(message);
         setConnectionsView("saved");
       });
-  }, [accountsQuery.isSuccess, active, connectionsView, queryClient, runtime]);
+  }, [accountsQuery.isSuccess, active, connectionsView, queryClient, router, runtime]);
+  const reconnect = useCallback((): void => {
+    if (active === null) return;
+    setReconnecting(true);
+    void runtime.accounts
+      .activate(active.connectionId)
+      .then(async (result) => {
+        queryClient.setQueryData(ACCOUNTS_KEY, result);
+        setOffline(false);
+        await queryClient.invalidateQueries();
+      })
+      .catch((cause) => setPlaybackError(errorMessage(cause, "The server still can’t be reached")))
+      .finally(() => setReconnecting(false));
+  }, [active, queryClient, runtime]);
   // Everything cached or playing belongs to one account on one server. When that changes, none
   // of it may carry over: stop playback, drop requests still in flight, and forget the data.
   const scope = useMemo(
@@ -435,6 +465,7 @@ export const App = (): React.ReactElement => {
 
   const workspace = {
     account: active,
+    offline,
     scope,
     openItem,
     playItem: queuePlayback,
@@ -464,6 +495,7 @@ export const App = (): React.ReactElement => {
               account={active}
               accounts={accounts}
               scope={scope}
+              offline={offline}
               onActivate={(id) => {
                 void runtime.accounts
                   .activate(id)
@@ -488,6 +520,18 @@ export const App = (): React.ReactElement => {
             />
           }
         >
+          {offline ? (
+            <div className="offline-banner" role="status">
+              <WifiOff aria-hidden="true" size={16} />
+              <span>
+                Can’t reach {active.serverName}. Your downloads still play; progress is saved when
+                the server is back.
+              </span>
+              <Button size="sm" disabled={reconnecting} onClick={reconnect}>
+                {reconnecting ? "Connecting…" : "Try again"}
+              </Button>
+            </div>
+          ) : null}
           <Outlet />
           {playbackError === null ? null : (
             <div className="toast" role="alert">

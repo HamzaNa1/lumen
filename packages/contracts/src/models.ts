@@ -176,6 +176,25 @@ export const CatalogItemDetails = Schema.Struct({
 });
 export type CatalogItemDetails = Schema.Schema.Type<typeof CatalogItemDetails>;
 
+/** The catalog item a details response describes, as lists and the player take it. */
+export const catalogItemOf = ({ item, watchState }: CatalogItemDetails): CatalogItem => ({
+  id: item.id,
+  libraryId: item.libraryId,
+  parentId: item.parentId,
+  title: item.title,
+  kind: item.kind,
+  year: item.year,
+  indexNumber: item.indexNumber,
+  indexNumberEnd: item.indexNumberEnd ?? null,
+  artworkId: item.artworkId,
+  artworkRevision: item.artworkRevision,
+  durationMs: item.durationSeconds === null ? null : item.durationSeconds * 1_000,
+  completed: item.completed ?? watchState?.completed ?? false,
+  resumePositionSeconds:
+    watchState === null || watchState.completed ? null : watchState.positionSeconds,
+  ...(item.placement === undefined ? {} : { placement: item.placement }),
+});
+
 export const CatalogItemPage = Schema.Struct({
   items: Schema.Array(CatalogItem),
   nextCursor: Schema.NullOr(Schema.String),
@@ -208,6 +227,8 @@ export const PlayableMedia = Schema.Struct({
   container: Schema.NullOr(Schema.String),
   mimeType: Schema.optional(Schema.NullOr(Schema.String)),
   sizeBytes: Schema.NullOr(Schema.Number),
+  /** Names the file's exact bytes; older servers leave it out. See `mediaRevision`. */
+  revision: Schema.optional(Schema.String),
   video: Schema.NullOr(
     Schema.Struct({
       codec: Schema.NullOr(Schema.String),
@@ -259,6 +280,8 @@ export const PlayerState = Schema.Struct({
   positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   bufferedRanges: Schema.Array(BufferedRange),
+  /** What of the file is kept on this device, in time; approximate for variable bitrates. */
+  downloadedRanges: Schema.optional(Schema.Array(BufferedRange)),
   ...VolumeSettings.fields,
   ended: Schema.Boolean,
   streams: Schema.Array(PlayableStream),

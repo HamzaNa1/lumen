@@ -4,6 +4,7 @@ import type {
   AdminRuntime,
   ArtworkRuntime,
   CatalogRuntime,
+  DownloadsRuntime,
   TrackSettingsRuntime,
   Unsubscribe,
   WatchRuntime,
@@ -36,6 +37,7 @@ export interface DesktopBridge {
     readonly artwork: ArtworkRuntime["url"];
   };
   readonly admin: AdminRuntime;
+  readonly downloads: DownloadsRuntime;
   readonly player: {
     readonly inline: boolean;
     readonly onFailure: (callback: (message: string) => void) => Unsubscribe;

@@ -1,8 +1,10 @@
 import { type PlaybackDiagnostics, setTranscodingParameters } from "@lumen/client";
 import { type PlayerSession, resolveTrackSelection, type TrackKind } from "@lumen/contracts";
-import type { ServerClient } from "../api/ServerClient";
+import type { MediaFile, MediaSpec } from "../media-store/MediaFile";
+import type { MediaStore } from "../media-store/MediaStore";
 import type { MpvIpc } from "./MpvIpc";
 import type { PlaybackBridge } from "./PlaybackBridge";
+import type { PlaybackClient } from "./PlaybackClient";
 
 export class MediaDecodeFailure extends Error {}
 export class MediaLoadCancelled extends Error {}
@@ -28,16 +30,20 @@ export class MpvMediaSource {
   private loadAbort: AbortController | null = null;
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
+  private held: Promise<{ readonly file: MediaFile; readonly release: () => void } | null> | null =
+    null;
 
   constructor(
     private readonly options: {
       ipc: MpvIpc;
       bridge: PlaybackBridge;
-      client: ServerClient;
+      client: PlaybackClient;
       session: PlayerSession;
       connectionId: string;
       diagnostics: PlaybackDiagnostics;
       active: () => boolean;
+      /** Where the file's bytes are kept; without it every stream is proxied as it arrives. */
+      store?: MediaStore;
     },
   ) {
     const selected = resolveTrackSelection(
@@ -129,6 +135,64 @@ export class MpvMediaSource {
     this.revision += 1;
     this.loadAbort?.abort();
     if (this.capability !== null) this.options.bridge.revoke(this.capability);
+    void this.held?.then((held) => held?.release());
+  }
+
+  /** The file as this device holds it, once direct playback has opened it. */
+  heldFile: MediaFile | null = null;
+
+  private heldSpec(): MediaSpec | null {
+    const { client, session, store } = this.options;
+    const media = session.media;
+    if (
+      store === undefined ||
+      client.serverId === null ||
+      media?.revision === undefined ||
+      media.sizeBytes === null ||
+      media.sizeBytes <= 0
+    )
+      return null;
+    return {
+      serverId: client.serverId,
+      sourceId: session.sourceId,
+      revision: media.revision,
+      sizeBytes: media.sizeBytes,
+      mimeType: media.mimeType ?? "application/octet-stream",
+    };
+  }
+
+  /** Opens the held file once for the whole playback, with this session's grant to fill it. */
+  private acquireHeld(): Promise<{
+    readonly file: MediaFile;
+    readonly release: () => void;
+  } | null> {
+    this.held ??= (async () => {
+      const spec = this.heldSpec();
+      const store = this.options.store;
+      if (spec === null || store === undefined) return null;
+      const { file, release } = await store.acquire(spec);
+      const { client, session } = this.options;
+      if (session.durationSeconds !== null && session.durationSeconds > 0)
+        file.bitrate = spec.sizeBytes / session.durationSeconds;
+      const removeSource = client.offline
+        ? () => undefined
+        : file.addSource({
+            origin: client.serverOrigin,
+            path: session.streamUrl,
+            token: session.grantToken,
+            kind: "playback",
+          });
+      this.heldFile = file;
+      return {
+        file,
+        release: () => {
+          removeSource();
+          release();
+          if (this.heldFile === file) this.heldFile = null;
+        },
+      };
+    })();
+    return this.held;
   }
 
   private load(converted: boolean, position: number): Promise<void> {
@@ -175,23 +239,41 @@ export class MpvMediaSource {
           );
         }
         let transferError: Error | null = null;
-        const registered = bridge.register({
-          onStatus: (status) => {
-            if (status >= 400)
-              transferError = new Error(
-                converted
-                  ? `Server transcoding is unavailable (HTTP ${status}). Check server settings and capacity.`
-                  : `Media request failed (HTTP ${status})`,
-              );
-          },
-          connectionId: this.options.connectionId,
-          serverClient: client,
-          streamPath: url.pathname + url.search,
-          bearer: session.grantToken,
-          active: () => !this.closed && this.options.active(),
-          sessionId: session.sessionId,
-          diagnostics: this.options.diagnostics,
-        });
+        const held = converted ? null : await this.acquireHeld();
+        assertCurrent();
+        if (held === null && client.offline)
+          throw new Error("This item needs the server, which cannot be reached");
+        const onHeldFailure = (cause: Error) => {
+          transferError = cause;
+        };
+        held?.file.on("failure", onHeldFailure);
+        const detachHeld = () => held?.file.off("failure", onHeldFailure);
+        detach = detachHeld;
+        const registered =
+          held === null
+            ? bridge.register({
+                onStatus: (status) => {
+                  if (status >= 400)
+                    transferError = new Error(
+                      converted
+                        ? `Server transcoding is unavailable (HTTP ${status}). Check server settings and capacity.`
+                        : `Media request failed (HTTP ${status})`,
+                    );
+                },
+                connectionId: this.options.connectionId,
+                serverOrigin: client.serverOrigin,
+                streamPath: url.pathname + url.search,
+                bearer: session.grantToken,
+                active: () => !this.closed && this.options.active(),
+                sessionId: session.sessionId,
+                diagnostics: this.options.diagnostics,
+              })
+            : bridge.register({
+                file: held.file,
+                active: () => !this.closed && this.options.active(),
+                sessionId: session.sessionId,
+                diagnostics: this.options.diagnostics,
+              });
         this.capability = registered.capability;
         await ipc.command(["set_property", "pause", "yes"]);
         assertCurrent();
@@ -223,6 +305,7 @@ export class MpvMediaSource {
             25000,
           );
           detach = () => {
+            detachHeld();
             clearTimeout(timer);
             ipc.off("file-loaded", onLoaded);
             ipc.off("end-file", onEnd);

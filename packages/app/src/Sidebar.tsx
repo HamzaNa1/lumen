@@ -3,6 +3,7 @@ import { AccountMenu } from "@lumen/ui";
 import { Link, useNavigate } from "@tanstack/react-router";
 import {
   Activity,
+  ArrowDownToLine,
   Film,
   FolderCog,
   House,
@@ -13,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { DeviceOnly } from "./Downloads";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
 import { WatchGroups } from "./WatchGroups";
@@ -41,10 +43,13 @@ export const Sidebar = ({
   account,
   accounts,
   scope,
+  offline,
   onActivate,
   onRemove,
   onAddServer,
 }: {
+  /** The server cannot be reached: only what is on this device is offered. */
+  readonly offline: boolean;
   readonly account: AccountSummary;
   readonly accounts: ReadonlyArray<AccountSummary>;
   readonly scope: readonly unknown[];
@@ -63,32 +68,45 @@ export const Sidebar = ({
       </div>
       <nav className="nav" aria-label="Primary">
         <div className="nav-group">
-          <Link className="nav-item" to="/" activeOptions={{ exact: true }}>
-            <NavLabel icon={House}>Home</NavLabel>
-          </Link>
-          <Link className="nav-item" to="/search">
-            <NavLabel icon={Search} trailing={<kbd className="nav-shortcut">⌘K</kbd>}>
-              Search
-            </NavLabel>
-          </Link>
+          {offline ? null : (
+            <>
+              <Link className="nav-item" to="/" activeOptions={{ exact: true }}>
+                <NavLabel icon={House}>Home</NavLabel>
+              </Link>
+              <Link className="nav-item" to="/search">
+                <NavLabel icon={Search} trailing={<kbd className="nav-shortcut">⌘K</kbd>}>
+                  Search
+                </NavLabel>
+              </Link>
+            </>
+          )}
+          {runtime.downloads === null ? null : (
+            <DeviceOnly>
+              <Link className="nav-item" to="/downloads">
+                <NavLabel icon={ArrowDownToLine}>Downloads</NavLabel>
+              </Link>
+            </DeviceOnly>
+          )}
         </div>
-        <div className="nav-group">
-          <span className="nav-heading">Libraries</span>
-          {libraries.data?.map((library) => (
-            <Link
-              className="nav-item"
-              key={library.id}
-              to="/library/$libraryId"
-              params={{ libraryId: library.id }}
-            >
-              <NavLabel icon={libraryIcon(library.kind)}>{library.name}</NavLabel>
-            </Link>
-          ))}
-          {libraries.data?.length === 0 ? (
-            <span className="nav-empty">No libraries yet</span>
-          ) : null}
-        </div>
-        {account.role === "admin" ? (
+        {offline ? null : (
+          <div className="nav-group">
+            <span className="nav-heading">Libraries</span>
+            {libraries.data?.map((library) => (
+              <Link
+                className="nav-item"
+                key={library.id}
+                to="/library/$libraryId"
+                params={{ libraryId: library.id }}
+              >
+                <NavLabel icon={libraryIcon(library.kind)}>{library.name}</NavLabel>
+              </Link>
+            ))}
+            {libraries.data?.length === 0 ? (
+              <span className="nav-empty">No libraries yet</span>
+            ) : null}
+          </div>
+        )}
+        {account.role === "admin" && !offline ? (
           <div className="nav-group">
             <span className="nav-heading">Administration</span>
             <Link className="nav-item" to="/admin" activeOptions={{ exact: true }}>

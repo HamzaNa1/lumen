@@ -119,10 +119,15 @@ test("real desktop and browser render shared routes, forms and menus with matchi
           .locator(region)
           .first()
           .evaluate((element) => {
+            // What only a device that keeps media offers is compared on its own below.
+            const deviceOnly = [...element.querySelectorAll<HTMLElement>("[data-device-only]")];
+            for (const node of deviceOnly) node.style.display = "none";
+            const text = (element as HTMLElement).innerText;
+            for (const node of deviceOnly) node.style.display = "";
             const style = getComputedStyle(element);
             const rect = element.getBoundingClientRect();
             return {
-              text: (element as HTMLElement).innerText,
+              text,
               width: Math.round(rect.width),
               font: style.font,
               color: style.color,
@@ -138,10 +143,21 @@ test("real desktop and browser render shared routes, forms and menus with matchi
       }).toPass({ timeout: 10000 });
     }
   }
+  // Downloads exist only where media can be kept: the desktop.
+  await expect(
+    desktop.page
+      .getByRole("navigation", { name: "Primary" })
+      .getByRole("link", { name: "Downloads" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Downloads" }),
+  ).toHaveCount(0);
   await page.goto(`${server.origin}web/settings`);
   await desktop.page.evaluate(() => {
     location.hash = "/settings";
   });
+  await expect(desktop.page.getByRole("heading", { name: "Downloads and storage" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Downloads and storage" })).toHaveCount(0);
   await expect(desktop.page.getByRole("button", { name: "Switch server…" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
   for (const current of [page, desktop.page]) {

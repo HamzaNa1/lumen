@@ -50,8 +50,11 @@ export const MediaCard = ({
   onPlay,
   onOpen,
   action,
+  badge,
 }: {
   readonly action?: ReactNode;
+  /** A mark in the artwork's corner, such as that the item is downloaded. */
+  readonly badge?: ReactNode;
   readonly title: string;
   readonly subtitle?: string | null | undefined;
   /** A second line under the subtitle. */
@@ -88,6 +91,7 @@ export const MediaCard = ({
           ) : (
             <PosterFallback title={title} kind={kind} />
           )}
+          {badge == null ? null : <span className="media-card-badge">{badge}</span>}
           {progress === undefined || progress === null ? null : (
             <span className="media-card-progress" aria-hidden="true">
               <span style={{ width: `${Math.round(Math.min(1, Math.max(0, progress)) * 100)}%` }} />

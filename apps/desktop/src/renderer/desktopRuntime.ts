@@ -100,4 +100,5 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     nativeAudio: { output: bridge.player.audioOutput },
   },
   watch: bridge.watch,
+  downloads: bridge.downloads,
 });

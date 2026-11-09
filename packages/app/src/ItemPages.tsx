@@ -3,6 +3,7 @@ import {
   backdropOf,
   type CatalogItem,
   type CatalogItemDetails,
+  catalogItemOf as catalogItem,
   posterOf,
 } from "@lumen/contracts";
 import { Button, PosterFallback, posterHue, StatusState } from "@lumen/ui";
@@ -11,6 +12,7 @@ import { Link, useCanGoBack, useNavigate, useParams, useRouter } from "@tanstack
 import { ChevronLeft, ChevronRight, Play, Star } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { LoadMore } from "./BrowsePages";
+import { DeviceOnly, DownloadAllButton, DownloadButton, ShowDownloadRuleMenu } from "./Downloads";
 import {
   episodeCode,
   episodeCount,
@@ -52,25 +54,6 @@ const useChildren = (parentId: string) => {
     getNextPageParam: (lastPage) => lastPage.nextCursor,
   });
 };
-
-// Playback and watched controls take catalog items; build one from the details response.
-const catalogItem = ({ item, watchState }: CatalogItemDetails): CatalogItem => ({
-  id: item.id,
-  libraryId: item.libraryId,
-  parentId: item.parentId,
-  title: item.title,
-  kind: item.kind,
-  year: item.year,
-  indexNumber: item.indexNumber,
-  indexNumberEnd: item.indexNumberEnd ?? null,
-  artworkId: item.artworkId,
-  artworkRevision: item.artworkRevision,
-  durationMs: item.durationSeconds === null ? null : item.durationSeconds * 1_000,
-  completed: item.completed ?? watchState?.completed ?? false,
-  resumePositionSeconds:
-    watchState === null || watchState.completed ? null : watchState.positionSeconds,
-  ...(item.placement === undefined ? {} : { placement: item.placement }),
-});
 
 const yearOf = (year: number | null): string | null => (year === null ? null : String(year));
 
@@ -307,6 +290,11 @@ const MovieDetails = ({ itemId }: { readonly itemId: string }): React.ReactEleme
           <>
             {playableKinds.has(item.kind) ? <PlayButton item={current} /> : null}
             {item.kind === "movie" ? <WatchedButton item={current} /> : null}
+            {item.kind === "movie" ? (
+              <DeviceOnly>
+                <DownloadButton item={current} />
+              </DeviceOnly>
+            ) : null}
             {item.kind === "movie" && account.role === "admin" ? (
               <ItemSettings
                 itemId={item.id}
@@ -357,6 +345,9 @@ const ShowDetails = ({ itemId }: { readonly itemId: string }): React.ReactElemen
         actions={
           <>
             {next === null ? null : <PlayButton item={next} />}
+            <DeviceOnly>
+              <ShowDownloadRuleMenu show={{ id: item.id, title: item.title }} />
+            </DeviceOnly>
             {account.role === "admin" ? (
               <ItemSettings
                 itemId={item.id}
@@ -462,7 +453,14 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
               : { to: "/show/$itemId", params: { itemId: item.parentId } },
           )
         }
-        actions={<WatchedButton item={catalogItem(details.data)} />}
+        actions={
+          <>
+            <WatchedButton item={catalogItem(details.data)} />
+            <DeviceOnly>
+              <DownloadAllButton items={list} label="Download season" />
+            </DeviceOnly>
+          </>
+        }
       />
       <DetailsInfo details={details.data} />
       <DetailsSection title="Episodes">
@@ -542,6 +540,9 @@ const EpisodeDetails = ({ itemId }: { readonly itemId: string }): React.ReactEle
           <>
             <PlayButton item={current} />
             <WatchedButton item={current} />
+            <DeviceOnly>
+              <DownloadButton item={current} />
+            </DeviceOnly>
           </>
         }
       />

@@ -261,6 +261,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       retry: async () => watch.retry(),
       onState: watchStates.subscribe,
     },
+    // The browser streams; keeping media for later is a desktop feature for now.
+    downloads: null,
     dispose: () => {
       document.removeEventListener("fullscreenchange", onFullscreenChange);
       document.removeEventListener("visibilitychange", onVisibilityChange);

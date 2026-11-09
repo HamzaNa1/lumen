@@ -152,6 +152,7 @@ export const PlayerView = ({
         position={player?.positionSeconds ?? 0}
         duration={player?.durationSeconds ?? display.duration}
         bufferedRanges={player?.bufferedRanges ?? []}
+        downloadedRanges={player?.downloadedRanges ?? []}
         volume={player?.volume ?? 100}
         muted={player?.muted ?? false}
         streams={capabilities.trackSelection ? (player?.streams ?? []) : []}

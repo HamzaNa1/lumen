@@ -9,6 +9,8 @@ export const User = Schema.Struct({
   displayName: NonEmptyText,
   role: UserRole,
   isActive: Schema.Boolean,
+  /** Whether the user may keep media on their devices. Older servers leave it out. */
+  canDownload: Schema.optional(Schema.Boolean),
   createdAtMs: UtcMillis,
   updatedAtMs: UtcMillis,
 });
