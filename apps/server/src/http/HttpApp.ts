@@ -1,6 +1,9 @@
 import {
   API_VERSION,
   BrowserSession,
+  DownloadSyncRequest,
+  DownloadSyncResponse,
+  DownloadTicket,
   EpisodeOrderOptions,
   EpisodeOrderSelection,
   HomeContent,
@@ -237,6 +240,7 @@ export const makeHttpHandler = (
             browserSessions: true,
             trackMemory: true,
             adjacentEpisodes: true,
+            downloads: true,
           },
         },
         200,
@@ -333,6 +337,8 @@ export const makeHttpHandler = (
       mediaSessions.set(request, media.sessionId);
       const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
       try {
+        if (url.searchParams.get("transcode") === "1" && media.sessionId.startsWith("download:"))
+          throw badRequest("Downloads keep the original file");
         if (url.searchParams.get("transcode") === "1")
           return await transcoder.serve(request, media, () =>
             call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now())),
@@ -994,6 +1000,33 @@ export const makeHttpHandler = (
         },
         201,
       );
+    }
+    if (method === "POST" && url.pathname === "/api/v1/downloads") {
+      const input = decode(S.CreateDownloadBody, await body(request, config.maxRequestBodyBytes));
+      return json(
+        DownloadTicket,
+        await call(services.playback.issueDownload(principal, input.itemId, Date.now())),
+        201,
+      );
+    }
+    if (method === "POST" && url.pathname === "/api/v1/downloads/sync") {
+      const input = decode(DownloadSyncRequest, await body(request, config.maxRequestBodyBytes));
+      return json(DownloadSyncResponse, {
+        downloads: await call(
+          services.playback.syncDownloads(principal, input.downloads, Date.now()),
+        ),
+      });
+    }
+    if (
+      method === "DELETE" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "downloads" &&
+      parts[3] !== undefined &&
+      parts[4] === undefined
+    ) {
+      await call(services.playback.revokeDownload(principal, parts[3], Date.now()));
+      return ack();
     }
     if (
       method === "POST" &&

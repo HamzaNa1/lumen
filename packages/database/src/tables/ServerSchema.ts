@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/sqlite-core";
 import {
   artwork,
+  devices,
   libraries,
   libraryRoots,
   mediaSources,
@@ -663,3 +664,40 @@ export const transcodingSettings = sqliteTable("transcoding_settings", {
   id: integer("id").primaryKey(),
   settings: text("settings").notNull(),
 });
+
+/**
+ * Lets one device fetch one file to keep. Unlike a playback grant it belongs to no playback
+ * session, outlives the player, and is renewed while the device keeps checking in.
+ */
+export const downloadGrants = sqliteTable(
+  "download_grants",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    deviceId: text("device_id").notNull(),
+    trackId: text("track_id")
+      .notNull()
+      .references(() => tracks.id, { onDelete: "cascade" }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => catalogItems.id, { onDelete: "cascade" }),
+    tokenHash: text("token_hash").notNull(),
+    createdAtMs: millis("created_at_ms"),
+    expiresAtMs: millis("expires_at_ms"),
+    revokedAtMs: integer("revoked_at_ms"),
+  },
+  (table) => [
+    foreignKey({
+      name: "download_grants_device_fk",
+      columns: [table.deviceId, table.userId],
+      foreignColumns: [devices.id, devices.userId],
+    }).onDelete("cascade"),
+    uniqueIndex("download_grants_token_hash_uq").on(table.tokenHash),
+    uniqueIndex("download_grants_device_track_uq").on(table.deviceId, table.trackId),
+    index("download_grants_user_idx").on(table.userId),
+    index("download_grants_track_idx").on(table.trackId),
+    check("download_grants_expiry_chk", sql`${table.expiresAtMs} > ${table.createdAtMs}`),
+  ],
+);

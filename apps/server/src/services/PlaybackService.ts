@@ -1,13 +1,18 @@
 import { extname } from "node:path";
-import type {
-  PlayableMedia,
-  PlayableStream,
-  PlaybackProgress,
-  PlaybackSession,
-  TrackChoiceInput,
-  TrackMemory,
-  TrackPreferences,
-  TrackPreferencesPatch,
+import {
+  type DownloadSyncRequest,
+  type DownloadSyncResult,
+  type DownloadTicket,
+  isWatchCompleted,
+  mediaRevision,
+  type PlayableMedia,
+  type PlayableStream,
+  type PlaybackProgress,
+  type PlaybackSession,
+  type TrackChoiceInput,
+  type TrackMemory,
+  type TrackPreferences,
+  type TrackPreferencesPatch,
 } from "@lumen/contracts";
 import {
   catalogItemSources,
@@ -37,6 +42,7 @@ import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Sch
 import { mediaType } from "../media/MediaType";
 import { AccessControl } from "./AccessControl";
 import type { AuthPrincipal } from "./AuthService";
+import { type AuthorizedMedia, makeDownloadGrants } from "./DownloadGrants";
 
 type PlaybackInput = Schema.Schema.Type<typeof StartPlaybackBody>;
 type HeartbeatInput = Schema.Schema.Type<typeof HeartbeatBody>;
@@ -99,21 +105,27 @@ export interface PlaybackServiceShape {
     input: ProgressInput,
     nowMs: number,
   ) => Effect.Effect<PlaybackProgress, unknown>;
+  /** Authorizes a media request made with a playback grant or a download grant. */
   readonly authorizeGrant: (
     grantToken: string,
     trackId: string,
     nowMs: number,
-  ) => Effect.Effect<
-    {
-      absolutePath: string;
-      size: number;
-      modifiedAtMs: number;
-      mimeType: string;
-      sessionId: string;
-      userId: string;
-    },
-    unknown
-  >;
+  ) => Effect.Effect<AuthorizedMedia, unknown>;
+  readonly issueDownload: (
+    principal: AuthPrincipal,
+    itemId: string,
+    nowMs: number,
+  ) => Effect.Effect<DownloadTicket, unknown>;
+  readonly syncDownloads: (
+    principal: AuthPrincipal,
+    held: DownloadSyncRequest["downloads"],
+    nowMs: number,
+  ) => Effect.Effect<ReadonlyArray<DownloadSyncResult>, unknown>;
+  readonly revokeDownload: (
+    principal: AuthPrincipal,
+    downloadId: string,
+    nowMs: number,
+  ) => Effect.Effect<void, unknown>;
 }
 
 export const makePlaybackService = Effect.gen(function* () {
@@ -132,6 +144,103 @@ export const makePlaybackService = Effect.gen(function* () {
     if (row == null) return yield* notFound("Media source not found");
     return row.id;
   });
+
+  /** What a client needs to know about a file to play it, shared by playback and downloads. */
+  const describeTrack = Effect.fn("Playback.describeTrack")(function* (
+    principal: AuthPrincipal,
+    trackId: string,
+  ) {
+    const source = yield* database
+      .select({
+        sourceId: tracks.sourceId,
+        title: tracks.title,
+        durationMs: tracks.durationMs,
+        absolutePath: mediaSources.absolutePath,
+        sizeBytes: mediaSources.fileSizeBytes,
+        modifiedAtMs: sql<number>`coalesce(${mediaSources.modifiedAtMs}, 0)`,
+      })
+      .from(tracks)
+      .innerJoin(mediaSources, eq(mediaSources.id, tracks.sourceId))
+      .where(eq(tracks.id, trackId))
+      .get();
+    if (source == null) return yield* notFound("Media source not found");
+    const streams = (yield* database
+      .select({
+        id: streamTable.id,
+        kind: streamTable.kind,
+        ordinal: streamTable.ordinal,
+        codec: streamTable.codec,
+        language: streamTable.language,
+        title: streamTable.title,
+        isDefault: streamTable.isDefault,
+        channels: streamTable.channels,
+        commentary: streamTable.commentary,
+        forced: streamTable.forced,
+        hearingImpaired: streamTable.hearingImpaired,
+        bitrate: streamTable.bitrate,
+        sampleRateHz: streamTable.sampleRateHz,
+      })
+      .from(streamTable)
+      .where(
+        and(
+          eq(streamTable.sourceId, source.sourceId),
+          inArray(streamTable.kind, ["audio", "subtitle"]),
+          sql`${streamTable.ordinal} is not null`,
+        ),
+      )
+      .orderBy(asc(streamTable.ordinal))) as ReadonlyArray<PlaybackStream>;
+    const video = yield* database
+      .select({
+        codec: streamTable.codec,
+        width: streamTable.width,
+        height: streamTable.height,
+        bitrate: streamTable.bitrate,
+      })
+      .from(streamTable)
+      .where(and(eq(streamTable.sourceId, source.sourceId), eq(streamTable.kind, "video")))
+      .orderBy(desc(streamTable.isDefault), asc(streamTable.ordinal))
+      .limit(1)
+      .get();
+    const extension = extname(source.absolutePath).slice(1).toLowerCase();
+    const titleId = yield* trackMemory.titleOf(trackId);
+    return {
+      trackMemory: yield* trackMemory.memory(principal, titleId),
+      titleId,
+      sourceId: source.sourceId,
+      title: source.title,
+      durationSeconds: source.durationMs === null ? null : Math.round(source.durationMs / 1000),
+      streams,
+      media: {
+        container: extension === "" ? null : extension,
+        mimeType: mediaType(source.absolutePath),
+        sizeBytes: source.sizeBytes,
+        ...(source.sizeBytes === null
+          ? {}
+          : { revision: mediaRevision(source.sizeBytes, source.modifiedAtMs) }),
+        video:
+          video == null
+            ? null
+            : {
+                codec: video.codec,
+                size:
+                  video.width === null || video.height === null
+                    ? null
+                    : { width: video.width, height: video.height },
+                bitrate: video.bitrate,
+              },
+      },
+    } satisfies Omit<
+      PlaybackStartResponse,
+      | "session"
+      | "grantToken"
+      | "itemId"
+      | "sourceGeneration"
+      | "streamPath"
+      | "grantExpiresInSeconds"
+    >;
+  });
+
+  const downloads = yield* makeDownloadGrants({ access, resolveTrack, describe: describeTrack });
 
   const start: PlaybackServiceShape["start"] = Effect.fn("Playback.start")(
     function* (principal, input, nowMs) {
@@ -202,86 +311,14 @@ export const makePlaybackService = Effect.gen(function* () {
             conflict(cause instanceof Error ? cause.message : "Grant could not be created"),
           ),
         );
-      const source = yield* database
-        .select({
-          sourceId: tracks.sourceId,
-          title: tracks.title,
-          durationMs: tracks.durationMs,
-          absolutePath: mediaSources.absolutePath,
-          sizeBytes: mediaSources.fileSizeBytes,
-        })
-        .from(tracks)
-        .innerJoin(mediaSources, eq(mediaSources.id, tracks.sourceId))
-        .where(eq(tracks.id, trackId))
-        .get();
-      if (source == null) return yield* notFound("Media source not found");
-      const streams = (yield* database
-        .select({
-          id: streamTable.id,
-          kind: streamTable.kind,
-          ordinal: streamTable.ordinal,
-          codec: streamTable.codec,
-          language: streamTable.language,
-          title: streamTable.title,
-          isDefault: streamTable.isDefault,
-          channels: streamTable.channels,
-          commentary: streamTable.commentary,
-          forced: streamTable.forced,
-          hearingImpaired: streamTable.hearingImpaired,
-          bitrate: streamTable.bitrate,
-          sampleRateHz: streamTable.sampleRateHz,
-        })
-        .from(streamTable)
-        .where(
-          and(
-            eq(streamTable.sourceId, source.sourceId),
-            inArray(streamTable.kind, ["audio", "subtitle"]),
-            sql`${streamTable.ordinal} is not null`,
-          ),
-        )
-        .orderBy(asc(streamTable.ordinal))) as ReadonlyArray<PlaybackStream>;
-      const video = yield* database
-        .select({
-          codec: streamTable.codec,
-          width: streamTable.width,
-          height: streamTable.height,
-          bitrate: streamTable.bitrate,
-        })
-        .from(streamTable)
-        .where(and(eq(streamTable.sourceId, source.sourceId), eq(streamTable.kind, "video")))
-        .orderBy(desc(streamTable.isDefault), asc(streamTable.ordinal))
-        .limit(1)
-        .get();
-      const extension = extname(source.absolutePath).slice(1).toLowerCase();
-      const titleId = yield* trackMemory.titleOf(trackId);
+      const playable = yield* describeTrack(principal, trackId);
       return {
         session,
-        trackMemory: yield* trackMemory.memory(principal, titleId),
         grantToken,
         itemId: input.trackId,
-        titleId,
-        sourceId: source.sourceId,
+        ...playable,
         sourceGeneration: 1,
-        title: source.title,
         streamPath: `/api/v1/media/${encodeURIComponent(trackId)}`,
-        durationSeconds: source.durationMs === null ? null : Math.round(source.durationMs / 1000),
-        streams,
-        media: {
-          container: extension === "" ? null : extension,
-          mimeType: mediaType(source.absolutePath),
-          sizeBytes: source.sizeBytes,
-          video:
-            video == null
-              ? null
-              : {
-                  codec: video.codec,
-                  size:
-                    video.width === null || video.height === null
-                      ? null
-                      : { width: video.width, height: video.height },
-                  bitrate: video.bitrate,
-                },
-        },
         grantExpiresInSeconds: playbackLifetimeMs / 1000,
       };
     },
@@ -454,10 +491,7 @@ export const makePlaybackService = Effect.gen(function* () {
             .get();
           if (watchVersion != null) {
             const positionSeconds = Math.round(input.positionMs / 1000);
-            const completed =
-              input.positionMs > 0 &&
-              input.durationMs !== null &&
-              input.positionMs / input.durationMs >= 0.9;
+            const completed = isWatchCompleted(input.positionMs, input.durationMs);
             yield* transaction
               .insert(itemWatchStates)
               .values({
@@ -514,7 +548,7 @@ export const makePlaybackService = Effect.gen(function* () {
       )
       .get();
     if (row == null || row.size == null)
-      return yield* notFound("Playback grant is invalid or expired");
+      return yield* downloads.authorize(grantToken, trackId, nowMs);
     const [root, file] = yield* Effect.all([
       Effect.promise(() => canonicalPath(row.rootPath)),
       Effect.promise(() => canonicalPath(row.absolutePath)),
@@ -534,6 +568,9 @@ export const makePlaybackService = Effect.gen(function* () {
     stop,
     progress,
     authorizeGrant,
+    issueDownload: downloads.issue,
+    syncDownloads: downloads.sync,
+    revokeDownload: downloads.revoke,
     preferences: trackMemory.preferences,
     updatePreferences: trackMemory.updatePreferences,
     saveChoice: trackMemory.saveChoice,

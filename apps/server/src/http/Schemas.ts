@@ -92,6 +92,7 @@ export const CreateUserBody = Schema.Struct({
   password: NewPassword,
   role: Schema.optional(UserRole),
   libraryAccess: Schema.optional(LibraryAccess),
+  canDownload: Schema.optional(Schema.Boolean),
 });
 
 export const UpdateUserBody = Schema.Struct({
@@ -100,6 +101,7 @@ export const UpdateUserBody = Schema.Struct({
   role: Schema.optional(UserRole),
   libraryAccess: Schema.optional(LibraryAccess),
   isActive: Schema.optional(Schema.Boolean),
+  canDownload: Schema.optional(Schema.Boolean),
 });
 
 export const CreateLibraryBody = Schema.Struct({
@@ -133,7 +135,6 @@ export const CreateGrantBody = Schema.Struct({
   libraryId: Identifier,
   userId: Identifier,
   capabilities: Schema.Array(GrantCapability),
-  canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),
 });
 
@@ -145,6 +146,8 @@ export const StartScanBody = Schema.Struct({
 export const StartPlaybackBody = Schema.Struct({
   trackId: Schema.NullOr(Identifier),
 });
+
+export const CreateDownloadBody = Schema.Struct({ itemId: Identifier });
 
 export const HeartbeatBody = Schema.Struct({
   state: Schema.Literals(["idle", "playing", "paused", "buffering", "ended", "error"]),
@@ -168,6 +171,11 @@ export const WatchStateBody = Schema.Struct({
 export const ItemWatchStateBody = Schema.Struct({
   positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   completed: Schema.Boolean,
+  /**
+   * When a device saw this state, for one that was offline at the time. It applies only over a
+   * state the server last changed before then, so a late device cannot undo newer progress.
+   */
+  observedAtMs: Schema.optional(UtcMillis),
 });
 
 export const ItemMetadataBody = Schema.Struct({

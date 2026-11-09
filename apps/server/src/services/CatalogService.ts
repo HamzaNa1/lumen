@@ -460,12 +460,15 @@ export const makeCatalogService = Effect.gen(function* () {
       .get();
     if (item == null) return yield* notFound("Item not found");
     yield* access.requireLibrary(principal, item.libraryId, "library:read", nowMs);
+    // A state seen earlier by a device that was offline loses to anything saved since then.
+    const changedAtMs =
+      input.observedAtMs === undefined ? nowMs : Math.min(input.observedAtMs, nowMs);
     // One statement updates the season and all its episodes, including those beyond
     // a desktop page, while advancing each manual version to fence old playback writes.
     yield* database.run(sql`
       INSERT INTO item_watch_states
         (user_id, item_id, position_seconds, completed, ownership_generation, manual_version, updated_at_ms)
-      SELECT ${principal.user.id}, i.id, ${input.positionSeconds}, ${input.completed ? 1 : 0}, 1, 1, ${nowMs}
+      SELECT ${principal.user.id}, i.id, ${input.positionSeconds}, ${input.completed ? 1 : 0}, 1, 1, ${changedAtMs}
       FROM catalog_items i
       WHERE i.library_id = ${item.libraryId} AND (i.id = ${itemId} OR
         (i.parent_id = ${itemId} AND i.kind = 'episode' AND EXISTS (
@@ -476,6 +479,7 @@ export const makeCatalogService = Effect.gen(function* () {
         completed = excluded.completed,
         manual_version = item_watch_states.manual_version + 1,
         updated_at_ms = excluded.updated_at_ms
+      ${input.observedAtMs === undefined ? sql`` : sql`WHERE item_watch_states.updated_at_ms <= excluded.updated_at_ms`}
     `);
   });
   const listTracks: CatalogServiceShape["listTracks"] = Effect.fn("Catalog.listTracks")(

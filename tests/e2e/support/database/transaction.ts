@@ -41,7 +41,6 @@ const result = await Effect.runPromise(
           libraryId: ids.library,
           userId: ids.user,
           capabilities: ["library:read", "playback:control"],
-          canDownload: true,
           expiresAtMs: null,
           nowMs,
         });

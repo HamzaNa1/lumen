@@ -132,7 +132,6 @@ const applyLibraryAccess = (
           libraryId,
           userId,
           capabilitiesJson: JSON.stringify(GrantCapability.literals),
-          canDownload: false,
           expiresAtMs: null,
           createdAtMs: nowMs,
           updatedAtMs: nowMs,
@@ -196,6 +195,7 @@ export const makeAdminService = Effect.gen(function* () {
     role: users.role,
     allLibraries: users.allLibraries,
     isActive: users.isActive,
+    canDownload: users.canDownload,
     createdAtMs: users.createdAtMs,
     updatedAtMs: users.updatedAtMs,
   };
@@ -241,6 +241,7 @@ export const makeAdminService = Effect.gen(function* () {
               passwordHash,
               role: input.role ?? "user",
               isActive: true,
+              canDownload: input.canDownload ?? true,
               createdAtMs: nowMs,
               updatedAtMs: nowMs,
             })
@@ -288,6 +289,7 @@ export const makeAdminService = Effect.gen(function* () {
               passwordHash: passwordHash ?? undefined,
               role: input.role,
               isActive: input.isActive,
+              canDownload: input.canDownload,
               updatedAtMs: nowMs,
             })
             .where(eq(users.id, userId))

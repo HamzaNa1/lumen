@@ -208,6 +208,8 @@ export const PlayableMedia = Schema.Struct({
   container: Schema.NullOr(Schema.String),
   mimeType: Schema.optional(Schema.NullOr(Schema.String)),
   sizeBytes: Schema.NullOr(Schema.Number),
+  /** Names the file's exact bytes; older servers leave it out. See `mediaRevision`. */
+  revision: Schema.optional(Schema.String),
   video: Schema.NullOr(
     Schema.Struct({
       codec: Schema.NullOr(Schema.String),
@@ -259,6 +261,8 @@ export const PlayerState = Schema.Struct({
   positionSeconds: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
   bufferedRanges: Schema.Array(BufferedRange),
+  /** What of the file is kept on this device, in time; approximate for variable bitrates. */
+  downloadedRanges: Schema.optional(Schema.Array(BufferedRange)),
   ...VolumeSettings.fields,
   ended: Schema.Boolean,
   streams: Schema.Array(PlayableStream),

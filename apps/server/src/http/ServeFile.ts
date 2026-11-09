@@ -1,6 +1,6 @@
 import { lstat } from "node:fs/promises";
+import { decideConditional, decideRange, mediaRevision } from "@lumen/contracts";
 import { notFound } from "../core/Errors";
-import { decideConditional, decideRange } from "../core/RangePolicy";
 
 const date = (value: number): string => new Date(value).toUTCString();
 
@@ -19,7 +19,7 @@ export interface ServeFileOptions {
 export const serveFile = async (options: ServeFileOptions): Promise<Response> => {
   const details = await lstat(options.path);
   if (!details.isFile() || details.isSymbolicLink()) throw notFound("File is unavailable");
-  const etag = `W/"${options.size.toString(16)}-${Math.trunc(options.modifiedAtMs).toString(16)}"`;
+  const etag = mediaRevision(options.size, options.modifiedAtMs);
   const lastModified = date(options.modifiedAtMs);
   const condition = decideConditional({
     method: options.request.method,

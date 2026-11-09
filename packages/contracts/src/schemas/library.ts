@@ -29,7 +29,6 @@ export const LibraryGrant = Schema.Struct({
   libraryId: Uuid,
   userId: Uuid,
   capabilities: Schema.Array(GrantCapability),
-  canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),
   createdAtMs: UtcMillis,
   updatedAtMs: UtcMillis,
@@ -58,7 +57,6 @@ export const UpsertLibraryGrant = Schema.Struct({
   libraryId: Uuid,
   userId: Uuid,
   capabilities: Schema.Array(GrantCapability),
-  canDownload: Schema.Boolean,
   expiresAtMs: Schema.NullOr(UtcMillis),
   nowMs: UtcMillis,
 });

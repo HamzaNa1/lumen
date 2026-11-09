@@ -84,7 +84,6 @@ test("membership cannot disclose or control inaccessible media, and ACL changes 
         libraryId: library.id,
         userId: user.id,
         capabilities,
-        canDownload: false,
         expiresAtMs: null,
       },
     });
