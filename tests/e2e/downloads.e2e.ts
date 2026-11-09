@@ -70,6 +70,12 @@ const movies = async (server: Server, token: string, titles: readonly string[]) 
 
 const downloads = (page: Page): Promise<DownloadState> =>
   page.evaluate(() => window.lumen.downloads.state());
+/** The released server a desktop release is checked against may predate downloads. */
+const requireDownloads = async (server: Server) => {
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  test.skip(info.capabilities?.downloads !== true, "The server predates downloads");
+};
+
 const entryFor = async (page: Page, itemId: string): Promise<DownloadEntry | undefined> =>
   (await downloads(page)).entries.find((entry) => entry.itemId === itemId);
 
@@ -238,6 +244,7 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const { item } = await movies(server, admin.accessToken, ["Film"]);
   const film = item("Film");
   let proxy = await new NetworkProxy(server.origin).start();
@@ -323,6 +330,7 @@ test("playback crosses from downloaded parts into missing ones and keeps the dow
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const { item } = await movies(server, admin.accessToken, ["Film"]);
   const film = item("Film");
   const size = (await readFile(film.path)).length;
@@ -393,6 +401,7 @@ test("the free-space limit pauses downloads but never playback, and cleanup rule
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const { item } = await movies(server, admin.accessToken, ["Film", "Other"]);
   const film = item("Film");
   const other = item("Other");
@@ -468,6 +477,7 @@ test("the streaming cache keeps nothing by default, keeps recent streams within 
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const { item } = await movies(server, admin.accessToken, ["Film"]);
   const film = item("Film");
   const { page, profile } = desktop;
@@ -519,6 +529,7 @@ test("changed files are replaced, revoked downloads are deleted, and signing out
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const first = await movies(server, admin.accessToken, ["Film"]);
   const second = await movies(server, admin.accessToken, ["Other"]);
   const film = first.item("Film");
@@ -581,6 +592,7 @@ test("a show keeps its next unwatched episode downloaded as episodes are watched
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const library = await server.library(admin.accessToken, "shows", [
     "Show/Season 1/Show S01E01.mp4",
     "Show/Season 1/Show S01E02.mp4",
@@ -624,6 +636,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const token = admin.accessToken;
   const library = await server.library(token, "movies", []);
   await mkdir(join(library.path, "Film"));
@@ -726,6 +739,7 @@ test("withdrawing download permission mid-download fails it with the server's re
   admin,
   desktop,
 }) => {
+  await requireDownloads(server);
   const { item } = await movies(server, admin.accessToken, ["Film", "Other"]);
   const film = item("Film");
   const other = item("Other");
@@ -790,6 +804,66 @@ test("withdrawing download permission mid-download fails it with the server's re
     expect((await page.evaluate(() => window.lumen.player.state()))?.paused).toBe(false);
     await leavePlayer(page);
     await expect.poll(async () => (await heldFiles(profile)).length).toBe(0);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("a server without downloads offers none, and its streams play as before", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const { item } = await movies(server, admin.accessToken, ["Film"]);
+  const film = item("Film");
+  // An older server: no downloads capability, and no file revision to keep bytes under.
+  const proxy = await new NetworkProxy(server.origin).start();
+  proxy.intercept = async (request, response) => {
+    const older =
+      (request.method === "GET" && request.url === "/api/v1/server") ||
+      (request.method === "POST" && request.url === "/api/v1/playback/sessions");
+    if (!older) return false;
+    const chunks: Buffer[] = [];
+    for await (const chunk of request) chunks.push(chunk as Buffer);
+    const upstream = await fetch(new URL(request.url ?? "/", server.origin), {
+      method: request.method ?? "GET",
+      headers: {
+        authorization: request.headers.authorization ?? "",
+        "content-type": request.headers["content-type"] ?? "application/json",
+      },
+      ...(request.method === "POST" ? { body: Buffer.concat(chunks).toString("utf8") } : {}),
+    });
+    const body = (await upstream.json()) as {
+      capabilities?: Record<string, boolean>;
+      media?: { revision?: string };
+    };
+    delete body.capabilities?.downloads;
+    delete body.media?.revision;
+    response.writeHead(upstream.status, { "content-type": "application/json" });
+    response.end(JSON.stringify(body));
+    return true;
+  };
+  const { page, profile } = desktop;
+  try {
+    await connectDesktop(page, proxy);
+    await page.evaluate(() => window.lumen.downloads.updateSettings({ streamingCache: "low" }));
+    await go(page, `/item/${film.id}`);
+    await expect(page.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Download", exact: true })).toHaveCount(0);
+    expect((await downloads(page)).available).toBe(false);
+    await expect(
+      page.evaluate((itemId) => window.lumen.downloads.add([itemId]), film.id),
+    ).rejects.toThrow("This server does not support downloads");
+    await page.getByRole("button", { name: "Play", exact: true }).click();
+    await expect
+      .poll(
+        async () => (await page.evaluate(() => window.lumen.player.state()))?.positionSeconds ?? 0,
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(2);
+    await leavePlayer(page);
+    // Without a revision nothing is kept, even with the cache on.
+    expect(await heldFiles(profile)).toEqual([]);
   } finally {
     await proxy.close();
   }

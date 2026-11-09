@@ -166,5 +166,7 @@ export const DownloadState = Schema.Struct({
   usage: StorageUsage,
   settings: DownloadSettings,
   shows: Schema.Array(ShowDownloadRule),
+  /** Whether the active account's server can be reached and supports downloads. */
+  available: Schema.Boolean,
 });
 export type DownloadState = Schema.Schema.Type<typeof DownloadState>;

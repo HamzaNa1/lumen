@@ -83,6 +83,9 @@ const useAccountDownloads = (): ReadonlyArray<DownloadEntry> | null => {
   return state.data.entries.filter((entry) => entry.connectionId === account.connectionId);
 };
 
+/** Whether new downloads can start: the server is reachable and supports them. */
+const useCanDownload = (): boolean => useDownloadState().data?.available === true;
+
 const useDownloadEntry = (itemId: string): DownloadEntry | null =>
   useAccountDownloads()?.find((entry) => entry.itemId === itemId) ?? null;
 
@@ -177,12 +180,12 @@ export const DownloadButton = ({
 }: {
   readonly item: CatalogItem;
 }): React.ReactElement | null => {
-  const runtime = useRuntime();
   const entry = useDownloadEntry(item.id);
+  const canDownload = useCanDownload();
   const add = useDownloadAction((downloads, itemIds: ReadonlyArray<string>) =>
     downloads.add(itemIds),
   );
-  if (runtime.downloads === null) return null;
+  if (entry === null && !canDownload) return null;
   if (entry === null)
     return (
       <div className="download-control">
@@ -244,10 +247,11 @@ export const DownloadAllButton = ({
   readonly label: string;
 }): React.ReactElement | null => {
   const entries = useAccountDownloads();
+  const canDownload = useCanDownload();
   const add = useDownloadAction((downloads, itemIds: ReadonlyArray<string>) =>
     downloads.add(itemIds),
   );
-  if (entries === null || items.length === 0) return null;
+  if (entries === null || items.length === 0 || !canDownload) return null;
   const missing = items.filter((item) => !entries.some((entry) => entry.itemId === item.id));
   return (
     <div className="download-control">
@@ -287,7 +291,7 @@ export const ShowDownloadRuleMenu = ({
   const set = useDownloadAction((downloads, episodes: number | null) =>
     downloads.showRule(show, episodes),
   );
-  if (state.data == null) return null;
+  if (state.data?.available !== true) return null;
   const current =
     state.data.shows.find(
       (rule) => rule.connectionId === account.connectionId && rule.showId === show.id,

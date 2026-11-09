@@ -574,7 +574,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     await watch.stop();
     return { ok: true };
   });
-  handle("downloads:state", async () => dependencies.downloads.state());
+  handle("downloads:state", async () =>
+    dependencies.downloads.state(dependencies.registry.active()?.connectionId ?? null),
+  );
   handle("downloads:add", async (_event, raw) => {
     const itemIds = decode(Schema.Array(Schema.String).check(Schema.isMaxLength(500)), raw);
     const account = activeAccount(dependencies);

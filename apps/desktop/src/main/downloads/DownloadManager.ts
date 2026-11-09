@@ -275,9 +275,12 @@ export class DownloadManager extends EventEmitter {
     }, 250);
   }
 
-  async state(): Promise<DownloadState> {
+  async state(activeConnectionId: string | null): Promise<DownloadState> {
     const { store } = this.options;
     return {
+      available:
+        activeConnectionId !== null &&
+        this.options.clientFor(activeConnectionId)?.supportsDownloads === true,
       entries: this.downloads.map((download) => {
         const target = download.next ?? download.ticket;
         const file = store.find(specOf(download.serverId, target));
