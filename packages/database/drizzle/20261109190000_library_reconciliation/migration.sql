@@ -9,7 +9,9 @@ UPDATE scan_runs SET status = 'cancelled',
   finished_at_ms = max(created_at_ms, coalesce(started_at_ms, 0), unixepoch() * 1000)
 WHERE status IN ('queued', 'running');
 --> statement-breakpoint
-WITH counts AS MATERIALIZED (
+WITH pending AS MATERIALIZED (
+  SELECT id FROM scan_runs WHERE stats_json IS NULL AND status IN ('succeeded', 'failed', 'cancelled')
+), counts AS MATERIALIZED (
   SELECT run_id, sum(discovered) AS discovered, sum(new) AS new, sum(changed) AS changed,
     sum(moved) AS moved, sum(unchanged) AS unchanged, sum(skipped) AS skipped,
     sum(missing) AS missing, sum(probes) AS probes
@@ -18,10 +20,13 @@ WITH counts AS MATERIALIZED (
       s.change = 'moved' AS moved, s.change = 'unchanged' AS unchanged,
       NOT EXISTS (SELECT 1 FROM scan_jobs j WHERE j.run_id = s.run_id AND j.source_id = s.source_id AND j.operation = 'probe') AS skipped,
       0 AS missing, 0 AS probes FROM server_scan_seen s
+    WHERE s.run_id IN (SELECT id FROM pending)
     UNION ALL
     SELECT run_id, 0, 0, 0, 0, 0, 0, 1, 0 FROM server_scan_missing
+    WHERE run_id IN (SELECT id FROM pending)
     UNION ALL
-    SELECT run_id, 0, 0, 0, 0, 0, 0, 0, 1 FROM scan_jobs WHERE operation = 'probe'
+    SELECT run_id, 0, 0, 0, 0, 0, 0, 0, 1 FROM scan_jobs
+    WHERE operation = 'probe' AND run_id IN (SELECT id FROM pending)
   ) GROUP BY run_id
 )
 UPDATE scan_runs SET stats_json = coalesce((SELECT json_object(
@@ -29,7 +34,7 @@ UPDATE scan_runs SET stats_json = coalesce((SELECT json_object(
   'unchanged', unchanged, 'skipped', skipped, 'missing', missing, 'probesEnqueued', probes
 ) FROM counts WHERE counts.run_id = scan_runs.id),
 '{"discovered":0,"new":0,"changed":0,"moved":0,"unchanged":0,"skipped":0,"missing":0,"probesEnqueued":0}')
-WHERE stats_json IS NULL AND status IN ('succeeded', 'failed', 'cancelled');
+WHERE id IN (SELECT id FROM pending);
 --> statement-breakpoint
 DROP TABLE server_scan_seen;
 --> statement-breakpoint
