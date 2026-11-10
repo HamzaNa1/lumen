@@ -121,6 +121,17 @@ test("native media decodes, seeks, changes volume and audio, survives replacemen
   expect(await server.api(`/items/${state?.itemId}`, { token: admin.accessToken })).toMatchObject({
     watchState: { positionSeconds: 5 },
   });
+  // An item that cannot start lets the kept MPV go, so the next one starts a fresh player.
+  await expect(page.evaluate(() => window.lumen.player.start("missing"))).rejects.toThrow();
+  expect(await page.evaluate(() => window.lumen.player.state())).toBeNull();
+  await page.evaluate((itemId) => window.lumen.player.start(itemId), other?.id ?? "");
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ itemId: other?.id, paused: false });
+  const restarted = await page.evaluate(() => window.lumen.player.timeline());
+  expect(restarted.find((event) => event.kind === "player_ready")?.fields).toEqual({
+    reused: false,
+  });
   await expect(
     page.evaluate((sessionId) => window.lumen.player.seek(sessionId, 2), sessionId),
   ).rejects.toThrow();
