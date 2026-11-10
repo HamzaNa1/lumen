@@ -276,8 +276,18 @@ export class MediaFile extends EventEmitter {
     consider(this.disk.heldUntil(position), "disk");
     consider(this.memory.heldUntil(position), "memory");
     for (const fetch of this.fetches)
-      if (fetch.start <= position && position < fetch.cursor) consider(fetch.cursor, fetch.target);
+      if (this.writingFrom(fetch) <= position && position < fetch.cursor)
+        consider(fetch.cursor, fetch.target);
     return best;
+  }
+
+  /**
+   * Where the bytes only a fetch knows of begin: the chunk it is part way through. Every chunk it
+   * finished before that is recorded as held, and stops being held once memory lets it go behind
+   * the readers, so the fetch cannot vouch for it.
+   */
+  private writingFrom(fetch: Fetch): number {
+    return Math.max(fetch.start, this.disk.startOf(this.disk.chunkOf(fetch.cursor)));
   }
 
   private isHeld(chunk: number): boolean {
@@ -367,7 +377,7 @@ export class MediaFile extends EventEmitter {
   private covered(offset: number): boolean {
     for (const fetch of this.fetches)
       if (
-        fetch.start <= offset &&
+        this.writingFrom(fetch) <= offset &&
         offset < fetch.end &&
         offset - fetch.cursor <= this.geometry.chunkBytes * 2
       )

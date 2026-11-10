@@ -59,6 +59,35 @@ const makeFilm = (path: string, seconds = 30, tone = 440) =>
     path,
   ]);
 
+/**
+ * Ten minutes of tiny frames: the index at its end is as large as a feature episode's, so the
+ * player is still reading it after it has left the start of the file.
+ */
+const makeLargeIndexFilm = (path: string) =>
+  execFileSync("ffmpeg", [
+    "-v",
+    "error",
+    "-f",
+    "lavfi",
+    "-i",
+    "testsrc=duration=600:size=160x90:rate=60",
+    "-f",
+    "lavfi",
+    "-i",
+    "sine=frequency=440:duration=600",
+    "-c:v",
+    "libx264",
+    "-preset",
+    "ultrafast",
+    "-b:v",
+    "150k",
+    "-c:a",
+    "aac",
+    "-b:a",
+    "32k",
+    path,
+  ]);
+
 const movies = async (server: Server, token: string, titles: readonly string[]) => {
   const library = await server.library(token, "movies", []);
   for (const [index, title] of titles.entries())
@@ -161,6 +190,12 @@ const leavePlayer = async (page: Page) => {
   await expect.poll(() => page.evaluate(() => window.lumen.player.state())).toBeNull();
 };
 
+/** One media request through the proxy: where its range starts and how much has gone out. */
+interface Transfer {
+  readonly start: number;
+  written: number;
+}
+
 /**
  * Media passes through only up to an allowance of bytes the test raises, so a download can be
  * held part way without depending on timing.
@@ -178,13 +213,13 @@ const meter = (proxy: NetworkProxy, upstream: () => string) => {
     ranges: [] as number[],
     /** Answers media requests as an overloaded server would. */
     failing: false,
-    /** Holds back media for paths it matches until it no longer does. */
-    blocked: (_path: string): boolean => false,
+    /** Holds back media for transfers it matches until it no longer does. */
+    blocked: (_path: string, _transfer: Transfer): boolean => false,
     allow(bytes: number) {
       control.allowance = Math.floor(bytes);
       wakeAll();
     },
-    block(predicate: (path: string) => boolean) {
+    block(predicate: (path: string, transfer: Transfer) => boolean) {
       control.blocked = predicate;
       wakeAll();
     },
@@ -202,7 +237,11 @@ const meter = (proxy: NetworkProxy, upstream: () => string) => {
     }
     active.add(response);
     response.on("close", () => active.delete(response));
-    control.ranges.push(Number(/bytes=(\d+)-/u.exec(request.headers.range ?? "")?.[1] ?? 0));
+    const transfer: Transfer = {
+      start: Number(/bytes=(\d+)-/u.exec(request.headers.range ?? "")?.[1] ?? 0),
+      written: 0,
+    };
+    control.ranges.push(transfer.start);
     const abort = new AbortController();
     response.on("close", () => abort.abort());
     try {
@@ -220,7 +259,7 @@ const meter = (proxy: NetworkProxy, upstream: () => string) => {
         if (chunk === undefined || chunk.done) break;
         for (let offset = 0; offset < chunk.value.length; ) {
           while (
-            (control.sent >= control.allowance || control.blocked(path)) &&
+            (control.sent >= control.allowance || control.blocked(path, transfer)) &&
             !response.destroyed
           )
             await new Promise<void>((resolve) => {
@@ -234,6 +273,7 @@ const meter = (proxy: NetworkProxy, upstream: () => string) => {
           );
           response.write(piece);
           control.sent += piece.length;
+          transfer.written += piece.length;
           offset += piece.length;
         }
       }
@@ -577,6 +617,73 @@ test("the streaming cache keeps nothing by default, keeps recent streams within 
   await page.getByRole("button", { name: /^Clear / }).click();
   await expect.poll(async () => (await downloads(page)).usage.cacheBytes).toBe(0);
   expect(await heldFiles(profile)).toEqual([]);
+});
+
+test("a stream whose index is at its end plays from the start instead of jumping to the end", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  await requireDownloads(server);
+  const library = await server.library(admin.accessToken, "movies", []);
+  const path = join(library.path, "Long Film.mp4");
+  makeLargeIndexFilm(path);
+  const size = (await readFile(path)).length;
+  await server.scan(admin.accessToken, library.id);
+  const proxy = await new NetworkProxy(server.origin).start();
+  const network = meter(proxy, () => server.origin);
+  // A long file is still arriving from its start while the player reads its index at the end.
+  const startArriving = (_path: string, transfer: Transfer) =>
+    transfer.start === 0 && transfer.written >= 2 * 1024 * 1024;
+  // The index arrives a piece at a time: the player has its first part, and has let go of the
+  // start, before the rest comes.
+  network.block(
+    (path, transfer) =>
+      startArriving(path, transfer) ||
+      (transfer.start > size / 2 && transfer.written >= 300 * 1024),
+  );
+  const { page } = desktop;
+  const timeline = () => page.evaluate(() => window.lumen.player.timeline());
+  try {
+    await connectDesktop(page, proxy);
+    // Streams keep nothing on disk by default; what the player reads is held in memory only.
+    expect((await downloads(page)).settings.streamingCache).toBe("none");
+    await page
+      .getByRole("navigation", { name: "Primary" })
+      .getByRole("link", { name: "movies" })
+      .click();
+    await page
+      .getByRole("button", { name: "Play Long Film", exact: true })
+      .first()
+      .click({ force: true });
+    // The player lets go of the start once it is reading the index.
+    await expect
+      .poll(async () =>
+        (await timeline()).some(
+          (event) => event.kind === "bridge_transfer" && event.fields.termination === "cancel",
+        ),
+      )
+      .toBe(true);
+    network.block(startArriving);
+    await expect
+      .poll(
+        async () => (await page.evaluate(() => window.lumen.player.state()))?.positionSeconds ?? 0,
+        { timeout: 30_000 },
+      )
+      .toBeGreaterThan(3);
+    // The player read the index at the end, then came back to the start to play.
+    const playing = await page.evaluate(() => window.lumen.player.state());
+    expect(playing?.ended).toBe(false);
+    expect(playing?.positionSeconds ?? 0).toBeLessThan(60);
+    const cutTransfers = (await timeline()).filter(
+      (event) =>
+        event.kind === "bridge_transfer" && event.fields.termination === "upstream_failure",
+    );
+    expect(cutTransfers).toEqual([]);
+    await leavePlayer(page);
+  } finally {
+    await proxy.close();
+  }
 });
 
 test("changed files are replaced, revoked downloads are deleted, and signing out removes everything", async ({
