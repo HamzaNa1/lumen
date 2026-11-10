@@ -99,6 +99,28 @@ test("native media decodes, seeks, changes volume and audio, survives replacemen
   await expect
     .poll(() => page.evaluate(() => window.lumen.player.state()))
     .toMatchObject({ itemId: other?.id });
+  // The replacement plays in the film's MPV, and the film's session still closes where it was left.
+  const replacement = await page.evaluate(() => window.lumen.player.timeline());
+  expect(replacement.find((event) => event.kind === "player_ready")?.fields).toEqual({
+    reused: true,
+  });
+  await expect
+    .poll(() =>
+      server
+        .api(`/playback/sessions/${sessionId}/heartbeat`, {
+          token: admin.accessToken,
+          status: 409,
+          body: { state: "paused", activeTrackId: state?.itemId, errorCode: null },
+        })
+        .then(
+          () => true,
+          () => false,
+        ),
+    )
+    .toBe(true);
+  expect(await server.api(`/items/${state?.itemId}`, { token: admin.accessToken })).toMatchObject({
+    watchState: { positionSeconds: 5 },
+  });
   await expect(
     page.evaluate((sessionId) => window.lumen.player.seek(sessionId, 2), sessionId),
   ).rejects.toThrow();

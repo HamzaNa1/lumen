@@ -68,6 +68,10 @@ interface ActiveSession {
   motionRevision: number;
   pendingMotion: number;
   stopping: Promise<void> | null;
+  /** False until this session asks MPV for its file; earlier events belong to the file it replaced. */
+  loaded: boolean;
+  /** Removes what this session listens to on an MPV that outlives it. */
+  detach: () => void;
 }
 
 interface PlaybackResources {
@@ -79,6 +83,8 @@ interface PlaybackResources {
 
 const AUDIO_RESTART_TIMEOUT_MS = 15_000;
 const CACHE_STATE_TIMEOUT_MS = 100;
+/** A player slower than this to stop is replaced rather than waited on. */
+const HANDOFF_STOP_TIMEOUT_MS = 500;
 
 const sumOfCounts = (...values: ReadonlyArray<unknown>): number | null => {
   const counts = values.filter((value): value is number => typeof value === "number");
@@ -127,51 +133,66 @@ export class PlayerController extends EventEmitter {
     readonly paused?: boolean;
   }): Promise<PlayerSession> {
     const generation = ++this.startGeneration;
-    await this.stopActive();
-    if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
     const diagnostics =
       this.diagnosticsItemId === input.itemId ? this.diagnostics : new PlaybackDiagnostics();
+    diagnostics.record("playback_requested", {});
+    const reused = await this.handOff();
+    if (reused === null) await this.stopActive();
+    if (generation !== this.startGeneration) {
+      await this.releasePlayer(reused, generation);
+      throw new Error("Playback was cancelled");
+    }
     this.diagnosticsItemId = input.itemId;
     this.diagnostics = diagnostics;
     diagnostics.record("playback_start", {});
-    const session = await input.client.startPlayback(input.itemId).catch((cause: unknown) => {
+    const session = await input.client.startPlayback(input.itemId).catch(async (cause: unknown) => {
       diagnostics.record("playback_failure", { stage: "startup" });
+      await this.releasePlayer(reused, generation);
       throw cause;
     });
+    diagnostics.record("session_started", {});
     const reporter = new PlaybackSessionReporter(input.client, session.sessionId, (cause) =>
       this.emitError(cause),
     );
-    let playerProcess: MpvProcess | null = null;
-    let ipc: MpvIpc | null = null;
+    let playerProcess: MpvProcess | null = reused?.process ?? null;
+    let ipc: MpvIpc | null = reused?.ipc ?? null;
     let media: MpvMediaSource | null = null;
     let startedActive: ActiveSession | null = null;
     try {
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      playerProcess = MpvProcess.start({
-        cwd: process.cwd(),
-        resourcesPath: process.resourcesPath,
-        videoOutputArguments: this.surface.prepare(),
-        onFrame: (frame) => {
-          if (this.surface.kind === "compositor") void this.surface.frame(frame);
-        },
-        onFailure: (error) => {
-          if (this.active?.process === playerProcess) this.failActive(this.active, error);
-        },
-        onExit: () => {
-          const active = this.active;
-          if (active?.process === playerProcess && active?.session === session)
-            this.failActive(active, new Error("MPV has exited"));
-        },
-      });
-      this.startingProcess = playerProcess;
-      if (this.surface.kind === "compositor")
-        this.surface.connect(playerProcess, (error) => {
-          if (this.active?.process === playerProcess) this.failActive(this.active, error);
+      if (playerProcess === null || ipc === null) {
+        const spawned = MpvProcess.start({
+          cwd: process.cwd(),
+          resourcesPath: process.resourcesPath,
+          videoOutputArguments: this.surface.prepare(),
+          onFrame: (frame) => {
+            if (this.surface.kind === "compositor") void this.surface.frame(frame);
+          },
+          onFailure: (error) => {
+            if (this.active?.process === spawned) this.failActive(this.active, error);
+          },
+          onExit: () => {
+            if (this.active?.process === spawned)
+              this.failActive(this.active, new Error("MPV has exited"));
+          },
         });
-      await playerProcess.frames?.initialized;
-      if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      ipc = new MpvIpc();
-      await ipc.connect(playerProcess);
+        playerProcess = spawned;
+        this.startingProcess = spawned;
+        if (this.surface.kind === "compositor")
+          this.surface.connect(spawned, (error) => {
+            if (this.active?.process === spawned) this.failActive(this.active, error);
+          });
+        await spawned.frames?.initialized;
+        if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
+        const connected = new MpvIpc();
+        ipc = connected;
+        await connected.connect(spawned);
+        connected.on("disconnected", (cause: Error) => {
+          if (this.active?.ipc === connected) this.failActive(this.active, cause);
+        });
+        await connected.command(["request_log_messages", "error"]);
+      }
+      diagnostics.record("player_ready", { reused: reused !== null });
       if (this.startingProcess === playerProcess) this.startingProcess = null;
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       media = new MpvMediaSource({
@@ -197,10 +218,11 @@ export class PlayerController extends EventEmitter {
         motionRevision: 0,
         pendingMotion: 0,
         stopping: null,
+        loaded: false,
+        detach: () => undefined,
       };
       startedActive = active;
       this.active = active;
-      ipc.on("disconnected", (cause: Error) => this.failActive(active, cause));
       const onMediaFailure = (cause: Error) => {
         if (active.media.loading || active.recovering || this.active !== active) return;
         if (active.media.transcoded && this.state?.paused) {
@@ -217,7 +239,8 @@ export class PlayerController extends EventEmitter {
           });
         } else this.failActive(active, cause);
       };
-      ipc.on("end-file", (event: { reason?: string; file_error?: string }) => {
+      const onEnd = (event: { reason?: string; file_error?: string }) => {
+        if (!active.loaded) return;
         diagnostics.record("media_end", {
           reason: ["eof", "error", "stop", "quit", "redirect"].includes(event.reason ?? "")
             ? (event.reason ?? "unknown")
@@ -236,12 +259,20 @@ export class PlayerController extends EventEmitter {
           this.state = { ...this.state, ended: true };
           this.publish();
         }
-      });
-      ipc.on("log-message", (event: { text?: string }) => {
-        if (isDecoderError(event.text ?? ""))
+      };
+      const onLog = (event: { text?: string }) => {
+        if (active.loaded && isDecoderError(event.text ?? ""))
           onMediaFailure(new MediaDecodeFailure("MPV could not decode the media"));
-      });
-      await ipc.command(["request_log_messages", "error"]);
+      };
+      const sessionIpc = ipc;
+      sessionIpc.on("end-file", onEnd);
+      sessionIpc.on("log-message", onLog);
+      active.detach = () => {
+        sessionIpc.off("end-file", onEnd);
+        sessionIpc.off("log-message", onLog);
+      };
+      // MPV keeps what was set for the previous item; a watch group may have changed its speed.
+      if (reused !== null) await ipc.command(["set_property", "speed", 1]);
       const { audioOutput } = this.audioSettings.current;
       const { volume, muted } = this.audioSettings.volumeFor(session.titleId ?? null);
       await ipc.command(["set_property", "audio-channels", audioOutput]);
@@ -253,9 +284,10 @@ export class PlayerController extends EventEmitter {
         input.startAtSeconds > 0
           ? input.startAtSeconds
           : 0;
+      active.loaded = true;
       await active.media.start(startAtSeconds);
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      if (process.platform === "darwin" && this.surface.kind === "native") {
+      if (reused === null && process.platform === "darwin" && this.surface.kind === "native") {
         const windowId = await ipc.command(["get_property", "window-id"]);
         if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
         if (typeof windowId !== "number" || !Number.isSafeInteger(windowId) || windowId <= 0) {
@@ -269,6 +301,7 @@ export class PlayerController extends EventEmitter {
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       await this.surface.show();
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
+      diagnostics.record("playback_ready", {});
       this.state = {
         sessionId: session.sessionId,
         itemId: session.itemId,
@@ -734,6 +767,66 @@ export class PlayerController extends EventEmitter {
     await this.stopActive();
   }
 
+  /**
+   * Ends the playing session but keeps its MPV, ready for the next item, so playing on does not
+   * wait for a player to quit and another to start. Null when there is no healthy player to keep.
+   */
+  private async handOff(): Promise<{ readonly process: MpvProcess; readonly ipc: MpvIpc } | null> {
+    const active = this.active;
+    const state = this.state;
+    if (active === null || state === null || this.stopping !== null) return null;
+    if (active.process.socketPath === null) return null;
+    this.active = null;
+    this.state = null;
+    this.syncDisplaySleepBlocker();
+    this.starved = false;
+    this.intentionalPause = false;
+    this.startingProcess = active.process;
+    active.reporter.retire();
+    active.detach();
+    const savedState = await this.samplePosition(active, state);
+    const stopped = await active.ipc.command(["stop"], HANDOFF_STOP_TIMEOUT_MS).then(
+      () => true,
+      () => false,
+    );
+    active.media.close();
+    const finishing = this.finishSession(active, savedState).catch((cause: unknown) =>
+      this.emitError(cause),
+    );
+    active.stopping = finishing;
+    if (stopped && this.startingProcess === active.process)
+      return { process: active.process, ipc: active.ipc };
+    if (this.startingProcess === active.process) this.startingProcess = null;
+    active.ipc.close();
+    await active.process.stop().catch((cause: unknown) => this.emitError(cause));
+    return null;
+  }
+
+  /** Stops a kept MPV that no session took over. */
+  private async releasePlayer(
+    player: { readonly process: MpvProcess; readonly ipc: MpvIpc } | null,
+    generation: number,
+  ): Promise<void> {
+    if (player === null) return;
+    if (this.startingProcess === player.process) this.startingProcess = null;
+    if (this.active === null && generation === this.startGeneration) this.surface.hide();
+    player.ipc.close();
+    await player.process.stop().catch((cause: unknown) => this.emitError(cause));
+  }
+
+  /** Records where a session ended and closes it on the server. */
+  private async finishSession(
+    active: ActiveSession,
+    savedState: PlayerState | null,
+  ): Promise<void> {
+    // Where playback ended counts too: watching to the end may stop before the next report.
+    if (savedState !== null) {
+      this.onProgress?.({ connectionId: active.connectionId, state: savedState });
+      await active.reporter.saveProgress(savedState);
+    }
+    await active.reporter.end();
+  }
+
   private stopActive(): Promise<void> {
     if (this.stopping !== null) return this.stopping;
     const active = this.active;
@@ -920,12 +1013,11 @@ export class PlayerController extends EventEmitter {
         : await this.samplePosition(finalProgress.active, finalProgress.state);
     ipc?.close();
     const stoppingProcess = process?.stop().catch((cause: unknown) => this.emitError(cause));
-    // Where playback ended counts too: watching to the end may stop before the next report.
-    if (savedState !== null && finalProgress !== null)
-      this.onProgress?.({ connectionId: finalProgress.active.connectionId, state: savedState });
-    if (savedState !== null) await reporter.saveProgress(savedState);
-    await stoppingProcess;
-    await reporter.end();
+    const finishing =
+      finalProgress === null
+        ? reporter.end()
+        : this.finishSession(finalProgress.active, savedState);
+    await Promise.all([stoppingProcess, finishing]);
   }
 
   private requireActive(sessionId: string): ActiveSession {
