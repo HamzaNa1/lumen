@@ -786,11 +786,16 @@ export class HtmlMediaPlayer {
         mediaErrorCode: this.element.error?.code ?? null,
       });
     };
-    let waitingAtSeconds = 0;
+    // Where playback last waited or was sought to; moving past it means playback goes on.
+    let resumesPastSeconds = 0;
     const onWaiting = (): void => {
       record("browser_waiting");
-      waitingAtSeconds = this.element.currentTime;
+      resumesPastSeconds = this.element.currentTime;
       buffering(true)();
+    };
+    const onSeeking = (): void => {
+      resumesPastSeconds = this.element.currentTime;
+      update();
     };
     const onPlaying = (): void => {
       if (active.buffering) record("browser_recovery");
@@ -798,7 +803,11 @@ export class HtmlMediaPlayer {
     };
     const onTimeUpdate = (): void => {
       // WebKit may follow a wait with neither playing nor canplay. A clock that moves on is playing.
-      if (active.buffering && !this.element.seeking && this.element.currentTime > waitingAtSeconds)
+      if (
+        active.buffering &&
+        !this.element.seeking &&
+        this.element.currentTime > resumesPastSeconds
+      )
         onPlaying();
       else update();
     };
@@ -822,6 +831,7 @@ export class HtmlMediaPlayer {
       ["progress", update],
       ["play", update],
       ["pause", update],
+      ["seeking", onSeeking],
       ["seeked", onSeeked],
       ["volumechange", update],
       ["waiting", onWaiting],
