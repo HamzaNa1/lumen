@@ -853,7 +853,8 @@ export class DownloadManager extends EventEmitter {
 
   /**
    * Looks at the queue again when the next retry falls due. A timer can fire before the clock
-   * reaches that time, so the queue arms another for whatever is still to come.
+   * reaches that time, so the queue arms another for whatever is still to come. Waits are capped,
+   * so a clock set back is caught up with.
    */
   private scheduleRetry(now: number): void {
     if (this.retryTimer !== null) clearTimeout(this.retryTimer);
@@ -865,10 +866,13 @@ export class DownloadManager extends EventEmitter {
         due = Math.min(due ?? atMs, atMs);
     }
     if (due === null || this.closed) return;
-    this.retryTimer = setTimeout(() => {
-      this.retryTimer = null;
-      this.schedule();
-    }, due - now);
+    this.retryTimer = setTimeout(
+      () => {
+        this.retryTimer = null;
+        this.schedule();
+      },
+      Math.min(MAX_RETRY_MS, due - now),
+    );
     this.retryTimer.unref?.();
   }
 
