@@ -4,6 +4,7 @@ import {
   type CatalogItem,
   type CatalogItemDetails,
   catalogItemOf as catalogItem,
+  firstUnwatchedEpisode,
   posterOf,
 } from "@lumen/contracts";
 import { Button, PosterFallback, posterHue, StatusState } from "@lumen/ui";
@@ -57,13 +58,26 @@ const useChildren = (parentId: string) => {
 
 const yearOf = (year: number | null): string | null => (year === null ? null : String(year));
 
-const PlayButton = ({ item }: { readonly item: CatalogItem }): React.ReactElement => {
+/** Plays `item`, or resumes it: an episode by naming it, anything else from where it stopped. */
+const PlayButton = ({
+  item,
+  seasonNumber,
+}: {
+  readonly item: CatalogItem;
+  /** The season of an episode, for naming the episode it resumes. */
+  readonly seasonNumber?: number | null | undefined;
+}): React.ReactElement => {
   const { playItem } = useWorkspace();
   const resume = item.resumePositionSeconds ?? 0;
+  const episode = item.kind === "episode" ? episodeCode(seasonNumber, item) : null;
   return (
     <Button variant="primary" size="lg" onClick={() => playItem(item)}>
       <Play aria-hidden="true" size={16} fill="currentColor" strokeWidth={0} />
-      {resume > 0 ? `Resume from ${formatClock(resume)}` : "Play"}
+      {resume <= 0
+        ? "Play"
+        : episode === null
+          ? `Resume from ${formatClock(resume)}`
+          : `Resume ${episode}`}
     </Button>
   );
 };
@@ -344,7 +358,12 @@ const ShowDetails = ({ itemId }: { readonly itemId: string }): React.ReactElemen
         }
         actions={
           <>
-            {next === null ? null : <PlayButton item={next} />}
+            {next === null ? null : (
+              <PlayButton
+                item={next}
+                seasonNumber={next.placement?.seasonNumber ?? seasonNumber(next.parentId)}
+              />
+            )}
             <DeviceOnly>
               <ShowDownloadRuleMenu show={{ id: item.id, title: item.title }} />
             </DeviceOnly>
@@ -428,6 +447,8 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
   const list = episodes.data?.pages.flatMap((page) => page.items) ?? [];
   const more = episodes.hasNextPage;
   const count = episodeCount(list);
+  // The season's next episode, or its first again once all of it is watched.
+  const next = firstUnwatchedEpisode(list) ?? (more ? null : (list[0] ?? null));
   return (
     <div className="details-page">
       <DetailsHeader
@@ -455,6 +476,7 @@ const SeasonDetails = ({ itemId }: { readonly itemId: string }): React.ReactElem
         }
         actions={
           <>
+            {next === null ? null : <PlayButton item={next} seasonNumber={item.indexNumber} />}
             <WatchedButton item={catalogItem(details.data)} />
             <DeviceOnly>
               <DownloadAllButton items={list} label="Download season" />
@@ -538,7 +560,7 @@ const EpisodeDetails = ({ itemId }: { readonly itemId: string }): React.ReactEle
         }
         actions={
           <>
-            <PlayButton item={current} />
+            <PlayButton item={current} seasonNumber={item.seasonNumber ?? season?.indexNumber} />
             <WatchedButton item={current} />
             <DeviceOnly>
               <DownloadButton item={current} />

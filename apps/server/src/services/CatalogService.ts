@@ -1,3 +1,4 @@
+import { firstUnwatchedEpisode, nextEpisode, previousEpisode } from "@lumen/contracts";
 import {
   albums,
   artists,
@@ -39,7 +40,6 @@ import {
   showPlacement,
 } from "./CatalogColumns";
 import { placeEpisodes, showEpisodes } from "./EpisodePlacement";
-import { firstUnwatchedEpisode, nextEpisode, previousEpisode } from "./EpisodeSequence";
 
 type WatchInput = Schema.Schema.Type<typeof WatchStateBody>;
 type FavoriteInput = Schema.Schema.Type<typeof FavoriteBody>;

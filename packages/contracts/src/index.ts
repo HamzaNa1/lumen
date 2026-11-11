@@ -2,6 +2,7 @@ export * from "./api.ts";
 export * from "./downloads.ts";
 export * from "./episode-order.ts";
 export * from "./episode-range.ts";
+export * from "./episode-sequence.ts";
 export * from "./home.ts";
 export * from "./ipc.ts";
 export * from "./metadata-match.ts";
