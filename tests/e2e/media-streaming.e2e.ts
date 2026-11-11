@@ -1,10 +1,11 @@
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MediaFile } from "../../apps/desktop/src/main/media-store/MediaFile";
-import { defaultGeometry } from "../../apps/desktop/src/main/media-store/MediaStore";
+import { defaultGeometry, MediaStore } from "../../apps/desktop/src/main/media-store/MediaStore";
 import { MediaPreload } from "../../apps/desktop/src/main/player/MediaPreload";
 import { expect, test } from "./support/server";
 
@@ -166,5 +167,29 @@ test("the start and end of the next file, preloaded into memory, serve the playe
   } finally {
     preload.drop();
     await stream.dispose();
+  }
+});
+
+test("playing a file again while the cache deletes it keeps the new copy", async () => {
+  // Letting go of a streamed file hands it to the cache, which deletes it while the same item
+  // can already be playing again, as it does when a viewer replays what just ended.
+  const root = await mkdtemp(join(tmpdir(), "lumen-media-store-"));
+  const store = await MediaStore.load({ root });
+  const spec = {
+    serverId: "server",
+    sourceId: "source",
+    revision: "revision-1",
+    sizeBytes: 2 * CHUNK,
+    mimeType: "video/mp4",
+  };
+  try {
+    (await store.acquire(spec)).release();
+    const replay = await store.acquire(spec);
+    await store.enforceCache();
+    expect(existsSync(replay.file.directory)).toBe(true);
+    replay.release();
+  } finally {
+    await store.close();
+    await rm(root, { recursive: true, force: true });
   }
 });

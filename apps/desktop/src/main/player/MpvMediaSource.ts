@@ -1,5 +1,6 @@
 import { type PlaybackDiagnostics, setTranscodingParameters } from "@lumen/client";
 import { type PlayerSession, resolveTrackSelection, type TrackKind } from "@lumen/contracts";
+import { ignoreFailure } from "../failures";
 import { type MediaFile, type MediaSpec, mediaSpecOf } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
 import type { MpvIpc } from "./MpvIpc";
@@ -137,7 +138,8 @@ export class MpvMediaSource {
     this.revision += 1;
     this.loadAbort?.abort();
     if (this.capability !== null) this.options.bridge.revoke(this.capability);
-    void this.held?.then((held) => held?.release());
+    // A file that failed to open was reported by the load that awaited it.
+    void this.held?.then((held) => held?.release(), ignoreFailure);
   }
 
   /** The file as this device holds it, once direct playback has opened it. */

@@ -28,6 +28,7 @@ const listDirectories = async (path: string): Promise<string[]> =>
 export class MediaStore {
   private readonly files = new Map<string, MediaFile>();
   private readonly opening = new Map<string, Promise<MediaFile>>();
+  private readonly deleting = new Map<string, Promise<void>>();
   private enforcing: Promise<void> | null = null;
   /** Bytes the streaming cache may keep. */
   cacheBudgetBytes = 0;
@@ -105,17 +106,22 @@ export class MediaStore {
     if (existing !== undefined) return existing;
     const pending = this.opening.get(key);
     if (pending !== undefined) return pending;
-    const opening = MediaFile.open({
-      root: this.root,
-      spec,
-      geometry: this.geometry,
-      allowSegment: (file) => this.allowSegment(file),
-      fetchImpl: this.fetchImpl,
-    }).then((file) => {
-      file.keepsBytes = () => file.pins > 0 || this.cacheBudgetBytes > 0;
-      this.files.set(key, file);
-      return file;
-    });
+    // A copy still being deleted shares the folder this one is about to use.
+    const opening = (this.deleting.get(key) ?? Promise.resolve())
+      .then(() =>
+        MediaFile.open({
+          root: this.root,
+          spec,
+          geometry: this.geometry,
+          allowSegment: (file) => this.allowSegment(file),
+          fetchImpl: this.fetchImpl,
+        }),
+      )
+      .then((file) => {
+        file.keepsBytes = () => file.pins > 0 || this.cacheBudgetBytes > 0;
+        this.files.set(key, file);
+        return file;
+      });
     this.opening.set(key, opening);
     try {
       return await opening;
@@ -163,10 +169,19 @@ export class MediaStore {
       file.stopBackground();
       await file.dropUnused();
     } else {
-      this.files.delete(file.key);
-      await file.destroy();
+      await this.delete(file);
     }
     this.onSpaceFreed();
+  }
+
+  private async delete(file: MediaFile): Promise<void> {
+    this.files.delete(file.key);
+    const deleting = file.destroy();
+    const settled = deleting.catch(ignoreFailure).finally(() => {
+      if (this.deleting.get(file.key) === settled) this.deleting.delete(file.key);
+    });
+    this.deleting.set(file.key, settled);
+    await deleting;
   }
 
   minimumFreeBytes(totalBytes: number): number {
@@ -213,8 +228,7 @@ export class MediaStore {
       if (evicted.has(segment.key)) await segment.file.dropSegment(segment.index);
     for (const file of cached)
       if (file.segments.length === 0 && !file.busy && file.pins === 0) {
-        this.files.delete(file.key);
-        await file.destroy();
+        await this.delete(file);
       }
   }
 
