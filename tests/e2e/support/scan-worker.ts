@@ -24,8 +24,22 @@ export class ScanWorker {
     const log: string[] = [];
     child.stdout?.on("data", (chunk) => log.push(String(chunk)));
     child.stderr?.on("data", (chunk) => log.push(String(chunk)));
-    const ready = await once(child, "message", { signal: AbortSignal.timeout(10000) });
-    expect(ready[0], log.join("")).toEqual({ ready: true });
+    const settled = new AbortController();
+    try {
+      const ready = await Promise.race([
+        once(child, "message", {
+          signal: AbortSignal.any([settled.signal, AbortSignal.timeout(10000)]),
+        }),
+        once(child, "exit", { signal: settled.signal }).then(([code]) => {
+          throw new Error(
+            `The scan worker exited with ${code} before it was ready:\n${log.join("")}`,
+          );
+        }),
+      ]);
+      expect(ready[0], log.join("")).toEqual({ ready: true });
+    } finally {
+      settled.abort();
+    }
     return new ScanWorker(child, log);
   }
   async call(
