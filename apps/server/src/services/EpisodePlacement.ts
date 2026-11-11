@@ -1,3 +1,4 @@
+import { nextEpisode, previousEpisode } from "@lumen/contracts";
 import { catalogItems, type DatabaseClient, itemWatchStates } from "@lumen/database";
 import { and, asc, eq, inArray, or, sql } from "drizzle-orm";
 import { alias } from "drizzle-orm/sqlite-core";
@@ -9,7 +10,6 @@ import {
   resumePositionSeconds,
   showPlacement,
 } from "./CatalogColumns";
-import { nextEpisode, previousEpisode } from "./EpisodeSequence";
 
 const season = alias(catalogItems, "season");
 

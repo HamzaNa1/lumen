@@ -132,6 +132,44 @@ async function asOlderServer(page: Page) {
   );
 }
 
+test("a season plays its next episode, names the one it resumes, and starts over once watched", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(token, "shows", [
+    ...twoEpisodes,
+    "Serial/Season 2/Serial S02E01 - Return.mp4",
+  ]);
+  const children = async (id: string | undefined) =>
+    (await server.api<{ items: Array<{ id: string }> }>(`/items/${id}/children`, { token })).items;
+  const [show] = await server.items(token, library.id);
+  const [seasonOne, seasonTwo] = await children(show?.id);
+  const [opening, sequel] = await children(seasonOne?.id);
+  const watch = (id: string | undefined, positionSeconds: number, completed: boolean) =>
+    server.api(`/items/${id}/watch-state`, {
+      token,
+      method: "PUT",
+      body: { positionSeconds, completed },
+    });
+  await watch(opening?.id, 0, true);
+  await watch(sequel?.id, 2, false);
+  await signIn(page, server);
+  const actions = page.locator(".details-actions");
+  for (const path of [`show/${show?.id}`, `season/${seasonOne?.id}`, `episode/${sequel?.id}`]) {
+    await page.goto(`${server.origin}web/${path}`);
+    await expect(actions.getByRole("button", { name: "Resume S1 E2", exact: true })).toBeVisible();
+  }
+  await page.goto(`${server.origin}web/season/${seasonTwo?.id}`);
+  await expect(actions.getByRole("button", { name: "Play", exact: true })).toBeVisible();
+  await watch(seasonOne?.id, 0, true);
+  await page.goto(`${server.origin}web/season/${seasonOne?.id}`);
+  await actions.getByRole("button", { name: "Play", exact: true }).click();
+  const header = page.locator(".media-player-header");
+  await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
+});
+
 test("an episode, and the one after it, are described the moment they play", async ({
   server,
   admin,

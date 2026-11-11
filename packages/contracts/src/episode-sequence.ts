@@ -1,9 +1,13 @@
-import { coveredEpisodeNumbers, type EpisodeNumbering, lastEpisodeNumber } from "@lumen/contracts";
+import {
+  coveredEpisodeNumbers,
+  type EpisodeNumbering,
+  lastEpisodeNumber,
+} from "./episode-range.ts";
 
 /** A show's episode entry, listed in watching order: by season, then by first episode. */
 export interface SequencedEpisode extends EpisodeNumbering {
   readonly seasonNumber?: number | null | undefined;
-  readonly completed: boolean;
+  readonly completed?: boolean | undefined;
 }
 
 // Entries in different seasons, or without a known place, follow the watching order alone.
