@@ -3,6 +3,7 @@ import { EventEmitter, once } from "node:events";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { ChunkMap, nextChunkToDownload } from "@lumen/client";
+import type { PlayableMedia } from "@lumen/contracts";
 import { ignoreFailure } from "../failures";
 import { DiskByteStore, MemoryByteStore, SpaceExhausted } from "./ByteStore";
 
@@ -14,6 +15,25 @@ export interface MediaSpec {
   readonly sizeBytes: number;
   readonly mimeType: string;
 }
+
+/** The file a server described, or null when it said too little for its bytes to be kept. */
+export const mediaSpecOf = (
+  serverId: string | null,
+  sourceId: string,
+  media: PlayableMedia | undefined,
+): MediaSpec | null =>
+  serverId === null ||
+  media?.revision === undefined ||
+  media.sizeBytes === null ||
+  media.sizeBytes <= 0
+    ? null
+    : {
+        serverId,
+        sourceId,
+        revision: media.revision,
+        sizeBytes: media.sizeBytes,
+        mimeType: media.mimeType ?? "application/octet-stream",
+      };
 
 export const mediaKey = (spec: Pick<MediaSpec, "serverId" | "sourceId" | "revision">): string =>
   `${spec.serverId}/${spec.sourceId}/${createHash("sha256").update(spec.revision).digest("hex").slice(0, 24)}`;
@@ -109,6 +129,8 @@ export class MediaFile extends EventEmitter {
   readonly disk: ChunkMap;
   private readonly memory: ChunkMap;
   private readonly memoryStore: MemoryByteStore;
+  /** Memory chunks held before any reader came, which readers moving on do not let go of. */
+  private readonly kept = new Set<number>();
   private readonly fetches = new Set<Fetch>();
   private readonly readers = new Set<Reader>();
   private readonly sources = new Map<symbol, UpstreamSource>();
@@ -543,15 +565,38 @@ export class MediaFile extends EventEmitter {
     const behind =
       Math.min(...[...this.readers].map((reader) => reader.position)) - MEMORY_BEHIND_BYTES;
     const limit = Number.isFinite(behind) ? behind : Number.POSITIVE_INFINITY;
-    for (
-      let chunk = 0;
-      chunk < this.memory.count && this.memory.endOf(chunk) <= limit;
-      chunk += 1
-    ) {
-      if (!this.memory.has(chunk)) continue;
-      this.memory.clear(chunk);
-      this.memoryStore.dropChunk(chunk);
+    for (let chunk = 0; chunk < this.memory.count && this.memory.endOf(chunk) <= limit; chunk += 1)
+      if (this.memory.has(chunk) && !this.kept.has(chunk)) this.dropMemory(chunk);
+  }
+
+  private dropMemory(chunk: number): void {
+    this.memory.clear(chunk);
+    this.memoryStore.dropChunk(chunk);
+    this.kept.delete(chunk);
+  }
+
+  /**
+   * Holds chunks fetched before the file opened, such as the start of the next episode. They
+   * stay in memory until no player reads the file, however far its readers move.
+   */
+  async adoptMemory(chunks: ReadonlyMap<number, Buffer>): Promise<number> {
+    let adopted = 0;
+    for (const [chunk, bytes] of chunks) {
+      if (chunk >= this.memory.count || this.isHeld(chunk)) continue;
+      if (bytes.length !== this.memory.endOf(chunk) - this.memory.startOf(chunk)) continue;
+      await this.memoryStore.write(this.memory.startOf(chunk), bytes);
+      this.memory.set(chunk);
+      this.kept.add(chunk);
+      adopted += bytes.length;
     }
+    if (adopted > 0) this.emit("progress");
+    return adopted;
+  }
+
+  /** Lets go of every chunk held in memory, once no player reads the file. */
+  releaseMemory(): void {
+    for (let chunk = 0; chunk < this.memory.count; chunk += 1)
+      if (this.memory.has(chunk)) this.dropMemory(chunk);
   }
 
   private markChanged(): void {
@@ -584,10 +629,7 @@ export class MediaFile extends EventEmitter {
         continue;
       }
       // Anything in memory there is dropped: the disk copy is the one that lasts.
-      if (this.memory.has(chunk)) {
-        this.memory.clear(chunk);
-        this.memoryStore.dropChunk(chunk);
-      }
+      if (this.memory.has(chunk)) this.dropMemory(chunk);
       const fetch = this.startFetch(offset, true);
       if (fetch === null) continue;
       const stop = () => fetch.controller.abort();

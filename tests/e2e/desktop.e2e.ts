@@ -140,6 +140,61 @@ test("native media decodes, seeks, changes volume and audio, survives replacemen
   expect((await app.windows()).length).toBeGreaterThanOrEqual(1);
 });
 
+test("near the end of an episode, the next one's start is held in memory and plays from there", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(token, "shows", [
+    "Show/Season 1/Show S01E01.mp4",
+    "Show/Season 1/Show S01E02.mp4",
+  ]);
+  const children = async (id: string | undefined) =>
+    (await server.api<{ items: { id: string }[] }>(`/items/${id}/children`, { token })).items;
+  const [show] = await server.items(token, library.id);
+  const [season] = await children(show?.id);
+  const [first, second] = await children(season?.id);
+  const { page } = desktop;
+  await connectDesktop(page, server);
+  await page.evaluate((route) => {
+    location.hash = route;
+  }, `/show/${show?.id}`);
+  await page
+    .getByRole("button", { name: /^Play (Show S01E01|Episode 1)$/ })
+    .first()
+    .click({ force: true });
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ itemId: first?.id, paused: false });
+  const state = await page.evaluate(() => window.lumen.player.state());
+  const sessionId = state?.sessionId ?? "";
+  await page.evaluate((id) => window.lumen.player.pause(id, true), sessionId);
+  // Past the share of an episode that counts as watched, the player asks for the next one.
+  await page.evaluate(({ id, at }) => window.lumen.player.seek(id, at), {
+    id: sessionId,
+    at: Math.floor((state?.durationSeconds ?? 0) * 0.95),
+  });
+  await expect
+    .poll(
+      async () =>
+        (await page.evaluate(() => window.lumen.player.timeline())).find(
+          (event) => event.kind === "preload_finished",
+        )?.fields,
+      { timeout: 15_000 },
+    )
+    .toEqual({ bytes: expect.any(Number), failed: false });
+  await page.evaluate((itemId) => window.lumen.player.start(itemId), second?.id ?? "");
+  await expect
+    .poll(() => page.evaluate(() => window.lumen.player.state()))
+    .toMatchObject({ itemId: second?.id, paused: false });
+  const adopted = (await page.evaluate(() => window.lumen.player.timeline())).find(
+    (event) => event.kind === "preload_adopted",
+  );
+  expect(adopted?.fields.bytes).toBeGreaterThan(0);
+  await page.evaluate(() => window.lumen.player.stop());
+});
+
 test("native playback prevents display sleep across fullscreen and releases it when inactive", async ({
   server,
   admin,

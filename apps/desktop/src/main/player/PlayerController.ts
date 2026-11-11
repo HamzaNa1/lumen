@@ -11,20 +11,23 @@ import {
   type WatchPlaybackSample,
   type WatchPlayer,
 } from "@lumen/client";
-import type {
-  AudioOutput,
-  IpcPlayerSurfaceBounds,
-  PlaybackInfo,
-  PlayerSession,
-  PlayerState,
-  TrackKind,
+import {
+  type AudioOutput,
+  type IpcPlayerSurfaceBounds,
+  isWatchCompleted,
+  type PlaybackInfo,
+  type PlayerSession,
+  type PlayerState,
+  type TrackKind,
 } from "@lumen/contracts";
 import { app, powerSaveBlocker } from "electron";
 import type { ServerClient } from "../api/ServerClient";
+import { mediaSpecOf } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
 import type { CompositorSurface } from "./CompositorSurface";
+import { MediaPreload } from "./MediaPreload";
 import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import {
@@ -70,6 +73,8 @@ interface ActiveSession {
   stopping: Promise<void> | null;
   /** False until this session asks MPV for its file; earlier events belong to the file it replaced. */
   loaded: boolean;
+  /** Whether the item after this one has been asked for, which happens once per session. */
+  preloadAsked: boolean;
   /** Removes what this session listens to on an MPV that outlives it. */
   readonly detach: () => void;
 }
@@ -100,6 +105,7 @@ export class PlayerController extends EventEmitter {
   private readonly onState: (state: PlayerState | null) => void;
   private readonly audioSettings: AudioSettingsStore;
   private readonly store: MediaStore | undefined;
+  private readonly preload: MediaPreload | null;
   private readonly onProgress: PlayerControllerOptions["onProgress"];
   private active: ActiveSession | null = null;
   private startingProcess: MpvProcess | null = null;
@@ -121,6 +127,8 @@ export class PlayerController extends EventEmitter {
     this.onState = options.onState;
     this.audioSettings = options.audioSettings ?? AudioSettingsStore.inMemory();
     this.store = options.store;
+    this.preload =
+      options.store === undefined ? null : new MediaPreload(options.store.geometry.chunkBytes);
     this.onProgress = options.onProgress;
   }
 
@@ -198,6 +206,7 @@ export class PlayerController extends EventEmitter {
         connectionId: input.connectionId,
         diagnostics,
         active: () => this.active?.session === session,
+        takePreload: (spec) => this.preload?.take(spec) ?? null,
         ...(this.store === undefined ? {} : { store: this.store }),
       });
       const sessionIpc = ipc;
@@ -256,6 +265,7 @@ export class PlayerController extends EventEmitter {
         pendingMotion: 0,
         stopping: null,
         loaded: false,
+        preloadAsked: false,
         detach: () => {
           sessionIpc.off("end-file", onEnd);
           sessionIpc.off("log-message", onLog);
@@ -280,6 +290,8 @@ export class PlayerController extends EventEmitter {
           : 0;
       active.loaded = true;
       await active.media.start(startAtSeconds);
+      // Whatever was preloaded and not taken was for another item.
+      this.preload?.drop();
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       if (reused === null && process.platform === "darwin" && this.surface.kind === "native") {
         const windowId = await ipc.command(["get_property", "window-id"]);
@@ -331,6 +343,7 @@ export class PlayerController extends EventEmitter {
       this.publish();
       return this.sanitized(session);
     } catch (cause) {
+      if (generation === this.startGeneration) this.preload?.drop();
       if (this.startingProcess === playerProcess) this.startingProcess = null;
       diagnostics.record(
         generation === this.startGeneration ? "playback_failure" : "playback_cancelled",
@@ -758,6 +771,7 @@ export class PlayerController extends EventEmitter {
 
   async stop(): Promise<void> {
     this.startGeneration += 1;
+    this.preload?.drop();
     await this.stopActive();
   }
 
@@ -942,7 +956,43 @@ export class PlayerController extends EventEmitter {
   async tick(): Promise<void> {
     if (this.active === null || this.state === null) return;
     this.onProgress?.({ connectionId: this.active.connectionId, state: this.state });
+    this.preloadNext(this.active, this.state);
     await this.active.reporter.tick(this.state);
+  }
+
+  /**
+   * Once the viewer has watched most of an item, holds the start and end of the next one in
+   * memory, so playing on reads them without waiting on the server.
+   */
+  private preloadNext(active: ActiveSession, state: PlayerState): void {
+    const { preload, diagnostics } = this;
+    const { client, session } = active;
+    if (preload === null || active.preloadAsked || active.media.transcoded || client.offline)
+      return;
+    const durationMs = state.durationSeconds === null ? null : state.durationSeconds * 1000;
+    if (!isWatchCompleted(state.positionSeconds * 1000, durationMs)) return;
+    active.preloadAsked = true;
+    void (async () => {
+      const ticket =
+        (await client.preloadNext?.(session.sessionId, session.itemId).catch(() => null)) ?? null;
+      const spec =
+        ticket === null ? null : mediaSpecOf(client.serverId, ticket.sourceId, ticket.media);
+      if (ticket === null || spec === null || this.active !== active) return;
+      const kept = this.store?.find(spec) ?? null;
+      diagnostics.record("preload_started", { itemId: ticket.itemId });
+      const outcome = await preload.start({
+        spec,
+        origin: client.serverOrigin,
+        path: ticket.streamPath,
+        token: session.grantToken,
+        durationSeconds: ticket.durationSeconds,
+        held: (chunk) => kept?.disk.has(chunk) === true,
+      });
+      diagnostics.record("preload_finished", {
+        bytes: outcome.bytes,
+        failed: outcome.failed,
+      });
+    })();
   }
 
   /** What of a downloaded file is on this device, as stretches of its timeline. */

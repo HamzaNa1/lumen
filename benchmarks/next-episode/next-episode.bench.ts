@@ -1,11 +1,17 @@
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
+import { request } from "node:http";
 import { join } from "node:path";
+import { Transform } from "node:stream";
 import { connectDesktop, expect, test } from "../../tests/e2e/support/desktop";
+import { NetworkProxy } from "../../tests/e2e/support/proxy";
 
 // Times "next episode" in the real desktop app, from the action to MPV playing the episode.
 // LUMEN_NEXT_EPISODE_MEDIA plays a file of your own; otherwise a 1080p Matroska file is made.
 const rounds = Number(process.env.LUMEN_NEXT_EPISODE_ROUNDS ?? 8);
+// A link to the server: each request waits this long for its answer, and bytes share this rate.
+const rttMs = Number(process.env.LUMEN_NEXT_EPISODE_RTT_MS ?? 0);
+const megabitsPerSecond = Number(process.env.LUMEN_NEXT_EPISODE_MBPS ?? 0);
 const output = process.env.LUMEN_NEXT_EPISODE_OUTPUT ?? "";
 const marks = [
   "playback_start",
@@ -21,6 +27,38 @@ const median = (values: number[]) => {
   return sorted.length % 2 === 0
     ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
     : (sorted[middle] ?? 0);
+};
+
+/** Puts the server behind a link with the configured latency and bandwidth. */
+const slowLink = async (upstream: string) => {
+  const proxy = await new NetworkProxy(upstream).start();
+  let linkFreeAtMs = 0;
+  const pace = () =>
+    new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        if (megabitsPerSecond <= 0) return callback(null, chunk);
+        const now = performance.now();
+        linkFreeAtMs =
+          Math.max(now, linkFreeAtMs) + (chunk.byteLength * 8) / (megabitsPerSecond * 1000);
+        setTimeout(() => callback(null, chunk), linkFreeAtMs - now);
+      },
+    });
+  proxy.intercept = async (incoming, response) => {
+    await new Promise((resolve) => setTimeout(resolve, rttMs));
+    const outbound = request(
+      new URL(incoming.url ?? "/", upstream),
+      { method: incoming.method, headers: incoming.headers },
+      (remote) => {
+        response.writeHead(remote.statusCode ?? 502, remote.headers);
+        remote.pipe(pace()).pipe(response);
+      },
+    );
+    outbound.on("error", () => response.destroy());
+    response.on("close", () => outbound.destroy());
+    incoming.pipe(outbound);
+    return true;
+  };
+  return proxy;
 };
 
 test("next episode", async ({ server, admin, desktop }) => {
@@ -46,7 +84,8 @@ test("next episode", async ({ server, admin, desktop }) => {
     (item) => item.kind === "show",
   );
   const { page } = desktop;
-  await connectDesktop(page, server);
+  const link = rttMs > 0 || megabitsPerSecond > 0 ? await slowLink(server.origin) : null;
+  await connectDesktop(page, link ?? server);
   await page.evaluate((route) => {
     location.hash = route;
   }, `/show/${show?.id}`);
@@ -81,6 +120,24 @@ test("next episode", async ({ server, admin, desktop }) => {
     await expect
       .poll(() => page.evaluate(() => window.lumen.player.state()).then((s) => s?.positionSeconds))
       .toBeGreaterThan(2);
+    // Watching most of an episode lets the player preload the next one. A build that cannot
+    // never reports it, and moves on once the wait runs out.
+    const current = await page.evaluate(() => window.lumen.player.state());
+    await page.evaluate((id) => window.lumen.player.pause(id, true), current?.sessionId ?? "");
+    await page.evaluate(({ id, at }) => window.lumen.player.seek(id, at), {
+      id: current?.sessionId ?? "",
+      at: Math.floor((current?.durationSeconds ?? 0) * 0.95),
+    });
+    await expect
+      .poll(
+        async () =>
+          (await page.evaluate(() => window.lumen.player.timeline())).some(
+            (event) => event.kind === "preload_finished",
+          ),
+        { timeout: 10_000 },
+      )
+      .toBe(true)
+      .catch(() => undefined);
     const requestedAtMs = await page.evaluate((inline) => {
       const at = Date.now();
       if (inline)
@@ -100,10 +157,18 @@ test("next episode", async ({ server, admin, desktop }) => {
   const summary = Object.fromEntries(
     marks.map((mark) => [mark, median(samples.map((sample) => sample[mark] ?? Number.NaN))]),
   );
-  console.log(`median ms after "next episode" over ${rounds} rounds:`, summary);
+  console.log(
+    `median ms after "next episode" over ${rounds} rounds, rtt ${rttMs} ms, ${megabitsPerSecond || "unlimited"} Mbps:`,
+    summary,
+  );
+  await link?.close();
   if (output !== "")
     await writeFile(
       output,
-      JSON.stringify({ platform: process.platform, summary, samples }, null, 2),
+      JSON.stringify(
+        { platform: process.platform, rttMs, megabitsPerSecond, summary, samples },
+        null,
+        2,
+      ),
     );
 });

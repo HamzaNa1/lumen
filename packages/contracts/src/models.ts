@@ -257,6 +257,19 @@ export const PlayerSession = Schema.Struct({
 });
 export type PlayerSession = Schema.Schema.Type<typeof PlayerSession>;
 
+/**
+ * An item a playback session's grant now also covers, so a client can fetch the start of what
+ * it will likely play next. The grant ends with the session; one preload replaces the last.
+ */
+export const PreloadTicket = Schema.Struct({
+  itemId: Uuid,
+  sourceId: Uuid,
+  streamPath: Schema.String.check(Schema.isMinLength(1)),
+  durationSeconds: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  media: PlayableMedia,
+});
+export type PreloadTicket = Schema.Schema.Type<typeof PreloadTicket>;
+
 export const AudioOutput = Schema.Literals(["stereo", "auto-safe"]);
 export type AudioOutput = Schema.Schema.Type<typeof AudioOutput>;
 

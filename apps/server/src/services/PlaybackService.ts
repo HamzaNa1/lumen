@@ -9,6 +9,7 @@ import {
   type PlayableStream,
   type PlaybackProgress,
   type PlaybackSession,
+  type PreloadTicket,
   type TrackChoiceInput,
   type TrackMemory,
   type TrackPreferences,
@@ -32,7 +33,7 @@ import {
   streams as streamTable,
   tracks,
 } from "@lumen/database";
-import { and, asc, desc, eq, gt, inArray, isNull, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
 import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
@@ -105,6 +106,13 @@ export interface PlaybackServiceShape {
     input: ProgressInput,
     nowMs: number,
   ) => Effect.Effect<PlaybackProgress, unknown>;
+  /** Extends a session's grant to the bytes of the item a viewer will likely play next. */
+  readonly preload: (
+    principal: AuthPrincipal,
+    sessionId: string,
+    itemId: string,
+    nowMs: number,
+  ) => Effect.Effect<PreloadTicket, unknown>;
   /** Authorizes a media request made with a playback grant or a download grant. */
   readonly authorizeGrant: (
     grantToken: string,
@@ -338,14 +346,33 @@ export const makePlaybackService = Effect.gen(function* () {
         return yield* conflict("Playback session is closed");
       const activeTrackId =
         input.activeTrackId === null ? null : yield* resolveTrack(input.activeTrackId);
-      const grants = yield* database
+      const current = yield* database
         .select({ id: playbackGrants.id, trackId: playbackGrants.trackId })
         .from(playbackGrants)
         .where(and(eq(playbackGrants.sessionId, sessionId), gt(playbackGrants.expiresAtMs, nowMs)));
-      const trackIds = new Set(grants.map((grant) => grant.trackId));
+      const playing = new Set([activeTrackId, session.activeTrackId]);
+      const trackIds = new Set(current.map((grant) => grant.trackId));
       if (activeTrackId !== null) trackIds.add(activeTrackId);
-      for (const trackId of trackIds)
-        yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
+      const lost = new Set<string>();
+      for (const trackId of trackIds) {
+        const check = access.requireTrack(principal, trackId, "playback:control", nowMs);
+        // A preloaded item the viewer can no longer reach loses its grant; what plays keeps going.
+        if (playing.has(trackId)) yield* check;
+        else if (
+          !(yield* check.pipe(Effect.match({ onFailure: () => false, onSuccess: () => true })))
+        )
+          lost.add(trackId);
+      }
+      if (lost.size > 0)
+        yield* database
+          .delete(playbackGrants)
+          .where(
+            and(
+              eq(playbackGrants.sessionId, sessionId),
+              inArray(playbackGrants.trackId, [...lost]),
+            ),
+          );
+      const grants = current.filter((grant) => !lost.has(grant.trackId));
       return yield* database.transaction((transaction) =>
         Effect.gen(function* () {
           const [updated] = yield* transaction
@@ -518,6 +545,56 @@ export const makePlaybackService = Effect.gen(function* () {
     },
   );
 
+  const preload: PlaybackServiceShape["preload"] = Effect.fn("Playback.preload")(
+    function* (principal, sessionId, itemId, nowMs) {
+      const session = yield* database
+        .select({
+          userId: playbackSessions.userId,
+          activeTrackId: playbackSessions.activeTrackId,
+          closedAtMs: playbackSessions.closedAtMs,
+          expiresAtMs: playbackSessions.expiresAtMs,
+        })
+        .from(playbackSessions)
+        .where(eq(playbackSessions.id, sessionId))
+        .get();
+      if (session == null) return yield* notFound("Playback session not found");
+      if (session.userId !== principal.user.id)
+        return yield* forbidden("Playback session belongs to another user");
+      if (session.closedAtMs !== null || session.expiresAtMs <= nowMs)
+        return yield* conflict("Playback session is closed");
+      if (session.activeTrackId === null)
+        return yield* conflict("Nothing is playing in this session");
+      const trackId = yield* resolveTrack(itemId);
+      yield* access.requireTrack(principal, trackId, "playback:control", nowMs);
+      const playable = yield* describeTrack(principal, trackId);
+      // One preload at a time: the grant for an earlier one goes.
+      yield* database
+        .delete(playbackGrants)
+        .where(
+          and(
+            eq(playbackGrants.sessionId, sessionId),
+            notInArray(playbackGrants.trackId, [session.activeTrackId, trackId]),
+          ),
+        );
+      yield* repositories.activity.upsertGrant({
+        id: newUuid(),
+        sessionId,
+        trackId,
+        canSeek: true,
+        canSkip: false,
+        maxBitrateKbps: null,
+        expiresAtMs: session.expiresAtMs,
+      });
+      return {
+        itemId,
+        sourceId: playable.sourceId,
+        streamPath: `/api/v1/media/${encodeURIComponent(trackId)}`,
+        durationSeconds: playable.durationSeconds,
+        media: playable.media,
+      };
+    },
+  );
+
   const authorizeGrant: PlaybackServiceShape["authorizeGrant"] = Effect.fn(
     "Playback.authorizeGrant",
   )(function* (grantToken, trackId, nowMs) {
@@ -525,6 +602,7 @@ export const makePlaybackService = Effect.gen(function* () {
       .select({
         sessionId: playbackSessions.id,
         userId: playbackSessions.userId,
+        activeTrackId: playbackSessions.activeTrackId,
         absolutePath: mediaSources.absolutePath,
         rootPath: libraryRoots.path,
         size: mediaSources.fileSizeBytes,
@@ -554,11 +632,13 @@ export const makePlaybackService = Effect.gen(function* () {
       Effect.promise(() => canonicalPath(row.absolutePath)),
     ]);
     if (!isPathWithin(root, file)) return yield* notFound("Playback grant is invalid or expired");
+    const { activeTrackId, ...media } = row;
     return {
-      ...row,
+      ...media,
       size: row.size,
       absolutePath: file,
       mimeType: mediaType(file) ?? "application/octet-stream",
+      preloaded: activeTrackId !== null && activeTrackId !== trackId,
     };
   });
 
@@ -567,6 +647,7 @@ export const makePlaybackService = Effect.gen(function* () {
     heartbeat,
     stop,
     progress,
+    preload,
     authorizeGrant,
     issueDownload: downloads.issue,
     syncDownloads: downloads.sync,

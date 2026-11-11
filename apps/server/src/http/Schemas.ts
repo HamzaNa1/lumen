@@ -151,6 +151,8 @@ export const StartPlaybackBody = Schema.Struct({
 
 export const CreateDownloadBody = Schema.Struct({ itemId: Identifier });
 
+export const PreloadBody = Schema.Struct({ itemId: Identifier });
+
 export const HeartbeatBody = Schema.Struct({
   state: Schema.Literals(["idle", "playing", "paused", "buffering", "ended", "error"]),
   activeTrackId: Schema.NullOr(Identifier),

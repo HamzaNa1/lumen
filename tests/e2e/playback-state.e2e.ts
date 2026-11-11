@@ -126,3 +126,91 @@ test("track preferences and per-title choices persist across devices and reject 
     body: { audioLanguage: "not a language" },
   });
 });
+
+test("a playback session preloads one other item's bytes, never converts them, and loses them with the session or the viewer's access", async ({
+  server,
+  admin,
+}) => {
+  const token = admin.accessToken;
+  expect(
+    (await server.api<{ capabilities: Record<string, boolean> }>("/server")).capabilities,
+  ).toMatchObject({ preload: true });
+  const movies = await server.library(token, "movies", ["Film.mp4"]);
+  const extras = await server.library(token, "movies", ["Other.mp4", "Third.mp4"]);
+  const hidden = await server.library(token, "movies", ["Hidden.mp4"]);
+  const [film] = await server.items(token, movies.id);
+  const extra = await server.items(token, extras.id);
+  const other = extra.find((item) => item.title === "Other");
+  const third = extra.find((item) => item.title === "Third");
+  const [secret] = await server.items(token, hidden.id);
+  const viewer = await server.api<{ id: string }>("/users", {
+    token,
+    body: {
+      username: "viewer",
+      displayName: "Viewer",
+      password,
+      libraryAccess: { scope: "selected", libraryIds: [movies.id, extras.id] },
+    },
+  });
+  const viewerToken = (await server.login("viewer")).accessToken;
+  const playback = await server.play(viewerToken, film?.id ?? "");
+  const path = `/playback/sessions/${playback.sessionId}`;
+  const preload = (itemId: string | undefined, status = 200, as = viewerToken) =>
+    server.api<{ itemId: string; streamPath: string; media: { revision?: string } }>(
+      `${path}/preload`,
+      { token: as, status, body: { itemId } },
+    );
+  const fetchStatus = async (streamPath: string, query = "") =>
+    (
+      await server.request(`${streamPath}${query}`, {
+        headers: { authorization: `Bearer ${playback.grantToken}`, range: "bytes=0-9" },
+      })
+    ).status;
+  const heartbeat = () =>
+    server.api(`${path}/heartbeat`, {
+      token: viewerToken,
+      status: 200,
+      body: { state: "playing", activeTrackId: film?.id, errorCode: null },
+    });
+
+  const next = await preload(other?.id);
+  expect(next).toMatchObject({ itemId: other?.id, media: { revision: expect.any(String) } });
+  expect(await fetchStatus(next.streamPath)).toBe(206);
+  expect(await fetchStatus(next.streamPath, "?transcode=1"), "preloads never convert").toBe(400);
+  expect(await fetchStatus(playback.streamUrl)).toBe(206);
+  await preload(other?.id, 403, token);
+  await preload(secret?.id, 403);
+  await server.api(`/playback/sessions/${crypto.randomUUID()}/preload`, {
+    token: viewerToken,
+    status: 404,
+    body: { itemId: other?.id },
+  });
+
+  // One preload at a time; the item that plays keeps its grant.
+  const replaced = await preload(third?.id);
+  expect(await fetchStatus(next.streamPath)).toBe(404);
+  expect(await fetchStatus(replaced.streamPath)).toBe(206);
+  expect(await fetchStatus(playback.streamUrl)).toBe(206);
+
+  // Losing the preloaded item's library ends its grant, not the playback.
+  await server.api(`/users/${viewer.id}`, {
+    token,
+    method: "PATCH",
+    status: 200,
+    body: { libraryAccess: { scope: "selected", libraryIds: [movies.id] } },
+  });
+  await heartbeat();
+  expect(await fetchStatus(replaced.streamPath)).toBe(404);
+  expect(await fetchStatus(playback.streamUrl)).toBe(206);
+  await preload(third?.id, 403);
+  // A session playing nothing has nothing to preload after.
+  await server.api(`${path}/heartbeat`, {
+    token: viewerToken,
+    status: 200,
+    body: { state: "playing", activeTrackId: null, errorCode: null },
+  });
+  await preload(film?.id, 409);
+
+  await server.api(path, { token: viewerToken, method: "DELETE" });
+  await preload(film?.id, 409);
+});

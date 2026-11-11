@@ -1,5 +1,5 @@
 import { type PlaybackSessionApi, ServerUnreachableError } from "@lumen/client";
-import type { PlayerSession, TrackChoiceInput, TrackMemory } from "@lumen/contracts";
+import type { PlayerSession, PreloadTicket, TrackChoiceInput, TrackMemory } from "@lumen/contracts";
 
 /**
  * What the player needs from wherever an item is played from: the server, or this device's
@@ -15,6 +15,8 @@ export interface PlaybackClient extends PlaybackSessionApi {
     sessionId: string,
     choice: TrackChoiceInput,
   ) => Promise<TrackMemory | null>;
+  /** Extends a session's grant to the item after the one it plays; absent where nothing can. */
+  readonly preloadNext?: (sessionId: string, itemId: string) => Promise<PreloadTicket | null>;
   /** Set when nothing can be fetched: only bytes already on this device can play. */
   readonly offline?: boolean;
 }
@@ -57,5 +59,7 @@ export const withOfflineFallback = (
       current.progress(sessionId, state, sequence, init),
     stopPlayback: (sessionId) => current.stopPlayback(sessionId),
     saveTrackChoice: (sessionId, choice) => current.saveTrackChoice(sessionId, choice),
+    preloadNext: async (sessionId, itemId) =>
+      (await current.preloadNext?.(sessionId, itemId)) ?? null,
   };
 };

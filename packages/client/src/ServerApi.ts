@@ -23,6 +23,7 @@ import {
   PlayableStream,
   type PlayerSession,
   type PlayerState,
+  PreloadTicket,
   type ScanRun,
   type ServerDiscovery,
   ServerInfo,
@@ -326,6 +327,10 @@ export class ServerApi {
 
   get supportsDownloads(): boolean {
     return this.serverIdentity?.capabilities?.downloads === true;
+  }
+
+  get supportsPreload(): boolean {
+    return this.serverIdentity?.capabilities?.preload === true;
   }
 
   /** The server this client talks to, once it has said who it is. */
@@ -813,6 +818,21 @@ export class ServerApi {
       "/api/v1/playback/sessions",
       jsonBody("POST", { trackId: itemId }),
       playerSessionSchema,
+    );
+  }
+
+  /**
+   * Extends a session's grant to the episode after the one it plays. Null when there is none, or
+   * when the server cannot, so the client simply goes without.
+   */
+  async preloadNext(sessionId: string, itemId: string): Promise<PreloadTicket | null> {
+    if (!this.supportsPreload) return null;
+    const next = (await this.adjacentEpisodes(itemId)).next;
+    if (next === null) return null;
+    return this.request(
+      `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/preload`,
+      jsonBody("POST", { itemId: next.id }),
+      PreloadTicket,
     );
   }
 
