@@ -15,14 +15,18 @@ export class Database extends Context.Service<Database, DatabaseClient>()(
   "@lumen/database/Database",
 ) {}
 
-export const makeDatabase = Effect.fn("Database.make")(function* () {
+const makeDatabase = Effect.fn("Database.make")(function* () {
   const database = yield* SQLiteBunDrizzle.makeWithDefaults();
-  yield* database.run(sql`PRAGMA foreign_keys = ON`);
+  // Processes opening the file together wait for each other only once a busy timeout is set.
   yield* database.run(sql`PRAGMA busy_timeout = 5000`);
+  yield* database.run(sql`PRAGMA journal_mode = WAL`);
+  yield* database.run(sql`PRAGMA foreign_keys = ON`);
   return database;
 });
 
 export const DatabaseLive = (
   config: Sqlite.SqliteClientConfig,
 ): Layer.Layer<Database, EffectDrizzleQueryError> =>
-  Layer.effect(Database, makeDatabase()).pipe(Layer.provide(Sqlite.layer(config)));
+  Layer.effect(Database, makeDatabase()).pipe(
+    Layer.provide(Sqlite.layer({ ...config, disableWAL: true })),
+  );

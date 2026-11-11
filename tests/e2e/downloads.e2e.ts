@@ -1,10 +1,11 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { copyFile, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Page } from "@playwright/test";
+import { promisify } from "node:util";
+import type { ElectronApplication, Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
 import {
   connectDesktop,
@@ -35,9 +36,13 @@ test.afterAll(async () => {
   await rm(diskFile, { force: true });
 });
 
+// Encoding must not block the event loop: a blocked test reuses keep-alive sockets the server
+// has closed meanwhile, and its network proxy stops serving the desktop.
+const ffmpeg = (args: string[]) => promisify(execFile)("ffmpeg", args);
+
 /** A 30-second film with its index at the end, as a player finds it in many real files. */
 const makeFilm = (path: string, seconds = 30, tone = 440) =>
-  execFileSync("ffmpeg", [
+  ffmpeg([
     "-v",
     "error",
     "-f",
@@ -64,7 +69,7 @@ const makeFilm = (path: string, seconds = 30, tone = 440) =>
  * player is still reading it after it has left the start of the file.
  */
 const makeLargeIndexFilm = (path: string) =>
-  execFileSync("ffmpeg", [
+  ffmpeg([
     "-v",
     "error",
     "-f",
@@ -91,7 +96,7 @@ const makeLargeIndexFilm = (path: string) =>
 const movies = async (server: Server, token: string, titles: readonly string[]) => {
   const library = await server.library(token, "movies", []);
   for (const [index, title] of titles.entries())
-    makeFilm(join(library.path, `${title}.mp4`), 30, 300 + index * 100);
+    await makeFilm(join(library.path, `${title}.mp4`), 30, 300 + index * 100);
   await server.scan(token, library.id);
   const items = await server.items(token, library.id);
   return {
@@ -106,6 +111,25 @@ const movies = async (server: Server, token: string, titles: readonly string[]) 
 
 const downloads = (page: Page): Promise<DownloadState> =>
   page.evaluate(() => window.lumen.downloads.state());
+/** Makes long main-process timers fire a second early, and returns how to undo it. */
+const earlyTimers = async (app: ElectronApplication) => {
+  // A server release is checked against the released desktop, which predates this fix.
+  if (process.env.LUMEN_BROWSER_PRODUCT === "server") return async () => {};
+  const setTimer = await app.evaluateHandle(() => setTimeout);
+  await app.evaluate(() => {
+    const set = setTimeout;
+    const early = (...[handler, ms, ...rest]: Parameters<typeof setTimeout>) =>
+      set(handler, typeof ms === "number" && ms >= 5_000 ? ms - 1_000 : ms, ...rest);
+    globalThis.setTimeout = early as typeof setTimeout;
+  });
+  return async () => {
+    await app.evaluate((_electron, set) => {
+      globalThis.setTimeout = set;
+    }, setTimer);
+    await setTimer.dispose();
+  };
+};
+
 /** The released server a desktop release is checked against may predate downloads. */
 const requireDownloads = async (server: Server) => {
   const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
@@ -627,7 +651,7 @@ test("a stream whose index is at its end plays from the start instead of jumping
   await requireDownloads(server);
   const library = await server.library(admin.accessToken, "movies", []);
   const path = join(library.path, "Long Film.mp4");
-  makeLargeIndexFilm(path);
+  await makeLargeIndexFilm(path);
   const size = (await readFile(path)).length;
   await server.scan(admin.accessToken, library.id);
   const proxy = await new NetworkProxy(server.origin).start();
@@ -715,7 +739,7 @@ test("changed files are replaced, revoked downloads are deleted, and signing out
   expect(await heldFiles(profile)).toHaveLength(2);
 
   // The film is re-encoded on the server and the viewer loses the other library.
-  makeFilm(join(first.library.path, "Replacement.mp4"), 20, 900);
+  await makeFilm(join(first.library.path, "Replacement.mp4"), 20, 900);
   await rm(film.path);
   execFileSync("cp", [join(first.library.path, "Replacement.mp4"), film.path]);
   await rm(join(first.library.path, "Replacement.mp4"));
@@ -803,7 +827,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
   const library = await server.library(token, "movies", []);
   await mkdir(join(library.path, "Film"));
   const filmPath = join(library.path, "Film", "Film.mp4");
-  makeFilm(filmPath, 30, 440);
+  await makeFilm(filmPath, 30, 440);
   await copyFile(
     join(repository, "tests/fixtures/still.png"),
     join(library.path, "Film", "poster.png"),
@@ -812,7 +836,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
     ["Other", 520],
     ["Third", 600],
   ] as const)
-    makeFilm(join(library.path, `${title}.mp4`), 30, tone);
+    await makeFilm(join(library.path, `${title}.mp4`), 30, tone);
   await server.scan(token, library.id);
   const items = await server.items(token, library.id);
   const id = (title: string) => items.find((item) => item.title === title)?.id ?? "";
@@ -821,7 +845,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
   const size = (await readFile(filmPath)).length;
   let proxy = await new NetworkProxy(server.origin).start();
   const network = meter(proxy, () => server.origin);
-  const { page, profile } = desktop;
+  const { app, page, profile } = desktop;
   try {
     await connectDesktop(page, proxy);
     network.allow(size * 0.3);
@@ -832,7 +856,9 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
       })
       .toBeGreaterThan(size * 0.15);
 
-    // The server stops answering: the download waits and retries.
+    // The server stops answering: the download waits and retries, even when its timer fires
+    // before the wall clock reaches the retry, as Node's timer clock allows.
+    const restoreTimers = await earlyTimers(app);
     network.failing = true;
     network.breakAll();
     await expect
@@ -840,7 +866,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
       .toMatchObject({ status: "waiting", reason: "Can’t reach the server. Retrying…" });
 
     // Meanwhile the file is replaced. The bytes already held belong to the old file and go.
-    makeFilm(join(library.path, "Film", "New.mp4"), 24, 700);
+    await makeFilm(join(library.path, "Film", "New.mp4"), 24, 700);
     await rm(filmPath);
     await copyFile(join(library.path, "Film", "New.mp4"), filmPath);
     await rm(join(library.path, "Film", "New.mp4"));
@@ -852,6 +878,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
     await expect
       .poll(async () => (await entryFor(page, id("Film")))?.status, { timeout: 60_000 })
       .toBe("completed");
+    await restoreTimers();
     const held = await heldFiles(profile);
     expect(held).toHaveLength(1);
     expect(held[0]?.bytes.equals(await readFile(filmPath))).toBe(true);

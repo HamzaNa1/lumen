@@ -108,15 +108,24 @@ const openingEpisode = ["Serial", "Season 1", "Opening"];
 const itemDetails = (url: URL): boolean => /\/api\/v1\/items\/[^/]+$/.test(url.pathname);
 const adjacentEpisodes = (url: URL): boolean => url.pathname.endsWith("/adjacent-episodes");
 
+/** Waits out the season page's own lookups, so routes added after see only the player's. */
+async function seasonShown(page: Page) {
+  await expect(page.getByRole("heading", { name: "Season 1", exact: true })).toBeVisible();
+  await expect(page.getByRole("link", { name: "Serial", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Play Opening", exact: true }).first(),
+  ).toBeVisible();
+}
+
 /** Answers like a server too old to place an episode in its show. */
 async function asOlderServer(page: Page) {
   await page.route(
     (url) => /\/api\/v1\/(items|home)(\/|$)/.test(url.pathname),
     async (route) => {
-      const response = await route.fetch();
-      // A page that navigates away abandons its requests, and their responses with them.
-      const text = await response.text().catch(() => null);
-      if (text === null) return route.abort().catch(() => undefined);
+      // A page that navigates away, or a test that ends, abandons its requests and responses.
+      const response = await route.fetch().catch(() => null);
+      const text = response === null ? null : await response.text().catch(() => null);
+      if (response === null || text === null) return route.abort().catch(() => undefined);
       const body = JSON.parse(text, (key, value) => (key === "placement" ? undefined : value));
       await route.fulfill({ response, json: body });
     },
@@ -131,6 +140,7 @@ test("an episode, and the one after it, are described the moment they play", asy
   const library = await server.library(admin.accessToken, "shows", twoEpisodes);
   await signIn(page, server);
   await startPlayback(page, server, library.id, ["Serial", "Season 1"]);
+  await seasonShown(page);
   const detailsLookups: string[] = [];
   const lookupsHeld = Promise.withResolvers<void>();
   await page.route(itemDetails, async (route) => {
@@ -231,6 +241,7 @@ test("an episode whose details cannot be read is described by the item it was st
   await signIn(page, server);
   await asOlderServer(page);
   await startPlayback(page, server, library.id, ["Serial", "Season 1"]);
+  await seasonShown(page);
   await page.route(itemDetails, (route) => route.abort());
   await page
     .getByRole("button", { name: "Play Opening", exact: true })
