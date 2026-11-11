@@ -165,6 +165,7 @@ net.createConnection = (...args) => {
       }
       if (
         (mode === "hold-sample" && entry?.command[0] === "expand-text") ||
+        (mode === "hold-stop" && entry?.command[0] === "stop") ||
         (mode === "hold-unpause" &&
           entry?.command[0] === "set_property" &&
           entry.command[1] === "pause" &&

@@ -109,13 +109,12 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           const replacement = await page.evaluate(() => window.lumen.player.state());
           const beforeRelease = (await wire.snapshot()).commands.at(-1)?.id ?? 0;
           await wire.release();
-          // Observe a successful sample on the new connection after delivery to the old socket.
+          // The replacement plays in the same MPV, so the late reply arrives where it now plays.
           await expect
             .poll(async () =>
               (await wire.snapshot()).commands.some(
                 (entry) =>
                   entry.id > beforeRelease &&
-                  entry.connection !== captured?.connection &&
                   entry.command[0] === "expand-text" &&
                   entry.error === "success",
               ),
@@ -127,9 +126,27 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
             paused: false,
           });
           expect(await wire.command(["get_property", "speed"])).toBe(1);
+          const commands = (await wire.snapshot()).commands;
+          expect(commands.find((entry) => entry.id === captured?.id)?.outcome).toBe("released");
+          expect(commands.findLast((entry) => entry.command[0] === "loadfile")?.connection).toBe(
+            captured?.connection,
+          );
+          // An MPV that will not stop is replaced instead of waited on.
+          await wire.arm("hold-stop");
+          await owner.action({ type: "play", itemId: film, positionSeconds: 0, replaces: other });
+          await expect
+            .poll(() => page.evaluate(() => window.lumen.player.state()), {
+              timeout: 3000,
+              intervals: [25, 50, 100],
+            })
+            .toMatchObject({ itemId: film, paused: false });
+          const stuck = (await wire.snapshot()).captured;
+          expect(stuck?.command).toEqual(["stop"]);
+          await wire.release();
           expect(
-            (await wire.snapshot()).commands.find((entry) => entry.id === captured?.id)?.outcome,
-          ).toBe("released");
+            (await wire.snapshot()).commands.findLast((entry) => entry.command[0] === "loadfile")
+              ?.connection,
+          ).not.toBe(stuck?.connection);
         } else {
           let initialCorrection: number | undefined;
           if (scenario === "disconnect") {
