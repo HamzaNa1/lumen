@@ -80,6 +80,8 @@ interface MediaPlayerProps {
   readonly awaitingInteraction?: boolean;
   readonly onStartPlayback?: () => void;
   readonly surfaceRef: Ref<HTMLDivElement>;
+  /** Drawn over the video, hiding a blank or stale picture until what is playing has its own. */
+  readonly artworkUrl?: string | null;
   readonly controlsVisible: boolean;
   readonly fullscreen: boolean;
   readonly onBack: () => void;
@@ -167,6 +169,7 @@ export const MediaPlayer = ({
   awaitingInteraction = false,
   onStartPlayback,
   surfaceRef,
+  artworkUrl = null,
   controlsVisible,
   fullscreen,
   onBack,
@@ -263,6 +266,9 @@ export const MediaPlayer = ({
 
       <div className="media-player-frame">
         <div className="media-player-surface" ref={surfaceRef}>
+          {artworkUrl === null ? null : (
+            <img className="media-player-artwork" src={artworkUrl} alt="" />
+          )}
           {/* Pointer-only: the console's play button and the Space shortcut cover the keyboard. */}
           <div
             className="media-player-video-hit-target"

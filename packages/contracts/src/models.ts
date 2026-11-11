@@ -330,6 +330,8 @@ export type PlaybackInfo = Schema.Schema.Type<typeof PlaybackInfo>;
 export const PlayingDescription = Schema.Struct({
   title: Schema.String,
   context: Schema.String,
+  /** The still or poster of what is playing, shown until it has a frame of its own. */
+  artwork: Schema.NullOr(ArtworkRef),
   hasPreviousEpisode: Schema.Boolean,
   /** The episode after the one playing, where there is one. */
   nextEpisode: Schema.NullOr(

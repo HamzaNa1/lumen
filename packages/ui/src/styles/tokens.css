@@ -2424,6 +2424,17 @@ body:has(.app-shell) {
   height: 100%;
   cursor: inherit;
 }
+.media-player-artwork {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  /* Opaque even where it is dimmed, so no stale video shows through the overlay window. */
+  background: #000;
+  filter: brightness(0.55);
+  pointer-events: none;
+}
 .media-player-placeholder {
   position: absolute;
   inset: 0;
