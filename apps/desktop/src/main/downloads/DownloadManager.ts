@@ -820,6 +820,7 @@ export class DownloadManager extends EventEmitter {
             : 1;
         return watching(a) - watching(b) || a.createdAtMs - b.createdAtMs;
       });
+    this.scheduleRetry(now);
     for (const download of this.downloads)
       if (
         !this.needsWork(download) &&
@@ -848,6 +849,27 @@ export class DownloadManager extends EventEmitter {
       this.schedule();
     });
     this.running = { id: next.id, controller, done };
+  }
+
+  /**
+   * Looks at the queue again when the next retry falls due. A timer can fire before the clock
+   * reaches that time, so the queue arms another for whatever is still to come.
+   */
+  private scheduleRetry(now: number): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    let due: number | null = null;
+    for (const download of this.downloads) {
+      const atMs = this.retryAt.get(download.id)?.atMs;
+      if (atMs !== undefined && atMs > now && this.needsWork(download))
+        due = Math.min(due ?? atMs, atMs);
+    }
+    if (due === null || this.closed) return;
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.schedule();
+    }, due - now);
+    this.retryTimer.unref?.();
   }
 
   private async run(download: Download, signal: AbortSignal): Promise<void> {
@@ -942,12 +964,6 @@ export class DownloadManager extends EventEmitter {
         download.status = "waiting";
         download.reason = "Can’t reach the server. Retrying…";
       }
-      if (this.retryTimer !== null) clearTimeout(this.retryTimer);
-      this.retryTimer = setTimeout(() => {
-        this.retryTimer = null;
-        this.schedule();
-      }, delay);
-      this.retryTimer.unref?.();
       return;
     }
     if (download.status !== "completed") {

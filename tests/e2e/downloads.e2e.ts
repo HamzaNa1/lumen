@@ -821,7 +821,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
   const size = (await readFile(filmPath)).length;
   let proxy = await new NetworkProxy(server.origin).start();
   const network = meter(proxy, () => server.origin);
-  const { page, profile } = desktop;
+  const { app, page, profile } = desktop;
   try {
     await connectDesktop(page, proxy);
     network.allow(size * 0.3);
@@ -832,7 +832,15 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
       })
       .toBeGreaterThan(size * 0.15);
 
-    // The server stops answering: the download waits and retries.
+    // The server stops answering: the download waits and retries, even when its timer fires
+    // before the wall clock reaches the retry, as Node's timer clock allows.
+    const setTimer = await app.evaluateHandle(() => setTimeout);
+    await app.evaluate(() => {
+      const set = setTimeout;
+      const early = (...[handler, ms, ...rest]: Parameters<typeof setTimeout>) =>
+        set(handler, typeof ms === "number" && ms >= 5_000 ? ms - 1_000 : ms, ...rest);
+      globalThis.setTimeout = early as typeof setTimeout;
+    });
     network.failing = true;
     network.breakAll();
     await expect
@@ -852,6 +860,10 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
     await expect
       .poll(async () => (await entryFor(page, id("Film")))?.status, { timeout: 60_000 })
       .toBe("completed");
+    await app.evaluate((_electron, set) => {
+      globalThis.setTimeout = set;
+    }, setTimer);
+    await setTimer.dispose();
     const held = await heldFiles(profile);
     expect(held).toHaveLength(1);
     expect(held[0]?.bytes.equals(await readFile(filmPath))).toBe(true);
