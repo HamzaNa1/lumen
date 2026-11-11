@@ -4,7 +4,7 @@ import { copyFile, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { Page } from "@playwright/test";
+import type { ElectronApplication, Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
 import {
   connectDesktop,
@@ -107,6 +107,25 @@ const movies = async (server: Server, token: string, titles: readonly string[]) 
 const downloads = (page: Page): Promise<DownloadState> =>
   page.evaluate(() => window.lumen.downloads.state());
 /** The released server a desktop release is checked against may predate downloads. */
+/** Makes long main-process timers fire a second early, and returns how to undo it. */
+const earlyTimers = async (app: ElectronApplication) => {
+  // A server release is checked against the released desktop, which predates this fix.
+  if (process.env.LUMEN_BROWSER_PRODUCT === "server") return async () => {};
+  const setTimer = await app.evaluateHandle(() => setTimeout);
+  await app.evaluate(() => {
+    const set = setTimeout;
+    const early = (...[handler, ms, ...rest]: Parameters<typeof setTimeout>) =>
+      set(handler, typeof ms === "number" && ms >= 5_000 ? ms - 1_000 : ms, ...rest);
+    globalThis.setTimeout = early as typeof setTimeout;
+  });
+  return async () => {
+    await app.evaluate((_electron, set) => {
+      globalThis.setTimeout = set;
+    }, setTimer);
+    await setTimer.dispose();
+  };
+};
+
 const requireDownloads = async (server: Server) => {
   const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
   test.skip(info.capabilities?.downloads !== true, "The server predates downloads");
@@ -834,13 +853,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
 
     // The server stops answering: the download waits and retries, even when its timer fires
     // before the wall clock reaches the retry, as Node's timer clock allows.
-    const setTimer = await app.evaluateHandle(() => setTimeout);
-    await app.evaluate(() => {
-      const set = setTimeout;
-      const early = (...[handler, ms, ...rest]: Parameters<typeof setTimeout>) =>
-        set(handler, typeof ms === "number" && ms >= 5_000 ? ms - 1_000 : ms, ...rest);
-      globalThis.setTimeout = early as typeof setTimeout;
-    });
+    const restoreTimers = await earlyTimers(app);
     network.failing = true;
     network.breakAll();
     await expect
@@ -860,10 +873,7 @@ test("downloads retry an unreachable server, follow a file that changes mid-down
     await expect
       .poll(async () => (await entryFor(page, id("Film")))?.status, { timeout: 60_000 })
       .toBe("completed");
-    await app.evaluate((_electron, set) => {
-      globalThis.setTimeout = set;
-    }, setTimer);
-    await setTimer.dispose();
+    await restoreTimers();
     const held = await heldFiles(profile);
     expect(held).toHaveLength(1);
     expect(held[0]?.bytes.equals(await readFile(filmPath))).toBe(true);
