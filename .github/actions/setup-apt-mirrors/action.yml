@@ -1,27 +1,42 @@
 name: Ubuntu package mirrors
-description: Use fallback Ubuntu mirrors and bounded network timeouts on hosted Linux runners.
+description: Configure Ubuntu package downloads with automatic mirror failover.
 runs:
   using: composite
   steps:
     - shell: bash
       run: |
-        sudo mkdir -p /etc/apt/mirrors
-        printf '%b\n' \
-          'https://archive.ubuntu.com/ubuntu/\tpriority:1' \
-          'https://azure.archive.ubuntu.com/ubuntu/\tpriority:2' \
-          'https://security.ubuntu.com/ubuntu/\tpriority:3' | sudo tee /etc/apt/mirrors/lumen.list
-        sudo python3 - <<'PY'
-        from pathlib import Path
-        import re
-        paths = [Path('/etc/apt/sources.list'), *Path('/etc/apt/sources.list.d').glob('*.sources'), *Path('/etc/apt/sources.list.d').glob('*.list')]
-        for path in paths:
-            if path.exists():
-                source = path.read_text()
-                updated = re.sub(r'https?://(?:(?:azure\.)?archive|security)\.ubuntu\.com/ubuntu/?', 'mirror+file:/etc/apt/mirrors/lumen.list', source)
-                if source != updated:
-                    path.write_text(updated)
-        PY
-        printf '%s\n' \
-          'Acquire::http::Timeout "15";' \
-          'Acquire::https::Timeout "15";' \
-          'Acquire::Retries "3";' | sudo tee /etc/apt/apt.conf.d/80-lumen-network
+        # Hosted runners are on Azure, so its in-region mirror comes first; the rest are outside
+        # ubuntu.com's DNS.
+        mirrors=(
+          http://azure.archive.ubuntu.com/ubuntu
+          https://mirrors.edge.kernel.org/ubuntu
+          https://mirror.math.princeton.edu/pub/ubuntu
+        )
+        # APT's mirror transport tries every file on a dead mirror before the next, waiting out
+        # its timeout each time. Probe once and list only the mirrors that answer.
+        suite=$(. /etc/os-release && echo "$VERSION_CODENAME")
+        probes=()
+        for mirror in "${mirrors[@]}"; do
+          curl -fsS --max-time 10 -o /dev/null "$mirror/dists/$suite/InRelease" &
+          probes+=($!)
+        done
+        reachable=()
+        for i in "${!mirrors[@]}"; do
+          if wait "${probes[$i]}"; then reachable+=("${mirrors[$i]}"); fi
+        done
+        if (( ${#reachable[@]} == 0 )); then
+          echo "::warning::No Ubuntu mirror answered; apt will try them all."
+          reachable=("${mirrors[@]}")
+        fi
+        # Replace the runner image's mirror list as well as direct sources.
+        for i in "${!reachable[@]}"; do
+          printf '%s\tpriority:%s\n' "${reachable[$i]}" "$((i + 1))"
+        done | sudo tee /etc/apt/apt-mirrors.txt
+
+        sudo find /etc/apt -maxdepth 2 -type f \( -name '*.list' -o -name '*.sources' \) \
+          -exec sed -i -E \
+          's#https?://(([^/]+\.)?archive|security)\.ubuntu\.com/ubuntu/?#mirror+file:/etc/apt/apt-mirrors.txt#g' {} +
+
+        # Move on to a fallback before an unreachable server exhausts the job.
+        printf '%s\n' 'Acquire::http::Timeout "15";' 'Acquire::https::Timeout "15";' \
+          | sudo tee /etc/apt/apt.conf.d/80-mirror-timeouts > /dev/null
