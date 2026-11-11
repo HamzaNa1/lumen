@@ -9,6 +9,7 @@ import {
   HomeContent,
   MetadataMatchOptions,
   MetadataMatchSelection,
+  PreloadTicket,
   ServerInfo,
   TrackChoiceInput,
   TrackPreferencesPatch,
@@ -241,6 +242,7 @@ export const makeHttpHandler = (
             trackMemory: true,
             adjacentEpisodes: true,
             downloads: true,
+            preload: true,
           },
         },
         200,
@@ -339,6 +341,8 @@ export const makeHttpHandler = (
       try {
         if (url.searchParams.get("transcode") === "1" && media.sessionId.startsWith("download:"))
           throw badRequest("Downloads keep the original file");
+        if (url.searchParams.get("transcode") === "1" && media.preloaded === true)
+          throw badRequest("Only the item a session plays can be converted");
         if (url.searchParams.get("transcode") === "1")
           return await transcoder.serve(request, media, () =>
             call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now())),
@@ -1047,6 +1051,21 @@ export const makeHttpHandler = (
           ),
         ),
       );
+    if (
+      method === "POST" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "playback" &&
+      parts[3] === "sessions" &&
+      parts[4] !== undefined &&
+      parts[5] === "preload"
+    ) {
+      const input = decode(S.PreloadBody, await body(request, config.maxRequestBodyBytes));
+      return json(
+        PreloadTicket,
+        await call(services.playback.preload(principal, parts[4], input.itemId, Date.now())),
+      );
+    }
     if (
       method === "DELETE" &&
       parts[0] === "api" &&

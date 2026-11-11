@@ -32,6 +32,8 @@ export interface AuthorizedMedia {
   /** What admission and logs count requests against: a playback session, or a download. */
   readonly sessionId: string;
   readonly userId: string;
+  /** Allowed only as the item after the one the session plays: its bytes, never a conversion. */
+  readonly preloaded?: boolean;
 }
 
 type Describe = (

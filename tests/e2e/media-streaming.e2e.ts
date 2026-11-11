@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MediaFile } from "../../apps/desktop/src/main/media-store/MediaFile";
 import { defaultGeometry } from "../../apps/desktop/src/main/media-store/MediaStore";
+import { MediaPreload } from "../../apps/desktop/src/main/player/MediaPreload";
 import { expect, test } from "./support/server";
 
 const CHUNK = defaultGeometry.chunkBytes;
@@ -15,9 +16,11 @@ const CHUNK = defaultGeometry.chunkBytes;
  * player looks elsewhere in it.
  */
 const serveFile = async (media: Buffer, revision: string, headBytes: number) => {
+  const starts: number[] = [];
   const server: HttpServer = createServer((request, response) => {
     const match = /bytes=(\d+)-(\d*)/u.exec(request.headers.range ?? "");
     const start = Number(match?.[1] ?? 0);
+    starts.push(start);
     const end = match?.[2] ? Number(match[2]) : media.length - 1;
     response.writeHead(206, {
       "content-length": String(end - start + 1),
@@ -32,6 +35,7 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
   if (address === null || typeof address === "string") throw new Error("No address");
   return {
     origin: `http://127.0.0.1:${address.port}`,
+    starts,
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -49,15 +53,16 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
   const revision = "revision-1";
   const upstream = await serveFile(media, revision, headBytes);
   const root = await mkdtemp(join(tmpdir(), "lumen-media-file-"));
+  const spec = {
+    serverId: "server",
+    sourceId: "source",
+    revision,
+    sizeBytes,
+    mimeType: "video/x-matroska",
+  };
   const file = await MediaFile.open({
     root,
-    spec: {
-      serverId: "server",
-      sourceId: "source",
-      revision,
-      sizeBytes,
-      mimeType: "video/x-matroska",
-    },
+    spec,
     geometry: defaultGeometry,
     allowSegment: async () => true,
   });
@@ -78,6 +83,9 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
   };
   return {
     media,
+    spec,
+    file,
+    upstream,
     read,
     readThenLeave,
     dispose: async () => {
@@ -116,6 +124,47 @@ test("seeking back to the start after playing on reads the start again", async (
     await stream.readThenLeave(0, 6 * CHUNK);
     expect((await stream.read(0, CHUNK)).equals(media.subarray(0, CHUNK))).toBe(true);
   } finally {
+    await stream.dispose();
+  }
+});
+
+test("the start and end of the next file, preloaded into memory, serve the player without the server", async () => {
+  const stream = await streamedFile(20 * CHUNK);
+  const preload = new MediaPreload(CHUNK);
+  try {
+    const { media, spec, file, upstream } = stream;
+    const request = {
+      origin: upstream.origin,
+      path: "/media",
+      token: "token",
+      durationSeconds: null,
+      held: () => false,
+    };
+    // A file that changed since the server described it is not held at all.
+    expect(await preload.start({ ...request, spec: { ...spec, revision: "revision-0" } })).toEqual({
+      bytes: 0,
+      failed: true,
+    });
+    // Without a duration, the first 8 MiB and the last 4 MiB are held.
+    expect(await preload.start({ ...request, spec })).toEqual({ bytes: 12 * CHUNK, failed: false });
+    expect(preload.take({ ...spec, sourceId: "another" })).toBeNull();
+    const chunks = preload.take(spec);
+    expect(preload.take(spec)).toBeNull();
+    expect(await file.adoptMemory(chunks ?? new Map())).toBe(12 * CHUNK);
+    const fetched = upstream.starts.length;
+    // The way MPV opens a file: the start, the index at the end, then the start again.
+    await stream.readThenLeave(0, 2 * CHUNK);
+    const tail = media.length - 700 * 1024;
+    expect((await stream.read(tail, media.length)).equals(media.subarray(tail))).toBe(true);
+    expect((await stream.read(0, 8 * CHUNK)).equals(media.subarray(0, 8 * CHUNK))).toBe(true);
+    // The player only reached the server for what lies after the preloaded start.
+    expect(upstream.starts.slice(fetched).every((start) => start >= 8 * CHUNK)).toBe(true);
+    // Once no player reads the file, the preloaded bytes are let go.
+    file.releaseMemory();
+    expect((await stream.read(0, CHUNK)).equals(media.subarray(0, CHUNK))).toBe(true);
+    expect(upstream.starts.slice(fetched)).toContain(0);
+  } finally {
+    preload.drop();
     await stream.dispose();
   }
 });

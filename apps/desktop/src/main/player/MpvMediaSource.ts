@@ -1,6 +1,6 @@
 import { type PlaybackDiagnostics, setTranscodingParameters } from "@lumen/client";
 import { type PlayerSession, resolveTrackSelection, type TrackKind } from "@lumen/contracts";
-import type { MediaFile, MediaSpec } from "../media-store/MediaFile";
+import { type MediaFile, type MediaSpec, mediaSpecOf } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
 import type { MpvIpc } from "./MpvIpc";
 import type { PlaybackBridge } from "./PlaybackBridge";
@@ -44,6 +44,8 @@ export class MpvMediaSource {
       active: () => boolean;
       /** Where the file's bytes are kept; without it every stream is proxied as it arrives. */
       store?: MediaStore;
+      /** Bytes of this file fetched before it played, held in memory, if any. */
+      takePreload?: (spec: MediaSpec) => ReadonlyMap<number, Buffer> | null;
     },
   ) {
     const selected = resolveTrackSelection(
@@ -143,22 +145,9 @@ export class MpvMediaSource {
 
   private heldSpec(): MediaSpec | null {
     const { client, session, store } = this.options;
-    const media = session.media;
-    if (
-      store === undefined ||
-      client.serverId === null ||
-      media?.revision === undefined ||
-      media.sizeBytes === null ||
-      media.sizeBytes <= 0
-    )
-      return null;
-    return {
-      serverId: client.serverId,
-      sourceId: session.sourceId,
-      revision: media.revision,
-      sizeBytes: media.sizeBytes,
-      mimeType: media.mimeType ?? "application/octet-stream",
-    };
+    return store === undefined
+      ? null
+      : mediaSpecOf(client.serverId, session.sourceId, session.media);
   }
 
   /** Opens the held file once for the whole playback, with this session's grant to fill it. */
@@ -171,7 +160,10 @@ export class MpvMediaSource {
       const store = this.options.store;
       if (spec === null || store === undefined) return null;
       const { file, release } = await store.acquire(spec);
-      const { client, session } = this.options;
+      const { client, session, diagnostics } = this.options;
+      const preloaded = this.options.takePreload?.(spec) ?? null;
+      if (preloaded !== null)
+        diagnostics.record("preload_adopted", { bytes: await file.adoptMemory(preloaded) });
       if (session.durationSeconds !== null && session.durationSeconds > 0)
         file.bitrate = spec.sizeBytes / session.durationSeconds;
       const removeSource = client.offline

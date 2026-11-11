@@ -22,12 +22,15 @@ The desktop keeps media in a media store under the loopback playback bridge (`ap
 
 **Shows.** A show rule keeps the next 1, 3 or 5 unwatched episodes downloaded. Episodes it fetched are cleaned up like any other download once watched.
 
+**Next episode.** Once an episode counts as watched, the desktop asks the server to extend the playing session's grant to the next episode (`preload` capability). A session holds one such grant, which can never start a conversion, ends with the session and is dropped when the viewer loses the episode's library. The desktop fetches the episode's first 15 seconds (8–48 MiB) and last 4 MiB into memory outside the store. When that episode plays, the chunks become its file's memory chunks and stay until no player reads the file, so MPV's jump to the index at the end does not drop the start it comes back to.
+
 ## Alternatives
 
 - **Downloads as a separate feature beside streaming.** This leaves the hardest part, serving a file that is partly local and partly remote, on a path that runs only when someone plays an unfinished download.
 - **Reusing playback sessions to authorize downloads.** Sessions last an hour, need heartbeats, and mean "someone is watching". A download outlives the player.
 - **One sparse file per media file.** See Storage above.
 - **SQLite for the store's index.** Each file's chunk map is a few kilobytes. A JSON index per file with an atomic rename, plus a check of segment lengths on open, needs no new storage engine.
+- **Preloading into the streaming cache.** It is off by default, and preloads would compete with what the viewer watched for its budget and write to disk for an episode that may never play. Memory holds at most one episode's start.
 - **A budget for downloads.** Space a viewer asked for is not the app's to reclaim. The free-space floor protects the disk without deleting anything the viewer chose.
 - **Downloading converted copies.** Rejected for the same reasons as full-file conversion caches (see the transcoding ADR). Files MPV cannot decode do not play offline.
 - **Browser downloads.** A Service Worker and OPFS could reuse the same chunk map and cleanup rules from `@lumen/client`. That is deferred; the web app reports downloads as unavailable.
