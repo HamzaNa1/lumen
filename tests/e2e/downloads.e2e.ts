@@ -106,7 +106,6 @@ const movies = async (server: Server, token: string, titles: readonly string[]) 
 
 const downloads = (page: Page): Promise<DownloadState> =>
   page.evaluate(() => window.lumen.downloads.state());
-/** The released server a desktop release is checked against may predate downloads. */
 /** Makes long main-process timers fire a second early, and returns how to undo it. */
 const earlyTimers = async (app: ElectronApplication) => {
   // A server release is checked against the released desktop, which predates this fix.
@@ -126,6 +125,7 @@ const earlyTimers = async (app: ElectronApplication) => {
   };
 };
 
+/** The released server a desktop release is checked against may predate downloads. */
 const requireDownloads = async (server: Server) => {
   const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
   test.skip(info.capabilities?.downloads !== true, "The server predates downloads");
