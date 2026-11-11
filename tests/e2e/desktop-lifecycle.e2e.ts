@@ -16,6 +16,33 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
   await connectDesktop(page, server);
   await page.getByRole("link", { name: "movies", exact: true }).click();
   const main = await app.browserWindow(page);
+  const parentId = await main.evaluate((window) => window.id);
+  const expectChildrenAligned = () =>
+    expect
+      .poll(() =>
+        app.evaluate(({ BaseWindow, BrowserWindow }, parentId) => {
+          const parent = BrowserWindow.fromId(parentId);
+          if (!parent) return false;
+          if (process.platform === "win32") return BaseWindow.getAllWindows().length === 1;
+          const expected = parent.getContentBounds();
+          const children = BaseWindow.getAllWindows().filter(
+            (window) => window.getParentWindow()?.id === parentId,
+          );
+          return (
+            children.length > 0 &&
+            children.every((child) => {
+              const bounds = child.getBounds();
+              return (
+                Math.abs(bounds.x - expected.x) <= 1 &&
+                Math.abs(bounds.y - expected.y) <= 1 &&
+                Math.abs(bounds.width - expected.width) <= 1 &&
+                Math.abs(bounds.height - expected.height) <= 1
+              );
+            })
+          );
+        }, parentId),
+      )
+      .toBe(true);
   for (let cycle = 0; cycle < 2; cycle++) {
     await page
       .getByRole("button", { name: "Play Film", exact: true })
@@ -24,6 +51,22 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
     await expect
       .poll(() => page.evaluate(() => window.lumen.player.state()))
       .toMatchObject({ paused: false });
+    // Hide only while settled: AppKit can order the window back in as it finishes leaving fullscreen.
+    await expectChildrenAligned();
+    await main.evaluate((window) => window.hide());
+    await expect
+      .poll(() =>
+        app.evaluate(
+          ({ BaseWindow }) =>
+            BaseWindow.getAllWindows().filter((window) => window.isVisible()).length,
+        ),
+      )
+      .toBe(0);
+    await main.evaluate((window) => {
+      window.show();
+      window.focus();
+    });
+    await expect.poll(() => main.evaluate((window) => window.isVisible())).toBe(true);
     for (const full of [true, true, false]) {
       await main.evaluate((window) => window.focus());
       await main.evaluate((window) => {
@@ -54,47 +97,8 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
         .poll(() => page.evaluate(() => window.lumen.player.fullscreenState()))
         .toBe(full);
       await expect.poll(() => main.evaluate((window) => window.isFullScreen())).toBe(full);
-      const parentId = await main.evaluate((window) => window.id);
-      await expect
-        .poll(() =>
-          app.evaluate(({ BaseWindow, BrowserWindow }, parentId) => {
-            const parent = BrowserWindow.fromId(parentId);
-            if (!parent) return false;
-            if (process.platform === "win32") return BaseWindow.getAllWindows().length === 1;
-            const expected = parent.getContentBounds();
-            const children = BaseWindow.getAllWindows().filter(
-              (window) => window.getParentWindow()?.id === parentId,
-            );
-            return (
-              children.length > 0 &&
-              children.every((child) => {
-                const bounds = child.getBounds();
-                return (
-                  Math.abs(bounds.x - expected.x) <= 1 &&
-                  Math.abs(bounds.y - expected.y) <= 1 &&
-                  Math.abs(bounds.width - expected.width) <= 1 &&
-                  Math.abs(bounds.height - expected.height) <= 1
-                );
-              })
-            );
-          }, parentId),
-        )
-        .toBe(true);
+      await expectChildrenAligned();
     }
-    await main.evaluate((window) => window.hide());
-    await expect
-      .poll(() =>
-        app.evaluate(
-          ({ BaseWindow }) =>
-            BaseWindow.getAllWindows().filter((window) => window.isVisible()).length,
-        ),
-      )
-      .toBe(0);
-    await main.evaluate((window) => {
-      window.show();
-      window.focus();
-    });
-    await expect.poll(() => main.evaluate((window) => window.isVisible())).toBe(true);
     await page.evaluate(async () => {
       const state = await window.lumen.player.state();
       if (!state) throw new Error("No playback");

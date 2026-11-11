@@ -1,6 +1,13 @@
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
+import {
+  connectDesktop,
+  desktopPlayerPage,
+  expect,
+  launchDesktop,
+  mainDesktopPage,
+  test,
+} from "./support/desktop";
 
 test("desktop connects through real IPC, persists its account and window, and never exposes tokens to the renderer", async ({
   server,
@@ -149,10 +156,12 @@ test("near the end of an episode, the next one's start is held in memory and pla
   const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
   test.skip(info.capabilities?.preload !== true, "The server predates preloading");
   const token = admin.accessToken;
-  const library = await server.library(token, "shows", [
-    "Show/Season 1/Show S01E01.mp4",
-    "Show/Season 1/Show S01E02.mp4",
-  ]);
+  const library = await server.library(
+    token,
+    "shows",
+    ["Show/Season 1/Show S01E01.mp4", "Show/Season 1/Show S01E02.mp4"],
+    { "Show/Season 1/Show S01E01-thumb.png": "still.png" },
+  );
   const children = async (id: string | undefined) =>
     (await server.api<{ items: { id: string }[] }>(`/items/${id}/children`, { token })).items;
   const [show] = await server.items(token, library.id);
@@ -170,6 +179,10 @@ test("near the end of an episode, the next one's start is held in memory and pla
   await expect
     .poll(() => page.evaluate(() => window.lumen.player.state()))
     .toMatchObject({ itemId: first?.id, paused: false });
+  // The episode's still gives way once MPV has a frame of the episode to show.
+  await expect((await desktopPlayerPage(desktop.app)).locator(".media-player-artwork")).toHaveCount(
+    0,
+  );
   const state = await page.evaluate(() => window.lumen.player.state());
   const sessionId = state?.sessionId ?? "";
   await page.evaluate((id) => window.lumen.player.pause(id, true), sessionId);

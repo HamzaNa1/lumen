@@ -49,7 +49,13 @@ elif [[ "$RUNNER_OS" == macOS ]]; then
 elif [[ "$RUNNER_OS" == Windows ]]; then
   packages=(ffmpeg)
   # Windows native tests use the renamed MPV executable from bundle-mpv.
-  choco install "${packages[@]}" -y --no-progress --cache-location "$(cygpath -w "$HOME/.cache/chocolatey")"
+  # The community feed answers 5xx at times, and choco can then exit 0 having installed nothing.
+  for attempt in 1 2 3 4; do
+    choco install "${packages[@]}" -y --no-progress --cache-location "$(cygpath -w "$HOME/.cache/chocolatey")" || true
+    if command -v ffmpeg > /dev/null; then break; fi
+    if (( attempt == 4 )); then echo "Chocolatey did not install ${packages[*]}" >&2; exit 1; fi
+    sleep $(( attempt * 20 ))
+  done
 fi
 
 if (( ${#browsers[@]} )); then
@@ -62,6 +68,9 @@ if [[ "$RUNNER_OS" == Linux ]]; then
   wait "$packages_pid"
   trap - EXIT
 fi
+# Every suite that builds media needs these; fail here rather than in each test.
+ffmpeg -hide_banner -version > /dev/null
+ffprobe -hide_banner -version > /dev/null
 if (( ${#browsers[@]} )); then
   # Validate libraries only after apt finishes, including on browser cache hits.
   bun run playwright install --only-shell "${browsers[@]}"

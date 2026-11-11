@@ -41,6 +41,21 @@ export const PlayerView = ({
   // The controls can be drawn where no account's caches are, so the still keeps to its own.
   const nextStill = useArtwork(nextEpisode?.artwork, ["player"]).data ?? null;
   const playingItemId = display?.itemId ?? null;
+  const artwork = useArtwork(description?.artwork, ["player"]).data ?? null;
+  // Until the item playing has drawn a frame, the surface holds nothing or the last frame of
+  // what played before it, so its artwork covers it.
+  const [framedItemId, setFramedItemId] = useState<string | null>(null);
+  if (display?.loading === true && framedItemId !== null) setFramedItemId(null);
+  else if (
+    display?.loading === false &&
+    player !== null &&
+    player.itemId === playingItemId &&
+    player.buffering === false &&
+    player.awaitingInteraction !== true &&
+    framedItemId !== playingItemId
+  )
+    setFramedItemId(playingItemId);
+  const artworkUrl = display?.error == null && framedItemId !== playingItemId ? artwork : null;
   const show = display?.show ?? null;
   // Loaded with the player rather than with the drawer, which then has nothing to wait for.
   useShowEpisodes(show?.id ?? null);
@@ -174,6 +189,7 @@ export const PlayerView = ({
         awaitingInteraction={player?.awaitingInteraction === true}
         onStartPlayback={() => void runtime.playback.allowPlayback().catch(() => undefined)}
         surfaceRef={surfaceRef}
+        artworkUrl={artworkUrl}
         controlsVisible={
           controlsVisible ||
           showDrawerVisible ||

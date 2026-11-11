@@ -53,6 +53,7 @@ const describe = (
                 seasonYear: placement.seasonYear,
               },
         ),
+  artwork: item === undefined ? null : posterOf(item),
   hasPreviousEpisode: neighbours.previous !== null,
   nextEpisode:
     neighbours.next === null

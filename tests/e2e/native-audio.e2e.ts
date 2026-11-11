@@ -61,6 +61,31 @@ for (const codec of ["eac3", "ac3", "dca"] as const)
     const ipc = new MpvIpc();
     const captures: { speed: number; start: number; end: number }[] = [];
     const bytes = async () => (await stat(pcm).catch(() => null))?.size ?? 0;
+    // The sampler skips a reply slower than 100 ms, and the player samples again on its next tick.
+    const measure = async () => {
+      let measured = null as {
+        sample: NonNullable<Awaited<ReturnType<typeof sampleMpvPlayback>>>;
+        requestedAtMs: number;
+        returnedAtMs: number;
+      } | null;
+      await expect
+        .poll(async () => {
+          const requestedAtMs = performance.now();
+          const sample = await sampleMpvPlayback(ipc, {
+            sessionId: "e2e",
+            itemId: "tone",
+            positionSeconds: 0,
+            durationSeconds: 30,
+            paused: false,
+          });
+          if (sample !== null)
+            measured = { sample, requestedAtMs, returnedAtMs: performance.now() };
+          return sample !== null;
+        })
+        .toBe(true);
+      if (measured === null) throw new Error("No measured sample");
+      return measured;
+    };
     try {
       await ipc.connect({
         get socketPath() {
@@ -78,29 +103,16 @@ for (const codec of ["eac3", "ac3", "dca"] as const)
         const after = await bytes();
         await expect.poll(bytes, { intervals: [100] }).toBeGreaterThan(after + 2 * 48000 * 6 * 4);
         captures.push({ speed, start, end: await bytes() });
-        const sample = await sampleMpvPlayback(ipc, {
-          sessionId: "e2e",
-          itemId: "tone",
-          positionSeconds: 0,
-          durationSeconds: 30,
-          paused: false,
-        });
+        const { sample, requestedAtMs, returnedAtMs } = await measure();
         expect(sample).toMatchObject({ speed, advancing: true });
-        expect(performance.now() - (sample?.sampledAtMs ?? 0)).toBeLessThan(100);
+        expect(sample.sampledAtMs).toBeGreaterThanOrEqual(requestedAtMs);
+        expect(sample.sampledAtMs).toBeLessThanOrEqual(returnedAtMs);
         expect(await ipc.command(["get_property", "af"])).toEqual([
           expect.objectContaining({ name: "scaletempo2" }),
         ]);
       }
       await ipc.command(["set_property", "pause", "yes"]);
-      expect(
-        await sampleMpvPlayback(ipc, {
-          sessionId: "e2e",
-          itemId: "tone",
-          positionSeconds: 0,
-          durationSeconds: 30,
-          paused: false,
-        }),
-      ).toMatchObject({ advancing: false });
+      expect((await measure()).sample).toMatchObject({ advancing: false });
       await ipc.command(["quit"]);
       await exited;
       const audio = await readFile(pcm);

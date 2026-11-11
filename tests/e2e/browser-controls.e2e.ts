@@ -174,6 +174,38 @@ test("an episode, and the one after it, are described the moment they play", asy
   lookupsHeld.resolve();
 });
 
+test("an episode's still covers the player until the episode, or the one after it, plays", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "shows", twoEpisodes, {
+    "Serial/Season 1/Serial S01E01 - Opening-thumb.png": "still.png",
+    "Serial/Season 1/Serial S01E02 - Sequel-thumb.png": "still.png",
+  });
+  await signIn(page, server);
+  let held = Promise.withResolvers<void>();
+  await page.route("**/api/v1/playback/sessions", async (route) => {
+    await held.promise;
+    await route.fallback();
+  });
+  const still = page.locator(".media-player-artwork");
+  await startPlayback(page, server, library.id, openingEpisode);
+  await expect(still).toHaveAttribute("src", /\/api\/v1\/artwork\//);
+  const openingStill = await still.getAttribute("src");
+  held.resolve();
+  await playing(page);
+  await expect(still).toHaveCount(0);
+
+  held = Promise.withResolvers<void>();
+  await page.getByRole("button", { name: "Next episode", exact: true }).click();
+  await expect(still).toHaveAttribute("src", /\/api\/v1\/artwork\//);
+  expect(await still.getAttribute("src")).not.toBe(openingStill);
+  held.resolve();
+  await playing(page);
+  await expect(still).toHaveCount(0);
+});
+
 test("an older server's episode is described all at once, once every detail is known", async ({
   server,
   admin,
