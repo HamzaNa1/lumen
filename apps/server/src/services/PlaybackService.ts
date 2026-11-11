@@ -353,8 +353,15 @@ export const makePlaybackService = Effect.gen(function* () {
       const playing = new Set([activeTrackId, session.activeTrackId]);
       const trackIds = new Set(current.map((grant) => grant.trackId));
       if (activeTrackId !== null) trackIds.add(activeTrackId);
+      // A preload grant exists only beside something that plays. When the session goes idle it
+      // goes too, or it would count as the session's own item and could convert.
+      const goingIdle = activeTrackId === null && session.activeTrackId !== null;
       const lost = new Set<string>();
       for (const trackId of trackIds) {
+        if (goingIdle && !playing.has(trackId)) {
+          lost.add(trackId);
+          continue;
+        }
         const check = access.requireTrack(principal, trackId, "playback:control", nowMs);
         // A preloaded item the viewer can no longer reach loses its grant; what plays keeps going.
         if (playing.has(trackId)) yield* check;

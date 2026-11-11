@@ -54,6 +54,36 @@ export interface MediaGeometry {
   readonly segmentBytes: number;
 }
 
+/** Asks for bytes [start, end) of a file, exactly as stored. */
+export const rangeRequest = (
+  token: string,
+  start: number,
+  end: number,
+  signal: AbortSignal,
+): RequestInit => ({
+  headers: {
+    authorization: `Bearer ${token}`,
+    range: `bytes=${start}-${end - 1}`,
+    "accept-encoding": "identity",
+  },
+  redirect: "manual",
+  signal,
+});
+
+/** Whether a 206 response holds bytes [start, end) of this revision and no other. */
+export const servesRange = (
+  response: Response,
+  spec: Pick<MediaSpec, "revision" | "sizeBytes">,
+  start: number,
+  end: number,
+): boolean => {
+  const etag = response.headers.get("etag");
+  return (
+    (etag === null || etag === spec.revision) &&
+    response.headers.get("content-range") === `bytes ${start}-${end - 1}/${spec.sizeBytes}`
+  );
+};
+
 /** The server no longer has these bytes under this revision. */
 export class MediaChanged extends Error {}
 /** Nothing is allowed to fetch the missing bytes. */
@@ -460,15 +490,10 @@ export class MediaFile extends EventEmitter {
     let source = this.pickSource();
     if (source === null) throw new MediaUnavailable("This part of the media is not on this device");
     for (let attempt = 0; ; attempt += 1) {
-      const response = await this.fetchImpl(new URL(source.path, source.origin), {
-        headers: {
-          authorization: `Bearer ${source.token}`,
-          range: `bytes=${fetch.start}-${fetch.end - 1}`,
-          "accept-encoding": "identity",
-        },
-        redirect: "manual",
-        signal: fetch.controller.signal,
-      });
+      const response = await this.fetchImpl(
+        new URL(source.path, source.origin),
+        rangeRequest(source.token, fetch.start, fetch.end, fetch.controller.signal),
+      );
       if ([401, 403, 404].includes(response.status) && attempt === 0 && source.refresh) {
         await response.body?.cancel().catch(ignoreFailure);
         const refreshed = await source.refresh();
@@ -483,12 +508,7 @@ export class MediaFile extends EventEmitter {
           throw new MediaChanged("The file changed");
         throw new Error(`Media request failed (HTTP ${response.status})`);
       }
-      const etag = response.headers.get("etag");
-      const range = response.headers.get("content-range");
-      if (
-        (etag !== null && etag !== this.spec.revision) ||
-        range !== `bytes ${fetch.start}-${fetch.end - 1}/${this.spec.sizeBytes}`
-      ) {
+      if (!servesRange(response, this.spec, fetch.start, fetch.end)) {
         await response.body?.cancel().catch(ignoreFailure);
         throw new MediaChanged("The file changed on the server");
       }

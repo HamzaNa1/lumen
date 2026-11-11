@@ -732,6 +732,7 @@ export class PlayerController extends EventEmitter {
       sessionId: active.session.sessionId,
     });
     this.startGeneration += 1;
+    this.preload?.drop();
     void this.stopActive();
     this.onState(null);
     this.emitError(cause);

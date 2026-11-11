@@ -1,5 +1,5 @@
 import { ignoreFailure } from "../failures";
-import { type MediaSpec, mediaKey } from "../media-store/MediaFile";
+import { type MediaSpec, mediaKey, rangeRequest, servesRange } from "../media-store/MediaFile";
 
 const HEAD_SECONDS = 15;
 const MIN_HEAD_BYTES = 8 * 1024 * 1024;
@@ -108,20 +108,13 @@ export class MediaPreload {
     const { spec } = request;
     const start = first * this.chunkBytes;
     const end = Math.min(spec.sizeBytes, (last + 1) * this.chunkBytes);
-    const response = await this.fetchImpl(new URL(request.path, request.origin), {
-      headers: {
-        authorization: `Bearer ${request.token}`,
-        range: `bytes=${start}-${end - 1}`,
-        "accept-encoding": "identity",
-      },
-      redirect: "manual",
-      signal: pending.controller.signal,
-    });
-    const etag = response.headers.get("etag");
+    const response = await this.fetchImpl(
+      new URL(request.path, request.origin),
+      rangeRequest(request.token, start, end, pending.controller.signal),
+    );
     if (
       response.status !== 206 ||
-      (etag !== null && etag !== spec.revision) ||
-      response.headers.get("content-range") !== `bytes ${start}-${end - 1}/${spec.sizeBytes}` ||
+      !servesRange(response, spec, start, end) ||
       response.body === null
     ) {
       await response.body?.cancel().catch(ignoreFailure);

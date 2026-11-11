@@ -203,13 +203,27 @@ test("a playback session preloads one other item's bytes, never converts them, a
   expect(await fetchStatus(replaced.streamPath)).toBe(404);
   expect(await fetchStatus(playback.streamUrl)).toBe(206);
   await preload(third?.id, 403);
-  // A session playing nothing has nothing to preload after.
-  await server.api(`${path}/heartbeat`, {
-    token: viewerToken,
+
+  // A session that goes idle drops its preload, which would otherwise count as its own item.
+  await server.api(`/users/${viewer.id}`, {
+    token,
+    method: "PATCH",
     status: 200,
-    body: { state: "playing", activeTrackId: null, errorCode: null },
+    body: { libraryAccess: { scope: "selected", libraryIds: [movies.id, extras.id] } },
   });
-  await preload(film?.id, 409);
+  const idle = await preload(other?.id);
+  const idleHeartbeat = () =>
+    server.api(`${path}/heartbeat`, {
+      token: viewerToken,
+      status: 200,
+      body: { state: "paused", activeTrackId: null, errorCode: null },
+    });
+  await idleHeartbeat();
+  await idleHeartbeat();
+  expect(await fetchStatus(idle.streamPath, "?transcode=1")).toBe(404);
+  expect(await fetchStatus(idle.streamPath)).toBe(404);
+  expect(await fetchStatus(playback.streamUrl)).toBe(206);
+  await preload(other?.id, 409);
 
   await server.api(path, { token: viewerToken, method: "DELETE" });
   await preload(film?.id, 409);
