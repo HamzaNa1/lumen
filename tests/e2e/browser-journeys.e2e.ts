@@ -53,6 +53,15 @@ test("real playback supports controls, fullscreen, buffering, diagnostics and te
   await signIn(page, server);
   await openMovie(page, server, library.id);
   const video = page.locator("video");
+  // WebKit may report a wait and never say playback resumed; the moving clock says so instead.
+  const player = page.getByRole("region", { name: "Media player" });
+  await player.evaluate((player) => {
+    new MutationObserver(() => {
+      player.dataset.statuses = `${player.dataset.statuses ?? ""} ${player.dataset.status}`;
+    }).observe(player, { attributeFilter: ["data-status"] });
+    player.querySelector("video")?.dispatchEvent(new Event("waiting"));
+  });
+  await expect(player).toHaveAttribute("data-statuses", / buffering ready$/);
   const exposure = await page.evaluate(() => ({
     location: location.href,
     storage: JSON.stringify({ localStorage, sessionStorage }),
