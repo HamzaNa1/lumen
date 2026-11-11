@@ -145,6 +145,9 @@ test("near the end of an episode, the next one's start is held in memory and pla
   admin,
   desktop,
 }) => {
+  // The released server a desktop release is checked against may predate preloading.
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  test.skip(info.capabilities?.preload !== true, "The server predates preloading");
   const token = admin.accessToken;
   const library = await server.library(token, "shows", [
     "Show/Season 1/Show S01E01.mp4",
