@@ -23,7 +23,7 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
         app.evaluate(({ BaseWindow, BrowserWindow }, parentId) => {
           const parent = BrowserWindow.fromId(parentId);
           if (!parent) return false;
-          if (process.platform === "win32") return BaseWindow.getAllWindows().length === 1;
+          if (process.platform !== "linux") return BaseWindow.getAllWindows().length === 1;
           const expected = parent.getContentBounds();
           const children = BaseWindow.getAllWindows().filter(
             (window) => window.getParentWindow()?.id === parentId,
@@ -240,12 +240,12 @@ test("a stalled progress response cannot block native pause, local samples or fi
   }
 });
 
-test("Windows main-window capture contains video and inline controls, and a killed helper can be retried", async ({
+test("main-window capture contains composited video and inline controls, and a killed helper can be retried", async ({
   server,
   admin,
   desktop,
 }) => {
-  test.skip(process.platform !== "win32", "Windows shared D3D11 compositor");
+  test.skip(process.platform === "linux", "Linux embeds an MPV window instead of compositing");
   test.setTimeout(120000);
   await server.library(admin.accessToken, "movies", ["Film.mp4"]);
   const { page, app } = desktop;
@@ -292,7 +292,7 @@ test("Windows main-window capture contains video and inline controls, and a kill
   await expect.poll(capture).toBeGreaterThan(100);
   await page.evaluate(() => window.lumen.player.fullscreen(true));
   await expect.poll(capture).toBeGreaterThan(100);
-  await test.info().attach("Windows single compositor playback", {
+  await test.info().attach("Single compositor playback", {
     body: Buffer.from(
       await main.evaluate(async (window) =>
         (await window.webContents.capturePage()).toPNG().toString("base64"),
@@ -302,47 +302,57 @@ test("Windows main-window capture contains video and inline controls, and a kill
     contentType: "image/png",
   });
   const { execFileSync, spawnSync } = await import("node:child_process");
-  const nativeProof = test.info().outputPath("windows-presentation");
   await page.evaluate(() => window.lumen.player.fullscreen(false));
   await page.mouse.move(300, 300);
-  const handle = await main.evaluate((window) =>
-    window.getNativeWindowHandle().readBigUInt64LE().toString(),
-  );
-  try {
-    const presentation = spawnSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-File",
-        join(import.meta.dirname, "support/windows-presentation.ps1"),
-        "-WindowHandle",
-        handle,
-        "-OutputDirectory",
-        nativeProof,
-      ],
-      { timeout: 35000, encoding: "utf8" },
+  if (process.platform === "win32") {
+    const nativeProof = test.info().outputPath("windows-presentation");
+    const handle = await main.evaluate((window) =>
+      window.getNativeWindowHandle().readBigUInt64LE().toString(),
     );
-    // Keep recovery evidence even if a native presentation assertion fails.
-    expect.soft(presentation.status, `${presentation.error ?? ""}\n${presentation.stderr}`).toBe(0);
-  } finally {
-    for (const name of ["window", "restored", "thumbnail", "alt-tab", "after-alt-tab"]) {
-      const path = join(nativeProof, `native-${name}.png`);
-      if (await stat(path).catch(() => null))
-        await test.info().attach(`Windows ${name}`, { path, contentType: "image/png" });
+    try {
+      const presentation = spawnSync(
+        "powershell.exe",
+        [
+          "-NoProfile",
+          "-File",
+          join(import.meta.dirname, "support/windows-presentation.ps1"),
+          "-WindowHandle",
+          handle,
+          "-OutputDirectory",
+          nativeProof,
+        ],
+        { timeout: 35000, encoding: "utf8" },
+      );
+      // Keep recovery evidence even if a native presentation assertion fails.
+      expect
+        .soft(presentation.status, `${presentation.error ?? ""}\n${presentation.stderr}`)
+        .toBe(0);
+    } finally {
+      for (const name of ["window", "restored", "thumbnail", "alt-tab", "after-alt-tab"]) {
+        const path = join(nativeProof, `native-${name}.png`);
+        if (await stat(path).catch(() => null))
+          await test.info().attach(`Windows ${name}`, { path, contentType: "image/png" });
+      }
     }
   }
   // Kill at the OS boundary: the real helper, decoder and Electron import path remain in use.
   const electronPid = await app.evaluate(() => process.pid);
   const helpers = (): number[] => {
-    const output = execFileSync(
-      "powershell.exe",
-      [
-        "-NoProfile",
-        "-Command",
-        `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Lumen Video Helper.exe' -and $_.ParentProcessId -eq ${electronPid} } | Select-Object -ExpandProperty ProcessId`,
-      ],
-      { encoding: "utf8" },
-    );
+    const output =
+      process.platform === "win32"
+        ? execFileSync(
+            "powershell.exe",
+            [
+              "-NoProfile",
+              "-Command",
+              `Get-CimInstance Win32_Process | Where-Object { $_.Name -eq 'Lumen Video Helper.exe' -and $_.ParentProcessId -eq ${electronPid} } | Select-Object -ExpandProperty ProcessId`,
+            ],
+            { encoding: "utf8" },
+          )
+        : // Only children of this test's Electron process; pgrep exits 1 when there are none.
+          spawnSync("pgrep", ["-P", String(electronPid), "-x", "Lumen Video Helper"], {
+            encoding: "utf8",
+          }).stdout;
     return output.trim().split(/\s+/).filter(Boolean).map(Number);
   };
   const before = helpers();

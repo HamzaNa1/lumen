@@ -293,14 +293,6 @@ export class PlayerController extends EventEmitter {
       // Whatever was preloaded and not taken was for another item.
       this.preload?.drop();
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-      if (reused === null && process.platform === "darwin" && this.surface.kind === "native") {
-        const windowId = await ipc.command(["get_property", "window-id"]);
-        if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
-        if (typeof windowId !== "number" || !Number.isSafeInteger(windowId) || windowId <= 0) {
-          throw new Error("MPV did not create a native video window");
-        }
-        this.surface.attachNativeWindow(windowId);
-      }
       const streams = active.media.streams;
       active.media.paused = input.paused ?? false;
       await ipc.command(["set_property", "pause", input.paused === true ? "yes" : "no"]);

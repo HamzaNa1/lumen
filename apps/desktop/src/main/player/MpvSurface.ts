@@ -1,11 +1,8 @@
 import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { BaseWindow, type BrowserWindow } from "electron";
-import { MacMpvWindow } from "./MacMpvWindow";
 import type { PlayerOverlayWindow } from "./PlayerOverlayWindow";
 import { observePlayerFocus, playerContentBounds } from "./PlayerWindowState";
 
-type NativeVideoWindow = Pick<MacMpvWindow, "sync" | "show" | "dispose">;
-type CreateNativeVideoWindow = (hostView: bigint, windowId: bigint) => NativeVideoWindow;
 type VideoHost = Pick<
   BaseWindow,
   "getNativeWindowHandle" | "setBounds" | "showInactive" | "hide" | "isDestroyed" | "destroy"
@@ -20,11 +17,9 @@ export class MpvSurface {
   readonly kind = "native" as const;
   private readonly parent: BrowserWindow;
   private host: VideoHost | null = null;
-  private macWindow: NativeVideoWindow | null = null;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private playbackVisible = false;
   private readonly overlay: PlayerOverlayWindow | undefined;
-  private readonly createNativeVideoWindow: CreateNativeVideoWindow;
   private disposed = false;
   private readonly stopObservingFocus: () => void;
   private readonly onBoundsChanged = (): void => this.syncHostBounds();
@@ -32,15 +27,9 @@ export class MpvSurface {
   private readonly onHide = (): void => this.hideHost();
   private readonly onClosed = (): void => this.dispose();
 
-  constructor(
-    parent: BrowserWindow,
-    overlay?: PlayerOverlayWindow,
-    createNativeVideoWindow: CreateNativeVideoWindow = (hostView, windowId) =>
-      new MacMpvWindow(hostView, windowId),
-  ) {
+  constructor(parent: BrowserWindow, overlay?: PlayerOverlayWindow) {
     this.parent = parent;
     this.overlay = overlay;
-    this.createNativeVideoWindow = createNativeVideoWindow;
     parent.on("move", this.onBoundsChanged);
     parent.on("resize", this.onBoundsChanged);
     parent.on("restore", this.onShow);
@@ -80,19 +69,7 @@ export class MpvSurface {
     this.playbackVisible = true;
     this.syncHostBounds();
     host.showInactive();
-    if (process.platform === "darwin") return [];
     return [`--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
-  }
-
-  attachNativeWindow(windowId: number): void {
-    if (process.platform !== "darwin") return;
-    if (!this.playbackVisible || this.macWindow !== null)
-      throw new Error("The MPV video window is already attached or playback has stopped");
-    const host = this.ensureHost();
-    this.macWindow = this.createNativeVideoWindow(
-      BigInt(nativeWindowId(host.getNativeWindowHandle())),
-      BigInt(Math.trunc(windowId)),
-    );
   }
 
   show(): void {
@@ -101,14 +78,12 @@ export class MpvSurface {
     if (this.parent.isMinimized() || !this.parent.isVisible()) return;
     this.syncHostBounds();
     if (this.host !== null && !this.host.isDestroyed()) this.host.showInactive();
-    this.macWindow?.show();
     this.overlay?.moveAboveVideo();
   }
 
   hide(): void {
     this.playbackVisible = false;
     this.hideHost();
-    this.detachNativeWindow();
   }
 
   dispose(): void {
@@ -132,12 +107,6 @@ export class MpvSurface {
     if (this.host !== null && !this.host.isDestroyed()) this.host.hide();
   }
 
-  private detachNativeWindow(): void {
-    const window = this.macWindow;
-    this.macWindow = null;
-    window?.dispose();
-  }
-
   private ensureHost(): VideoHost {
     if (this.host !== null && !this.host.isDestroyed()) return this.host;
     const host = new BaseWindow({
@@ -157,7 +126,6 @@ export class MpvSurface {
       backgroundColor: "#000000",
     });
     host.setMenuBarVisibility(false);
-    if (process.platform === "darwin") host.setIgnoreMouseEvents(true);
     this.host = host;
     return host;
   }
@@ -178,7 +146,6 @@ export class MpvSurface {
       width: this.bounds.width,
       height: this.bounds.height,
     });
-    this.macWindow?.sync();
     this.overlay?.syncBounds();
     this.overlay?.moveAboveVideo();
   }

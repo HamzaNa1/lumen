@@ -14,12 +14,12 @@ const expected = [
   [192, 144, 112],
 ];
 
-test("Windows playback preserves SDR gray levels and muted colors through the compositor", async ({
+test("composited playback preserves SDR gray levels and muted colors", async ({
   server,
   admin,
   desktop,
 }, testInfo) => {
-  test.skip(process.platform !== "win32", "Windows shared D3D11 compositor");
+  test.skip(process.platform === "linux", "Linux embeds an MPV window instead of compositing");
   await server.library(admin.accessToken, "movies", [], { "Colors.mp4": "sdr-colors.mp4" });
   const { page, app } = desktop;
   await connectDesktop(page, server);
@@ -34,27 +34,30 @@ test("Windows playback preserves SDR gray levels and muted colors through the co
     await window.lumen.player.pause(state.sessionId, true);
   });
   const mainWindow = await app.browserWindow(page);
-  const sample = async () => {
+  // Rows are fractions of the picture's height; the color stripes span its lower three quarters.
+  const sample = async (row = 0.5) => {
     const bounds = await page.locator(".watch-surface canvas").boundingBox();
     if (!bounds) throw new Error("Video canvas missing");
     const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }));
     return mainWindow.evaluate(
-      async (window, { bounds, viewport }) => {
+      async (window, { bounds, viewport, row }) => {
         const capture = await window.webContents.capturePage();
         const size = capture.getSize();
         const pixels = capture.toBitmap();
         const scaleX = size.width / viewport.width,
           scaleY = size.height / viewport.height;
         const videoWidth = Math.min(bounds.width, (bounds.height * 16) / 9);
+        const videoHeight = (videoWidth * 9) / 16;
         const left = bounds.x + (bounds.width - videoWidth) / 2;
-        const y = Math.floor((bounds.y + bounds.height / 2) * scaleY);
+        const top = bounds.y + (bounds.height - videoHeight) / 2;
+        const y = Math.floor((top + videoHeight * row) * scaleY);
         return Array.from({ length: 10 }, (_, index) => {
           const x = Math.floor((left + ((index + 0.5) * videoWidth) / 10) * scaleX);
           const offset = (y * size.width + x) * 4;
           return [pixels[offset + 2], pixels[offset + 1], pixels[offset]];
         });
       },
-      { bounds, viewport },
+      { bounds, viewport, row },
     );
   };
   try {
@@ -71,12 +74,22 @@ test("Windows playback preserves SDR gray levels and muted colors through the co
         { message: "Captured SDR colors must match the source within four code values" },
       )
       .toBeLessThanOrEqual(4);
+    const shade = (pixel: (number | undefined)[] | undefined) =>
+      pixel?.every((value) => (value ?? 0) > 250)
+        ? "white"
+        : pixel?.every((value) => (value ?? 255) < 5)
+          ? "black"
+          : pixel;
+    expect(
+      { top: shade((await sample(0.125))[0]), bottom: shade((await sample(0.875))[0]) },
+      "The white band must be at the top of the picture",
+    ).toEqual({ top: "white", bottom: "black" });
   } finally {
     await testInfo.attach("SDR color measurements", {
       body: JSON.stringify({ expected, actual: await sample() }, null, 2),
       contentType: "application/json",
     });
-    await testInfo.attach("Windows SDR color chart", {
+    await testInfo.attach("SDR color chart", {
       body: Buffer.from(
         await mainWindow.evaluate(async (window) =>
           (await window.webContents.capturePage()).toPNG().toString("base64"),
