@@ -22,7 +22,12 @@ export async function collectBrowserErrors(context: BrowserContext): Promise<str
           : String(cause);
       void window.__reportE2EBrowserError(message).catch(() => undefined);
     };
-    window.addEventListener("error", (event) => report(event.error ?? event.message));
+    window.addEventListener("error", (event) => {
+      // Not an exception: the spec's notice that some resize observations moved to the next frame.
+      // https://drafts.csswg.org/resize-observer/#deliver-resize-loop-error-notification
+      if (event.error == null && event.message.startsWith("ResizeObserver loop")) return;
+      report(event.error ?? event.message);
+    });
     window.addEventListener("unhandledrejection", (event) => report(event.reason));
   });
   context.on("page", (page) => page.on("crash", () => errors.push(`Page crashed: ${page.url()}`)));
