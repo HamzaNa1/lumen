@@ -620,7 +620,7 @@ const Row = ({
 );
 
 /** The free space at which downloads pause, as a share of the disk. */
-const FreeSpaceLimit = ({
+const FreeSpaceLimitRow = ({
   value,
   totalBytes,
   disabled,
@@ -638,47 +638,57 @@ const FreeSpaceLimit = ({
     Number.isInteger(parsed) &&
     parsed >= MIN_FREE_SPACE_PERCENT &&
     parsed <= MAX_FREE_SPACE_PERCENT;
+  const percent = valid ? parsed : value;
   const commit = (next: number) => {
     if (next !== value) onCommit(next);
   };
   return (
-    <div className="free-space-limit">
+    <Row
+      label="Stop downloading when free space falls below"
+      description={
+        <>
+          Downloads pause until space frees up. Playback never stops for it.
+          {totalBytes > 0 ? (
+            <span className="free-space-hint">
+              {percent}% of {formatBytes(totalBytes)}: downloads pause at{" "}
+              {formatBytes(Math.ceil((totalBytes * percent) / 100))} free
+            </span>
+          ) : null}
+        </>
+      }
+    >
       <input
+        className="free-space-range"
         type="range"
         aria-label="Free space limit"
         min={MIN_FREE_SPACE_PERCENT}
         max={MAX_FREE_SPACE_PERCENT}
         step={1}
-        value={valid ? parsed : value}
+        value={percent}
         disabled={disabled}
         onChange={(event) => setDraft(event.currentTarget.value)}
         onPointerUp={(event) => commit(Number(event.currentTarget.value))}
         onKeyUp={(event) => commit(Number(event.currentTarget.value))}
       />
-      <input
-        className="free-space-number"
-        type="number"
-        aria-label="Free space limit percent"
-        min={MIN_FREE_SPACE_PERCENT}
-        max={MAX_FREE_SPACE_PERCENT}
-        step={1}
-        value={draft}
-        disabled={disabled}
-        aria-invalid={!valid}
-        onChange={(event) => setDraft(event.currentTarget.value)}
-        onBlur={() => (valid ? commit(parsed) : setDraft(String(value)))}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && valid) commit(parsed);
-        }}
-      />
-      <span aria-hidden="true">%</span>
-      {totalBytes > 0 && valid ? (
-        <span className="free-space-hint">
-          {parsed}% of {formatBytes(totalBytes)}: downloads pause at{" "}
-          {formatBytes(Math.ceil((totalBytes * parsed) / 100))} free
-        </span>
-      ) : null}
-    </div>
+      <label className="free-space-number">
+        <input
+          type="number"
+          aria-label="Free space limit percent"
+          min={MIN_FREE_SPACE_PERCENT}
+          max={MAX_FREE_SPACE_PERCENT}
+          step={1}
+          value={draft}
+          disabled={disabled}
+          aria-invalid={!valid}
+          onChange={(event) => setDraft(event.currentTarget.value)}
+          onBlur={() => (valid ? commit(parsed) : setDraft(String(value)))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && valid) commit(parsed);
+          }}
+        />
+        <span aria-hidden="true">%</span>
+      </label>
+    </Row>
   );
 };
 
@@ -719,17 +729,12 @@ export const DownloadSettingsSection = (): React.ReactElement | null => {
             onValueChange={(streamingCache) => update.mutate({ streamingCache })}
           />
         </Row>
-        <Row
-          label="Stop downloading when free space falls below"
-          description="Downloads pause until space frees up. Playback never stops for it."
-        >
-          <FreeSpaceLimit
-            value={settings.minimumFreeSpacePercent}
-            totalBytes={usage.totalBytes}
-            disabled={update.isPending}
-            onCommit={(minimumFreeSpacePercent) => update.mutate({ minimumFreeSpacePercent })}
-          />
-        </Row>
+        <FreeSpaceLimitRow
+          value={settings.minimumFreeSpacePercent}
+          totalBytes={usage.totalBytes}
+          disabled={update.isPending}
+          onCommit={(minimumFreeSpacePercent) => update.mutate({ minimumFreeSpacePercent })}
+        />
         <Row
           label="Delete watched downloads"
           description="Downloads you keep are never deleted automatically."
