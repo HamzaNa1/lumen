@@ -215,9 +215,9 @@ body:has(.app-shell) {
   flex: none;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
-  margin: -2px -4px -2px auto;
+  width: 22px;
+  height: 22px;
+  margin: 0 -2px 0 auto;
   padding: 0;
   border: 0;
   border-radius: 50%;
@@ -239,7 +239,7 @@ body:has(.app-shell) {
   height: 100%;
   transform: rotate(-90deg);
   fill: none;
-  stroke-width: 1.5;
+  stroke-width: 1.8;
 }
 .update-button-track {
   stroke: var(--border-strong);
@@ -252,23 +252,12 @@ body:has(.app-shell) {
 .update-button[data-state="available"] .update-button-progress {
   stroke: transparent;
 }
-.update-button[data-state="active"],
-.update-button[data-state="active"]:hover {
+.update-button:not([data-state="available"]),
+.update-button:not([data-state="available"]):hover {
   color: var(--accent);
 }
-.update-button[data-state="active"] .update-button-track {
+.update-button:not([data-state="available"]) .update-button-track {
   stroke: rgba(201, 245, 96, 0.18);
-}
-.update-button[data-state="ready"] {
-  background: var(--accent);
-  color: var(--accent-ink);
-}
-.update-button[data-state="ready"]:hover {
-  background: var(--accent-hover);
-  color: var(--accent-ink);
-}
-.update-button[data-state="ready"] .update-button-ring {
-  display: none;
 }
 .nav {
   flex: 1;
