@@ -14,6 +14,7 @@ import {
   Users,
 } from "lucide-react";
 import type { ReactNode } from "react";
+import { AppUpdateButton } from "./AppUpdates";
 import { DeviceOnly } from "./Downloads";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
@@ -65,6 +66,7 @@ export const Sidebar = ({
       <div className="sidebar-brand">
         <LumenMark />
         <span>Lumen</span>
+        {runtime.appUpdates === null ? null : <AppUpdateButton updates={runtime.appUpdates} />}
       </div>
       <nav className="nav" aria-label="Primary">
         <div className="nav-group">

@@ -3,6 +3,7 @@ import { Button, Form, Modal, SelectField, TextField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
+import { AppUpdateSettings } from "./AppUpdates";
 import { DeviceOnly, DownloadSettingsSection } from "./Downloads";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
@@ -170,7 +171,7 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
 
 export const SettingsPage = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
-  const { capabilities } = useRuntime();
+  const { capabilities, appUpdates } = useRuntime();
   return (
     <div className="page page-narrow">
       <PageHeader title="Settings" />
@@ -186,6 +187,7 @@ export const SettingsPage = (): React.ReactElement => {
       {account.role === "admin" ? (
         <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
       ) : null}
+      {appUpdates === null ? null : <AppUpdateSettings updates={appUpdates} />}
       <section className="settings-group" aria-labelledby="settings-server">
         <h2 id="settings-server">Server</h2>
         <div className="settings-card">

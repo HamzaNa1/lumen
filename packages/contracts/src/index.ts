@@ -1,4 +1,5 @@
 export * from "./api.ts";
+export * from "./app-updates.ts";
 export * from "./downloads.ts";
 export * from "./episode-order.ts";
 export * from "./episode-range.ts";

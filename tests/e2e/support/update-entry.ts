@@ -4,7 +4,12 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
 import type { NsisUpdater } from "../../../apps/desktop/node_modules/electron-updater";
-import { AppUpdates, type UpdateSource } from "../../../apps/desktop/src/main/updates/AppUpdates";
+import {
+  AppUpdates,
+  openUpdateSettings,
+  type UpdateSource,
+} from "../../../apps/desktop/src/main/updates/AppUpdates";
+import type { AppUpdateStatus } from "../../../packages/contracts/src/app-updates";
 
 const root = process.env.LUMEN_E2E_PROFILE;
 const url = process.env.LUMEN_E2E_UPDATE_URL;
@@ -26,7 +31,7 @@ process.on("unhandledRejection", (error) => {
   console.error(error);
   app.exit(1);
 });
-void app.whenReady().then(() => {
+void app.whenReady().then(async () => {
   void new BrowserWindow({ show: false }).loadURL(
     "data:text/html,<title>Update integration</title>",
   );
@@ -42,8 +47,21 @@ void app.whenReady().then(() => {
   updater.signals.updateDownloaded((event) => {
     if (process.platform !== "win32") chmodSync(event.downloadedFile, 0o700);
   });
-  const notifications: string[] = [];
-  const updates = new AppUpdates((version) => notifications.push(version), 1000);
-  const stop = updates.start(updater as unknown as UpdateSource);
-  Object.assign(globalThis, { updateHarness: { updates, errors, notifications, stop, updater } });
+  const statuses: AppUpdateStatus[] = [];
+  const available: string[] = [];
+  (updater as unknown as EventEmitter).on("update-available", ({ version }: { version: string }) =>
+    available.push(version),
+  );
+  const settings = await openUpdateSettings(join(root, "update-settings.json"));
+  const updates = new AppUpdates({
+    channel: { kind: "installer", source: updater as unknown as UpdateSource },
+    currentVersion: "1.0.0",
+    settings,
+    onChange: (status) => statuses.push(status),
+    intervalMs: 1000,
+  });
+  const stop = updates.start();
+  Object.assign(globalThis, {
+    updateHarness: { updates, settings, errors, available, statuses, stop, updater },
+  });
 });

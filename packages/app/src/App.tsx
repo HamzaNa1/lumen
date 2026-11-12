@@ -11,6 +11,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-router";
 import { CircleAlert, LoaderCircle, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useAppUpdateChanges } from "./AppUpdates";
 import { ConnectPage } from "./ConnectPage";
 import { useDownloadUpdates } from "./Downloads";
 import { errorMessage } from "./format";
@@ -53,6 +54,7 @@ export const App = (): React.ReactElement => {
   const [offline, setOffline] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   useDownloadUpdates();
+  useAppUpdateChanges();
   const startupAttempted = useRef(false);
   const [signInAccount, setSignInAccount] = useState<AccountSummary | null>(null);
   const startingItemId = useRef<string | null>(null);

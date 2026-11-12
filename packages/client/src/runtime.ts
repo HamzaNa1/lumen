@@ -1,6 +1,7 @@
 import type {
   AccountList,
   AdjacentEpisodes,
+  AppUpdateStatus,
   ArtworkRef,
   AudioOutput,
   CatalogItem,
@@ -224,6 +225,17 @@ export interface DownloadsRuntime {
   readonly artwork: (id: string) => Promise<string | null>;
 }
 
+/** New versions of the app itself. */
+export interface AppUpdatesRuntime {
+  readonly status: () => Promise<AppUpdateStatus>;
+  readonly onChange: (callback: (status: AppUpdateStatus) => void) => Unsubscribe;
+  /** Starts downloading the update, or opens its release page where the app cannot install it. */
+  readonly download: () => Promise<void>;
+  /** Quits, installs the downloaded update and reopens the app. */
+  readonly install: () => Promise<void>;
+  readonly setAutomatic: (automatic: boolean) => Promise<AppUpdateStatus>;
+}
+
 export interface WatchRuntime {
   readonly state: () => Promise<WatchStatus>;
   readonly action: (action: WatchAction) => Promise<WatchStatus>;
@@ -243,4 +255,6 @@ export interface LumenRuntime {
   readonly watch: WatchRuntime;
   /** Null where media cannot be kept on the device. */
   readonly downloads: DownloadsRuntime | null;
+  /** Null where the app is not installed, and a new version arrives with the page. */
+  readonly appUpdates: AppUpdatesRuntime | null;
 }

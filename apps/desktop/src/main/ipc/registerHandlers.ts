@@ -626,8 +626,12 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("downloads:artwork", async (_event, raw) =>
     dependencies.downloads.artwork(decode(Schema.String, raw)),
   );
-  handle("updates:ready", async () => dependencies.updates.ready);
+  handle("updates:status", async () => dependencies.updates.status);
+  handle("updates:download", () => dependencies.updates.download());
   handle("updates:install", async () => dependencies.updates.install());
+  handle("updates:set-automatic", async (_event, automatic) =>
+    dependencies.updates.setAutomatic(decode(Schema.Boolean, automatic)),
+  );
 };
 
 export const unregisterIpcHandlers = (): void => {
