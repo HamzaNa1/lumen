@@ -64,7 +64,10 @@ offscreen CGL core-profile context, the same API mpv's own `cocoa-cb` output
 uses. Each of the three slots is an `IOSurface` bound as a rectangle texture
 and framebuffer. A GL fence completes before publication. The stable Homebrew
 mpv 0.41.0 is enough; the helper compiles against that release's headers and
-loads the `libmpv.dylib` bundled beside it.
+loads the `libmpv.dylib` bundled beside it. Virtual machines, including GitHub's
+hosted macOS runners, have Metal but no accelerated OpenGL renderer, so the
+helper falls back to Apple's software renderer there and applies mpv's `fast`
+profile; its default scalers cannot keep up with playback on the CPU.
 
 Electron imports an IOSurface only as a reference local to its own process, so
 the surface has to cross processes. The helper sends each frame's surface as a

@@ -16,7 +16,7 @@ void updateCallback(void* opaque) {
 
 Api::Api() {
 #define LOAD(name) name = std::bit_cast<decltype(name)>(platform::mpvSymbol("mpv_" #name)); require(name != nullptr, "Missing mpv_" #name)
-    LOAD(client_api_version); LOAD(create); LOAD(set_option_string); LOAD(initialize);
+    LOAD(client_api_version); LOAD(create); LOAD(set_option_string); LOAD(initialize); LOAD(command);
     LOAD(terminate_destroy); LOAD(wait_event); LOAD(render_context_create);
     LOAD(render_context_set_update_callback); LOAD(render_context_update);
     LOAD(render_context_render); LOAD(render_context_free);

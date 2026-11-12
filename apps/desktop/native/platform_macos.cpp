@@ -17,6 +17,7 @@
 #include <csignal>
 #include <cstdlib>
 #include <dlfcn.h>
+#include <iostream>
 #include <thread>
 #include <unistd.h>
 
@@ -176,12 +177,21 @@ Backend::Backend(Shared& state, Api& api, mpv_handle* mpv, const Options& option
     require(bootstrap_look_up(bootstrap_port, options.port.c_str(), &impl->server) == KERN_SUCCESS, "Cannot reach the texture port");
     impl->opengl = dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_NOW | RTLD_LOCAL);
     require(impl->opengl != nullptr, "Cannot load OpenGL");
-    const CGLPixelFormatAttribute attributes[]{
-        kCGLPFAOpenGLProfile, static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core),
-        kCGLPFAAccelerated, kCGLPFAAllowOfflineRenderers, static_cast<CGLPixelFormatAttribute>(0)};
+    const auto profile = static_cast<CGLPixelFormatAttribute>(kCGLOGLPVersion_3_2_Core);
+    const CGLPixelFormatAttribute hardware[]{
+        kCGLPFAOpenGLProfile, profile, kCGLPFAAccelerated, kCGLPFAAllowOfflineRenderers, static_cast<CGLPixelFormatAttribute>(0)};
+    // Virtual machines, including hosted CI runners, expose Metal but no accelerated OpenGL renderer.
+    const CGLPixelFormatAttribute software[]{kCGLPFAOpenGLProfile, profile, kCGLPFARendererID,
+        static_cast<CGLPixelFormatAttribute>(kCGLRendererGenericFloatID), static_cast<CGLPixelFormatAttribute>(0)};
     CGLPixelFormatObj format = nullptr;
     GLint formats = 0;
-    require(CGLChoosePixelFormat(attributes, &format, &formats) == kCGLNoError && format, "Hardware OpenGL unavailable");
+    if (CGLChoosePixelFormat(hardware, &format, &formats) != kCGLNoError || !format) {
+        std::cerr << "No accelerated OpenGL renderer; using Apple Software Renderer\n";
+        require(CGLChoosePixelFormat(software, &format, &formats) == kCGLNoError && format, "OpenGL unavailable");
+        // mpv's default scalers render far below the frame rate on the CPU.
+        const char* fast[]{"apply-profile", "fast", nullptr};
+        require(api.command(mpv, fast) >= 0, "Cannot apply the fast profile");
+    }
     auto created = CGLCreateContext(format, nullptr, &impl->context);
     CGLReleasePixelFormat(format);
     require(created == kCGLNoError && impl->context, "Cannot create OpenGL context");

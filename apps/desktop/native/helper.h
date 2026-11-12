@@ -49,7 +49,7 @@ void monitorParent(Shared& state, uint64_t pid);
 
 struct Api {
 #define API(name) decltype(&mpv_##name) name = nullptr
-    API(client_api_version); API(create); API(set_option_string); API(initialize);
+    API(client_api_version); API(create); API(set_option_string); API(initialize); API(command);
     API(terminate_destroy); API(wait_event); API(render_context_create);
     API(render_context_set_update_callback); API(render_context_update);
     API(render_context_render); API(render_context_free);
