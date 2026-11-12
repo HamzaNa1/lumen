@@ -100,7 +100,7 @@ export const openUpdateSettings = (path: string): Promise<JsonFileStore<UpdateSe
     name: "update settings",
   });
 
-const checkIntervalMs = 4 * 60 * 60 * 1_000;
+const checkIntervalMs = 30 * 60 * 1_000;
 
 /**
  * Finds new releases and takes the viewer through getting one. An installation that updates
@@ -130,7 +130,7 @@ export class AppUpdates {
     };
   }
 
-  /** Checks now and every few hours after, since the app can stay open for days. */
+  /** Checks now and every half hour after, so a release published mid-session still shows up. */
   start(): () => void {
     const { channel, settings, currentVersion } = this.options;
     if (channel === null) return () => undefined;
