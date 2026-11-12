@@ -30,8 +30,9 @@ export const AppUpdateButton = ({
   readonly updates: AppUpdatesRuntime;
 }): React.ReactElement | null => {
   const status = useAppUpdateStatus(updates);
-  // Opening the release page cannot be followed further, so the click itself marks it under way.
-  const [opened, setOpened] = useState<string | null>(null);
+  // The version the viewer asked for, shown as under way before the app reports progress. An
+  // opened release page reports nothing further, so it stays under way unless opening failed.
+  const [requested, setRequested] = useState<string | null>(null);
   const update = status.data?.update ?? null;
   if (update === null) return null;
   const { version } = update;
@@ -54,15 +55,20 @@ export const AppUpdateButton = ({
       />
     );
   const page = status.data?.automatic === null;
+  const underWay = requested === version;
   return (
     <UpdateButton
-      state={page && opened === version ? "active" : "available"}
-      progress={page && opened === version ? 1 : 0}
+      state={underWay ? "active" : "available"}
+      progress={underWay && page ? 1 : 0}
       label={page ? `Download Lumen ${version} from its release page` : `Download Lumen ${version}`}
       onClick={() => {
-        if (page) setOpened(version);
-        // A failed download returns the update to available, which the button shows.
-        void updates.download().catch(() => undefined);
+        setRequested(version);
+        void updates.download().then(
+          () => {
+            if (!page) setRequested(null);
+          },
+          () => setRequested(null),
+        );
       }}
     />
   );

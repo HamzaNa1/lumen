@@ -149,7 +149,7 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
   // The viewer turned automatic updates off: nothing downloads until they ask.
   writeFileSync(
     join(root, "update-settings.json"),
-    JSON.stringify({ automatic: false, downloaded: null }),
+    JSON.stringify({ automatic: false, downloaded: null, attempted: null }),
   );
   const first = await launch();
   try {
@@ -196,7 +196,9 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
         (status) => status.update?.phase === "downloading" && status.update.progress === 1,
       ),
     ).toBe(true);
-    await expect.poll(settings).toEqual({ automatic: true, downloaded: "9999.1.0" });
+    await expect
+      .poll(settings)
+      .toEqual({ automatic: true, downloaded: "9999.1.0", attempted: null });
   } finally {
     await first.close();
   }
@@ -236,9 +238,26 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
       .toEqual(["--updated", "/S", "--force-run"]);
     await expect.poll(() => child.exitCode).toBe(0);
     expect(downloads).toBe(fetched);
-    expect(settings()).toEqual({ automatic: true, downloaded: null });
+    expect(settings()).toEqual({ automatic: true, downloaded: "9999.1.0", attempted: "9999.1.0" });
   } finally {
     await second.close();
+  }
+  // The installer ran but this is still the old version: it failed, and is not tried again on its own.
+  rmSync(marker);
+  const third = await launch();
+  try {
+    const { state, run } = harness(third);
+    await expect
+      .poll(async () => (await state()).errors.join(" "))
+      .toContain("Not installing Lumen 9999.1.0 at launch again");
+    await expect
+      .poll(async () => (await state()).status.update)
+      .toEqual({ version: "9999.1.0", phase: "ready", progress: 1 });
+    expect(existsSync(marker)).toBe(false);
+    expect(downloads).toBe(fetched);
+    await run("stop");
+  } finally {
+    await third.close();
     await new Promise<void>((resolve, reject) =>
       feed.close((error) => (error ? reject(error) : resolve())),
     );
@@ -285,6 +304,14 @@ releaseTest(
       automatic: null,
       update: { version: "9999.0.0", phase: "available", progress: 0 },
     });
+    // A browser that cannot open leaves the button as it was, ready to try again.
+    await app.evaluate(({ shell }) => {
+      shell.openExternal = async () => {
+        throw new Error("No browser");
+      };
+    });
+    await button.click();
+    await expect(button).toHaveAttribute("data-state", "available");
     await app.evaluate(({ shell }) => {
       shell.openExternal = async (url) => {
         Object.assign(globalThis, { openedRelease: url });
@@ -320,6 +347,18 @@ releaseTest(
     await expect(
       page.getByRole("button", { name: "Restart to update to Lumen 9999.0.0" }),
     ).toHaveAttribute("data-state", "ready");
+    // Where the app installs updates, a click shows at once, before the feed answers.
+    await app.evaluate(({ shell }) => {
+      shell.openExternal = () => new Promise(() => undefined);
+    });
+    await report({
+      automatic: false,
+      update: { version: "9999.0.0", phase: "available", progress: 0 },
+    });
+    const download = page.getByRole("button", { name: "Download Lumen 9999.0.0", exact: true });
+    await expect(download).toHaveAttribute("data-state", "available");
+    await download.click();
+    await expect(download).toHaveAttribute("data-state", "active");
     await report({ automatic: null, update: null });
     await expect(page.locator(".update-button")).toHaveCount(0);
   },

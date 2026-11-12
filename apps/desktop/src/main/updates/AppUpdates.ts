@@ -89,6 +89,8 @@ const UpdateSettings = Schema.Struct({
   automatic: Schema.Boolean,
   /** A version downloaded but not installed yet, which the next launch installs. */
   downloaded: Schema.NullOr(Schema.String),
+  /** The version a launch last tried to install on its own; it is not tried again. */
+  attempted: Schema.NullOr(Schema.String),
 });
 type UpdateSettings = Schema.Schema.Type<typeof UpdateSettings>;
 
@@ -96,7 +98,7 @@ export const openUpdateSettings = (path: string): Promise<JsonFileStore<UpdateSe
   JsonFileStore.open({
     path,
     schema: UpdateSettings,
-    defaults: () => ({ automatic: true, downloaded: null }),
+    defaults: () => ({ automatic: true, downloaded: null, attempted: null }),
     name: "update settings",
   });
 
@@ -134,11 +136,13 @@ export class AppUpdates {
   start(): () => void {
     const { channel, settings, currentVersion } = this.options;
     if (channel === null) return () => undefined;
-    const { downloaded } = settings.current;
-    if (downloaded !== null && !isNewerVersion(downloaded, currentVersion))
-      settings.set({ ...settings.current, downloaded: null });
-    let pending =
-      downloaded !== null && isNewerVersion(downloaded, currentVersion) ? downloaded : null;
+    const { downloaded, attempted } = settings.current;
+    const newer = downloaded !== null && isNewerVersion(downloaded, currentVersion);
+    if (downloaded !== null && !newer)
+      settings.set({ ...settings.current, downloaded: null, attempted: null });
+    if (newer && downloaded === attempted)
+      console.error(`Not installing Lumen ${downloaded} at launch again: its installer failed`);
+    let pending = newer && downloaded !== attempted ? downloaded : null;
     if (channel.kind === "installer") {
       // A prerelease build would otherwise follow the newest tag in the repository, which can be a
       // server release. Everyone follows GitHub's Latest release, which is always a stable desktop one.
@@ -204,10 +208,10 @@ export class AppUpdates {
     if (!this.options.settings.current.automatic && version !== installing) return;
     await this.downloadFrom(channel.source, version);
     if (version !== installing || this.update?.phase !== "ready") return;
-    // One attempt per download: an installer that fails must not close the app on every launch,
+    // One attempt per version: an installer that fails must not close the app on later launches,
     // so it runs only once the record of this attempt is on disk.
     const { settings } = this.options;
-    settings.set({ ...settings.current, downloaded: null });
+    settings.set({ ...settings.current, attempted: version });
     if (!(await settings.saved())) {
       console.error("Skipped installing the downloaded update: its record could not be saved");
       return;
