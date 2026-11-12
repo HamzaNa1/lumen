@@ -1968,7 +1968,7 @@ body:has(.app-shell) {
 .settings-row-text {
   min-width: 0;
 }
-.settings-row-text span {
+.settings-row-text > span {
   font-size: 13.5px;
 }
 .settings-row-text p {
@@ -3276,33 +3276,60 @@ body:has(.app-shell) {
   font-size: 10px;
   letter-spacing: 1px;
 }
-.free-space-limit {
-  display: grid;
-  grid-template-columns: 140px 56px auto;
-  align-items: center;
-  gap: 8px;
-}
-.free-space-limit input[type="range"] {
-  width: 100%;
+.free-space-range {
+  width: 140px;
+  margin: 0;
   accent-color: var(--accent);
 }
 .free-space-number {
-  width: 56px;
-  height: 30px;
-  padding: 0 8px;
+  width: 64px;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 10px;
   border: 1px solid var(--border-control);
-  border-radius: var(--radius-sm);
+  border-radius: var(--radius);
   background: var(--bg-control);
-  color: var(--text);
-  font: inherit;
-  font-variant-numeric: tabular-nums;
+  color: var(--text-tertiary);
+  font-size: 13px;
+  cursor: text;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease;
 }
-.free-space-number[aria-invalid="true"] {
+.free-space-number:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.free-space-number:focus-within {
+  border-color: var(--accent-ring);
+  box-shadow: 0 0 0 3px rgba(201, 245, 96, 0.12);
+}
+.free-space-number:has(input[aria-invalid="true"]) {
   border-color: var(--danger);
 }
-.free-space-hint {
-  grid-column: 1 / -1;
-  color: var(--text-tertiary);
-  font-size: 12px;
+.free-space-number:has(input:disabled) {
+  opacity: 0.5;
+}
+.free-space-number input {
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
   text-align: right;
+  appearance: textfield;
+}
+.free-space-number input::-webkit-inner-spin-button,
+.free-space-number input::-webkit-outer-spin-button {
+  margin: 0;
+  appearance: none;
+}
+.free-space-hint {
+  display: block;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
 }
