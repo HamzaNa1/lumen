@@ -2,7 +2,7 @@ import { ArrowDown, RotateCw } from "lucide-react";
 
 /**
  * A new version, as a small circle. It stays muted until the viewer or the app starts getting it,
- * then its border fills with the download, and once the border is full it offers a restart.
+ * then its border fills with the download, and once the update is ready it offers a restart.
  */
 export const UpdateButton = ({
   state,

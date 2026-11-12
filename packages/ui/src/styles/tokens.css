@@ -259,6 +259,13 @@ body:has(.app-shell) {
 .update-button:not([data-state="available"]) .update-button-track {
   stroke: rgba(201, 245, 96, 0.18);
 }
+.update-button[data-state="ready"],
+.update-button[data-state="ready"]:hover {
+  background: rgba(201, 245, 96, 0.18);
+}
+.update-button[data-state="ready"] .update-button-ring {
+  display: none;
+}
 .nav {
   flex: 1;
   display: grid;
