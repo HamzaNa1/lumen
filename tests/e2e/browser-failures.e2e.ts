@@ -13,6 +13,21 @@ test("browser error guard distinguishes handled network errors from uncaught exc
     const page = await context.newPage();
     await page.goto(`${server.origin}health/ready`);
     await page.route("**/guard-network", (route) => route.abort("connectionreset"));
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) => {
+          const box = document.body.appendChild(document.createElement("div"));
+          const observer = new ResizeObserver(() => {
+            box.style.height = `${box.offsetHeight + 1}px`;
+          });
+          window.addEventListener("error", (event) => {
+            if (!event.message.startsWith("ResizeObserver loop")) return;
+            observer.disconnect();
+            resolve();
+          });
+          observer.observe(box);
+        }),
+    );
     await page.evaluate(async () => {
       await fetch("/guard-network").catch(() => undefined);
       await Promise.reject(new Error("handled rejection")).catch(() => undefined);
