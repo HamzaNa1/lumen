@@ -169,7 +169,7 @@ export class AppUpdates {
     const { channel } = this.options;
     if (channel === null || this.update === null) throw new Error("No update is available");
     if (channel.kind === "page") return channel.page.open();
-    await this.downloadFrom(channel.source);
+    await this.downloadLatest(channel.source);
   }
 
   /** Quits, installs the downloaded update without prompts and reopens the app. */
@@ -186,7 +186,7 @@ export class AppUpdates {
     settings.set({ ...settings.current, automatic });
     this.publish(this.update);
     if (automatic && this.update?.phase === "available")
-      void this.downloadFrom(channel.source).catch((cause: unknown) => {
+      void this.downloadLatest(channel.source).catch((cause: unknown) => {
         console.error("Failed to update", cause);
       });
     return this.status;
@@ -199,30 +199,54 @@ export class AppUpdates {
         this.publish({ version, phase: "available", progress: 0 });
       return;
     }
-    const result = await channel.source.checkForUpdates();
-    if (result?.isUpdateAvailable !== true) return;
-    const { version } = result.updateInfo;
-    if (this.update?.version !== version)
-      this.publish({ version, phase: "available", progress: 0 });
+    const version = await this.latest(channel.source);
+    if (version === null) return;
     if (!this.options.settings.current.automatic && version !== installing) return;
-    await this.downloadFrom(channel.source);
+    await this.downloadFrom(channel.source, version);
     if (version !== installing || this.update?.phase !== "ready") return;
-    // One attempt per download: an installer that fails must not close the app on every launch.
-    this.options.settings.set({ ...this.options.settings.current, downloaded: null });
-    await this.options.settings.saved();
+    // One attempt per download: an installer that fails must not close the app on every launch,
+    // so it runs only once the record of this attempt is on disk.
+    const { settings } = this.options;
+    settings.set({ ...settings.current, downloaded: null });
+    if (!(await settings.saved())) {
+      console.error("Skipped installing the downloaded update: its record could not be saved");
+      return;
+    }
     channel.source.quitAndInstall(true, true);
   }
 
-  private downloadFrom(source: UpdateSource): Promise<void> {
+  /** Asks the feed for the newest release, which a download then fetches. */
+  private async latest(source: UpdateSource): Promise<string | null> {
+    const result = await source.checkForUpdates();
+    // The download under way keeps its version; the first check after it sees the newer release.
+    if (result?.isUpdateAvailable !== true || this.downloading !== null) return null;
+    const { version } = result.updateInfo;
+    if (this.update?.version !== version)
+      this.publish({ version, phase: "available", progress: 0 });
+    return version;
+  }
+
+  /**
+   * Checks again before downloading: the updater fetches whatever its last check found, which may
+   * be newer than the release the button names.
+   */
+  private async downloadLatest(source: UpdateSource): Promise<void> {
+    if (this.downloading !== null) return this.downloading;
+    const version = await this.latest(source);
+    if (version !== null) await this.downloadFrom(source, version);
+  }
+
+  /** Downloads the release the updater's last check found, which must be `version`. */
+  private downloadFrom(source: UpdateSource, version: string): Promise<void> {
     const update = this.update;
-    if (update === null || update.phase === "ready") return Promise.resolve();
+    if (update?.version !== version || update.phase === "ready") return Promise.resolve();
     this.downloading ??= (async () => {
       this.publish({ ...update, phase: "downloading", progress: 0 });
       try {
         await source.downloadUpdate();
         this.publish({ ...update, phase: "ready", progress: 1 });
         const { settings } = this.options;
-        settings.set({ ...settings.current, downloaded: update.version });
+        settings.set({ ...settings.current, downloaded: version });
       } catch (cause) {
         this.publish({ ...update, phase: "available", progress: 0 });
         throw cause;

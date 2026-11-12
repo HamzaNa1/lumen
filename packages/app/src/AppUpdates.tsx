@@ -3,17 +3,25 @@ import type { AppUpdateStatus } from "@lumen/contracts";
 import { SwitchField, UpdateButton } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
+import { useRuntime } from "./Runtime";
 
 const APP_UPDATES_KEY = ["app-updates"] as const;
 
-const useAppUpdateStatus = (updates: AppUpdatesRuntime) => {
+/**
+ * Keeps the update status current while the app is open, including while the sidebar is off
+ * screen for playback or the connections page. Mounted once, by the app shell.
+ */
+export const useAppUpdateChanges = (): void => {
+  const { appUpdates } = useRuntime();
   const queryClient = useQueryClient();
   useEffect(
-    () => updates.onChange((status) => queryClient.setQueryData(APP_UPDATES_KEY, status)),
-    [updates, queryClient],
+    () => appUpdates?.onChange((status) => queryClient.setQueryData(APP_UPDATES_KEY, status)),
+    [appUpdates, queryClient],
   );
-  return useQuery({ queryKey: APP_UPDATES_KEY, queryFn: updates.status, staleTime: Infinity });
 };
+
+const useAppUpdateStatus = (updates: AppUpdatesRuntime) =>
+  useQuery({ queryKey: APP_UPDATES_KEY, queryFn: updates.status, staleTime: Infinity });
 
 /** A newer version of the app, beside the brand until the viewer installs it. */
 export const AppUpdateButton = ({

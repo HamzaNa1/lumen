@@ -6,6 +6,7 @@ import { Schema } from "effect";
 export class JsonFileStore<A> {
   private writing: Promise<void> | null = null;
   private unwritten = false;
+  private failed = false;
 
   private constructor(
     private value: A,
@@ -46,9 +47,10 @@ export class JsonFileStore<A> {
     this.writing ??= this.write(this.path);
   }
 
-  /** Settles once everything set so far has been written, or has failed to be. */
-  saved(): Promise<void> {
-    return this.writing ?? Promise.resolve();
+  /** Settles once everything set so far has been written or has failed to be, with which. */
+  async saved(): Promise<boolean> {
+    await this.writing;
+    return !this.failed;
   }
 
   /** One write at a time, so a burst of changes ends with its last value on disk. */
@@ -61,7 +63,9 @@ export class JsonFileStore<A> {
         await writeFile(temporary, JSON.stringify(this.value));
         await rename(temporary, path);
       }
+      this.failed = false;
     } catch (cause) {
+      this.failed = true;
       console.error(`Failed to save ${this.name}`, cause);
     } finally {
       this.writing = null;

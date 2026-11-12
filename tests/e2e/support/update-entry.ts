@@ -48,6 +48,10 @@ void app.whenReady().then(async () => {
     if (process.platform !== "win32") chmodSync(event.downloadedFile, 0o700);
   });
   const statuses: AppUpdateStatus[] = [];
+  const available: string[] = [];
+  (updater as unknown as EventEmitter).on("update-available", ({ version }: { version: string }) =>
+    available.push(version),
+  );
   const settings = await openUpdateSettings(join(root, "update-settings.json"));
   const updates = new AppUpdates({
     channel: { kind: "installer", source: updater as unknown as UpdateSource },
@@ -58,6 +62,6 @@ void app.whenReady().then(async () => {
   });
   const stop = updates.start();
   Object.assign(globalThis, {
-    updateHarness: { updates, settings, errors, statuses, stop, updater },
+    updateHarness: { updates, settings, errors, available, statuses, stop, updater },
   });
 });

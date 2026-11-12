@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { createServer, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
@@ -29,8 +29,10 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
   ]);
   const bytes = readFileSync(join(root, "installer.exe"));
   let phase = "offline";
+  let version = "9999.0.0";
   let checks = 0;
   let downloads = 0;
+  const held: ServerResponse[] = [];
   const feed = createServer((req, res) => {
     if (req.url?.split("?")[0]?.endsWith(".yml")) {
       checks++;
@@ -39,12 +41,16 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
         return;
       }
       res.end(
-        `version: 9999.0.0\nfiles:\n  - url: installer.exe\n    sha512: ${createHash("sha512").update(bytes).digest("base64")}\n    size: ${bytes.length}\npath: installer.exe\nsha512: ${createHash("sha512").update(bytes).digest("base64")}\nreleaseDate: 2026-01-01T00:00:00.000Z\n`,
+        `version: ${version}\nfiles:\n  - url: installer.exe\n    sha512: ${createHash("sha512").update(bytes).digest("base64")}\n    size: ${bytes.length}\npath: installer.exe\nsha512: ${createHash("sha512").update(bytes).digest("base64")}\nreleaseDate: 2026-01-01T00:00:00.000Z\n`,
       );
     } else {
       downloads++;
       if (phase === "broken") {
         res.writeHead(503).end("download unavailable");
+        return;
+      }
+      if (phase === "held") {
+        held.push(res);
         return;
       }
       res.writeHead(200, { "content-length": bytes.length }).end(bytes);
@@ -109,6 +115,7 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
       setAutomatic(automatic: boolean): AppUpdateStatus;
     };
     errors: string[];
+    available: string[];
     statuses: AppUpdateStatus[];
     stop(): void;
     updater: { allowPrerelease: boolean };
@@ -116,21 +123,23 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
   const harness = (app: ElectronApplication) => ({
     state: () =>
       app.evaluate(() => {
-        const { updates, errors, statuses, updater } = (
+        const { updates, errors, available, statuses, updater } = (
           globalThis as unknown as { updateHarness: Harness }
         ).updateHarness;
         return {
           status: updates.status,
           errors,
+          available,
           statuses,
           prerelease: updater.allowPrerelease,
         };
       }),
-    run: (action: "download" | "install" | "automatic" | "stop") =>
+    run: (action: "download" | "start download" | "install" | "automatic" | "stop") =>
       app.evaluate(async (_electron, action) => {
         const { updates, stop } = (globalThis as unknown as { updateHarness: Harness })
           .updateHarness;
         if (action === "download") await updates.download();
+        else if (action === "start download") void updates.download().catch(() => undefined);
         else if (action === "install") updates.install();
         else if (action === "automatic") updates.setAutomatic(true);
         else stop();
@@ -166,24 +175,53 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
       phase: "available",
       progress: 0,
     });
+    // A release published during a download: the button names what is really downloaded.
+    phase = "held";
+    await run("start download");
+    await expect.poll(() => held.length).toBe(1);
+    version = "9999.1.0";
+    await expect.poll(async () => (await state()).available).toContain("9999.1.0");
+    // No later check may correct the label; only the viewer's retry follows.
+    await run("stop");
+    for (const response of held.splice(0)) response.writeHead(503).end("download unavailable");
+    await expect.poll(async () => (await state()).status.update?.phase).toBe("available");
     phase = "ready";
     await run("automatic");
     await expect
       .poll(async () => (await state()).status, { timeout: 30000 })
-      .toEqual({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });
+      .toEqual({ automatic: true, update: { version: "9999.1.0", phase: "ready", progress: 1 } });
     const { statuses } = await state();
     expect(
       statuses.some(
         (status) => status.update?.phase === "downloading" && status.update.progress === 1,
       ),
     ).toBe(true);
-    await expect.poll(settings).toEqual({ automatic: true, downloaded: "9999.0.0" });
-    await run("stop");
+    await expect.poll(settings).toEqual({ automatic: true, downloaded: "9999.1.0" });
   } finally {
     await first.close();
   }
-  // Closed without installing: the next launch installs what was downloaded, without fetching it again.
+  // Closed without installing: the next launch installs what was downloaded, without fetching it
+  // again, but only once it has recorded that it tried, so a failing installer cannot close every launch.
   const fetched = downloads;
+  const unsaveable = join(root, "update-settings.json.tmp");
+  mkdirSync(unsaveable);
+  const blocked = await launch();
+  try {
+    const { state } = harness(blocked);
+    await expect
+      .poll(async () => (await state()).errors.join(" "))
+      .toContain("Skipped installing the downloaded update");
+    expect((await state()).status.update).toEqual({
+      version: "9999.1.0",
+      phase: "ready",
+      progress: 1,
+    });
+    expect(existsSync(marker)).toBe(false);
+    await harness(blocked).run("stop");
+  } finally {
+    await blocked.close();
+  }
+  rmSync(unsaveable, { recursive: true });
   const second = await launch();
   const child = second.process();
   try {
@@ -257,6 +295,11 @@ releaseTest(
     await expect
       .poll(() => app.evaluate(() => (globalThis as { openedRelease?: string }).openedRelease))
       .toBe(`${releases.url}/latest`);
+    await page.evaluate(() => {
+      window.location.hash = "#/settings";
+    });
+    await expect(page.getByRole("heading", { name: "Playback" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Updates" })).toHaveCount(0);
     // The button follows what the main process reports, as an installer's download would.
     const report = (status: AppUpdateStatus) =>
       app.evaluate(({ BrowserWindow }, status) => {
@@ -269,16 +312,15 @@ releaseTest(
     });
     const downloading = page.getByRole("button", { name: "Downloading Lumen 9999.0.0, 40%" });
     await expect(downloading).toHaveAttribute("data-state", "active");
+    // The download finishes while the sidebar is not on screen; it must not miss that.
+    await page.getByRole("button", { name: "Switch server…" }).click();
+    await expect(page.getByRole("navigation", { name: "Primary" })).toHaveCount(0);
     await report({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });
+    await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(
       page.getByRole("button", { name: "Restart to update to Lumen 9999.0.0" }),
     ).toHaveAttribute("data-state", "ready");
     await report({ automatic: null, update: null });
     await expect(page.locator(".update-button")).toHaveCount(0);
-    await page.evaluate(() => {
-      window.location.hash = "#/settings";
-    });
-    await expect(page.getByRole("heading", { name: "Playback" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Updates" })).toHaveCount(0);
   },
 );
