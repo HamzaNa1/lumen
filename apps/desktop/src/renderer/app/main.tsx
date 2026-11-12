@@ -5,7 +5,6 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { createDesktopRuntime } from "../desktopRuntime";
 import { PlayerOverlay } from "./PlayerOverlay";
-import { UpdateReady } from "./UpdateReady";
 
 const root = document.getElementById("root");
 if (root === null) throw new Error("Renderer root is missing");
@@ -20,10 +19,7 @@ createRoot(root).render(
         <PlayerOverlay bridge={bridge} />
       </AppProviders>
     ) : (
-      <>
-        <LumenApp runtime={runtime} history={createHashHistory()} />
-        <UpdateReady updates={bridge.updates} />
-      </>
+      <LumenApp runtime={runtime} history={createHashHistory()} />
     )}
   </StrictMode>,
 );

@@ -210,6 +210,66 @@ body:has(.app-shell) {
   width: 22px;
   height: 22px;
 }
+.update-button {
+  position: relative;
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  margin: -2px -4px -2px auto;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-tertiary);
+  cursor: pointer;
+  transition:
+    background 120ms ease,
+    color 120ms ease;
+}
+.update-button:hover {
+  color: var(--text-secondary);
+  background: var(--bg-hover);
+}
+.update-button-ring {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transform: rotate(-90deg);
+  fill: none;
+  stroke-width: 1.5;
+}
+.update-button-track {
+  stroke: var(--border-strong);
+}
+.update-button-progress {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 900ms linear;
+}
+.update-button[data-state="available"] .update-button-progress {
+  stroke: transparent;
+}
+.update-button[data-state="active"],
+.update-button[data-state="active"]:hover {
+  color: var(--accent);
+}
+.update-button[data-state="active"] .update-button-track {
+  stroke: rgba(201, 245, 96, 0.18);
+}
+.update-button[data-state="ready"] {
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+.update-button[data-state="ready"]:hover {
+  background: var(--accent-hover);
+  color: var(--accent-ink);
+}
+.update-button[data-state="ready"] .update-button-ring {
+  display: none;
+}
 .nav {
   flex: 1;
   display: grid;
@@ -1964,6 +2024,9 @@ body:has(.app-shell) {
 }
 .settings-row + .settings-row {
   border-top: 1px solid var(--border);
+}
+.settings-row > .switch-field {
+  flex: 1;
 }
 .settings-row-text {
   min-width: 0;

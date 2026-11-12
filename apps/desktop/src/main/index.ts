@@ -1,5 +1,13 @@
 import { join } from "node:path";
-import { app, type BrowserWindow, nativeTheme, powerSaveBlocker, screen, session } from "electron";
+import {
+  app,
+  type BrowserWindow,
+  nativeTheme,
+  powerSaveBlocker,
+  screen,
+  session,
+  shell,
+} from "electron";
 import { composesVideo } from "../shared/videoCompositor";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
@@ -17,7 +25,13 @@ import { PlaybackBridge } from "./player/PlaybackBridge";
 import { PlayerController, startNativePlayer } from "./player/PlayerController";
 import { PlayerOverlayWindow } from "./player/PlayerOverlayWindow";
 import { broadcastPlayerFullscreen } from "./player/PlayerWindowState";
-import { AppUpdates, supportsAutoUpdates } from "./updates/AppUpdates";
+import {
+  AppUpdates,
+  githubReleasePage,
+  openUpdateSettings,
+  supportsAutoUpdates,
+  type UpdateChannel,
+} from "./updates/AppUpdates";
 import { createMainWindow } from "./windows";
 
 let mainWindow: BrowserWindow | null = null;
@@ -47,6 +61,26 @@ const stopPlayerBeforeClose = (): Promise<void> => {
   });
   closingPlayback = waiting;
   return waiting;
+};
+
+const releasesUrl = "https://github.com/HamzaNa1/lumen/releases";
+
+const updateChannel = async (): Promise<UpdateChannel | null> => {
+  if (
+    supportsAutoUpdates({
+      platform: process.platform,
+      isPackaged: app.isPackaged,
+      portableExecutable: process.env.PORTABLE_EXECUTABLE_FILE,
+    })
+  ) {
+    // Loaded only where it runs: reaching for the updater elsewhere sets up one that cannot work.
+    const { autoUpdater } = await import("electron-updater");
+    return { kind: "installer", source: autoUpdater };
+  }
+  const releases = process.env.LUMEN_E2E_RELEASES_URL ?? (app.isPackaged ? releasesUrl : null);
+  return releases === null
+    ? null
+    : { kind: "page", page: githubReleasePage(releases, (url) => shell.openExternal(url)) };
 };
 
 const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
@@ -137,8 +171,14 @@ const bootstrap = async (): Promise<void> => {
   mainWindow.once("closed", () => {
     void player?.stop().catch((cause: unknown) => console.error("Failed to stop playback", cause));
   });
-  const updates = new AppUpdates((version) => {
-    mainWindow?.webContents.send("updates:ready", version);
+  const updates = new AppUpdates({
+    channel: await updateChannel(),
+    currentVersion: app.getVersion(),
+    settings: await openUpdateSettings(join(app.getPath("userData"), "update-settings.json")),
+    onChange: (status) => {
+      if (mainWindow && !mainWindow.isDestroyed())
+        mainWindow.webContents.send("updates:changed", status);
+    },
   });
   registerIpcHandlers({
     registry,
@@ -159,17 +199,7 @@ const bootstrap = async (): Promise<void> => {
   await overlay?.load(rendererUrl, rendererPath);
   const stopUpdates = startNativePlayer(player);
   mainWindow.once("closed", stopUpdates);
-  if (
-    supportsAutoUpdates({
-      platform: process.platform,
-      isPackaged: app.isPackaged,
-      portableExecutable: process.env.PORTABLE_EXECUTABLE_FILE,
-    })
-  ) {
-    // Loaded only where it runs: reaching for the updater elsewhere sets up one that cannot work.
-    const { autoUpdater } = await import("electron-updater");
-    mainWindow.once("closed", updates.start(autoUpdater));
-  }
+  mainWindow.once("closed", updates.start());
 };
 
 app.on("before-quit", (event) => {

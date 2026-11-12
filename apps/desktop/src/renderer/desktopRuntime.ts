@@ -101,4 +101,5 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
   },
   watch: bridge.watch,
   downloads: bridge.downloads,
+  appUpdates: bridge.updates,
 });

@@ -174,7 +174,11 @@ test("switching accounts stops playback, isolates catalog and credentials, and r
   expect(saved).not.toContain(password);
   if (process.platform !== "win32")
     expect((await stat(join(profile, "connections.json"))).mode & 0o077).toBe(0);
-  expect(await page.evaluate(() => window.lumen.updates.ready())).toBeNull();
+  // A development build neither updates itself nor looks for releases.
+  expect(await page.evaluate(() => window.lumen.updates.status())).toEqual({
+    automatic: null,
+    update: null,
+  });
   await expect(
     page.evaluate(() =>
       window.lumen.library.artwork({ id: "http://127.0.0.1/arbitrary", revision: "bad" }),

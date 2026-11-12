@@ -2,6 +2,7 @@ import type { PlaybackDiagnosticEvent } from "@lumen/client";
 import type {
   AccountsRuntime,
   AdminRuntime,
+  AppUpdatesRuntime,
   ArtworkRuntime,
   CatalogRuntime,
   DownloadsRuntime,
@@ -71,13 +72,7 @@ export interface DesktopBridge {
     readonly onOverlayAction: (callback: (action: PlayerAction) => void) => Unsubscribe;
     readonly onFullscreenChange: (callback: (fullscreen: boolean) => void) => Unsubscribe;
   };
-  readonly updates: {
-    /** The downloaded version waiting to be installed, if any. */
-    readonly ready: () => Promise<string | null>;
-    readonly onReady: (callback: (version: string) => void) => Unsubscribe;
-    /** Quits the app, installs the downloaded update and reopens it. */
-    readonly install: () => Promise<void>;
-  };
+  readonly updates: AppUpdatesRuntime;
 }
 
 declare global {

@@ -23,5 +23,6 @@ export { formatBytes, formatPlayerTime } from "./PlayerFormatting";
 export { Popover, PopoverTitle } from "./Popover";
 export { Shell } from "./Shell";
 export { EmptyState, StatusState } from "./StatusState";
+export { UpdateButton } from "./UpdateButton";
 export { UpdateToast } from "./UpdateToast";
 export { usePlayerShortcuts } from "./usePlayerShortcuts";

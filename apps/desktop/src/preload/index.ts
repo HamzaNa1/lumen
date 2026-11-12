@@ -123,9 +123,11 @@ const api: DesktopBridge = {
     onFullscreenChange: subscribe("player:fullscreen-state"),
   },
   updates: {
-    ready: () => invoke("updates:ready"),
-    onReady: subscribe("updates:ready"),
+    status: () => invoke("updates:status"),
+    onChange: subscribe("updates:changed"),
+    download: () => invoke("updates:download"),
     install: () => invoke("updates:install"),
+    setAutomatic: (automatic) => invoke("updates:set-automatic", automatic),
   },
 };
 

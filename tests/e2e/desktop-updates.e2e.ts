@@ -5,10 +5,12 @@ import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
-import { _electron } from "@playwright/test";
+import type { AppUpdateStatus } from "@lumen/contracts";
+import { _electron, type ElectronApplication } from "@playwright/test";
+import { connectDesktop, test as desktopTest } from "./support/desktop";
 import { expect, repository, test } from "./support/server";
 
-test("real updater retries failed checks and downloads, verifies bytes, reports readiness and launches the silent installer", async ({
+test("real updater waits for the viewer, recovers from failed downloads, reports progress and installs a download on the next launch", async ({
   server,
 }) => {
   const root = join(server.root, "updater");
@@ -92,56 +94,99 @@ test("real updater retries failed checks and downloads, verifies bytes, reports 
     LUMEN_E2E_UPDATE_URL: `http://127.0.0.1:${address.port}`,
   };
   delete env.ELECTRON_RUN_AS_NODE;
-  const app = await _electron.launch({
-    timeout: 10000,
-    executablePath: require("electron"),
-    args: [main, "--no-sandbox"],
-    env,
-  });
-  const child = app.process();
-  try {
-    const state = () =>
+  const launch = () =>
+    _electron.launch({
+      timeout: 10000,
+      executablePath: require("electron"),
+      args: [main, "--no-sandbox"],
+      env,
+    });
+  type Harness = {
+    updates: {
+      status: AppUpdateStatus;
+      download(): Promise<void>;
+      install(): void;
+      setAutomatic(automatic: boolean): AppUpdateStatus;
+    };
+    errors: string[];
+    statuses: AppUpdateStatus[];
+    stop(): void;
+    updater: { allowPrerelease: boolean };
+  };
+  const harness = (app: ElectronApplication) => ({
+    state: () =>
       app.evaluate(() => {
-        const harness = (
-          globalThis as unknown as {
-            updateHarness: {
-              updates: { ready: string | null };
-              errors: string[];
-              notifications: string[];
-              updater: { allowPrerelease: boolean };
-            };
-          }
+        const { updates, errors, statuses, updater } = (
+          globalThis as unknown as { updateHarness: Harness }
         ).updateHarness;
         return {
-          ready: harness.updates.ready,
-          errors: harness.errors,
-          notifications: harness.notifications,
-          prerelease: harness.updater.allowPrerelease,
+          status: updates.status,
+          errors,
+          statuses,
+          prerelease: updater.allowPrerelease,
         };
-      });
+      }),
+    run: (action: "download" | "install" | "automatic" | "stop") =>
+      app.evaluate(async (_electron, action) => {
+        const { updates, stop } = (globalThis as unknown as { updateHarness: Harness })
+          .updateHarness;
+        if (action === "download") await updates.download();
+        else if (action === "install") updates.install();
+        else if (action === "automatic") updates.setAutomatic(true);
+        else stop();
+      }, action),
+  });
+  const settings = () => JSON.parse(readFileSync(join(root, "update-settings.json"), "utf8"));
+  // The viewer turned automatic updates off: nothing downloads until they ask.
+  writeFileSync(
+    join(root, "update-settings.json"),
+    JSON.stringify({ automatic: false, downloaded: null }),
+  );
+  const first = await launch();
+  try {
+    const { state, run } = harness(first);
     await expect.poll(() => checks).toBeGreaterThanOrEqual(2);
-    expect(await state()).toMatchObject({ ready: null, prerelease: false, notifications: [] });
-    expect((await state()).errors.join(" ")).toContain("Failed to update");
-    await expect(
-      app.evaluate(() =>
-        (
-          globalThis as unknown as { updateHarness: { updates: { install(): void } } }
-        ).updateHarness.updates.install(),
-      ),
-    ).rejects.toThrow("No update is ready");
-    phase = "broken";
-    await expect.poll(() => downloads).toBeGreaterThanOrEqual(1);
-    await expect.poll(async () => (await state()).errors.join(" ")).toContain("Cannot download");
-    phase = "ready";
-    await expect.poll(async () => (await state()).ready, { timeout: 30000 }).toBe("9999.0.0");
-    expect(new Set((await state()).notifications)).toEqual(new Set(["9999.0.0"]));
-    await app.evaluate(() => {
-      const harness = (
-        globalThis as unknown as { updateHarness: { stop(): void; updates: { install(): void } } }
-      ).updateHarness;
-      harness.stop();
-      harness.updates.install();
+    expect(await state()).toMatchObject({
+      status: { automatic: false, update: null },
+      prerelease: false,
     });
+    expect((await state()).errors.join(" ")).toContain("Failed to update");
+    await expect(run("install")).rejects.toThrow("No update is ready");
+    phase = "broken";
+    await expect
+      .poll(async () => (await state()).status.update)
+      .toEqual({ version: "9999.0.0", phase: "available", progress: 0 });
+    expect(downloads).toBe(0);
+    await expect(run("download")).rejects.toThrow();
+    expect(downloads).toBeGreaterThanOrEqual(1);
+    expect((await state()).errors.join(" ")).toContain("Cannot download");
+    // A failed download goes back to waiting for the viewer, who can try again.
+    expect((await state()).status.update).toEqual({
+      version: "9999.0.0",
+      phase: "available",
+      progress: 0,
+    });
+    phase = "ready";
+    await run("automatic");
+    await expect
+      .poll(async () => (await state()).status, { timeout: 30000 })
+      .toEqual({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });
+    const { statuses } = await state();
+    expect(
+      statuses.some(
+        (status) => status.update?.phase === "downloading" && status.update.progress === 1,
+      ),
+    ).toBe(true);
+    await expect.poll(settings).toEqual({ automatic: true, downloaded: "9999.0.0" });
+    await run("stop");
+  } finally {
+    await first.close();
+  }
+  // Closed without installing: the next launch installs what was downloaded, without fetching it again.
+  const fetched = downloads;
+  const second = await launch();
+  const child = second.process();
+  try {
     await expect
       .poll(() => {
         try {
@@ -152,10 +197,88 @@ test("real updater retries failed checks and downloads, verifies bytes, reports 
       })
       .toEqual(["--updated", "/S", "--force-run"]);
     await expect.poll(() => child.exitCode).toBe(0);
+    expect(downloads).toBe(fetched);
+    expect(settings()).toEqual({ automatic: true, downloaded: null });
   } finally {
-    await app.close();
+    await second.close();
     await new Promise<void>((resolve, reject) =>
       feed.close((error) => (error ? reject(error) : resolve())),
     );
   }
 });
+
+const releaseTest = desktopTest.extend<{ releases: { url: string; lookups: () => number } }>({
+  // Started beside the server so the desktop the fixture launches can be pointed at it.
+  releases: async ({ server: _ }, use) => {
+    let lookups = 0;
+    const feed = createServer((req, res) => {
+      lookups++;
+      if (req.url !== "/releases/latest" || req.headers.accept !== "application/json") {
+        res.writeHead(404).end();
+        return;
+      }
+      res
+        .writeHead(200, { "content-type": "application/json" })
+        .end(JSON.stringify({ tag_name: "v9999.0.0+desktop" }));
+    });
+    await new Promise<void>((resolve) => feed.listen(0, "127.0.0.1", resolve));
+    const address = feed.address();
+    if (!address || typeof address === "string") throw new Error("Missing release feed port");
+    await use({ url: `http://127.0.0.1:${address.port}/releases`, lookups: () => lookups });
+    await new Promise<void>((resolve, reject) =>
+      feed.close((error) => (error ? reject(error) : resolve())),
+    );
+  },
+  desktopEnvironment: async ({ releases }, use) => {
+    await use({ LUMEN_E2E_RELEASES_URL: releases.url });
+  },
+});
+
+releaseTest(
+  "an installation that cannot update itself sends the viewer to the latest release page",
+  async ({ server, admin: _, desktop: { app, page }, releases }) => {
+    await connectDesktop(page, server);
+    const button = page.getByRole("button", {
+      name: "Download Lumen 9999.0.0 from its release page",
+    });
+    await expect(button).toHaveAttribute("data-state", "available");
+    expect(releases.lookups()).toBe(1);
+    expect(await page.evaluate(() => window.lumen.updates.status())).toEqual({
+      automatic: null,
+      update: { version: "9999.0.0", phase: "available", progress: 0 },
+    });
+    await app.evaluate(({ shell }) => {
+      shell.openExternal = async (url) => {
+        Object.assign(globalThis, { openedRelease: url });
+      };
+    });
+    await button.click();
+    await expect(button).toHaveAttribute("data-state", "active");
+    await expect
+      .poll(() => app.evaluate(() => (globalThis as { openedRelease?: string }).openedRelease))
+      .toBe(`${releases.url}/latest`);
+    // The button follows what the main process reports, as an installer's download would.
+    const report = (status: AppUpdateStatus) =>
+      app.evaluate(({ BrowserWindow }, status) => {
+        for (const window of BrowserWindow.getAllWindows())
+          window.webContents.send("updates:changed", status);
+      }, status);
+    await report({
+      automatic: true,
+      update: { version: "9999.0.0", phase: "downloading", progress: 0.4 },
+    });
+    const downloading = page.getByRole("button", { name: "Downloading Lumen 9999.0.0, 40%" });
+    await expect(downloading).toHaveAttribute("data-state", "active");
+    await report({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });
+    await expect(
+      page.getByRole("button", { name: "Restart to update to Lumen 9999.0.0" }),
+    ).toHaveAttribute("data-state", "ready");
+    await report({ automatic: null, update: null });
+    await expect(page.locator(".update-button")).toHaveCount(0);
+    await page.evaluate(() => {
+      window.location.hash = "#/settings";
+    });
+    await expect(page.getByRole("heading", { name: "Playback" })).toBeVisible();
+    await expect(page.getByRole("heading", { name: "Updates" })).toHaveCount(0);
+  },
+);
