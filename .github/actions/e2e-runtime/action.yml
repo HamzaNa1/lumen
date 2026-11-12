@@ -46,9 +46,3 @@ runs:
         pactl load-module module-null-sink sink_name=lumen_e2e rate=48000 channels=2
         pactl set-default-sink lumen_e2e
         pactl info
-    - if: runner.os == 'macOS' && inputs.native == 'true'
-      shell: bash
-      run: |
-        # Apple's virtual GPU crashes when MoltenVK uploads heap-backed textures.
-        # Keep real Vulkan rendering, using ordinary Metal resource allocations.
-        echo 'MVK_CONFIG_USE_MTLHEAP=0' >> "$GITHUB_ENV"

@@ -13,8 +13,8 @@ inline uint64_t number(std::string_view text) {
     require(error == std::errc{} && end == text.data() + text.size() && !text.empty(), "Invalid unsigned integer");
     return result;
 }
-struct Size { unsigned width = 1280, height = 720; };
-inline Size size(uint64_t width, uint64_t height) {
+struct TextureSize { unsigned width = 1280, height = 720; };
+inline TextureSize size(uint64_t width, uint64_t height) {
     require(width && height && width <= 8192 && height <= 8192 && width * height <= 33554432, "Invalid texture size");
     return {static_cast<unsigned>(width), static_cast<unsigned>(height)};
 }

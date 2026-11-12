@@ -34,7 +34,7 @@ jobs:
           browsers: ${{ inputs.project == 'native' && 'chromium' || inputs.project }}
           native: ${{ inputs.project == 'native' }}
       - uses: ./.github/actions/bundle-mpv
-        if: ${{ runner.os == 'Windows' && inputs.project == 'native' }}
+        if: ${{ runner.os != 'Linux' && inputs.project == 'native' }}
       - name: Run client scenarios
         shell: bash
         env:

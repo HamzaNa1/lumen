@@ -2,7 +2,6 @@ import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
 import { app, type BrowserWindow, ipcMain, screen, sharedTexture } from "electron";
 import { type HelperFrame, validateTextureSize } from "./HelperFrames";
 import type { MpvProcess } from "./MpvProcess";
-import { WindowsTextureHandles } from "./WindowsTextureHandles";
 
 export class CompositorSurface {
   readonly kind = "compositor" as const;
@@ -11,7 +10,6 @@ export class CompositorSurface {
   private generation = 0;
   private player: MpvProcess | null = null;
   private failure: ((error: Error) => void) | null = null;
-  private readonly handles = new WindowsTextureHandles();
   private presented: (() => void) | null = null;
   private rejectPresentation: ((cause: Error) => void) | null = null;
   private presentation: Promise<void> = Promise.resolve();
@@ -112,16 +110,17 @@ export class CompositorSurface {
   async frame(frame: HelperFrame): Promise<void> {
     const player = this.player;
     const generation = this.generation;
-    if (!player?.process?.pid) return;
+    const textures = player?.textures;
+    if (!player?.process.pid || !textures) return;
     let imported: Electron.SharedTextureImported | undefined;
     try {
-      imported = this.handles.import(player.process.pid, frame.handle, (ntHandle) =>
+      imported = textures.import(player.process.pid, frame, (handle) =>
         sharedTexture.importSharedTexture({
           textureInfo: {
-            pixelFormat: "rgba",
+            pixelFormat: textures.pixelFormat,
             codedSize: { width: frame.width, height: frame.height },
             colorSpace: { primaries: "bt709", transfer: "srgb", matrix: "rgb", range: "full" },
-            handle: { ntHandle },
+            handle,
           },
           allReferencesReleased: () => {
             if (this.player === player && this.generation === generation)

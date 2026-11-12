@@ -12,5 +12,5 @@
       "@lumen/client": ["../../packages/client/src/index.ts"]
     }
   },
-  "include": ["src/main/**/*.ts", "scripts/**/*.ts", "electron.vite.config.ts"]
+  "include": ["src/main/**/*.ts", "scripts/**/*.ts", "native/**/*.ts", "electron.vite.config.ts"]
 }

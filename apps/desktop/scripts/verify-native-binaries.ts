@@ -13,7 +13,8 @@ interface NativeManifest {
 
 const manifestName = "mpv-manifest.json";
 const platform = process.platform;
-const binary = platform === "darwin" ? "libmpv.dylib" : platform === "win32" ? "mpv.exe" : "mpv";
+const binary =
+  platform === "darwin" ? "Lumen Video Helper" : platform === "win32" ? "mpv.exe" : "mpv";
 const candidates = [
   join(process.cwd(), "apps", "desktop", "resources", "native", binary),
   join(process.cwd(), "resources", "native", binary),
@@ -22,13 +23,13 @@ const found = candidates.find(existsSync);
 if (found === undefined) {
   throw new Error(`Packaged MPV binary is missing: ${candidates.join(", ")}`);
 }
-if (platform !== "win32" && platform !== "darwin") accessSync(found, constants.X_OK);
+if (platform !== "win32") accessSync(found, constants.X_OK);
 
 const root = dirname(found);
 if (platform === "darwin") {
   verifyMacosLibraries(root);
   const { load } = await import("koffi");
-  const library = load(found);
+  const library = load(join(root, "libmpv.dylib"));
   try {
     const create = library.func("void *mpv_create(void)");
     const setOption = library.func("int mpv_set_option_string(void *, const char *, const char *)");

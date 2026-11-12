@@ -1,4 +1,5 @@
 import { ipcRenderer, sharedTexture } from "electron";
+import { composesVideo } from "../shared/videoCompositor";
 
 let canvas: HTMLCanvasElement | null = null;
 let gl: WebGL2RenderingContext | null = null;
@@ -13,7 +14,7 @@ const fail = (cause: unknown): void => {
   );
 };
 
-if (process.platform === "win32") {
+if (composesVideo(process.platform)) {
   ipcRenderer.on("video:generation", (_event, value: number) => {
     generation = value;
     if (gl) {
@@ -51,7 +52,7 @@ if (process.platform === "win32") {
 
 /** Called before the main-process surface handshake; native objects never cross contextBridge. */
 export const prepareVideoSurface = (): void => {
-  if (process.platform !== "win32") return;
+  if (!composesVideo(process.platform)) return;
   if (canvas?.isConnected && gl && !gl.isContextLost()) return;
   releaseVideoSurface();
   const element = document.querySelector("[data-lumen-video-surface]");

@@ -14,7 +14,7 @@ bun run dev:desktop
 bun run dev:web
 ```
 
-The E2E suite requires FFmpeg, MPV, Electron and the Playwright browsers (`bunx playwright install --with-deps`). Run `bun run check` for formatting, types, builds and instrumented E2E coverage. Native checks need an unlocked graphical session; Linux CI uses Xvfb with Openbox.
+The E2E suite requires FFmpeg, MPV, Electron and the Playwright browsers (`bunx playwright install --with-deps`). On macOS and Windows the desktop plays video through a helper process that must be built into `apps/desktop/resources/native` first: `brew install mpv dylibbundler && bash apps/desktop/scripts/bundle-macos-mpv.sh` on macOS, `apps/desktop/scripts/bundle-windows-mpv.ps1` on Windows. Run `bun run check` for formatting, types, builds and instrumented E2E coverage. Native checks need an unlocked graphical session; Linux CI uses Xvfb with Openbox.
 
 ## Web app
 

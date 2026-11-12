@@ -75,6 +75,8 @@ for (const [location, copies] of [
     expect(before.status).not.toBe(0);
     expect(before.stderr).toContain("duplicate LC_RPATH");
     if (!location) {
+      // The verifier locates the bundle by its helper before it inspects the libraries.
+      writeFileSync(join(root, "Lumen Video Helper"), "#!/bin/sh\n", { mode: 0o755 });
       const rejected = spawnSync("bun", [verify, "--write-manifest"], {
         cwd: dirname(dirname(root)),
         encoding: "utf8",

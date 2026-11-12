@@ -1,4 +1,4 @@
-import { BaseWindow, type BrowserWindow, type Rectangle } from "electron";
+import type { BrowserWindow, Rectangle } from "electron";
 
 export const broadcastPlayerFullscreen = (
   parent: BrowserWindow,
@@ -69,7 +69,7 @@ export const observePlayerFocus = (
   return dispose;
 };
 
-/** Serialize transitions so rapid toggles cannot strand Cocoa's child windows in another Space. */
+/** Serialize transitions: macOS ignores a fullscreen request made while another one animates. */
 export const playerFullscreen = (
   parent: BrowserWindow,
 ): ((enabled: boolean) => Promise<boolean>) => {
@@ -78,25 +78,15 @@ export const playerFullscreen = (
     pending = pending
       .catch(() => false)
       .then(async () => {
-        // Cocoa must finish its delegate callback before another transition or reparenting.
+        // Cocoa must finish its delegate callback before another transition.
         await new Promise<void>((resolve) => setImmediate(resolve));
         if (parent.isDestroyed()) throw new Error("The player window is closed");
         if (parent.isFullScreen() === enabled) return enabled;
-        // BrowserWindow.getChildWindows omits the BaseWindow hosting native video.
-        const children =
-          process.platform === "darwin"
-            ? BaseWindow.getAllWindows().filter(
-                (child) => child.getParentWindow()?.id === parent.id,
-              )
-            : [];
-        for (const child of children) child.setParentWindow(null);
         await new Promise<void>((resolve, reject) => {
           const cleanup = () => {
             parent.off("enter-full-screen", completed);
             parent.off("leave-full-screen", completed);
             parent.off("closed", closed);
-            if (!parent.isDestroyed())
-              for (const child of children) if (!child.isDestroyed()) child.setParentWindow(parent);
           };
           const completed = () => {
             setImmediate(() => {

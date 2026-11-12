@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
 // Nominal RGB code values, encoded as limited-range BT.709 video. Each stripe is 64 pixels wide.
+// A white band across the top quarter shows whether the picture arrives upside down.
 const colors = [
   [0, 0, 0],
   [32, 32, 32],
@@ -16,7 +17,8 @@ const colors = [
 ];
 const pixels = Buffer.alloc(640 * 360 * 3);
 for (let y = 0; y < 360; y++)
-  for (let x = 0; x < 640; x++) pixels.set(colors[Math.floor(x / 64)] ?? [], (y * 640 + x) * 3);
+  for (let x = 0; x < 640; x++)
+    pixels.set(y < 90 ? [255, 255, 255] : (colors[Math.floor(x / 64)] ?? []), (y * 640 + x) * 3);
 execFileSync(
   "ffmpeg",
   [

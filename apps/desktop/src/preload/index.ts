@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { DesktopBridge } from "../shared/bridge";
+import { composesVideo } from "../shared/videoCompositor";
 import { prepareVideoSurface, releaseVideoSurface } from "./videoSurface";
 
 // The main process validates every argument and shapes every result, so a channel's result is
@@ -86,7 +87,7 @@ const api: DesktopBridge = {
     artwork: (id) => invoke("downloads:artwork", id),
   },
   player: {
-    inline: process.platform === "win32",
+    inline: composesVideo(process.platform),
     onFailure: subscribe("player:failure"),
     resetTrack: (sessionId, kind) => invoke("player:reset-track", { sessionId, kind }),
     retryTrackMemory: (sessionId) => invoke("player:retry-track-memory", sessionId),

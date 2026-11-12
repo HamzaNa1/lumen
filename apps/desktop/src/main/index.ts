@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { app, type BrowserWindow, nativeTheme, powerSaveBlocker, screen, session } from "electron";
+import { composesVideo } from "../shared/videoCompositor";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import { createTokenVault } from "./accounts/TokenVault";
@@ -81,12 +82,9 @@ const bootstrap = async (): Promise<void> => {
     maximized: windowState.current.maximized,
   });
   rememberMainWindowState(mainWindow, windowState);
-  const overlay =
-    process.platform === "win32" ? undefined : new PlayerOverlayWindow(mainWindow, preloadPath);
-  surface =
-    process.platform === "win32"
-      ? new CompositorSurface(mainWindow)
-      : new MpvSurface(mainWindow, overlay);
+  const compositor = composesVideo(process.platform);
+  const overlay = compositor ? undefined : new PlayerOverlayWindow(mainWindow, preloadPath);
+  surface = compositor ? new CompositorSurface(mainWindow) : new MpvSurface(mainWindow, overlay);
   const playing = { current: null as PlayerController | null };
   downloads = await DownloadManager.open({
     directory: join(app.getPath("userData"), "downloads"),

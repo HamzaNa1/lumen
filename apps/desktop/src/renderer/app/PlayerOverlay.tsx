@@ -23,31 +23,6 @@ export const PlayerOverlay = ({
     return unsubscribe;
   }, [bridge]);
 
-  useEffect(() => {
-    // When macOS makes the overlay the key window, Chromium focuses its first control (Back) as if
-    // the viewer had pressed Tab, which draws a focus ring as soon as playback starts. Drop that
-    // focus unless a key press or click in the overlay caused it.
-    let inputPending = false;
-    const onInput = (): void => {
-      inputPending = true;
-      setTimeout(() => {
-        inputPending = false;
-      }, 0);
-    };
-    const onFocusIn = (event: FocusEvent): void => {
-      if (inputPending || !(event.target instanceof HTMLElement)) return;
-      if (event.target.closest(".media-player-header") !== null) event.target.blur();
-    };
-    window.addEventListener("keydown", onInput, true);
-    window.addEventListener("pointerdown", onInput, true);
-    document.addEventListener("focusin", onFocusIn);
-    return () => {
-      window.removeEventListener("keydown", onInput, true);
-      window.removeEventListener("pointerdown", onInput, true);
-      document.removeEventListener("focusin", onFocusIn);
-    };
-  }, []);
-
   return (
     <PlayerView display={display} onAction={(action) => void bridge.player.overlayAction(action)} />
   );

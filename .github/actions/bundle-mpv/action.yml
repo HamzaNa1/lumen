@@ -29,19 +29,8 @@ runs:
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        if [[ "$(uname -m)" != 'arm64' ]]; then
-          echo 'macOS releases require an Apple Silicon runner.' >&2
-          exit 1
-        fi
         brew install mpv dylibbundler
-        mpv_version="$(brew list --versions mpv | awk '{ print $2 }')"
-        test "${mpv_version%%_*}" = '0.41.0'
-        echo 'LUMEN_MPV_VERSION=0.41.0' >> "$GITHUB_ENV"
-        native_dir="apps/desktop/resources/native"
-        mkdir -p "$native_dir/lib"
-        cp "$(brew --prefix mpv)/lib/libmpv.dylib" "$native_dir/libmpv.dylib"
-        dylibbundler -od -b -x "$native_dir/libmpv.dylib" -d "$native_dir/lib" -p '@loader_path/lib/'
-        bun apps/desktop/scripts/prepare-macos-libraries.ts "$native_dir"
+        bash apps/desktop/scripts/bundle-macos-mpv.sh
     - name: Configure MSVC (Windows)
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1
@@ -55,6 +44,10 @@ runs:
       if: runner.os == 'Windows'
       shell: pwsh
       run: ./apps/desktop/native/smoke-test.ps1 -Helper "./apps/desktop/resources/native/Lumen Video Helper.exe"
+    - name: Exercise macOS helper on the runner GPU
+      if: runner.os == 'macOS'
+      shell: bash
+      run: bun apps/desktop/native/smoke-test.ts "apps/desktop/resources/native/Lumen Video Helper"
     - name: Seal and verify native MPV files
       shell: bash
       run: |
