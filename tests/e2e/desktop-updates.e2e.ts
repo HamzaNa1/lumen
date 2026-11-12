@@ -77,7 +77,9 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
       "tests/e2e/support/update-entry.ts",
       "--target=node",
       "--format=cjs",
-      "--packages=external",
+      // Bundled like the app's main process; only Electron and the updater load from the install.
+      "--external=electron",
+      "--external=electron-updater",
       "--outfile",
       main,
     ],
