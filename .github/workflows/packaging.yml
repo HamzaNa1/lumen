@@ -8,6 +8,15 @@ on:
       artifact-prefix:
         type: string
         default: pr-package
+      release-certificate:
+        description: Sign the macOS app with the release certificate instead of ad hoc.
+        type: boolean
+        default: false
+    secrets:
+      MACOS_SIGNING_CERTIFICATE:
+        required: false
+      MACOS_SIGNING_CERTIFICATE_PASSWORD:
+        required: false
   workflow_dispatch:
     inputs:
       product:
@@ -17,6 +26,10 @@ on:
       artifact-prefix:
         type: string
         default: manual-package
+      release-certificate:
+        description: Sign the macOS app with the release certificate instead of ad hoc.
+        type: boolean
+        default: false
 permissions:
   contents: read
 jobs:
@@ -58,7 +71,32 @@ jobs:
       - run: bun run check:desktop typecheck
       - uses: ./.github/actions/bundle-mpv
       - run: bun run --cwd apps/desktop build
+      - name: Load the macOS release certificate
+        if: runner.os == 'macOS' && inputs.release-certificate
+        shell: bash
+        env:
+          CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+          PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/lumen-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 32)"
+          certificate="$RUNNER_TEMP/lumen-signing.p12"
+          printf '%s' "$CERTIFICATE" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" > /dev/null
+          rm "$certificate"
+          echo "LUMEN_MACOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
       - run: bun run --cwd apps/desktop package
+        env:
+          # electron-builder skips signing for pull requests; they never load the certificate, so
+          # sign them ad hoc like any other build without it.
+          CSC_FOR_PULL_REQUEST: 'true'
+      - name: Verify the macOS signature
+        if: runner.os == 'macOS'
+        run: bun apps/desktop/scripts/verify-macos-signature.ts ${{ inputs.release-certificate && '--release' || '' }}
       - name: Verify the update feed (Windows)
         if: runner.os == 'Windows'
         run: bun apps/desktop/scripts/verify-update-feed.ts

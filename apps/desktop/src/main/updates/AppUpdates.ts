@@ -37,8 +37,8 @@ export interface UpdateHost {
 }
 
 /**
- * Only the installed Windows build updates itself. macOS refuses updates to an unsigned app, and
- * the portable build has no installation for the installer to replace.
+ * Only the installed Windows build updates itself. The self-signed macOS build is updated by hand
+ * from the release page, and the portable build has no installation for the installer to replace.
  */
 export const supportsAutoUpdates = (host: UpdateHost): boolean =>
   host.platform === "win32" && host.isPackaged && host.portableExecutable === undefined;

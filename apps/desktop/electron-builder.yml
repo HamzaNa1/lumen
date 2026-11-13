@@ -9,6 +9,9 @@
   "mac": {
     "category": "public.app-category.video",
     "icon": "resources/icons/icon.icns",
+    "identity": "-",
+    "sign": "./scripts/sign-macos.mjs",
+    "hardenedRuntime": false,
     "extendInfo": {
       "NSLocalNetworkUsageDescription": "Lumen connects to media servers on your local network."
     },
