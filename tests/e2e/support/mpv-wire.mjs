@@ -15,6 +15,7 @@ let connectionId = 0;
 const commands = [];
 const expired = [];
 let captured = null;
+const restartWaiters = new Set();
 
 const hold = (entry, send) => {
   if (pendingHold) throw new Error("Release the previous MPV fault before holding another frame");
@@ -50,6 +51,9 @@ globalThis.__lumenMpvWire = {
   },
   snapshot() {
     return { captured, commands, expired };
+  },
+  restarted() {
+    return new Promise((resolve) => restartWaiters.add(resolve));
   },
   release() {
     mode = null;
@@ -151,6 +155,10 @@ net.createConnection = (...args) => {
       incoming = incoming.slice(newline + 1);
       if (!line.trim()) continue;
       const frame = JSON.parse(line);
+      if (frame.event === "playback-restart") {
+        for (const resolve of restartWaiters) resolve();
+        restartWaiters.clear();
+      }
       const probe = connected.probes.get(frame.request_id);
       if (probe) {
         probe(frame);
