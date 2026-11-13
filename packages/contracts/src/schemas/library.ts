@@ -69,3 +69,26 @@ export const StartScan = Schema.Struct({
   startedAtMs: UtcMillis,
 });
 export type StartScan = Schema.Schema.Type<typeof StartScan>;
+
+/** One folder on the server, for choosing a library root. Unreadable and hidden folders are left out. */
+export const DirectoryListing = Schema.Struct({
+  path: Schema.String,
+  /** The home folder of the account the server runs as, where browsing starts. */
+  home: Schema.String,
+  /** Null at the top of the filesystem or when the server cannot read the folder above. */
+  parent: Schema.NullOr(Schema.String),
+  /** From the top of the filesystem down to this folder. */
+  trail: Schema.Array(Schema.Struct({ name: Schema.String, path: Schema.String })),
+  directories: Schema.Array(Schema.Struct({ name: Schema.String, path: Schema.String })),
+  /** Media files only, with "video" or "audio" as kind. */
+  files: Schema.Array(
+    Schema.Struct({ name: Schema.String, size: Schema.Number, kind: Schema.String }),
+  ),
+  /** True when the folder held more entries than the server lists. */
+  truncated: Schema.Boolean,
+  /** A library root this folder is, contains, or sits inside, which a new root may not overlap. */
+  overlaps: Schema.NullOr(
+    Schema.Struct({ rootId: Schema.String, libraryId: Schema.String, libraryName: Schema.String }),
+  ),
+});
+export type DirectoryListing = Schema.Schema.Type<typeof DirectoryListing>;

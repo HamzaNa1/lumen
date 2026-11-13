@@ -1,5 +1,5 @@
-import { mkdir } from "node:fs/promises";
-import { join } from "node:path";
+import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
+import { dirname, join, parse } from "node:path";
 import { openDatabase } from "./support/database";
 import { expect, password, test } from "./support/server";
 
@@ -108,6 +108,129 @@ test("library edits are atomic, overlapping or unavailable roots fail, and index
   });
   await server.scan(token, library.id);
   expect(await server.api(`/libraries/${library.id}/roots`, { token })).toHaveLength(1);
+});
+
+test("administrators browse readable server folders, create a library with its folder in one step, and replace a folder atomically", async ({
+  server,
+  admin,
+}) => {
+  const token = admin.accessToken;
+  const base = join(server.root, "browse");
+  await server.media(base, "Movies/Loose.mp4");
+  await server.media(base, "Movies/Film (2020)/Film.mp4");
+  await writeFile(join(base, "Movies/notes.txt"), "not media");
+  await mkdir(join(base, "Shows"));
+  await mkdir(join(base, ".hidden"));
+  await mkdir(join(base, "locked"));
+  await chmod(join(base, "locked"), 0o000);
+  const canonical = await realpath(base);
+  type Listing = {
+    path: string;
+    home: string;
+    parent: string | null;
+    trail: { name: string; path: string }[];
+    directories: { name: string; path: string }[];
+    files: { name: string; size: number; kind: string }[];
+    truncated: boolean;
+    overlaps: { rootId: string; libraryId: string; libraryName: string } | null;
+  };
+  const list = (path: string | null, status = 200, as = token) =>
+    server.api<Listing>(
+      `/admin/directories${path === null ? "" : `?path=${encodeURIComponent(path)}`}`,
+      { token: as, status },
+    );
+  try {
+    const top = await list(base);
+    expect(top).toMatchObject({
+      path: canonical,
+      parent: dirname(canonical),
+      directories: [
+        { name: "Movies", path: join(canonical, "Movies") },
+        { name: "Shows", path: join(canonical, "Shows") },
+      ],
+      files: [],
+      truncated: false,
+      overlaps: null,
+    });
+    expect(top.trail.at(-1)).toEqual({ name: "browse", path: canonical });
+    expect(top.trail[0]?.path).toBe(parse(canonical).root);
+    expect((await list(join(base, "Movies"))).files).toEqual([
+      { name: "Loose.mp4", size: expect.any(Number), kind: "video" },
+    ]);
+    const home = await list(null);
+    expect(home.path).toBe(home.home);
+    await list("relative/path", 400);
+    await list(join(base, "missing"), 404);
+    await list(join(base, "locked"), 409);
+    await server.api("/users", {
+      token,
+      body: { username: "viewer", displayName: "Viewer", password },
+    });
+    await list(base, 403, (await server.login("viewer")).accessToken);
+
+    const library = { id: crypto.randomUUID(), name: "Movies", slug: "movies", kind: "movies" };
+    const rootId = crypto.randomUUID();
+    await server.api("/libraries", {
+      token,
+      body: { ...library, root: { id: rootId, path: join(base, "Movies") } },
+    });
+    expect(await server.api(`/libraries/${library.id}/roots`, { token })).toMatchObject([
+      { id: rootId, path: join(canonical, "Movies") },
+    ]);
+    expect((await list(base)).overlaps).toEqual({
+      rootId,
+      libraryId: library.id,
+      libraryName: "Movies",
+    });
+    const overlapping = crypto.randomUUID();
+    await server.api("/libraries", {
+      token,
+      status: 409,
+      body: {
+        id: overlapping,
+        name: "Everything",
+        slug: "everything",
+        root: { id: crypto.randomUUID(), path: base },
+      },
+    });
+    expect(await server.api<{ id: string }[]>("/admin/libraries", { token })).not.toContainEqual(
+      expect.objectContaining({ id: overlapping }),
+    );
+
+    await server.scan(token, library.id);
+    expect(await server.items(token, library.id)).toHaveLength(2);
+    const other = await server.library(token, "shows", []);
+    const replacement = crypto.randomUUID();
+    await server.api(`/libraries/${library.id}/roots`, {
+      token,
+      status: 404,
+      body: {
+        id: replacement,
+        libraryId: library.id,
+        path: join(base, "Shows"),
+        priority: 0,
+        replacesRootId: other.rootId,
+      },
+    });
+    await server.api(`/libraries/${library.id}/roots`, {
+      token,
+      body: {
+        id: replacement,
+        libraryId: library.id,
+        path: join(base, "Movies/Film (2020)"),
+        priority: 0,
+        replacesRootId: rootId,
+      },
+    });
+    expect(await server.api(`/libraries/${library.id}/roots`, { token })).toMatchObject([
+      { id: replacement, path: join(canonical, "Movies/Film (2020)") },
+    ]);
+    expect(await server.items(token, library.id)).toHaveLength(0);
+    await server.scan(token, library.id);
+    expect(await server.items(token, library.id)).toHaveLength(1);
+  } finally {
+    await chmod(join(base, "locked"), 0o755);
+  }
 });
 
 test("event streams replay only public and caller events after the requested cursor and release disconnected requests", async ({

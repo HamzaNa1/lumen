@@ -1,8 +1,10 @@
 import { lstat } from "node:fs/promises";
-import type { Library, LibraryGrant, LibraryRoot } from "@lumen/contracts";
+import { isAbsolute } from "node:path";
+import type { DirectoryListing, Library, LibraryGrant, LibraryRoot } from "@lumen/contracts";
 import {
   catalogItems,
   Database,
+  type DatabaseTransaction,
   libraries,
   libraryProfiles,
   libraryRootStates,
@@ -15,7 +17,7 @@ import { and, asc, count, eq, inArray } from "drizzle-orm";
 import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
 import { mapRepositoryError } from "../core/Cause";
-import { conflict, notFound } from "../core/Errors";
+import { badRequest, conflict, internal, notFound, ServerError } from "../core/Errors";
 import { ServerLogger } from "../core/Logger";
 import { assertNoRootOverlap, canonicalPath } from "../core/Paths";
 import { newUuid } from "../core/Security";
@@ -28,6 +30,7 @@ import type {
 } from "../http/Schemas";
 import { insertScanRun } from "../jobs/ScanJobs";
 import { purgeLibrary, purgeSources } from "./CatalogPurge";
+import { listDirectory } from "./DirectoryListing";
 
 type LibraryInput = Schema.Schema.Type<typeof CreateLibraryBody>;
 type UpdateLibraryInput = Schema.Schema.Type<typeof UpdateLibraryBody>;
@@ -47,6 +50,8 @@ export interface LibraryServiceShape {
   readonly listRoots: (libraryId: string) => Effect.Effect<ReadonlyArray<LibraryRoot>, unknown>;
   readonly listGrants: (libraryId: string) => Effect.Effect<ReadonlyArray<LibraryGrant>, unknown>;
   readonly deleteRoot: (rootId: string) => Effect.Effect<void, unknown>;
+  /** Lists a folder on the server, or the server account's home folder when path is null. */
+  readonly listDirectory: (path: string | null) => Effect.Effect<DirectoryListing, unknown>;
   readonly upsertGrant: (input: GrantInput, nowMs: number) => Effect.Effect<LibraryGrant, unknown>;
   readonly startScan: (
     input: ScanInput,
@@ -76,8 +81,84 @@ export const makeLibraryService = Effect.gen(function* () {
     createdAtMs: libraryRoots.createdAtMs,
     updatedAtMs: libraryRoots.updatedAtMs,
   };
+  const purgeRoot = Effect.fn("LibraryService.purgeRoot")(function* (
+    transaction: DatabaseTransaction,
+    rootId: string,
+  ) {
+    const sources = yield* transaction
+      .select({ id: mediaSources.id })
+      .from(mediaSources)
+      .where(eq(mediaSources.rootId, rootId));
+    const counts = yield* purgeSources(
+      transaction,
+      sources.map((source) => source.id),
+    );
+    yield* transaction.delete(libraryRoots).where(eq(libraryRoots.id, rootId));
+    return counts;
+  });
+
+  const resolveRootPath = Effect.fn("LibraryService.resolveRootPath")(function* (path: string) {
+    const rootPath = yield* Effect.tryPromise({
+      try: () => canonicalPath(path),
+      catch: (cause) => conflict(cause instanceof Error ? cause.message : "Root does not exist"),
+    });
+    const stat = yield* Effect.tryPromise({
+      try: () => lstat(rootPath),
+      catch: () => conflict("Root is not accessible"),
+    });
+    if (!stat.isDirectory()) return yield* conflict("Root must be a directory");
+    return rootPath;
+  });
+
+  // Overlap is checked inside the transaction so two roots added at once cannot both pass.
+  const insertRoot = Effect.fn("LibraryService.insertRoot")(function* (
+    transaction: DatabaseTransaction,
+    root: {
+      readonly id: string;
+      readonly libraryId: string;
+      readonly priority: number;
+      readonly replacesRootId?: string | undefined;
+    },
+    rootPath: string,
+    nowMs: number,
+  ) {
+    const roots = yield* transaction
+      .select({ id: libraryRoots.id, path: libraryRoots.path })
+      .from(libraryRoots);
+    yield* assertNoRootOverlap(
+      roots
+        .filter((existing) => existing.id !== root.replacesRootId)
+        .map((existing) => existing.path),
+      rootPath,
+    );
+    const [created] = yield* transaction
+      .insert(libraryRoots)
+      .values({
+        id: root.id,
+        libraryId: root.libraryId,
+        path: rootPath,
+        isEnabled: true,
+        priority: root.priority,
+        createdAtMs: nowMs,
+        updatedAtMs: nowMs,
+      })
+      .returning(rootSelection);
+    yield* transaction.insert(libraryRootStates).values({
+      rootId: root.id,
+      libraryId: root.libraryId,
+      canonicalPath: rootPath,
+      canonicalKey: process.platform === "win32" ? rootPath.toLowerCase() : rootPath,
+      isAvailable: true,
+      updatedAtMs: nowMs,
+    });
+    if (created === undefined) return yield* Effect.die(new Error("Root insert returned no row"));
+    return created;
+  });
+
   const create: LibraryServiceShape["create"] = Effect.fn("LibraryService.create")(
     function* (input, nowMs) {
+      const root = input.root;
+      const rootPath = root === undefined ? null : yield* resolveRootPath(root.path);
       const row = yield* database.transaction((transaction) =>
         Effect.gen(function* () {
           const [created] = yield* transaction
@@ -98,6 +179,13 @@ export const makeLibraryService = Effect.gen(function* () {
           });
           if (created === undefined)
             return yield* Effect.die(new Error("Library insert returned no row"));
+          if (root !== undefined && rootPath !== null)
+            yield* insertRoot(
+              transaction,
+              { id: root.id, libraryId: input.id, priority: 0 },
+              rootPath,
+              nowMs,
+            );
           return created;
         }),
       );
@@ -180,48 +268,30 @@ export const makeLibraryService = Effect.gen(function* () {
         .get();
       if (library == null) return yield* conflict("Library does not exist");
       if (!library.isEnabled) return yield* conflict("Library is disabled");
-      const rootPath = yield* Effect.tryPromise({
-        try: () => canonicalPath(input.path),
-        catch: (cause) => conflict(cause instanceof Error ? cause.message : "Root does not exist"),
-      });
-      const stat = yield* Effect.tryPromise({
-        try: () => lstat(rootPath),
-        catch: () => conflict("Root is not accessible"),
-      });
-      if (!stat.isDirectory()) return yield* conflict("Root must be a directory");
-      const roots = yield* database.select({ path: libraryRoots.path }).from(libraryRoots);
-      yield* assertNoRootOverlap(
-        roots.map((root) => root.path),
-        rootPath,
-      );
-      const canonicalKey = process.platform === "win32" ? rootPath.toLowerCase() : rootPath;
-      const row = yield* database.transaction((transaction) =>
+      const rootPath = yield* resolveRootPath(input.path);
+      const replaced = input.replacesRootId;
+      const { row, counts } = yield* database.transaction((transaction) =>
         Effect.gen(function* () {
-          const [created] = yield* transaction
-            .insert(libraryRoots)
-            .values({
-              id: input.id,
-              libraryId: input.libraryId,
-              path: rootPath,
-              isEnabled: true,
-              priority: input.priority,
-              createdAtMs: nowMs,
-              updatedAtMs: nowMs,
-            })
-            .returning(rootSelection);
-          yield* transaction.insert(libraryRootStates).values({
-            rootId: input.id,
-            libraryId: input.libraryId,
-            canonicalPath: rootPath,
-            canonicalKey,
-            isAvailable: true,
-            updatedAtMs: nowMs,
-          });
-          if (created === undefined)
-            return yield* Effect.die(new Error("Root insert returned no row"));
-          return created;
+          if (replaced === undefined)
+            return { row: yield* insertRoot(transaction, input, rootPath, nowMs), counts: null };
+          const existing = yield* transaction
+            .select({ libraryId: libraryRoots.libraryId })
+            .from(libraryRoots)
+            .where(eq(libraryRoots.id, replaced))
+            .get();
+          if (existing?.libraryId !== input.libraryId)
+            return yield* notFound("Root not found in this library");
+          const counts = yield* purgeRoot(transaction, replaced);
+          return { row: yield* insertRoot(transaction, input, rootPath, nowMs), counts };
         }),
       );
+      if (replaced !== undefined)
+        logger.info("library_root_replaced", {
+          rootId: replaced,
+          replacementId: row.id,
+          result: "succeeded",
+          ...counts,
+        });
       return row;
     },
   );
@@ -253,20 +323,7 @@ export const makeLibraryService = Effect.gen(function* () {
   const deleteRoot: LibraryServiceShape["deleteRoot"] = Effect.fn("LibraryService.deleteRoot")(
     function* (rootId) {
       const counts = yield* database
-        .transaction((transaction) =>
-          Effect.gen(function* () {
-            const sources = yield* transaction
-              .select({ id: mediaSources.id })
-              .from(mediaSources)
-              .where(eq(mediaSources.rootId, rootId));
-            const counts = yield* purgeSources(
-              transaction,
-              sources.map((source) => source.id),
-            );
-            yield* transaction.delete(libraryRoots).where(eq(libraryRoots.id, rootId));
-            return counts;
-          }),
-        )
+        .transaction((transaction) => purgeRoot(transaction, rootId))
         .pipe(
           Effect.tapError((cause) =>
             Effect.sync(() =>
@@ -277,6 +334,27 @@ export const makeLibraryService = Effect.gen(function* () {
       logger.info("library_root_deleted", { rootId, result: "succeeded", ...counts });
     },
   );
+
+  const listFolder: LibraryServiceShape["listDirectory"] = Effect.fn(
+    "LibraryService.listDirectory",
+  )(function* (path) {
+    if (path !== null && !isAbsolute(path))
+      return yield* badRequest("Folder path must be absolute");
+    const roots = yield* database
+      .select({
+        rootId: libraryRoots.id,
+        libraryId: libraryRoots.libraryId,
+        libraryName: libraries.name,
+        path: libraryRoots.path,
+      })
+      .from(libraryRoots)
+      .innerJoin(libraries, eq(libraries.id, libraryRoots.libraryId));
+    return yield* Effect.tryPromise({
+      try: () => listDirectory(path, roots),
+      catch: (cause) =>
+        cause instanceof ServerError ? cause : internal("Could not read folder", cause),
+    });
+  });
 
   const upsertGrant: LibraryServiceShape["upsertGrant"] = Effect.fn("LibraryService.upsertGrant")(
     function* (input, nowMs) {
@@ -356,6 +434,7 @@ export const makeLibraryService = Effect.gen(function* () {
     listRoots,
     listGrants,
     deleteRoot,
+    listDirectory: listFolder,
     upsertGrant,
     startScan,
   };

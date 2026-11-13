@@ -1,6 +1,7 @@
 import {
   API_VERSION,
   BrowserSession,
+  DirectoryListing,
   DownloadSyncRequest,
   DownloadSyncResponse,
   DownloadTicket,
@@ -243,6 +244,7 @@ export const makeHttpHandler = (
             adjacentEpisodes: true,
             downloads: true,
             preload: true,
+            libraryFolders: true,
           },
         },
         200,
@@ -517,6 +519,22 @@ export const makeHttpHandler = (
       parts.length === 4
     )
       return unknownJson(await call(services.admin.listAllLibraries(principal)));
+    if (
+      method === "GET" &&
+      parts[0] === "api" &&
+      parts[1] === "v1" &&
+      parts[2] === "admin" &&
+      parts[3] === "directories" &&
+      parts.length === 4
+    ) {
+      await call(services.access.requireAdmin(principal));
+      return json(
+        DirectoryListing,
+        await call(services.libraries.listDirectory(url.searchParams.get("path"))),
+        200,
+        { "cache-control": "no-store" },
+      );
+    }
     if (
       method === "GET" &&
       parts[0] === "api" &&
