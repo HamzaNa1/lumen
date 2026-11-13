@@ -14,6 +14,7 @@ let nextEntryId = 0;
 let connectionId = 0;
 const commands = [];
 const expired = [];
+const closed = [];
 let captured = null;
 const restartWaiters = new Set();
 
@@ -50,7 +51,7 @@ globalThis.__lumenMpvWire = {
     return nextEntryId;
   },
   snapshot() {
-    return { captured, commands, expired };
+    return { captured, commands, expired, closed };
   },
   restarted() {
     return new Promise((resolve) => restartWaiters.add(resolve));
@@ -89,6 +90,7 @@ net.createConnection = (...args) => {
   if (typeof args[0] !== "string" || !args[0].includes("lumen-mpv-")) return connected;
   socket = connected;
   const connection = ++connectionId;
+  connected.once("close", () => closed.push(connection));
   const requests = new Map();
   connected.probes = new Map();
   const originalWrite = connected.write.bind(connected);

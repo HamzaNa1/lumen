@@ -19,7 +19,12 @@ interface Wire {
     mode: "hold-speed" | "fail-speed" | "hold-sample" | "hold-unpause" | "hold-stop",
     speed?: number,
   ): number;
-  snapshot(): { captured: WireEntry | null; commands: WireEntry[]; expired: number[] };
+  snapshot(): {
+    captured: WireEntry | null;
+    commands: WireEntry[];
+    expired: number[];
+    closed: number[];
+  };
   /** Resolves on MPV's next playback-restart event, which ends a seek. */
   restarted(): Promise<void>;
   release(): void;

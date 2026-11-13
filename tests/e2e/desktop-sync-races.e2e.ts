@@ -135,14 +135,21 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           await wire.arm("hold-stop");
           await owner.action({ type: "play", itemId: film, positionSeconds: 0, replaces: other });
           await expect
-            .poll(() => page.evaluate(() => window.lumen.player.state()), {
-              timeout: 3000,
-              intervals: [25, 50, 100],
-            })
-            .toMatchObject({ itemId: film, paused: false });
+            .poll(
+              async () => {
+                const { captured, closed } = await wire.snapshot();
+                return captured !== null && closed.includes(captured.connection);
+              },
+              { timeout: 3000, intervals: [25, 50, 100] },
+            )
+            .toBe(true);
           const stuck = (await wire.snapshot()).captured;
           expect(stuck?.command).toEqual(["stop"]);
+          expect(stuck?.outcome).toBe("held");
           await wire.release();
+          await expect
+            .poll(() => page.evaluate(() => window.lumen.player.state()))
+            .toMatchObject({ itemId: film, paused: false });
           expect(
             (await wire.snapshot()).commands.findLast((entry) => entry.command[0] === "loadfile")
               ?.connection,
