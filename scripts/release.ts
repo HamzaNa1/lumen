@@ -37,6 +37,9 @@ if (command === "preflight") {
     if (!image || !digest)
       throw new Error("SERVER_IMAGE and SERVER_DIGEST are required for server release notes.");
     console.log(`\nContainer: \`${image}:${version}\`\n\nDigest: \`${image}@${digest}\``);
+    console.log(
+      `\nLinux service: \`curl -fsSL https://github.com/${repository}/releases/download/server-latest/install.sh | sudo sh -s -- --version=${version}\``,
+    );
   }
 } else {
   throw new Error(

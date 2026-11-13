@@ -24,7 +24,7 @@ jobs:
     name: Server image / ${{ matrix.arch }}
     if: ${{ inputs.product == 'all' || inputs.product == 'server' }}
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 25
+    timeout-minutes: 35
     strategy:
       fail-fast: false
       matrix:

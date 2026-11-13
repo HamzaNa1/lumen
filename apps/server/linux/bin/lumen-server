@@ -1,0 +1,5 @@
+#!/bin/sh
+# Starts the Lumen server from the release this file belongs to.
+set -eu
+root=$(dirname -- "$(dirname -- "$(readlink -f -- "$0")")")
+exec "$root/bin/bun" "$root/apps/server/src/main.ts" "$@"

@@ -54,7 +54,7 @@ bun run version:check desktop 0.0.8
 
 Run `release-server` or `release-desktop` in GitHub Actions from the default branch with the prepared version. Release eligibility is product-specific: `bun run check:server` or `bun run check:desktop` validates the selected app, its shared dependencies, and release tooling. Each release also tests against the latest stable counterpart (using a historical combined tag until that product has a separate release). This allows a healthy product to ship while the other app's development version is broken, while shared contract or released-counterpart compatibility failures still block affected releases. Full-repository `bun run check` remains the development and CI gate. Tags and release titles identify the product: `v0.0.10+server` / `Lumen Server v0.0.10`, or `v0.0.10+desktop` / `Lumen Desktop v0.0.10`.
 
-Server releases publish AMD64 and ARM64 images as `ghcr.io/<owner>/<repository>-server:<version>` and `:sha-<commit-sha>`, with the exact digest in their release notes. Stable images update `:latest` after the GitHub Release succeeds. Desktop releases attach the installers and own GitHub's repository-wide Latest designation. The installed Windows app updates itself from that Latest release: it downloads the installer named by the release's `latest.yml`, in the background unless the viewer turns automatic updates off in Settings, then installs it when the viewer chooses to restart, on the next quit, or on the next launch. Windows builds are not code-signed, so an update is trusted on the strength of the release itself: HTTPS and the SHA-512 in `latest.yml`. macOS, Linux and the portable Windows build check the same Latest release and offer a button that opens its page, where the viewer downloads the new version. A version such as `0.0.9-rc.1` creates a prerelease and never updates either stable Latest designation. GHCR controls image visibility.
+Server releases publish AMD64 and ARM64 images as `ghcr.io/<owner>/<repository>-server:<version>` and `:sha-<commit-sha>`, with the exact digest in their release notes. Stable images update `:latest` after the GitHub Release succeeds. Each server release also attaches a Linux service package per architecture (`lumen-server-<version>-linux-<arch>.tar.gz`, the image's application tree with its Bun) and their `SHA256SUMS`. Desktop releases own GitHub's Latest designation, so a stable server release instead uploads its version and `install.sh` to the fixed `server-latest` release, which the installer and automatic updates read. Desktop releases attach the installers and own GitHub's repository-wide Latest designation. The installed Windows app updates itself from that Latest release: it downloads the installer named by the release's `latest.yml`, in the background unless the viewer turns automatic updates off in Settings, then installs it when the viewer chooses to restart, on the next quit, or on the next launch. Windows builds are not code-signed, so an update is trusted on the strength of the release itself: HTTPS and the SHA-512 in `latest.yml`. macOS, Linux and the portable Windows build check the same Latest release and offer a button that opens its page, where the viewer downloads the new version. A version such as `0.0.9-rc.1` creates a prerelease and never updates either stable Latest designation. GHCR controls image visibility.
 
 Publication is serialized per app, and versions must advance within that app's release history so older runs cannot move Latest backward. Release notes include that app and its shared dependencies since its previous release, with deduplicated PR links, author attribution, and a full repository comparison. Commits without a merged PR retain their commit link and author instead of disappearing from the notes. GitHub lookup failures block publication rather than silently omitting attribution. Failed server image promotion can be retried by rerunning the failed `promote` job; a newer stable release blocks promotion of an older image.
 
@@ -69,3 +69,23 @@ docker run -d --name lumen-server --restart unless-stopped \
   -v /path/to/media:/media:ro \
   ghcr.io/<owner>/<repository>-server
 ```
+
+### Linux service
+
+On a systemd Linux distribution with glibc, on AMD64 or ARM64, the server can run as a service instead of a container:
+
+```sh
+curl -fsSL https://github.com/HamzaNa1/lumen/releases/download/server-latest/install.sh | sudo sh
+# Pass options after `sh -s --`: --auto-update, or --version=X.Y.Z for a specific release.
+```
+
+The installer installs FFmpeg with the system package manager when it is missing, then installs the release under `/opt/lumen` and starts `lumen.service` as the `lumen` system user. Settings are in `/etc/lumen/lumen.env` and the database in `/var/lib/lumen`; both survive updates and uninstalls. The service can write only to `/var/lib/lumen`, so give the `lumen` user read access to each library root.
+
+```sh
+sudo lumenctl status               # version, available update, service and FFmpeg state
+sudo lumenctl update               # install the latest stable release now
+sudo lumenctl auto-update on       # or off: a daily check between 04:00 and 05:00
+sudo lumenctl uninstall [--purge]  # --purge also deletes settings, data and the user
+```
+
+Updates only move forward and replace the running version; there is no automatic rollback. A download that fails its checksum leaves the installed version running. Running the installer again repairs an installation.
