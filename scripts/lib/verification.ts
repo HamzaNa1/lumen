@@ -51,6 +51,7 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "protection.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
   "release-notes.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
   "release-tooling.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
+  "linux-service.e2e.ts": { runtime: "tooling", products: ["server"] },
 };
 export const selectedSuites = (runtime: Runtime, product?: Product) =>
   Object.entries(suites)

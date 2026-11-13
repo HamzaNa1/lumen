@@ -25,6 +25,25 @@ COPY packages/app packages/app
 COPY apps/server/package.json apps/server/package.json
 RUN bun run --cwd apps/web build
 
+# The release tree that both the image and the Linux service package run.
+FROM scratch AS app
+COPY --from=dependencies /app/node_modules /node_modules
+COPY --from=dependencies /app/package.json /package.json
+COPY --from=dependencies /app/bun.lock /bun.lock
+COPY apps/server /apps/server
+COPY packages/contracts /packages/contracts
+COPY packages/database /packages/database
+COPY --from=web /app/apps/web/dist /apps/web/dist
+COPY --from=dependencies /app/apps/server/node_modules /apps/server/node_modules
+COPY --from=dependencies /app/packages/contracts/node_modules /packages/contracts/node_modules
+COPY --from=dependencies /app/packages/database/node_modules /packages/database/node_modules
+
+# Exported as the Linux service package: the release tree, its Bun, and the bin/ entry points.
+FROM scratch AS linux-package
+COPY --from=app / /
+COPY --from=dependencies /usr/local/bin/bun /bin/bun
+COPY apps/server/linux/bin /bin
+
 FROM oven/bun:1.4.4-slim
 WORKDIR /app
 ENV NODE_ENV=production \
@@ -39,16 +58,7 @@ RUN apt-get update \
 RUN groupadd --system --gid 10001 lumen \
     && useradd --system --uid 10001 --gid 10001 --create-home lumen \
     && install -d -o 10001 -g 10001 /app /data /media
-COPY --chown=10001:10001 --from=dependencies /app/node_modules ./node_modules
-COPY --chown=10001:10001 --from=dependencies /app/package.json ./package.json
-COPY --chown=10001:10001 --from=dependencies /app/bun.lock ./bun.lock
-COPY --chown=10001:10001 apps/server ./apps/server
-COPY --chown=10001:10001 packages/contracts ./packages/contracts
-COPY --chown=10001:10001 packages/database ./packages/database
-COPY --chown=10001:10001 --from=web /app/apps/web/dist ./apps/web/dist
-COPY --chown=10001:10001 --from=dependencies /app/apps/server/node_modules ./apps/server/node_modules
-COPY --chown=10001:10001 --from=dependencies /app/packages/contracts/node_modules ./packages/contracts/node_modules
-COPY --chown=10001:10001 --from=dependencies /app/packages/database/node_modules ./packages/database/node_modules
+COPY --chown=10001:10001 --from=app / /app/
 USER lumen
 VOLUME ["/data", "/media"]
 EXPOSE 3210

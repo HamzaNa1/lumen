@@ -1,0 +1,7 @@
+#!/bin/sh
+# Manages the Lumen service with the release this file belongs to.
+set -eu
+root=$(dirname -- "$(dirname -- "$(readlink -f -- "$0")")")
+# Bun loads .env from the working directory, so never run from the caller's.
+cd /
+exec "$root/bin/bun" "$root/apps/server/linux/lumenctl.ts" "$@"

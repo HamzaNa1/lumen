@@ -26,7 +26,7 @@ jobs:
     name: Server image / ${{ matrix.arch }}
     needs: preflight
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 20
+    timeout-minutes: 30
     permissions:
       contents: read
       packages: write
@@ -63,6 +63,12 @@ jobs:
           [[ "$DIGEST" =~ ^sha256:[a-f0-9]{64}$ ]] || { echo 'Invalid image digest' >&2; exit 1; }
           mkdir -p "$RUNNER_TEMP/digests"
           touch "$RUNNER_TEMP/digests/${DIGEST#sha256:}"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: server-linux-package-${{ matrix.arch }}
+          path: ${{ steps.build.outputs.linux-package }}
+          if-no-files-found: error
+          retention-days: 1
       - uses: actions/upload-artifact@v4
         with:
           name: server-digest-${{ matrix.arch }}
@@ -129,6 +135,11 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: server-linux-package-*
+          path: ${{ runner.temp }}/linux-packages
+          merge-multiple: true
       - name: Publish server release
         shell: bash
         env:
@@ -143,19 +154,22 @@ jobs:
         run: |
           bun scripts/release.ts preflight server "$RELEASE_VERSION"
           bun scripts/release.ts notes server "$RELEASE_VERSION" "$PREVIOUS_TAG" > release-notes.md
+          packages="$RUNNER_TEMP/linux-packages"
+          (cd "$packages" && sha256sum "lumen-server-$RELEASE_VERSION-linux-amd64.tar.gz" "lumen-server-$RELEASE_VERSION-linux-arm64.tar.gz" > SHA256SUMS)
           flags=(--latest=false)
           if [[ "$RELEASE_VERSION" == *-* ]]; then flags+=(--prerelease); fi
           gh release create "$RELEASE_TAG" \
             --target "$GITHUB_SHA" \
             --title "Lumen Server v$RELEASE_VERSION" \
             --notes-file release-notes.md \
-            "${flags[@]}"
+            "${flags[@]}" \
+            "$packages"/lumen-server-*.tar.gz "$packages/SHA256SUMS"
   promote:
     if: needs.preflight.outputs.prerelease == 'false'
     needs: [preflight, server-manifest, publish]
     runs-on: ubuntu-24.04
     permissions:
-      contents: read
+      contents: write
       packages: write
     steps:
       - uses: actions/checkout@v4
@@ -176,3 +190,17 @@ jobs:
         run: |
           bun scripts/release.ts promotion-check server "$RELEASE_VERSION"
           docker buildx imagetools create --tag "$SERVER_IMAGE:latest" "$SERVER_IMAGE@$SERVER_DIGEST"
+      - name: Point the Linux installer at this release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_VERSION: ${{ needs.preflight.outputs.version }}
+        run: |
+          gh release view server-latest > /dev/null 2>&1 ||
+            gh release create server-latest --target "$GITHUB_SHA" --latest=false \
+              --title "Lumen Server installer" \
+              --notes "Installs the latest stable Lumen server as a Linux service: \`curl -fsSL https://github.com/$GH_REPO/releases/download/server-latest/install.sh | sudo sh\`"
+          printf '%s\n' "$RELEASE_VERSION" > "$RUNNER_TEMP/latest-version"
+          # The script first, so the version it is pointed at always has an installer that knows it.
+          gh release upload server-latest apps/server/linux/install.sh --clobber
+          gh release upload server-latest "$RUNNER_TEMP/latest-version" --clobber

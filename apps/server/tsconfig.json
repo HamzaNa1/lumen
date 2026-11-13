@@ -13,6 +13,7 @@
   "include": [
     "src/**/*.ts",
     "scripts/**/*.ts",
+    "linux/**/*.ts",
     "../../packages/contracts/src/**/*.ts",
     "../../packages/database/src/**/*.ts"
   ]

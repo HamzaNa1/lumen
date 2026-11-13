@@ -1,5 +1,5 @@
 name: Build and check server image
-description: Build natively with an architecture-scoped cache, smoke-test, and optionally push by digest.
+description: Build the image and the Linux service package natively, check both, and optionally push the image by digest.
 inputs:
   arch:
     description: Native runner architecture (amd64 or arm64).
@@ -14,6 +14,9 @@ outputs:
   digest:
     description: Digest of the smoke-tested image pushed to the registry.
     value: ${{ steps.push.outputs.digest }}
+  linux-package:
+    description: Path of the checked Linux service package.
+    value: ${{ steps.linux-package.outputs.path }}
 runs:
   using: composite
   steps:
@@ -38,6 +41,31 @@ runs:
     - name: Smoke-test the native image
       shell: bash
       run: bun scripts/smoke-server-image.ts lumen-server:check
+    - name: Build the Linux service package
+      uses: docker/build-push-action@v7
+      with:
+        context: .
+        file: apps/server/Dockerfile
+        platforms: linux/${{ inputs.arch }}
+        target: linux-package
+        cache-from: type=gha,scope=server-${{ inputs.arch }}
+        outputs: type=tar,dest=${{ runner.temp }}/linux-package.tar
+    - name: Compress the Linux service package
+      id: linux-package
+      shell: bash
+      env:
+        ARCH: ${{ inputs.arch }}
+      run: |
+        version=$(bun -e 'console.log((await Bun.file("apps/server/package.json").json()).version)')
+        path="$RUNNER_TEMP/lumen-server-$version-linux-$ARCH.tar.gz"
+        gzip -9 < "$RUNNER_TEMP/linux-package.tar" > "$path"
+        echo "path=$path" >> "$GITHUB_OUTPUT"
+    - uses: ./.github/actions/setup-dependencies
+    - name: Install, update and remove the Linux service
+      shell: bash
+      env:
+        LUMEN_LINUX_SERVER_PACKAGE: ${{ steps.linux-package.outputs.path }}
+      run: bun scripts/test-e2e.ts source linux-service.e2e.ts --project tooling --no-build
     - name: Push the checked image by digest
       if: inputs.push-image != ''
       id: push

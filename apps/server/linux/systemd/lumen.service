@@ -1,0 +1,29 @@
+[Unit]
+Description=Lumen media server
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=lumen
+Group=lumen
+# Paths live here rather than in lumen.env so a missing settings file never starts an empty server.
+Environment=NODE_ENV=production
+Environment=LUMEN_DATA_DIR=/var/lib/lumen
+Environment=LUMEN_DATABASE_PATH=/var/lib/lumen/lumen.sqlite
+EnvironmentFile=-/etc/lumen/lumen.env
+ExecStart=/opt/lumen/current/bin/lumen-server
+WorkingDirectory=/var/lib/lumen
+StateDirectory=lumen
+StateDirectoryMode=0750
+UMask=0077
+Restart=on-failure
+RestartSec=5
+# Library roots are read-only to Lumen; the system enforces it.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+PrivateTmp=yes
+
+[Install]
+WantedBy=multi-user.target
