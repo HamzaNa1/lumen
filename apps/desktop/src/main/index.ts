@@ -43,6 +43,11 @@ let closingDownloads: Promise<void> | null = null;
 let quitting = false;
 let closingPlayback: Promise<void> | null = null;
 
+// Let Electron finish cancelling the native Quit event before retrying it.
+const resumeQuit = (): void => {
+  setImmediate(() => app.quit());
+};
+
 const stopPlayerBeforeClose = (): Promise<void> => {
   if (closingPlayback !== null) return closingPlayback;
   const stopping = player?.stop().catch((cause: unknown) => {
@@ -210,7 +215,7 @@ app.on("before-quit", (event) => {
   if (!quitting && (player?.getState() != null || closingPlayback !== null)) {
     event.preventDefault();
     quitting = true;
-    void stopPlayerBeforeClose().finally(() => app.quit());
+    void stopPlayerBeforeClose().finally(resumeQuit);
     return;
   }
   // Downloads record what they hold before the app goes, so nothing is fetched twice.
@@ -222,7 +227,7 @@ app.on("before-quit", (event) => {
       new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
     ]).finally(() => {
       downloads = null;
-      app.quit();
+      resumeQuit();
     });
     return;
   }

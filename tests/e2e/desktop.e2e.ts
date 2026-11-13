@@ -6,6 +6,7 @@ import {
   expect,
   launchDesktop,
   mainDesktopPage,
+  quitDesktop,
   test,
 } from "./support/desktop";
 
@@ -43,7 +44,7 @@ test("desktop connects through real IPC, persists its account and window, and ne
       ),
     )
     .toMatchObject({ bounds: size });
-  await app.close();
+  await quitDesktop(app);
   const reopened = await launchDesktop(profile);
   try {
     const restored = await mainDesktopPage(reopened);

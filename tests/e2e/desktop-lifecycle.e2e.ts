@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { openDatabase } from "./support/database";
-import { connectDesktop, expect, test } from "./support/desktop";
+import { connectDesktop, expect, quitDesktop, test } from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
 import { password } from "./support/server";
 
@@ -114,7 +114,7 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
   await expect
     .poll(() => page.evaluate(() => window.lumen.player.state()))
     .toMatchObject({ itemId: item?.id });
-  await app.close();
+  await quitDesktop(app);
   const db = openDatabase(server.databasePath);
   try {
     expect(
