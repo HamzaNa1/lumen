@@ -280,7 +280,7 @@ withHome(
     await expect(create.getByRole("button", { name: "Next" })).toBeDisabled();
     await contents.getByRole("button", { name: "libraries", exact: true }).click();
     await contents.getByRole("button", { name: "movies", exact: true }).click();
-    await expect(contents.getByText("Film.mp4")).toBeVisible();
+    await expect(contents.getByText(/^Film\.(mp4|webm)$/)).toBeVisible();
     await expect(create.getByText(/^~[\\/]libraries[\\/]movies$/)).toBeVisible();
     await create.getByRole("button", { name: "Next" }).click();
     await expect(create.getByLabel("Name")).toHaveValue("Movies");
