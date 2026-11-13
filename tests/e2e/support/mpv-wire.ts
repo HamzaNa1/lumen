@@ -19,7 +19,14 @@ interface Wire {
     mode: "hold-speed" | "fail-speed" | "hold-sample" | "hold-unpause" | "hold-stop",
     speed?: number,
   ): number;
-  snapshot(): { captured: WireEntry | null; commands: WireEntry[]; expired: number[] };
+  snapshot(): {
+    captured: WireEntry | null;
+    commands: WireEntry[];
+    expired: number[];
+    closed: number[];
+  };
+  /** Resolves on MPV's next playback-restart event, which ends a seek. */
+  restarted(): Promise<void>;
   release(): void;
   command(args: (string | number)[]): Promise<unknown>;
 }
@@ -40,14 +47,27 @@ export const mpvWire = (app: ElectronApplication) => ({
         if (typeof speed !== "number") throw new Error("MPV did not report its speed");
         const expectedSpeed = speed < 1 ? 1.01 : 0.99;
         const afterId = wire.arm(mode, expectedSpeed);
-        // Leave room for seek/render latency while keeping drift below the one-second seek threshold.
-        const offset = expectedSpeed < 1 ? 0.75 : -0.5;
-        // Advance the supplied group clock across the IPC/probe latency before seeking.
-        await wire.command([
-          "seek",
-          targetSeconds + (Date.now() - atMs) / 1000 + offset,
-          "absolute+exact",
-        ]);
+        const groupPosition = () => targetSeconds + (Date.now() - atMs) / 1000;
+        // Where MPV should sit relative to the group: inside the soft band, short of the seek threshold.
+        const lead = expectedSpeed < 1 ? 0.5 : -0.5;
+        // The group clock runs on while MPV decodes to an exact target, which can take over a
+        // second on a loaded runner. Measure where each seek landed and aim the next past the shortfall.
+        let compensation = 0;
+        for (let seek = 0; seek < 3 && wire.snapshot().captured === null; seek++) {
+          const restarted = wire.restarted();
+          await wire.command(["seek", groupPosition() + lead + compensation, "absolute+exact"]);
+          await restarted;
+          const position = await wire.command(["get_property", "time-pos"]);
+          if (typeof position !== "number") throw new Error("MPV did not report its position");
+          const landed = position - groupPosition();
+          if (
+            Math.sign(landed) === Math.sign(lead) &&
+            Math.abs(landed) >= 0.3 &&
+            Math.abs(landed) < 0.8
+          )
+            break;
+          compensation += lead - landed;
+        }
         return { afterId, expectedSpeed };
       },
       { mode, targetSeconds, atMs: Date.now() },
