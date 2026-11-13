@@ -6,6 +6,7 @@ import {
   type CatalogItem,
   CatalogItemDetails,
   type CatalogItemPage,
+  DirectoryListing,
   DownloadSyncResponse,
   type DownloadSyncResult,
   DownloadTicket,
@@ -138,6 +139,8 @@ export interface CreateLibraryInput {
   readonly name: string;
   readonly slug: string;
   readonly kind: LibraryKind;
+  /** The library's first folder on the server. */
+  readonly root?: { readonly id: string; readonly path: string } | undefined;
 }
 
 export interface UpdateLibraryInput {
@@ -152,6 +155,10 @@ export interface AddLibraryRootInput {
   readonly libraryId: string;
   readonly path: string;
   readonly priority: number;
+}
+
+export interface ReplaceLibraryRootInput extends AddLibraryRootInput {
+  readonly replacesRootId: string;
 }
 
 export interface MetadataSettings {
@@ -331,6 +338,10 @@ export class ServerApi {
 
   get supportsPreload(): boolean {
     return this.serverIdentity?.capabilities?.preload === true;
+  }
+
+  get supportsLibraryFolders(): boolean {
+    return this.serverIdentity?.capabilities?.libraryFolders === true;
   }
 
   /** The server this client talks to, once it has said who it is. */
@@ -749,8 +760,30 @@ export class ServerApi {
     );
   }
 
+  /** Null when the server cannot list its folders, so the folder is typed instead. */
+  async directory(path: string | null): Promise<DirectoryListing | null> {
+    if (!this.supportsLibraryFolders) return null;
+    const query = path === null ? "" : `?${new URLSearchParams({ path })}`;
+    return this.request(`/api/v1/admin/directories${query}`, {}, DirectoryListing);
+  }
+
   async createLibrary(input: CreateLibraryInput): Promise<LibrarySummary> {
-    return this.request("/api/v1/libraries", jsonBody("POST", input), libraryEntrySchema);
+    const { root, ...library } = input;
+    if (root === undefined || this.supportsLibraryFolders)
+      return this.request("/api/v1/libraries", jsonBody("POST", input), libraryEntrySchema);
+    // Older servers add the folder separately; a library they reject the folder for is removed.
+    const created = await this.request<LibrarySummary>(
+      "/api/v1/libraries",
+      jsonBody("POST", library),
+      libraryEntrySchema,
+    );
+    try {
+      await this.addLibraryRoot({ id: root.id, libraryId: input.id, path: root.path, priority: 0 });
+    } catch (error) {
+      await this.deleteLibrary(input.id).catch(() => undefined);
+      throw error;
+    }
+    return created;
   }
 
   async updateLibrary(libraryId: string, input: UpdateLibraryInput): Promise<LibrarySummary> {
@@ -774,6 +807,14 @@ export class ServerApi {
       `/api/v1/libraries/${encodeURIComponent(input.libraryId)}/roots`,
       jsonBody("POST", input),
     );
+  }
+
+  async replaceLibraryRoot(input: ReplaceLibraryRootInput): Promise<unknown> {
+    if (this.supportsLibraryFolders) return this.addLibraryRoot(input);
+    const { replacesRootId, ...root } = input;
+    const added = await this.addLibraryRoot(root);
+    await this.deleteLibraryRoot(replacesRootId);
+    return added;
   }
 
   async deleteLibraryRoot(rootId: string): Promise<void> {

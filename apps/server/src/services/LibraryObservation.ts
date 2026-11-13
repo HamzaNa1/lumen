@@ -46,8 +46,32 @@ const mediaExtensions = new Set([
   ".wmv",
 ]);
 
-const isMedia = (path: string): boolean =>
-  mediaExtensions.has(path.slice(path.lastIndexOf(".")).toLowerCase());
+const audioExtensions = new Set([
+  ".aac",
+  ".ac3",
+  ".aif",
+  ".aiff",
+  ".alac",
+  ".ape",
+  ".dts",
+  ".flac",
+  ".m4a",
+  ".mka",
+  ".mp2",
+  ".mp3",
+  ".oga",
+  ".ogg",
+  ".opus",
+  ".wav",
+  ".wma",
+]);
+
+const extensionOf = (path: string): string => path.slice(path.lastIndexOf(".")).toLowerCase();
+
+const isMedia = (path: string): boolean => mediaExtensions.has(extensionOf(path));
+
+export const mediaKind = (path: string): "video" | "audio" | null =>
+  !isMedia(path) ? null : audioExtensions.has(extensionOf(path)) ? "audio" : "video";
 
 export const observeRoot = async (
   root: { readonly id: string; readonly path: string },

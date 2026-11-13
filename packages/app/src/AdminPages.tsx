@@ -39,6 +39,12 @@ import {
   roleLabels,
   slugify,
 } from "./format";
+import {
+  type FolderSelection,
+  FolderSelectionNote,
+  folderName,
+  useFolderPicker,
+} from "./LibraryFolders";
 import { useRuntime } from "./Runtime";
 import { libraryIcon } from "./Sidebar";
 import { PageHeader, useWorkspace } from "./Workspace";
@@ -179,46 +185,28 @@ const LibraryDialog = ({
   onOpenChange,
   scope,
 }: {
-  readonly library: LibrarySummary | null;
+  readonly library: LibrarySummary;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
   readonly scope: readonly unknown[];
 }): React.ReactElement => {
   const runtime = useRuntime();
   const queryClient = useQueryClient();
-  const [name, setName] = useState(library?.name ?? "");
-  const [slug, setSlug] = useState(library?.slug ?? "");
-  const [kind, setKind] = useState<LibrarySummary["kind"]>(library?.kind ?? "movies");
-  const [isEnabled, setIsEnabled] = useState(library?.isEnabled ?? true);
+  const [name, setName] = useState(library.name);
+  const [slug, setSlug] = useState(library.slug);
+  const [kind, setKind] = useState<LibrarySummary["kind"]>(library.kind);
+  const [isEnabled, setIsEnabled] = useState(library.isEnabled);
   const save = useMutation({
-    mutationFn: async () => {
-      if (library === null) {
-        await runtime.admin.createLibrary({ id: randomId(), name, slug, kind });
-      } else {
-        await runtime.admin.updateLibrary({ libraryId: library.id, name, slug, kind, isEnabled });
-      }
-    },
+    mutationFn: () =>
+      runtime.admin.updateLibrary({ libraryId: library.id, name, slug, kind, isEnabled }),
     onSuccess: async () => {
       onOpenChange(false);
-      if (library === null) {
-        setName("");
-        setSlug("");
-      }
       await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "libraries"] });
       await queryClient.invalidateQueries({ queryKey: [...scope, "libraries"] });
     },
   });
   return (
-    <Modal
-      open={open}
-      onOpenChange={onOpenChange}
-      title={library === null ? "New library" : `Edit ${library.name}`}
-      description={
-        library === null
-          ? "After creating the library, add the folders Lumen should scan."
-          : undefined
-      }
-    >
+    <Modal open={open} onOpenChange={onOpenChange} title={`Edit ${library.name}`}>
       <Form
         className="dialog-form"
         onSubmit={(event) => {
@@ -226,41 +214,24 @@ const LibraryDialog = ({
           save.mutate();
         }}
       >
-        <TextField
-          label="Name"
-          value={name}
-          placeholder="Movies"
-          onValueChange={(value) => {
+        <LibraryFields
+          name={name}
+          slug={slug}
+          kind={kind}
+          onNameChange={(value) => {
             setName(value);
             if (slug === "" || slug === slugify(name)) setSlug(slugify(value));
           }}
+          onSlugChange={setSlug}
+          onKindChange={setKind}
         />
-        <TextField
-          label="Slug"
-          value={slug}
-          onValueChange={setSlug}
-          description="A stable identifier used in links. Lowercase letters, numbers, and dashes."
+        <SwitchField
+          label="Enabled"
+          description="Disabled libraries are hidden from everyone and skipped by scans."
+          checked={isEnabled}
+          onCheckedChange={setIsEnabled}
         />
-        <SelectField
-          label="Media type"
-          value={kind}
-          options={libraryKindOptions}
-          onValueChange={setKind}
-        />
-        {library === null ? null : (
-          <SwitchField
-            label="Enabled"
-            description="Disabled libraries are hidden from everyone and skipped by scans."
-            checked={isEnabled}
-            onCheckedChange={setIsEnabled}
-          />
-        )}
-        {save.isError ? (
-          <FormError
-            error={save.error}
-            fallback={library === null ? "Could not create library" : "Could not save library"}
-          />
-        ) : null}
+        {save.isError ? <FormError error={save.error} fallback="Could not save library" /> : null}
         <div className="dialog-actions">
           <Button variant="ghost" onClick={() => onOpenChange(false)}>
             Cancel
@@ -270,10 +241,266 @@ const LibraryDialog = ({
             type="submit"
             disabled={save.isPending || name.trim() === "" || slug.trim() === ""}
           >
-            {save.isPending ? "Saving…" : library === null ? "Create library" : "Save changes"}
+            {save.isPending ? "Saving…" : "Save changes"}
           </Button>
         </div>
       </Form>
+    </Modal>
+  );
+};
+
+const LibraryFields = ({
+  name,
+  slug,
+  kind,
+  onNameChange,
+  onSlugChange,
+  onKindChange,
+}: {
+  readonly name: string;
+  readonly slug: string;
+  readonly kind: LibrarySummary["kind"];
+  readonly onNameChange: (name: string) => void;
+  readonly onSlugChange: (slug: string) => void;
+  readonly onKindChange: (kind: LibrarySummary["kind"]) => void;
+}): React.ReactElement => (
+  <>
+    <TextField label="Name" value={name} placeholder="Movies" onValueChange={onNameChange} />
+    <TextField
+      label="Slug"
+      value={slug}
+      onValueChange={onSlugChange}
+      description="A stable identifier used in links. Lowercase letters, numbers, and dashes."
+    />
+    <SelectField
+      label="Media type"
+      value={kind}
+      options={libraryKindOptions}
+      onValueChange={onKindChange}
+    />
+  </>
+);
+
+const kindOfFolder = (name: string): LibrarySummary["kind"] =>
+  /music|audio|songs/iu.test(name)
+    ? "music"
+    : /tv|shows?\b|series/iu.test(name)
+      ? "shows"
+      : "movies";
+
+const NewLibraryDialog = ({
+  onClose,
+  scope,
+}: {
+  readonly onClose: () => void;
+  readonly scope: readonly unknown[];
+}): React.ReactElement => {
+  const runtime = useRuntime();
+  const queryClient = useQueryClient();
+  const picker = useFolderPicker({ start: null });
+  const [folder, setFolder] = useState<FolderSelection | null>(null);
+  const [name, setName] = useState("");
+  const [nameEdited, setNameEdited] = useState(false);
+  const [slug, setSlug] = useState("");
+  const [kind, setKind] = useState<LibrarySummary["kind"]>("movies");
+  const [kindEdited, setKindEdited] = useState(false);
+  const save = useMutation({
+    mutationFn: (path: string) =>
+      runtime.admin.createLibrary({
+        id: randomId(),
+        name,
+        slug,
+        kind,
+        root: { id: randomId(), path },
+      }),
+    onSuccess: async () => {
+      onClose();
+      await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "libraries"] });
+      await queryClient.invalidateQueries({ queryKey: [...scope, "libraries"] });
+    },
+  });
+  const selection = picker.selection;
+  const next = (chosen: FolderSelection): void => {
+    setFolder(chosen);
+    const named = folderName(chosen.path);
+    // Name and type follow the folder until the administrator changes them.
+    if (!nameEdited) {
+      const suggested = named.charAt(0).toUpperCase() + named.slice(1);
+      setName(suggested);
+      setSlug(slugify(suggested));
+    }
+    if (!kindEdited) setKind(kindOfFolder(named));
+  };
+  return (
+    <Modal
+      open
+      onOpenChange={(open) => (open ? undefined : onClose())}
+      className="folder-dialog"
+      title="New library"
+      description={
+        folder === null
+          ? "Choose the folder on the server that holds this library’s media."
+          : "Name the library and choose what kind of media it holds."
+      }
+    >
+      {folder === null ? (
+        <div className="dialog-form">
+          {picker.view}
+          <div className="dialog-actions">
+            <FolderSelectionNote
+              selection={selection}
+              hint="Open the folder that holds this library’s media."
+            />
+            <Button variant="ghost" onClick={onClose}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              disabled={selection === null || selection.overlaps !== null}
+              onClick={() => (selection === null ? undefined : next(selection))}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <Form
+          className="dialog-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            save.mutate(folder.path);
+          }}
+        >
+          <div className="folder-summary">
+            <Folder aria-hidden="true" size={16} />
+            <div>
+              <code title={folder.path}>{folder.label}</code>
+              {folder.summary === "" ? null : <span>{folder.summary}</span>}
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setFolder(null)}>
+              Change
+            </Button>
+          </div>
+          <LibraryFields
+            name={name}
+            slug={slug}
+            kind={kind}
+            onNameChange={(value) => {
+              setName(value);
+              setNameEdited(true);
+              if (slug === "" || slug === slugify(name)) setSlug(slugify(value));
+            }}
+            onSlugChange={setSlug}
+            onKindChange={(value) => {
+              setKind(value);
+              setKindEdited(true);
+            }}
+          />
+          {save.isError ? (
+            <FormError error={save.error} fallback="Could not create library" />
+          ) : null}
+          <div className="dialog-actions">
+            <Button
+              className="dialog-actions-start"
+              variant="ghost"
+              onClick={() => setFolder(null)}
+            >
+              Back
+            </Button>
+            <Button
+              variant="primary"
+              type="submit"
+              disabled={save.isPending || name.trim() === "" || slug.trim() === ""}
+            >
+              {save.isPending ? "Creating…" : "Create library"}
+            </Button>
+          </div>
+        </Form>
+      )}
+    </Modal>
+  );
+};
+
+interface Root {
+  readonly id: string;
+  readonly path: string;
+  readonly priority: number;
+}
+
+const FolderDialog = ({
+  library,
+  root,
+  priority,
+  onClose,
+  scope,
+}: {
+  readonly library: LibrarySummary;
+  /** The folder being changed, or null to add another. */
+  readonly root: Root | null;
+  readonly priority: number;
+  readonly onClose: () => void;
+  readonly scope: readonly unknown[];
+}): React.ReactElement => {
+  const runtime = useRuntime();
+  const queryClient = useQueryClient();
+  const picker = useFolderPicker({ start: root?.path ?? null, replacing: root?.id });
+  const save = useMutation({
+    mutationFn: (path: string) =>
+      root === null
+        ? runtime.admin.addRoot({ id: randomId(), libraryId: library.id, path, priority })
+        : runtime.admin.replaceRoot({
+            id: randomId(),
+            libraryId: library.id,
+            path,
+            priority: root.priority,
+            replacesRootId: root.id,
+          }),
+    onSuccess: async () => {
+      onClose();
+      await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "roots", library.id] });
+      await queryClient.invalidateQueries({ queryKey: [...scope, "items", library.id] });
+    },
+  });
+  const selection = picker.selection;
+  return (
+    <Modal
+      open
+      onOpenChange={(open) => (open ? undefined : onClose())}
+      className="folder-dialog"
+      title={root === null ? `Add a folder to ${library.name}` : `Change ${library.name} folder`}
+      description={
+        root === null
+          ? "Lumen scans every folder in a library together."
+          : "Anything found only in the current folder is removed from the library."
+      }
+    >
+      <div className="dialog-form">
+        {picker.view}
+        {save.isError ? (
+          <FormError
+            error={save.error}
+            fallback={root === null ? "Could not add folder" : "Could not change folder"}
+          />
+        ) : null}
+        <div className="dialog-actions">
+          <FolderSelectionNote selection={selection} hint="Open a folder to choose it." />
+          <Button variant="ghost" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            disabled={
+              save.isPending ||
+              selection === null ||
+              selection.overlaps !== null ||
+              selection.path === root?.path
+            }
+            onClick={() => (selection === null ? undefined : save.mutate(selection.path))}
+          >
+            {root === null ? "Add folder" : "Use this folder"}
+          </Button>
+        </div>
+      </div>
     </Modal>
   );
 };
@@ -287,15 +514,15 @@ const LibraryCard = ({
 }): React.ReactElement => {
   const runtime = useRuntime();
   const queryClient = useQueryClient();
-  const [rootPath, setRootPath] = useState("");
   const [editing, setEditing] = useState(false);
+  const [folder, setFolder] = useState<{ readonly root: Root | null } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const Icon = libraryIcon(library.kind);
   const roots = useQuery({
     queryKey: [...scope, "admin", "roots", library.id],
     queryFn: () => runtime.admin.listRoots(library.id),
   });
-  const rootList = (roots.data ?? []) as ReadonlyArray<{ id: string; path: string }>;
+  const rootList = (roots.data ?? []) as ReadonlyArray<Root>;
   const refreshLibraries = async (): Promise<void> => {
     await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "libraries"] });
     await queryClient.invalidateQueries({ queryKey: [...scope, "libraries"] });
@@ -304,19 +531,6 @@ const LibraryCard = ({
     mutationFn: () =>
       runtime.admin.updateLibrary({ libraryId: library.id, isEnabled: !library.isEnabled }),
     onSuccess: refreshLibraries,
-  });
-  const addRoot = useMutation({
-    mutationFn: () =>
-      runtime.admin.addRoot({
-        id: randomId(),
-        libraryId: library.id,
-        path: rootPath.trim(),
-        priority: rootList.length,
-      }),
-    onSuccess: async () => {
-      setRootPath("");
-      await queryClient.invalidateQueries({ queryKey: [...scope, "admin", "roots", library.id] });
-    },
   });
   const removeRoot = useMutation({
     mutationFn: (rootId: string) => runtime.admin.deleteRoot(rootId),
@@ -420,17 +634,33 @@ const LibraryCard = ({
       ) : null}
       <div className="folder-list">
         {roots.isLoading ? null : rootList.length === 0 ? (
-          <p className="folder-empty">No folders yet. Add the path to a folder on the server.</p>
+          <p className="folder-empty">
+            No folder yet. Choose the folder on the server that holds this library’s media.
+          </p>
         ) : (
           rootList.map((root) => (
             <div className="folder-row" key={root.id}>
               <Folder aria-hidden="true" size={15} />
               <code title={root.path}>{root.path}</code>
               <Button
+                size="sm"
+                variant="ghost"
+                aria-label={`Change ${root.path}`}
+                onClick={() => setFolder({ root })}
+              >
+                <Pencil aria-hidden="true" size={13} />
+                Change…
+              </Button>
+              <Button
                 variant="icon"
                 size="sm"
                 aria-label={`Remove ${root.path}`}
-                disabled={removeRoot.isPending}
+                title={
+                  rootList.length === 1
+                    ? "A library needs a folder. Change it instead of removing it."
+                    : undefined
+                }
+                disabled={removeRoot.isPending || rootList.length === 1}
                 onClick={() => removeRoot.mutate(root.id)}
               >
                 <X aria-hidden="true" size={14} />
@@ -438,33 +668,28 @@ const LibraryCard = ({
             </div>
           ))
         )}
-        <Form
+        <button
+          type="button"
           className="folder-add"
-          onSubmit={(event) => {
-            event.preventDefault();
-            addRoot.mutate();
-          }}
+          disabled={!library.isEnabled}
+          onClick={() => setFolder({ root: null })}
         >
-          <TextField
-            hideLabel
-            label={`Add a folder to ${library.name}`}
-            value={rootPath}
-            onValueChange={setRootPath}
-            placeholder={library.kind === "shows" ? "/media/tv" : `/media/${library.kind}`}
-            spellCheck={false}
-          />
-          <Button type="submit" disabled={addRoot.isPending || rootPath.trim() === ""}>
-            <Plus aria-hidden="true" size={15} />
-            {addRoot.isPending ? "Adding…" : "Add folder"}
-          </Button>
-        </Form>
-        {addRoot.isError ? (
-          <FormError error={addRoot.error} fallback="Could not add folder" />
-        ) : null}
+          <Plus aria-hidden="true" size={14} />
+          {rootList.length === 0 ? "Choose folder…" : "Add another folder"}
+        </button>
         {removeRoot.isError ? (
           <FormError error={removeRoot.error} fallback="Could not remove folder" />
         ) : null}
       </div>
+      {folder === null ? null : (
+        <FolderDialog
+          library={library}
+          root={folder.root}
+          priority={rootList.length}
+          onClose={() => setFolder(null)}
+          scope={scope}
+        />
+      )}
       {editing ? (
         <LibraryDialog library={library} open onOpenChange={setEditing} scope={scope} />
       ) : null}
@@ -558,7 +783,7 @@ const AdminLibraries = (): React.ReactElement => {
           <MetadataPanel configured={metadata.data?.tmdbConfigured ?? false} scope={scope} />
         </div>
       )}
-      <LibraryDialog library={null} open={creating} onOpenChange={setCreating} scope={scope} />
+      {creating ? <NewLibraryDialog onClose={() => setCreating(false)} scope={scope} /> : null}
     </div>
   );
 };

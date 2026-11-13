@@ -104,6 +104,8 @@ export const UpdateUserBody = Schema.Struct({
   canDownload: Schema.optional(Schema.Boolean),
 });
 
+const FolderPath = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096));
+
 export const CreateLibraryBody = Schema.Struct({
   id: Identifier,
   name: Text,
@@ -112,6 +114,8 @@ export const CreateLibraryBody = Schema.Struct({
     Schema.isMaxLength(100),
   ),
   kind: Schema.optional(Schema.Literals(["movies", "shows", "music"])),
+  /** The library's first folder, added in the same transaction. Older clients add it afterwards. */
+  root: Schema.optional(Schema.Struct({ id: Identifier, path: FolderPath })),
 });
 
 export const UpdateLibraryBody = Schema.Struct({
@@ -126,8 +130,10 @@ export const UpdateLibraryBody = Schema.Struct({
 export const CreateRootBody = Schema.Struct({
   id: Identifier,
   libraryId: Identifier,
-  path: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(4096)),
+  path: FolderPath,
   priority: Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 10_000 })),
+  /** A root of the same library that the new one replaces in the same transaction. */
+  replacesRootId: Schema.optional(Identifier),
 });
 
 export const CreateGrantBody = Schema.Struct({

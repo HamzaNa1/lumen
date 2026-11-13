@@ -426,6 +426,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
           name: Schema.String,
           slug: Schema.String,
           kind: Schema.Literals(["movies", "shows", "music"]),
+          root: Schema.optional(Schema.Struct({ id: Schema.String, path: Schema.String })),
         }),
         raw,
       ),
@@ -462,6 +463,23 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         raw,
       ),
     ),
+  );
+  handle("admin:replaceRoot", async (_event, raw) =>
+    activeClient(dependencies).replaceLibraryRoot(
+      decode(
+        Schema.Struct({
+          id: Schema.String,
+          libraryId: Schema.String,
+          path: Schema.String,
+          priority: Schema.Number,
+          replacesRootId: Schema.String,
+        }),
+        raw,
+      ),
+    ),
+  );
+  handle("admin:listDirectory", async (_event, raw) =>
+    activeClient(dependencies).directory(decode(Schema.NullOr(Schema.String), raw)),
   );
   handle("admin:deleteRoot", async (_event, raw) =>
     activeClient(dependencies).deleteLibraryRoot(decode(Schema.String, raw)),

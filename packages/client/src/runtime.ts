@@ -8,6 +8,7 @@ import type {
   CatalogItemDetails,
   CatalogItemPage,
   ConnectionInput,
+  DirectoryListing,
   DownloadSettings,
   DownloadSettingsPatch,
   DownloadState,
@@ -37,6 +38,7 @@ import type {
   CreateLibraryInput,
   CreateUserInput,
   MetadataSettings,
+  ReplaceLibraryRootInput,
   ScanMode,
   UpdateLibraryInput,
   UpdateUserInput,
@@ -120,7 +122,11 @@ export interface AdminRuntime {
   readonly deleteLibrary: (libraryId: string) => Promise<unknown>;
   readonly listRoots: (libraryId: string) => Promise<ReadonlyArray<unknown>>;
   readonly addRoot: (input: AddLibraryRootInput) => Promise<unknown>;
+  /** Swaps a library's folder for another; the old folder's catalog entries are removed. */
+  readonly replaceRoot: (input: ReplaceLibraryRootInput) => Promise<unknown>;
   readonly deleteRoot: (rootId: string) => Promise<unknown>;
+  /** A folder on the server, or its home folder for null; null when the server cannot list folders. */
+  readonly listDirectory: (path: string | null) => Promise<DirectoryListing | null>;
   readonly startScan: (input: {
     readonly libraryId: string;
     readonly mode: ScanMode;

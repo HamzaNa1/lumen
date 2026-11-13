@@ -1,3 +1,6 @@
+import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { Page } from "@playwright/test";
 import { openMovie, pause, playing, signIn } from "./support/browser";
 import { openDatabase } from "./support/database";
@@ -205,7 +208,11 @@ test("older server capabilities keep playback and settings usable without unsupp
   const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
   const unsupported: string[] = [];
   page.on("request", (request) => {
-    if (/track-preferences|track-choice|adjacent-episodes|watch-groups/.test(request.url()))
+    if (
+      /track-preferences|track-choice|adjacent-episodes|watch-groups|directories/.test(
+        request.url(),
+      )
+    )
       unsupported.push(request.url());
   });
   await page.route("**/api/v1/server", async (route) => {
@@ -221,8 +228,87 @@ test("older server capabilities keep playback and settings usable without unsupp
   await pause(page);
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
   await expect(page.getByRole("button", { name: "Playback info", exact: true })).toBeVisible();
+
+  const typed = join(server.root, "typed");
+  const moved = join(server.root, "moved");
+  await mkdir(typed);
+  await mkdir(moved);
+  await page.goto(`${server.origin}web/admin`);
+  await page.getByRole("button", { name: "New library" }).first().click();
+  const create = page.getByRole("dialog", { name: "New library" });
+  await create.getByLabel("Folder on the server").fill(typed);
+  await create.getByRole("button", { name: "Next" }).click();
+  await create.getByLabel("Name").fill("Typed");
+  await create.getByRole("button", { name: "Create library" }).click();
+  await expect(create).toBeHidden();
+  const card = page.getByRole("article").filter({ hasText: "Typed" });
+  await expect(card.getByText(await realpath(typed), { exact: true })).toBeVisible();
+  await card.getByRole("button", { name: /^Change / }).click();
+  const change = page.getByRole("dialog", { name: "Change Typed folder" });
+  await change.getByLabel("Folder on the server").fill(moved);
+  await change.getByRole("button", { name: "Use this folder" }).click();
+  await expect(change).toBeHidden();
+  await expect(card.getByText(await realpath(moved), { exact: true })).toBeVisible();
+  await expect(card.getByRole("button", { name: /^Change / })).toHaveCount(1);
   expect(unsupported).toEqual([]);
 });
+
+const withHome = test.extend<{ home: string }>({
+  home: async ({ playwright: _playwright }, use) => {
+    const home = await mkdtemp(join(tmpdir(), "lumen-home-"));
+    try {
+      await use(home);
+    } finally {
+      await rm(home, { recursive: true, force: true });
+    }
+  },
+  serverEnvironment: async ({ home }, use) => {
+    await use({ HOME: home, USERPROFILE: home });
+  },
+});
+
+withHome(
+  "administrators create a library from a folder they browse to and change its folder later",
+  async ({ server, admin: _admin, home, page }) => {
+    await server.media(home, "libraries/movies/Film.mp4");
+    await server.media(home, "libraries/other/Other.mp4");
+    await signIn(page, server);
+    await page.goto(`${server.origin}web/admin`);
+    await page.getByRole("button", { name: "New library" }).first().click();
+    const create = page.getByRole("dialog", { name: "New library" });
+    const contents = create.getByRole("list", { name: "Folder contents" });
+    await expect(create.getByRole("button", { name: "Next" })).toBeDisabled();
+    await contents.getByRole("button", { name: "libraries", exact: true }).click();
+    await contents.getByRole("button", { name: "movies", exact: true }).click();
+    await expect(contents.getByText("Film.mp4")).toBeVisible();
+    await expect(create.getByText(/^~[\\/]libraries[\\/]movies$/)).toBeVisible();
+    await create.getByRole("button", { name: "Next" }).click();
+    await expect(create.getByLabel("Name")).toHaveValue("Movies");
+    await create.getByRole("button", { name: "Create library" }).click();
+    await expect(create).toBeHidden();
+
+    const card = page.getByRole("article").filter({ hasText: "Movies" });
+    await expect(card.getByText(/libraries[\\/]movies$/)).toBeVisible();
+    await page.getByRole("button", { name: "New library" }).first().click();
+    await contents.getByRole("button", { name: "libraries", exact: true }).click();
+    await expect(create.getByText("Overlaps a folder in Movies")).toBeVisible();
+    await expect(create.getByRole("button", { name: "Next" })).toBeDisabled();
+    await create.getByRole("button", { name: "Cancel" }).click();
+    await expect(create).toBeHidden();
+    await expect(card.getByRole("button", { name: /^Remove / })).toBeDisabled();
+    await card.getByRole("button", { name: /^Change / }).click();
+    const change = page.getByRole("dialog", { name: "Change Movies folder" });
+    await expect(change.getByRole("button", { name: "Use this folder" })).toBeDisabled();
+    await change.getByRole("button", { name: "Up one folder" }).click();
+    await change
+      .getByRole("list", { name: "Folder contents" })
+      .getByRole("button", { name: "other", exact: true })
+      .click();
+    await change.getByRole("button", { name: "Use this folder" }).click();
+    await expect(change).toBeHidden();
+    await expect(card.getByText(/libraries[\\/]other$/)).toBeVisible();
+  },
+);
 
 for (const output of ["mp4", "webm"] as const)
   test(`incompatible container and audio transcode to ${output}, seek and close`, async ({
