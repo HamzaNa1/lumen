@@ -39,6 +39,10 @@ jobs:
     with:
       product: desktop
       artifact-prefix: lumen-desktop-${{ needs.preflight.outputs.version }}
+      release-certificate: true
+    secrets:
+      MACOS_SIGNING_CERTIFICATE: ${{ secrets.MACOS_SIGNING_CERTIFICATE }}
+      MACOS_SIGNING_CERTIFICATE_PASSWORD: ${{ secrets.MACOS_SIGNING_CERTIFICATE_PASSWORD }}
   publish:
     needs: [preflight, verify, native-desktop, package]
     runs-on: ubuntu-24.04
