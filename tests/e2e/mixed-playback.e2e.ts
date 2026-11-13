@@ -88,6 +88,8 @@ test("real desktop and browser render shared routes, forms and menus with matchi
   await window.evaluate((window) => window.setContentSize(1200, 800));
   await signIn(page, server);
   await connectDesktop(desktop.page, server);
+  // The released server a desktop release is checked against may serve an older Libraries page.
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
   for (const route of [
     "/",
     "/library",
@@ -95,7 +97,7 @@ test("real desktop and browser render shared routes, forms and menus with matchi
     `/item/${item?.id}`,
     "/search?q=Film",
     "/settings",
-    "/admin",
+    ...(info.capabilities?.libraryFolders === true ? ["/admin"] : []),
     "/admin/users",
     "/admin/jobs",
   ]) {
