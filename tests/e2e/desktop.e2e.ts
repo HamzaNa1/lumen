@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { join } from "node:path";
 import {
   connectDesktop,
@@ -261,4 +262,51 @@ test("native playback prevents display sleep across fullscreen and releases it w
   await page.evaluate(() => window.lumen.player.stop());
   expect(await active()).toEqual([]);
   await blockers.dispose();
+});
+
+test("cancelling a server response while the player reads it keeps the desktop running", async ({
+  desktop,
+}) => {
+  // Media fetches go through Chromium's fetch, whose body Node adapts to a web stream. Node before
+  // 24.22 throws an uncaught error when that body is cancelled with a read pending (nodejs#62773).
+  const body = Buffer.alloc(8 * 1024 * 1024);
+  const media = createServer((_request, response) => {
+    response.writeHead(206, { "content-length": String(body.length) });
+    response.end(body);
+  });
+  await new Promise<void>((resolve) => media.listen(0, "127.0.0.1", resolve));
+  const address = media.address();
+  if (address === null || typeof address === "string") throw new Error("No address");
+  try {
+    const cancelled = await desktop.app.evaluate(async ({ session }, url) => {
+      let cancelled = 0;
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const controller = new AbortController();
+        const response = await session.defaultSession.fetch(url, {
+          credentials: "omit",
+          cache: "no-store",
+          signal: controller.signal,
+        });
+        const reader = response.body?.getReader();
+        if (reader === undefined) throw new Error("No body");
+        await reader.read();
+        // Electron's own response stream, which Node adapted: wait until it holds bytes unread.
+        const incoming = (response as Response & { __original_resp: { readableLength: number } })
+          .__original_resp;
+        while (incoming.readableLength === 0) await new Promise((resolve) => setImmediate(resolve));
+        // A seek aborts the fetch: the body is cancelled while the next read is still pending.
+        const pending = reader.read().catch(() => undefined);
+        await reader.cancel().catch(() => undefined);
+        controller.abort();
+        await pending;
+        cancelled += 1;
+      }
+      return cancelled;
+    }, `http://127.0.0.1:${address.port}/`);
+    expect(cancelled).toBe(20);
+    expect(await desktop.app.evaluate(({ app }) => app.isReady())).toBe(true);
+  } finally {
+    media.closeAllConnections();
+    await new Promise<void>((resolve) => media.close(() => resolve()));
+  }
 });

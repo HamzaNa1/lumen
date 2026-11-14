@@ -14,7 +14,7 @@ try {
     Download-Verified "$release/mpv-x86_64-20261021-git-e471496c56.7z" "$build/mpv.7z" "4a355f3e89c83fabc730d33fb4e759dfec747806ed2287b61a90d1681b83e8d3"
     # libmpv imports vulkan-1.dll even when using its D3D11 renderer. Use the
     # matching Electron redistribution for that loader and the shader compiler.
-    Download-Verified "https://github.com/electron/electron/releases/download/v44.4.5/electron-v44.4.5-win32-x64.zip" "$build/electron.zip" "11c395820a5aaa8ebcc0686b476d0ac98a730274ebfbdc8cf5538a7c2815cb5d"
+    Download-Verified "https://github.com/electron/electron/releases/download/v44.11.3/electron-v44.11.3-win32-x64.zip" "$build/electron.zip" "97fca9b8e9b90cdc88c1efd44160ca4b89b15101721d93c8befcbeb35b93fb59"
     & 7z x -y "$build/dev.7z" "-o$build/dev" | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "libmpv extraction failed" }
     & 7z x -y "$build/mpv.7z" "-o$build/mpv" | Out-Null
