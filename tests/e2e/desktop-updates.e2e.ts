@@ -329,7 +329,7 @@ releaseTest(
     });
     await expect(page.getByRole("heading", { name: "Playback" })).toBeVisible();
     const settingsNav = page.getByRole("navigation", { name: "Settings" });
-    await expect(settingsNav.getByRole("link", { name: "Server" })).toBeVisible();
+    await expect(settingsNav.getByRole("link", { name: "General" })).toBeVisible();
     await expect(settingsNav.getByRole("link", { name: "Updates" })).toHaveCount(0);
     // The button follows what the main process reports, as an installer's download would.
     const report = (status: AppUpdateStatus) =>
@@ -346,7 +346,7 @@ releaseTest(
     await settingsNav.getByRole("link", { name: "Updates" }).click();
     await expect(page.getByRole("switch", { name: /^Update automatically/ })).toBeChecked();
     // The download finishes while the sidebar is not on screen; it must not miss that.
-    await settingsNav.getByRole("link", { name: "Server" }).click();
+    await settingsNav.getByRole("link", { name: "General" }).click();
     await page.getByRole("button", { name: "Switch server…" }).click();
     await expect(page.locator(".sidebar")).toHaveCount(0);
     await report({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });

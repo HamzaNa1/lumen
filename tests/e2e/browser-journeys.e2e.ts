@@ -51,7 +51,7 @@ test("browser sign-in protects cookies, restores routes and propagates logout ac
   await page.getByRole("menuitem", { name: "Settings" }).click();
   const settingsNav = page.getByRole("navigation", { name: "Settings" });
   await settingsNav.getByRole("link", { name: "Transcoding" }).click();
-  await settingsNav.getByRole("link", { name: "Server" }).click();
+  await settingsNav.getByRole("link", { name: "General" }).click();
   await expect(page).toHaveURL(/\/web\/settings\/server$/);
   await settingsNav.getByRole("button", { name: "Back" }).click();
   await expect(page).toHaveURL(/\/web\/search$/);

@@ -184,7 +184,7 @@ const SettingsCategoryPage = ({
   </div>
 );
 
-/** A category this client or this viewer does not have falls back to the first one. */
+/** A category this client does not have, or a server one for a viewer, falls back to the first. */
 const toFirstCategory = <Navigate to="/settings/playback" replace />;
 
 export const PlaybackSettingsPage = (): React.ReactElement => {
@@ -240,11 +240,12 @@ export const UpdateSettingsPage = (): React.ReactElement => {
 export const ServerSettingsPage = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
   const { capabilities } = useRuntime();
+  if (account.role !== "admin") return toFirstCategory;
   return (
-    <SettingsCategoryPage title="Server">
+    <SettingsCategoryPage title="General">
       <div className="settings-card">
         <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
-          {account.role === "admin" ? <RenameServer serverName={account.serverName} /> : null}
+          <RenameServer serverName={account.serverName} />
         </SettingsRow>
         {capabilities.serverSwitching ? (
           <div className="settings-row settings-row-actions">

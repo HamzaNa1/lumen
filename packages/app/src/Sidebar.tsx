@@ -87,7 +87,7 @@ const SettingsNav = ({
         </button>
       </div>
       <div className="nav-group">
-        <span className="nav-heading">Settings</span>
+        <span className="nav-heading">Client</span>
         <Link className="nav-item" to="/settings/playback" replace>
           <NavLabel icon={Play}>Playback</NavLabel>
         </Link>
@@ -98,16 +98,19 @@ const SettingsNav = ({
             </Link>
           </DeviceOnly>
         )}
-        {account.role === "admin" ? (
+        {appUpdates === null ? null : <UpdatesNavItem updates={appUpdates} />}
+      </div>
+      {account.role === "admin" ? (
+        <div className="nav-group">
+          <span className="nav-heading">Server</span>
+          <Link className="nav-item" to="/settings/server" replace>
+            <NavLabel icon={Server}>General</NavLabel>
+          </Link>
           <Link className="nav-item" to="/settings/transcoding" replace>
             <NavLabel icon={Cpu}>Transcoding</NavLabel>
           </Link>
-        ) : null}
-        {appUpdates === null ? null : <UpdatesNavItem updates={appUpdates} />}
-        <Link className="nav-item" to="/settings/server" replace>
-          <NavLabel icon={Server}>Server</NavLabel>
-        </Link>
-      </div>
+        </div>
+      ) : null}
     </nav>
   );
 };
