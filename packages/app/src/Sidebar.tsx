@@ -65,7 +65,6 @@ export const Sidebar = ({
     <>
       <div className="sidebar-brand">
         <LumenMark />
-        <span>Lumen</span>
         {runtime.appUpdates === null ? null : <AppUpdateButton updates={runtime.appUpdates} />}
       </div>
       <nav className="nav" aria-label="Primary">

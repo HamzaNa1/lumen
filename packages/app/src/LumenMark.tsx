@@ -1,6 +1,7 @@
 export const LumenMark = (): React.ReactElement => (
   <svg
-    aria-hidden="true"
+    aria-label="Lumen"
+    role="img"
     className="brand-mark"
     focusable="false"
     viewBox="0 0 64 64"
