@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { readLocalFile, readResponseBytes } from "../core/BoundedInput";
 import { imageInfo } from "./ImageInfo";
@@ -133,17 +133,19 @@ export class ArtworkVariants {
     width: number,
     mimeType: string,
   ): Promise<ArtworkVariant | null> {
-    const scaled = await scale(await this.options.ffmpeg(), bytes, mimeType, width).catch(
-      () => null,
-    );
+    const ffmpeg = await this.options.ffmpeg();
+    const scaled = await scale(ffmpeg, bytes, mimeType, width).catch(() => null);
     if (scaled === null || imageInfo(scaled)?.width !== width) return null;
     const variant = { bytes: new Uint8Array(scaled), mimeType: formatFor(mimeType).mimeType };
     // Written aside and renamed, so a reader never sees half a file under the final name.
     const partial = `${path}.${randomBytes(6).toString("hex")}.partial`;
-    await mkdir(artworkVariantDir(this.options.dataDir), { recursive: true })
-      .then(() => writeFile(partial, variant.bytes, { flag: "wx" }))
-      .then(() => rename(partial, path))
-      .catch(() => rm(partial, { force: true }));
+    try {
+      await mkdir(artworkVariantDir(this.options.dataDir), { recursive: true });
+      await writeFile(partial, variant.bytes, { flag: "wx" });
+      await rename(partial, path);
+    } catch {
+      // The variant is still served; the sweep removes a partial file left behind.
+    }
     return variant;
   }
 
