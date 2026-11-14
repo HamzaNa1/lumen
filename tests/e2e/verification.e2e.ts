@@ -176,6 +176,8 @@ test("Playwright discovery assigns every E2E suite, selects product owners and f
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toContain("mixed-playback.e2e.ts");
     expect(result.stdout).toContain("release-tooling.e2e.ts");
+    expect(result.stdout.includes("client-parity.e2e.ts")).toBe(product === "source");
+    expect(result.stdout.includes("transport-timeouts.e2e.ts")).toBe(product !== "desktop");
     if (product === "desktop") {
       expect(result.stdout).not.toContain("browser-journeys.e2e.ts");
       expect(result.stdout).not.toContain("browser-groups.e2e.ts");
