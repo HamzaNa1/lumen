@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 import type { ElectronApplication, Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
+import { openSettings } from "./support/browser";
 import {
   connectDesktop,
   desktopPlayerPage,
@@ -202,11 +203,6 @@ const go = (page: Page, route: string) =>
   page.evaluate((route) => {
     location.hash = route;
   }, route);
-
-const openSettings = async (page: Page) => {
-  await go(page, "/settings/downloads");
-  await expect(page.getByRole("combobox", { name: "Streaming cache" })).toBeVisible();
-};
 
 const leavePlayer = async (page: Page) => {
   await page.evaluate(() => window.lumen.player.stop());
@@ -536,7 +532,7 @@ test("the free-space limit pauses downloads but never playback, and cleanup rule
   await leavePlayer(page);
 
   // Lowering the limit in Settings lets the download finish.
-  await openSettings(page);
+  await openSettings(page, "Downloads");
   await expect(page.getByText("10% of 100 MB: downloads pause at 10.0 MB free")).toBeVisible();
   const percent = page.getByRole("spinbutton", { name: "Free space limit percent" });
   await percent.fill("5");
@@ -553,6 +549,7 @@ test("the free-space limit pauses downloads but never playback, and cleanup rule
   await expect
     .poll(async () => (await downloads(page)).settings.deleteWatchedAfter)
     .toBe("immediately");
+  await page.keyboard.press("Escape");
   await page.evaluate((itemId) => window.lumen.downloads.add([itemId]), other.id);
   await expect
     .poll(async () => (await entryFor(page, other.id))?.status, { timeout: 60_000 })
@@ -624,10 +621,11 @@ test("the streaming cache keeps nothing by default, keeps recent streams within 
   expect(await heldFiles(profile)).toEqual([]);
   expect((await downloads(page)).usage.cacheBytes).toBe(0);
 
-  await openSettings(page);
+  await openSettings(page, "Downloads");
   await page.getByRole("combobox", { name: "Streaming cache" }).click();
   await page.getByRole("option", { name: "Low (0.5 GB)" }).click();
   await expect.poll(async () => (await downloads(page)).settings.streamingCache).toBe("low");
+  await page.keyboard.press("Escape");
   await stream();
   await expect.poll(async () => (await downloads(page)).usage.cacheBytes).toBeGreaterThan(0);
   // Every chunk kept holds exactly the bytes at its place in the file, head and tail alike.
@@ -637,7 +635,7 @@ test("the streaming cache keeps nothing by default, keeps recent streams within 
     expect(bytes.equals(original.subarray(offset, offset + bytes.length))).toBe(true);
   expect(await entryFor(page, film.id)).toBeUndefined();
 
-  await openSettings(page);
+  await openSettings(page, "Downloads");
   await page.getByRole("button", { name: /^Clear / }).click();
   await expect.poll(async () => (await downloads(page)).usage.cacheBytes).toBe(0);
   expect(await heldFiles(profile)).toEqual([]);

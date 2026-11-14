@@ -1,4 +1,5 @@
-import { signIn } from "./support/browser";
+import type { Locator } from "@playwright/test";
+import { openSettings, signIn } from "./support/browser";
 import { connectDesktop, expect, test } from "./support/desktop";
 
 test("real desktop and browser render shared routes, forms and menus with matching content and layout", async ({
@@ -20,7 +21,6 @@ test("real desktop and browser render shared routes, forms and menus with matchi
     `/library/${library.id}`,
     `/item/${item?.id}`,
     "/search?q=Film",
-    "/settings",
     "/admin",
     "/admin/users",
     "/admin/jobs",
@@ -31,19 +31,13 @@ test("real desktop and browser render shared routes, forms and menus with matchi
     }, route);
     for (const current of [page, desktop.page]) {
       await expect(
-        route === "/settings"
-          ? current
-              .getByRole("navigation", { name: "Settings" })
-              .getByRole("link", { name: "Playback", exact: true })
-          : current
-              .getByRole("navigation", { name: "Primary" })
-              .getByRole("link", { name: "movies", exact: true }),
+        current
+          .getByRole("navigation", { name: "Primary" })
+          .getByRole("link", { name: "movies", exact: true }),
       ).toBeVisible();
       await expect(current.locator(".main-content").first()).toBeVisible();
     }
-    const regions =
-      route === "/settings" ? [".nav", ".settings-row-text"] : [".nav", ".main-content"];
-    for (const region of regions) {
+    for (const region of [".nav", ".main-content"]) {
       const snapshot = (current: typeof page) =>
         current
           .locator(region)
@@ -82,24 +76,30 @@ test("real desktop and browser render shared routes, forms and menus with matchi
   await expect(
     page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Downloads" }),
   ).toHaveCount(0);
-  await page.goto(`${server.origin}web/settings/server`);
-  await desktop.page.evaluate(() => {
-    location.hash = "/settings/server";
-  });
-  await expect(
-    desktop.page
-      .getByRole("navigation", { name: "Settings" })
-      .getByRole("link", { name: "Downloads" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("navigation", { name: "Settings" }).getByRole("link", { name: "Downloads" }),
-  ).toHaveCount(0);
-  // A category this client does not have falls back to the first one.
-  await page.goto(`${server.origin}web/settings/downloads`);
-  await expect(page).toHaveURL(/\/web\/settings\/playback$/);
-  await page.goto(`${server.origin}web/settings/server`);
-  await expect(desktop.page.getByRole("button", { name: "Switch server…" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
+  // Settings is the same dialog in both, apart from what only a device has.
+  const browserSettings = await openSettings(page);
+  const desktopSettings = await openSettings(desktop.page);
+  for (const settings of [browserSettings, desktopSettings])
+    await expect(settings.getByText("Preferred audio", { exact: true })).toBeVisible();
+  const settingsText = (settings: Locator) => settings.locator(".settings-dialog-body").innerText();
+  expect(await settingsText(desktopSettings)).toBe(await settingsText(browserSettings));
+  const categories = (settings: Locator) =>
+    settings.getByRole("navigation", { name: "Settings" }).getByRole("button");
+  await expect(categories(browserSettings)).toHaveText(["Playback", "General", "Transcoding"]);
+  await expect(categories(desktopSettings)).toHaveText([
+    "Playback",
+    "Downloads",
+    "General",
+    "Transcoding",
+  ]);
+  for (const settings of [browserSettings, desktopSettings])
+    await categories(settings).getByText("General", { exact: true }).click();
+  await expect(desktopSettings.getByRole("button", { name: "Switch server…" })).toBeVisible();
+  await expect(browserSettings.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
+  for (const current of [page, desktop.page]) {
+    await current.keyboard.press("Escape");
+    await expect(current.getByRole("dialog", { name: "Settings" })).toHaveCount(0);
+  }
   for (const current of [page, desktop.page]) {
     await current.locator(".account-trigger").click();
     await expect(current.getByRole("menuitem", { name: /Sign out/ })).toBeVisible();

@@ -7,6 +7,7 @@ import { homedir } from "node:os";
 import { join, relative } from "node:path";
 import type { AppUpdateStatus } from "@lumen/contracts";
 import { _electron, type ElectronApplication } from "@playwright/test";
+import { openSettings } from "./support/browser";
 import { connectDesktop, test as desktopTest } from "./support/desktop";
 import { expect, repository, test } from "./support/server";
 
@@ -324,13 +325,11 @@ releaseTest(
     await expect
       .poll(() => app.evaluate(() => (globalThis as { openedRelease?: string }).openedRelease))
       .toBe(`${releases.url}/latest`);
-    await page.evaluate(() => {
-      window.location.hash = "#/settings";
-    });
-    await expect(page.getByRole("heading", { name: "Playback" })).toBeVisible();
-    const settingsNav = page.getByRole("navigation", { name: "Settings" });
-    await expect(settingsNav.getByRole("link", { name: "General" })).toBeVisible();
-    await expect(settingsNav.getByRole("link", { name: "Updates" })).toHaveCount(0);
+    const settings = await openSettings(page);
+    const categories = settings.getByRole("navigation", { name: "Settings" });
+    await expect(categories.getByRole("button", { name: "General" })).toBeVisible();
+    await expect(categories.getByRole("button", { name: "Updates" })).toHaveCount(0);
+    await page.keyboard.press("Escape");
     // The button follows what the main process reports, as an installer's download would.
     const report = (status: AppUpdateStatus) =>
       app.evaluate(({ BrowserWindow }, status) => {
@@ -343,12 +342,13 @@ releaseTest(
     });
     const downloading = page.getByRole("button", { name: "Downloading Lumen 9999.0.0, 40%" });
     await expect(downloading).toHaveAttribute("data-state", "active");
-    await settingsNav.getByRole("link", { name: "Updates" }).click();
-    await expect(page.getByRole("switch", { name: /^Update automatically/ })).toBeChecked();
+    // Settings offers the choice once the app can install updates itself.
+    await openSettings(page, "Updates");
+    await expect(settings.getByRole("switch", { name: /^Update automatically/ })).toBeChecked();
     // The download finishes while the sidebar is not on screen; it must not miss that.
-    await settingsNav.getByRole("link", { name: "General" }).click();
-    await page.getByRole("button", { name: "Switch server…" }).click();
-    await expect(page.locator(".sidebar")).toHaveCount(0);
+    await categories.getByRole("button", { name: "General" }).click();
+    await settings.getByRole("button", { name: "Switch server…" }).click();
+    await expect(page.getByRole("navigation", { name: "Primary" })).toHaveCount(0);
     await report({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(

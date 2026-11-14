@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { openMovie, pause, playing, signIn } from "./support/browser";
+import { openMovie, openSettings, pause, playing, signIn } from "./support/browser";
 import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
 
@@ -30,38 +30,25 @@ test("browser sign-in protects cookies, restores routes and propagates logout ac
       JSON.stringify({ cookie: document.cookie, localStorage, sessionStorage }),
     ),
   ).not.toContain(cookie?.value ?? "missing");
-  for (const path of [
-    "search",
-    "settings/server",
-    "admin",
-    "admin/users",
-    "admin/jobs",
-    "library",
-  ]) {
+  for (const path of ["search", "settings", "admin", "admin/users", "admin/jobs", "library"]) {
     await page.goto(`${server.origin}web/${path}`);
-    await expect(
-      page.getByRole("navigation", { name: path.startsWith("settings") ? "Settings" : "Primary" }),
-    ).toBeVisible();
+    await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     await page.reload();
     await expect(page.locator(".page").first()).toBeVisible();
   }
-  // Settings categories replace each other, so Back returns to where settings was opened.
+  // Settings opens over the page the viewer is on and closes back to it.
   await page.goto(`${server.origin}web/search`);
-  await page.locator(".account-trigger").click();
-  await page.getByRole("menuitem", { name: "Settings" }).click();
-  const settingsNav = page.getByRole("navigation", { name: "Settings" });
-  await settingsNav.getByRole("link", { name: "Transcoding" }).click();
-  await settingsNav.getByRole("link", { name: "General" }).click();
-  await expect(page).toHaveURL(/\/web\/settings\/server$/);
-  await settingsNav.getByRole("button", { name: "Back" }).click();
+  const settings = await openSettings(page);
+  const categories = settings.getByRole("navigation", { name: "Settings" });
+  await expect(categories.getByRole("button")).toHaveText(["Playback", "General", "Transcoding"]);
+  await categories.getByRole("button", { name: "General" }).click();
+  await expect(settings.getByRole("button", { name: "Rename…" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(settings).toHaveCount(0);
   await expect(page).toHaveURL(/\/web\/search$/);
-  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
-  // Opened directly, there is nowhere to go back to, so Back goes home.
   const other = await context.newPage();
   await other.goto(`${server.origin}web/settings`);
-  await expect(other.getByRole("heading", { name: "Playback" })).toBeVisible();
-  await other.getByRole("button", { name: "Back" }).click();
-  await expect(other).toHaveURL(/\/web\/$/);
+  await expect(other.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await page.goto(`${server.origin}web/settings`);
   await page.locator(".account-trigger").click();
   await page.getByRole("menuitem", { name: /Sign out/ }).click();
@@ -245,8 +232,8 @@ test("older server capabilities keep playback and settings usable without unsupp
     await route.fulfill({ response, json: identity });
   });
   await signIn(page, server);
-  await page.goto(`${server.origin}web/settings`);
-  await expect(page.locator(".page")).toBeVisible();
+  await openSettings(page);
+  await page.keyboard.press("Escape");
   await openMovie(page, server, library.id);
   await pause(page);
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
@@ -520,12 +507,7 @@ test("administrators configure transcoding from Settings and persist changes", a
   page,
 }, testInfo) => {
   await signIn(page, server);
-  await page.goto(`${server.origin}web/settings`);
-  await page
-    .getByRole("navigation", { name: "Settings" })
-    .getByRole("link", { name: "Transcoding" })
-    .click();
-  const panel = page.locator(".page");
+  const panel = await openSettings(page, "Transcoding");
   await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeChecked();
   await panel.getByLabel("CPU threads per job", { exact: true }).fill("3");
   let finishSave = () => {};
@@ -550,6 +532,7 @@ test("administrators configure transcoding from Settings and persist changes", a
   await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
   await page.unroute("**/api/v1/admin/transcoding-settings");
   await page.reload();
+  await openSettings(page, "Transcoding");
   await expect(panel.getByLabel("CPU threads per job", { exact: true })).toHaveValue("3");
   await panel.scrollIntoViewIfNeeded();
   await testInfo.attach("CPU transcoding settings", {
@@ -566,6 +549,7 @@ test("administrators configure transcoding from Settings and persist changes", a
   await panel.getByRole("button", { name: "Save transcoding settings" }).click();
   await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
   await page.reload();
+  await openSettings(page, "Transcoding");
   await expect(panel.getByLabel("GPU devices", { exact: true })).toHaveValue("0,1");
   await panel.scrollIntoViewIfNeeded();
   await testInfo.attach("Multi-GPU transcoding settings", {
@@ -579,5 +563,6 @@ test("administrators configure transcoding from Settings and persist changes", a
   await panel.getByRole("button", { name: "Save transcoding settings" }).click();
   await expect(panel.getByRole("status")).toHaveText("Transcoding settings saved.");
   await page.reload();
+  await openSettings(page, "Transcoding");
   await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).not.toBeChecked();
 });

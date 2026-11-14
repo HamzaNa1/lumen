@@ -1,16 +1,22 @@
-import type { AppUpdatesRuntime } from "@lumen/client/runtime";
 import type { TrackPreferencesPatch } from "@lumen/contracts";
 import { Button, Form, Modal, SelectField, TextField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Navigate } from "@tanstack/react-router";
-import { CircleAlert } from "lucide-react";
+import {
+  CircleAlert,
+  CircleArrowUp,
+  Cpu,
+  HardDrive,
+  type LucideIcon,
+  Play,
+  Server,
+} from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { AppUpdateSettings, useAppUpdateStatus } from "./AppUpdates";
 import { DownloadSettingsSection } from "./Downloads";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
 import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
-import { ACCOUNTS_KEY, PageHeader, useWorkspace } from "./Workspace";
+import { ACCOUNTS_KEY, useWorkspace } from "./Workspace";
 
 const SettingsRow = ({
   label,
@@ -171,91 +177,137 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
   );
 };
 
-const SettingsCategoryPage = ({
-  title,
-  children,
-}: {
-  readonly title: string;
-  readonly children: ReactNode;
-}): React.ReactElement => (
-  <div className="page page-narrow">
-    <PageHeader title={title} />
-    {children}
-  </div>
-);
-
-/** A category this client does not have, or a server one for a viewer, falls back to the first. */
-const toFirstCategory = <Navigate to="/settings/playback" replace />;
-
-export const PlaybackSettingsPage = (): React.ReactElement => {
-  const { account } = useWorkspace();
-  return (
-    <SettingsCategoryPage title="Playback">
-      <div className="settings-card">
-        <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
-      </div>
-    </SettingsCategoryPage>
-  );
-};
-
-export const DownloadSettingsPage = (): React.ReactElement => {
-  const { downloads } = useRuntime();
-  if (downloads === null) return toFirstCategory;
-  return (
-    <SettingsCategoryPage title="Downloads">
-      <DownloadSettingsSection />
-    </SettingsCategoryPage>
-  );
-};
-
-export const TranscodingSettingsPage = (): React.ReactElement => {
-  const { account } = useWorkspace();
-  if (account.role !== "admin") return toFirstCategory;
-  return (
-    <SettingsCategoryPage title="Transcoding">
-      <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
-    </SettingsCategoryPage>
-  );
-};
-
-const UpdateSettings = ({
-  updates,
-}: {
-  readonly updates: AppUpdatesRuntime;
-}): React.ReactElement | null => {
-  const status = useAppUpdateStatus(updates);
-  if (status.data?.automatic === null) return toFirstCategory;
-  return (
-    <SettingsCategoryPage title="Updates">
-      <AppUpdateSettings updates={updates} />
-    </SettingsCategoryPage>
-  );
-};
-
-export const UpdateSettingsPage = (): React.ReactElement => {
-  const { appUpdates } = useRuntime();
-  return appUpdates === null ? toFirstCategory : <UpdateSettings updates={appUpdates} />;
-};
-
-export const ServerSettingsPage = (): React.ReactElement => {
+const ServerSettings = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
   const { capabilities } = useRuntime();
-  if (account.role !== "admin") return toFirstCategory;
   return (
-    <SettingsCategoryPage title="General">
-      <div className="settings-card">
-        <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
-          <RenameServer serverName={account.serverName} />
-        </SettingsRow>
-        {capabilities.serverSwitching ? (
-          <div className="settings-row settings-row-actions">
-            <Button onClick={() => openConnections("saved")}>Switch server…</Button>
-            <Button variant="ghost" onClick={() => openConnections("add")}>
-              Add server…
-            </Button>
+    <div className="settings-card">
+      <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
+        <RenameServer serverName={account.serverName} />
+      </SettingsRow>
+      {capabilities.serverSwitching ? (
+        <div className="settings-row settings-row-actions">
+          <Button onClick={() => openConnections("saved")}>Switch server…</Button>
+          <Button variant="ghost" onClick={() => openConnections("add")}>
+            Add server…
+          </Button>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+interface Category {
+  readonly id: string;
+  readonly label: string;
+  readonly icon: LucideIcon;
+  readonly content: () => ReactNode;
+}
+
+const useCategoryGroups = (): ReadonlyArray<{
+  readonly title: string;
+  readonly categories: ReadonlyArray<Category>;
+}> => {
+  const { account } = useWorkspace();
+  const { downloads, appUpdates } = useRuntime();
+  const updates = useAppUpdateStatus(appUpdates);
+  const client: Category[] = [
+    {
+      id: "playback",
+      label: "Playback",
+      icon: Play,
+      content: () => (
+        <div className="settings-card">
+          <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
+        </div>
+      ),
+    },
+  ];
+  if (downloads !== null)
+    client.push({
+      id: "downloads",
+      label: "Downloads",
+      icon: HardDrive,
+      content: () => <DownloadSettingsSection />,
+    });
+  if (appUpdates !== null && updates.data?.automatic != null)
+    client.push({
+      id: "updates",
+      label: "Updates",
+      icon: CircleArrowUp,
+      content: () => <AppUpdateSettings updates={appUpdates} />,
+    });
+  if (account.role !== "admin") return [{ title: "Client", categories: client }];
+  return [
+    { title: "Client", categories: client },
+    {
+      title: "Server",
+      categories: [
+        { id: "general", label: "General", icon: Server, content: () => <ServerSettings /> },
+        {
+          id: "transcoding",
+          label: "Transcoding",
+          icon: Cpu,
+          content: () => (
+            <TranscodingSettingsPanel
+              key={account.connectionId}
+              connectionId={account.connectionId}
+            />
+          ),
+        },
+      ],
+    },
+  ];
+};
+
+export const SettingsDialog = ({
+  open,
+  onOpenChange,
+}: {
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+}): React.ReactElement => {
+  const groups = useCategoryGroups();
+  const [selected, setSelected] = useState("playback");
+  const categories = groups.flatMap((group) => group.categories);
+  // A category that went away, such as server settings after switching to a viewer account,
+  // falls back to the first one.
+  const current = categories.find((category) => category.id === selected) ?? categories[0];
+  return (
+    <Modal
+      open={open}
+      onOpenChange={onOpenChange}
+      title="Settings"
+      hideHeader
+      className="settings-dialog"
+    >
+      <nav className="settings-dialog-nav" aria-label="Settings">
+        {groups.map((group) => (
+          <div className="nav-group" key={group.title}>
+            <span className="nav-heading">{group.title}</span>
+            {group.categories.map(({ id, label, icon: Icon }) => (
+              <button
+                type="button"
+                className="nav-item"
+                key={id}
+                aria-current={id === current?.id ? "page" : undefined}
+                onClick={() => setSelected(id)}
+              >
+                <Icon aria-hidden="true" size={16} strokeWidth={1.85} />
+                <span className="nav-item-label">{label}</span>
+              </button>
+            ))}
           </div>
-        ) : null}
+        ))}
+      </nav>
+      <div className="settings-dialog-main">
+        <div className="settings-dialog-header">
+          <span>Settings</span>
+          <span aria-hidden="true">/</span>
+          <h2>{current?.label}</h2>
+        </div>
+        <div className="settings-dialog-body">{current?.content()}</div>
       </div>
-    </SettingsCategoryPage>
+    </Modal>
   );
 };

@@ -1,7 +1,7 @@
 import type { AppUpdatesRuntime } from "@lumen/client/runtime";
 import type { AppUpdateStatus } from "@lumen/contracts";
 import { SwitchField, UpdateButton } from "@lumen/ui";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { skipToken, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useRuntime } from "./Runtime";
 
@@ -20,8 +20,12 @@ export const useAppUpdateChanges = (): void => {
   );
 };
 
-export const useAppUpdateStatus = (updates: AppUpdatesRuntime) =>
-  useQuery({ queryKey: APP_UPDATES_KEY, queryFn: updates.status, staleTime: Infinity });
+export const useAppUpdateStatus = (updates: AppUpdatesRuntime | null) =>
+  useQuery({
+    queryKey: APP_UPDATES_KEY,
+    queryFn: updates === null ? skipToken : updates.status,
+    staleTime: Infinity,
+  });
 
 /** A newer version of the app, beside the brand until the viewer installs it. */
 export const AppUpdateButton = ({

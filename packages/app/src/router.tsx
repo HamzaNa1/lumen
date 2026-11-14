@@ -7,13 +7,6 @@ import { DownloadsPage } from "./Downloads";
 import { EpisodePage, ItemPage, SeasonPage, ShowPage } from "./ItemPages";
 import { JobLogPage } from "./JobLogPage";
 import { PlayerPage } from "./PlayerPage";
-import {
-  DownloadSettingsPage,
-  PlaybackSettingsPage,
-  ServerSettingsPage,
-  TranscodingSettingsPage,
-  UpdateSettingsPage,
-} from "./SettingsPage";
 
 const rootRoute = createRootRoute({ component: App });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
@@ -65,22 +58,14 @@ const downloadsRoute = createRoute({
   path: "/downloads",
   component: DownloadsPage,
 });
+// Settings is a dialog now; an old link to its page lands on home.
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
   beforeLoad: () => {
-    throw redirect({ to: "/settings/playback", replace: true });
+    throw redirect({ to: "/", replace: true });
   },
 });
-const settingsCategoryRoutes = (
-  [
-    ["/settings/playback", PlaybackSettingsPage],
-    ["/settings/downloads", DownloadSettingsPage],
-    ["/settings/transcoding", TranscodingSettingsPage],
-    ["/settings/updates", UpdateSettingsPage],
-    ["/settings/server", ServerSettingsPage],
-  ] as const
-).map(([path, component]) => createRoute({ getParentRoute: () => rootRoute, path, component }));
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin",
@@ -109,7 +94,6 @@ const routeTree = rootRoute.addChildren([
   playerRoute,
   downloadsRoute,
   settingsRoute,
-  ...settingsCategoryRoutes,
   adminRoute,
   adminUsersRoute,
   jobLogRoute,
