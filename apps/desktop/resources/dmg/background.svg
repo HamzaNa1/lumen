@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="660" height="400" viewBox="0 0 660 400">
+  <title>Lumen installer background</title>
+  <defs>
+    <linearGradient id="floor" x1="0" y1="0" x2="0" y2="400" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#161b23"/>
+      <stop offset="1" stop-color="#0a0d12"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="180" cy="215" r="240" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c9f560" stop-opacity="0.18"/>
+      <stop offset="0.4" stop-color="#c9f560" stop-opacity="0.05"/>
+      <stop offset="1" stop-color="#c9f560" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="arrow" x1="268" y1="0" x2="392" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c9f560" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#c9f560"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="660" height="400" fill="url(#floor)"/>
+  <rect width="660" height="400" fill="url(#glow)"/>
+
+  <text x="330" y="74" text-anchor="middle" fill="#f5f7f2" font-family="-apple-system, system-ui, sans-serif" font-size="24" font-weight="700" letter-spacing="-0.3">Install Lumen</text>
+  <text x="330" y="102" text-anchor="middle" fill="#9aa1ab" font-family="-apple-system, system-ui, sans-serif" font-size="14" font-weight="500">Drag Lumen onto the Applications folder</text>
+
+  <!-- background.png and background@2x.png are this file rendered at 1x and 2x.
+       Finder centres the icons at (180, 215) and (480, 215); the title bar hides the bottom ~32pt. -->
+  <g fill="none" stroke="url(#arrow)" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M272 215H380" stroke-dasharray="0 13"/>
+    <path d="M374 202L389 215L374 228"/>
+  </g>
+
+  <!-- Finder may draw labels black or white depending on the macOS release and appearance.
+       Mid-grey plates keep either readable (about 4.5:1). -->
+  <rect x="128" y="277" width="104" height="24" rx="12" fill="#767b82"/>
+  <rect x="428" y="277" width="104" height="24" rx="12" fill="#767b82"/>
+</svg>
