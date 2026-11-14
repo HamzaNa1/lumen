@@ -144,8 +144,14 @@ test("native artwork loads scaled through the app protocol, persists by account 
       .toBeGreaterThan(0);
     const ref = await artwork();
     const image = await loadArtwork(desktop.app, artworkUrl(ref));
-    // The fixture is 480 pixels wide; the server scaled it to the step the URL names.
-    expect(Buffer.from(image ?? "", "base64").readUInt32BE(16)).toBe(320);
+    // The fixture is 480 pixels wide. A server that scales artwork answers at the step the URL
+    // names; a released one without that capability still answers with the whole image.
+    const { capabilities } = await server.api<{ capabilities?: Record<string, boolean> }>(
+      "/server",
+    );
+    expect(Buffer.from(image ?? "", "base64").readUInt32BE(16)).toBe(
+      capabilities?.artworkWidths === true ? 320 : 480,
+    );
     const before = reads();
     expect(await loadArtwork(desktop.app, artworkUrl(ref))).toBe(image);
     expect(reads()).toBe(before);
