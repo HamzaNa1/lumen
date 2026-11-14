@@ -106,6 +106,58 @@ export async function launchDesktop(
 export async function desktopPlayerPage(app: ElectronApplication): Promise<Page> {
   return app.windows().find((window) => window.url().includes("overlay=1")) ?? mainDesktopPage(app);
 }
+export async function quitDesktop(app: ElectronApplication): Promise<void> {
+  const child = app.process();
+  await app.evaluate(({ app }, koffiModule) => {
+    if (process.platform !== "darwin") {
+      setImmediate(() => app.quit());
+      return;
+    }
+    // Queue Cmd+Q as an AppKit event; calling app.quit() from JS misses native reentrancy.
+    const koffi = process.getBuiltinModule("module").createRequire(koffiModule)(koffiModule);
+    const objc = koffi.load("/usr/lib/libobjc.A.dylib");
+    const getClass = objc.func("void *objc_getClass(const char *)");
+    const selector = objc.func("void *sel_registerName(const char *)");
+    const send = objc.func("void *objc_msgSend(void *, void *)");
+    const string = objc.func("void *objc_msgSend(void *, void *, const char *)");
+    const point = koffi.struct({ x: "double", y: "double" });
+    const keyEvent = objc.func("objc_msgSend", "void *", [
+      "void *",
+      "void *",
+      "ulong",
+      point,
+      "ulong",
+      "double",
+      "long",
+      "void *",
+      "void *",
+      "void *",
+      "bool",
+      "ushort",
+    ]);
+    const post = objc.func("void objc_msgSend(void *, void *, void *, bool)");
+    const application = send(getClass("NSApplication"), selector("sharedApplication"));
+    const characters = string(getClass("NSString"), selector("stringWithUTF8String:"), "q");
+    const event = keyEvent(
+      getClass("NSEvent"),
+      selector(
+        "keyEventWithType:location:modifierFlags:timestamp:windowNumber:context:characters:charactersIgnoringModifiers:isARepeat:keyCode:",
+      ),
+      10,
+      { x: 0, y: 0 },
+      1 << 20,
+      0,
+      0,
+      null,
+      characters,
+      characters,
+      false,
+      12,
+    );
+    post(application, selector("postEvent:atStart:"), event, false);
+  }, require.resolve("koffi"));
+  await expect.poll(() => child.exitCode).toBe(0);
+}
 export async function mainDesktopPage(app: ElectronApplication): Promise<Page> {
   let selected: Page | undefined;
   let windows: {

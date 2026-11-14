@@ -3,7 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as NodeReadableStream } from "node:stream/web";
-import type { PlaybackDiagnostics } from "@lumen/client";
+import type { FetchLike, PlaybackDiagnostics } from "@lumen/client";
 import { decideRange } from "@lumen/contracts";
 import type { MediaFile } from "../media-store/MediaFile";
 
@@ -59,6 +59,8 @@ export class PlaybackBridge {
   private readonly transfers = new Map<string, Set<Transfer>>();
   private port = 0;
   private closing: Promise<void> | null = null;
+
+  constructor(private readonly fetchImpl: FetchLike = fetch) {}
 
   get activeTransferCount(): number {
     let count = 0;
@@ -187,7 +189,7 @@ export class PlaybackBridge {
       method: request.method ?? "GET",
     });
     try {
-      upstream = await fetch(new URL(entry.streamPath, entry.serverOrigin), {
+      upstream = await this.fetchImpl(new URL(entry.streamPath, entry.serverOrigin), {
         method: request.method,
         headers: forwardedHeaders(request, entry.bearer, requestId),
         redirect: "manual",

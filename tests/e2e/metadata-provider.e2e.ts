@@ -269,6 +269,21 @@ test("movie matching searches and deduplicates candidates, downloads real artwor
   expect(
     (await readdir(join(server.root, "artwork"))).map((file) => file.split(".").at(-1)).sort(),
   ).toEqual(["jpg", "png", "webp"]);
+  const { item: matched } = await server.api<{
+    item: { backdropId: string; backdropRevision: string };
+  }>(`/items/${itemId}`, { token });
+  const backdrop = await server.request(
+    `/api/v1/artwork/${matched.backdropId}?revision=${matched.backdropRevision}&width=320`,
+    { headers: { authorization: `Bearer ${token}` } },
+  );
+  expect(backdrop.headers.get("content-type")).toBe("image/jpeg");
+  const scaledWidth = execFileSync(
+    "ffprobe",
+    ["-v", "error", "-show_entries", "stream=width", "-of", "csv=p=0", "-i", "pipe:0"],
+    { input: Buffer.from(await backdrop.arrayBuffer()) },
+  );
+  expect(scaledWidth.toString().trim()).toBe("320");
+  expect(await readdir(join(server.root, "artwork-variants"))).toHaveLength(1);
   await server.api(`/items/${itemId}/metadata`, {
     token,
     method: "PATCH",
@@ -282,12 +297,16 @@ test("movie matching searches and deduplicates candidates, downloads real artwor
   unavailable = true;
   await server.api(`/items/${itemId}/match?query=42`, { token, status: 503 });
   unavailable = false;
-  for (const file of await readdir(join(server.root, "artwork")))
-    await utimes(join(server.root, "artwork", file), new Date(0), new Date(0));
+  const generated = ["artwork", "artwork-variants"].map((name) => join(server.root, name));
+  for (const directory of generated)
+    for (const file of await readdir(directory))
+      await utimes(join(directory, file), new Date(0), new Date(0));
   await server.api(`/libraries/${library.id}`, { token, method: "DELETE" });
   await expect
-    .poll(async () => readdir(join(server.root, "artwork")), { timeout: 15000 })
-    .toEqual([]);
+    .poll(async () => Promise.all(generated.map((directory) => readdir(directory))), {
+      timeout: 15000,
+    })
+    .toEqual([[], []]);
   expect(await server.api("/search?q=Mine", { token })).toMatchObject({ items: [] });
 });
 

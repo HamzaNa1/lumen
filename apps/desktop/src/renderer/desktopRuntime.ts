@@ -1,4 +1,5 @@
 import type { LumenRuntime, PlayerSurface } from "@lumen/client/runtime";
+import { artworkUrl } from "../shared/artworkUrl";
 import type { DesktopBridge } from "../shared/bridge";
 
 /**
@@ -64,7 +65,7 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     setMatch: bridge.library.setMatch,
   },
   admin: bridge.admin,
-  artwork: { url: bridge.library.artwork },
+  artwork: { url: artworkUrl },
   playback: {
     start: async (itemId, startAtSeconds, title, replaces) => {
       await bridge.player.start(itemId, startAtSeconds, title, replaces);

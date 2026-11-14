@@ -26,6 +26,7 @@ import { createLogger, type Logger } from "../core/Logger";
 import type { ServerIdentity } from "../database/Identity";
 import * as S from "../http/Schemas";
 import type { JobServiceShape } from "../jobs/JobService";
+import { ArtworkVariants } from "../media/ArtworkVariants";
 import type { MetadataProvider } from "../media/Tmdb";
 import { Transcoder } from "../media/Transcoder";
 import type { AccessControlShape } from "../services/AccessControl";
@@ -220,6 +221,10 @@ export const makeHttpHandler = (
     );
   };
   const transcoder = new Transcoder(() => call(services.transcodingSettings.read()));
+  const artworkVariants = new ArtworkVariants({
+    dataDir: config.dataDir,
+    ffmpeg: async () => (await call(services.transcodingSettings.read())).ffmpeg,
+  });
   const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
@@ -245,6 +250,7 @@ export const makeHttpHandler = (
             downloads: true,
             preload: true,
             libraryFolders: true,
+            artworkWidths: true,
           },
         },
         200,
@@ -1134,7 +1140,13 @@ export const makeHttpHandler = (
       parts[3] !== undefined
     ) {
       const asset = await call(services.assets.artwork(principal, parts[3], Date.now()));
-      return serveArtwork({ request, asset, revision: url.searchParams.get("revision") });
+      return serveArtwork({
+        request,
+        asset,
+        revision: url.searchParams.get("revision"),
+        width: url.searchParams.get("width"),
+        variants: artworkVariants,
+      });
     }
     if (
       method === "GET" &&

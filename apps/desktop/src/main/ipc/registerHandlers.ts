@@ -1,6 +1,5 @@
-import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
+import { type FetchLike, viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
-  ArtworkRef,
   AudioOutput,
   ConnectionInput,
   DownloadSettingsPatch,
@@ -65,6 +64,7 @@ export interface IpcDependencies {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
   readonly artwork: ArtworkCache;
+  readonly serverTransport: FetchLike;
   readonly player: PlayerController;
   readonly downloads: DownloadManager;
   readonly bridge: PlaybackBridge;
@@ -163,7 +163,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const pending = restoring.get(account.connectionId);
     if (pending !== undefined) return pending;
     const next = (async () => {
-      const client = new ServerClient({ origin: account.origin });
+      const client = new ServerClient({
+        origin: account.origin,
+        fetchImpl: dependencies.serverTransport,
+      });
       const identity = await client.identity();
       if (identity.serverId !== account.serverId)
         throw new Error("Server identity changed; remove this connection and enroll it again");
@@ -220,14 +223,20 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("accounts:list", async () => dependencies.registry.list());
   handle("accounts:discover-server", async (_event, raw) => {
     const input = decode(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)), raw);
-    const discovery = await new ServerClient({ origin: input }).discover();
+    const discovery = await new ServerClient({
+      origin: input,
+      fetchImpl: dependencies.serverTransport,
+    }).discover();
     discoveredServers.set(discovery.origin, discovery);
     return discovery;
   });
   handle("accounts:connect", async (_event, raw) => {
     const input = decode(ConnectionInput, raw);
     let connectionId = requestId();
-    const client = new ServerClient({ origin: input.origin });
+    const client = new ServerClient({
+      origin: input.origin,
+      fetchImpl: dependencies.serverTransport,
+    });
     const discovery = discoveredServers.get(client.serverOrigin);
     if (discovery === undefined) throw new Error("Connect to the server first");
     const identity = await client.identity();
@@ -356,12 +365,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   );
   handle("library:adjacent-episodes", async (_event, raw) =>
     activeClient(dependencies).adjacentEpisodes(decode(Schema.String, raw)),
-  );
-  handle("library:artwork", async (_event, raw) =>
-    activeClient(dependencies).artworkDataUrl(
-      decode(ArtworkRef, raw),
-      dependencies.artwork.transportFor(activeConnectionId(dependencies)),
-    ),
   );
   handle("library:search", async (_event, raw) => {
     const input = decode(

@@ -8,7 +8,6 @@ import {
   type WatchAuthentication,
   type WatchServer,
 } from "@lumen/client";
-import type { ArtworkRef } from "@lumen/contracts";
 
 export { ServerHttpError } from "@lumen/client";
 
@@ -66,13 +65,6 @@ export class ServerClient extends ServerApi implements WatchServer {
 
   async migrateLegacySession(refreshToken: string): Promise<AccountSession> {
     return this.adopt(await this.migrateLegacyToken(refreshToken));
-  }
-
-  /** Artwork as a data URL, because the renderer cannot send this connection's token itself. */
-  async artworkDataUrl(artwork: ArtworkRef, transport: FetchLike): Promise<string | null> {
-    const image = await this.artworkImage(artwork, transport);
-    if (image === null) return null;
-    return `data:${image.mimeType};base64,${Buffer.from(image.bytes).toString("base64")}`;
   }
 
   private adopt(session: AccountSession): AccountSession {

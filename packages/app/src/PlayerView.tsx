@@ -5,7 +5,7 @@ import { useRuntime } from "./Runtime";
 import { ShowDrawer, ShowDrawerButton, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
 import { useWatchStatus, WatchGroups, waitingSummary } from "./WatchGroups";
-import { useArtwork } from "./Workspace";
+import { ARTWORK_SIZE, useArtwork } from "./Workspace";
 import "./player.css";
 
 /** How far into an episode Previous still leads to the episode before it instead of restarting. */
@@ -38,10 +38,9 @@ export const PlayerView = ({
   const surfaceRef = useRef<HTMLDivElement>(null);
   const description = display?.description ?? null;
   const nextEpisode = description?.nextEpisode ?? null;
-  // The controls can be drawn where no account's caches are, so the still keeps to its own.
-  const nextStill = useArtwork(nextEpisode?.artwork, ["player"]).data ?? null;
+  const nextStill = useArtwork(nextEpisode?.artwork, ARTWORK_SIZE.card);
   const playingItemId = display?.itemId ?? null;
-  const artwork = useArtwork(description?.artwork, ["player"]).data ?? null;
+  const artwork = useArtwork(description?.artwork, ARTWORK_SIZE.page);
   // Until the item playing has drawn a frame, the surface holds nothing or the last frame of
   // what played before it, so its artwork covers it.
   const [framedItemId, setFramedItemId] = useState<string | null>(null);

@@ -59,6 +59,16 @@ const ArtworkRevision = Schema.optional(Schema.NullOr(Sha256Digest));
 export const ArtworkRef = Schema.Struct({ id: Uuid, revision: Schema.NullOr(Sha256Digest) });
 export type ArtworkRef = Schema.Schema.Type<typeof ArtworkRef>;
 
+/**
+ * The widths, in pixels, a server scales revisioned artwork to. A width between two steps is
+ * served at the next one up, so clients that ask for the steps themselves share cached images.
+ */
+export const ARTWORK_WIDTHS = [320, 640, 960, 1920] as const;
+
+/** The step that covers an image drawn this many device pixels wide. */
+export const artworkWidth = (pixels: number): number =>
+  ARTWORK_WIDTHS.find((width) => width >= pixels) ?? Math.max(...ARTWORK_WIDTHS);
+
 const artworkRef = (id: string | null, revision: string | null | undefined): ArtworkRef | null =>
   id === null ? null : { id, revision: revision ?? null };
 

@@ -2,6 +2,7 @@ import type { LumenRuntime } from "@lumen/client/runtime";
 import {
   type AccountSummary,
   type ArtworkRef,
+  artworkWidth,
   type CatalogItem,
   type PlayerAction,
   type PlayerDisplay,
@@ -93,15 +94,18 @@ export const watchedFraction = (item: CatalogItem): number | null =>
     ? (item.resumePositionSeconds * 1_000) / item.durationMs
     : null;
 
-export const useArtwork = (artwork: ArtworkRef | null | undefined, scope: readonly unknown[]) => {
+/** The most CSS pixels each kind of image is drawn across. */
+export const ARTWORK_SIZE = { card: 300, wideCard: 440, page: 1920 } as const;
+
+/** Where to load an image drawn this many CSS pixels wide, at this display's density. */
+export const useArtwork = (
+  artwork: ArtworkRef | null | undefined,
+  cssWidth: number,
+): string | null => {
   const runtime = useRuntime();
-  return useQuery({
-    // Keyed by revision too, so an image replaced under the same ID is loaded again.
-    queryKey: [...scope, "artwork", artwork?.id, artwork?.revision],
-    queryFn: () => (artwork == null ? null : runtime.artwork.url(artwork)),
-    enabled: artwork != null,
-    staleTime: Number.POSITIVE_INFINITY,
-  });
+  return artwork == null
+    ? null
+    : runtime.artwork.url(artwork, artworkWidth(cssWidth * window.devicePixelRatio));
 };
 
 /** Refetches everything that shows watch progress, after it changes. */
@@ -171,8 +175,11 @@ export const CatalogCard = ({
   /** Wide artwork, for episode stills. */
   readonly landscape?: boolean;
 }): React.ReactElement => {
-  const { scope, openItem, playItem } = useWorkspace();
-  const artwork = useArtwork(posterOf(item), scope);
+  const { openItem, playItem } = useWorkspace();
+  const imageUrl = useArtwork(
+    posterOf(item),
+    landscape ? ARTWORK_SIZE.wideCard : ARTWORK_SIZE.card,
+  );
   return (
     <MediaCard
       badge={<DownloadBadge itemId={item.id} />}
@@ -181,7 +188,7 @@ export const CatalogCard = ({
       detail={detail}
       kind={item.kind}
       landscape={landscape}
-      imageUrl={artwork.data ?? null}
+      imageUrl={imageUrl}
       progress={watchedFraction(item)}
       action={
         ["movie", "season", "episode"].includes(item.kind) ? (

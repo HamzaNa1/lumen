@@ -81,6 +81,12 @@ const server = await serveHttp({
     );
   },
 });
+const brief = await serveHttp({
+  hostname: "127.0.0.1",
+  port: 0,
+  timeouts: { activeMs: 500, idleMs: 1_000 },
+  fetch: () => new Response("ok", { headers: { "content-length": "2" } }),
+});
 const bridge = new PlaybackBridge();
 await bridge.listen();
 const diagnostics = new PlaybackDiagnostics();
@@ -102,10 +108,16 @@ try {
 } catch {
   bindRejected = true;
 }
-process.send?.({ origin: server.url.toString(), bridge: media.url, bindRejected });
+process.send?.({
+  origin: server.url.toString(),
+  brief: brief.url.toString(),
+  bridge: media.url,
+  bindRejected,
+});
 process.once("SIGTERM", async () => {
   await bridge.close();
   await server.stop(true);
+  await brief.stop(true);
   if (process.env.LUMEN_COVERAGE_DIR)
     writeFileSync(
       join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),

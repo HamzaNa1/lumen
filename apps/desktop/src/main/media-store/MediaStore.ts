@@ -1,6 +1,6 @@
 import { mkdir, readdir, rm, rmdir, statfs } from "node:fs/promises";
 import { join } from "node:path";
-import { segmentsOverBudget } from "@lumen/client";
+import { type FetchLike, segmentsOverBudget } from "@lumen/client";
 import type { StorageUsage } from "@lumen/contracts";
 import { ignoreFailure, reportFailure } from "../failures";
 import { MediaFile, type MediaGeometry, type MediaSpec, mediaKey } from "./MediaFile";
@@ -41,14 +41,14 @@ export class MediaStore {
     readonly root: string,
     readonly geometry: MediaGeometry,
     private readonly space: () => Promise<DiskSpace>,
-    private readonly fetchImpl: typeof fetch,
+    readonly fetchImpl: FetchLike,
   ) {}
 
   static async load(options: {
     readonly root: string;
     readonly geometry?: MediaGeometry;
     readonly space?: (store: MediaStore) => Promise<DiskSpace>;
-    readonly fetchImpl?: typeof fetch;
+    readonly fetchImpl?: FetchLike;
   }): Promise<MediaStore> {
     await mkdir(options.root, { recursive: true });
     let store: MediaStore | null = null;

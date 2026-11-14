@@ -8,6 +8,7 @@ import {
   ServerHttpError,
 } from "@lumen/client";
 import {
+  ARTWORK_WIDTHS,
   CatalogItem,
   catalogItemOf,
   DownloadSettings,
@@ -390,12 +391,16 @@ export class DownloadManager extends EventEmitter {
   private async saveArtwork(download: Download, client: ServerClient): Promise<void> {
     const poster = posterOf(download.item);
     if (poster === null) return;
-    const url = await client.artworkDataUrl(
-      poster,
-      this.options.artworkTransport(download.connectionId),
+    // Kept as a data URL beside the download, so it shows while the server cannot be reached.
+    const image = await client.artworkImage(poster, {
+      width: ARTWORK_WIDTHS[0],
+      transport: this.options.artworkTransport(download.connectionId),
+    });
+    if (image === null || !this.downloads.includes(download)) return;
+    await writeFile(
+      this.artworkPath(download.id),
+      `data:${image.mimeType};base64,${Buffer.from(image.bytes).toString("base64")}`,
     );
-    if (url === null || !this.downloads.includes(download)) return;
-    await writeFile(this.artworkPath(download.id), url);
     download.hasArtwork = true;
     this.save();
     this.publish();

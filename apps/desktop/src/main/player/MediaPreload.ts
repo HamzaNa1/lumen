@@ -1,3 +1,4 @@
+import type { FetchLike } from "@lumen/client";
 import { ignoreFailure } from "../failures";
 import { type MediaSpec, mediaKey, rangeRequest, servesRange } from "../media-store/MediaFile";
 
@@ -58,7 +59,7 @@ export class MediaPreload {
 
   constructor(
     private readonly chunkBytes: number,
-    private readonly fetchImpl: typeof fetch = fetch,
+    private readonly fetchImpl: FetchLike = fetch,
   ) {}
 
   /** Replaces whatever is held with the chunks of `request`, settling once they are fetched. */

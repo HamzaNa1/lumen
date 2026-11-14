@@ -6,7 +6,7 @@ import { type RefObject, useEffect, useLayoutEffect, useRef } from "react";
 import { episodeCode, episodeSubtitle } from "./format";
 import { useRuntime } from "./Runtime";
 import { type EpisodeGroup, episodesOfShow } from "./ShowEpisodes";
-import { useArtwork, watchedFraction } from "./Workspace";
+import { ARTWORK_SIZE, useArtwork, watchedFraction } from "./Workspace";
 
 const DRAWER_ID = "show-drawer";
 
@@ -61,7 +61,7 @@ const EpisodeCard = ({
   readonly current: boolean;
   readonly onSelect: () => void;
 }): React.ReactElement => {
-  const artwork = useArtwork(posterOf(episode), playerScope);
+  const imageUrl = useArtwork(posterOf(episode), ARTWORK_SIZE.card);
   return (
     <MediaCard
       title={episode.title}
@@ -72,7 +72,7 @@ const EpisodeCard = ({
       }
       kind={episode.kind}
       landscape
-      imageUrl={artwork.data ?? null}
+      imageUrl={imageUrl}
       progress={watchedFraction(episode)}
       current={current}
       onOpen={onSelect}

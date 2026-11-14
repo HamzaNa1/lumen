@@ -128,7 +128,9 @@ export class PlayerController extends EventEmitter {
     this.audioSettings = options.audioSettings ?? AudioSettingsStore.inMemory();
     this.store = options.store;
     this.preload =
-      options.store === undefined ? null : new MediaPreload(options.store.geometry.chunkBytes);
+      options.store === undefined
+        ? null
+        : new MediaPreload(options.store.geometry.chunkBytes, options.store.fetchImpl);
     this.onProgress = options.onProgress;
   }
 

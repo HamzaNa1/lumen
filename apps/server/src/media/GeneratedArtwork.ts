@@ -4,6 +4,7 @@ import { artwork, type DatabaseClient, serverScheduledJobs } from "@lumen/databa
 import { like, sql } from "drizzle-orm";
 import { Effect } from "effect";
 import { ServerLogger } from "../core/Logger";
+import { ARTWORK_VARIANT_NAME, artworkVariantDir } from "./ArtworkVariants";
 
 // Artwork downloaded from metadata providers is stored once per content hash
 // and may be shared by several libraries, so files are only removed once no
@@ -36,34 +37,52 @@ export const queueArtworkSweep = (database: Writer, nowMs: number) =>
       },
     });
 
-// Deletes generated artwork files that no artwork row references.
+const removeUnkept = (directory: string, keep: (name: string) => boolean, nowMs: number) =>
+  Effect.gen(function* () {
+    const names = yield* Effect.tryPromise(() => readdir(directory)).pipe(
+      Effect.catch(() => Effect.succeed([] as string[])),
+    );
+    let deleted = 0;
+    for (const name of names) {
+      if (keep(name)) continue;
+      const path = join(directory, name);
+      const removed = yield* Effect.tryPromise(async () => {
+        const details = await lstat(path);
+        if (!details.isFile() || details.mtimeMs > nowMs - sweepGraceMs) return false;
+        await unlink(path);
+        return true;
+      }).pipe(Effect.catch(() => Effect.succeed(false)));
+      if (removed) deleted += 1;
+    }
+    return deleted;
+  });
+
+// Deletes generated artwork files that no artwork row references, and scaled variants of
+// revisions no artwork row holds any more.
 export const sweepGeneratedArtwork = Effect.fn("GeneratedArtwork.sweep")(function* (
   database: DatabaseClient,
   dataDir: string,
   nowMs: number,
 ) {
   const directory = generatedArtworkDir(dataDir);
-  const names = yield* Effect.tryPromise(() => readdir(directory)).pipe(
-    Effect.catch(() => Effect.succeed([] as string[])),
-  );
   const referenced = new Set(
     (yield* database
       .select({ path: artwork.relativePath })
       .from(artwork)
       .where(like(artwork.relativePath, `${directory}%`))).map((row) => row.path),
   );
-  let deleted = 0;
-  for (const name of names) {
-    const path = join(directory, name);
-    if (referenced.has(path)) continue;
-    const removed = yield* Effect.tryPromise(async () => {
-      const details = await lstat(path);
-      if (!details.isFile() || details.mtimeMs > nowMs - sweepGraceMs) return false;
-      await unlink(path);
-      return true;
-    }).pipe(Effect.catch(() => Effect.succeed(false)));
-    if (removed) deleted += 1;
-  }
+  const revisions = new Set(
+    (yield* database.selectDistinct({ hash: artwork.contentHash }).from(artwork)).map(
+      (row) => row.hash,
+    ),
+  );
+  const deleted =
+    (yield* removeUnkept(directory, (name) => referenced.has(join(directory, name)), nowMs)) +
+    (yield* removeUnkept(
+      artworkVariantDir(dataDir),
+      (name) => revisions.has(ARTWORK_VARIANT_NAME.exec(name)?.[1] ?? ""),
+      nowMs,
+    ));
   const logger = yield* ServerLogger;
   logger.info("artwork_sweep_completed", { filesDeleted: deleted });
   return deleted;

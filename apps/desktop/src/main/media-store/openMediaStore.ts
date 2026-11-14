@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import type { FetchLike } from "@lumen/client";
 import { type DiskSpace, defaultGeometry, MediaStore } from "./MediaStore";
 
 const positive = (value: string | undefined): number | null => {
@@ -10,12 +11,13 @@ const positive = (value: string | undefined): number | null => {
  * Opens the store under the app's data folder. Tests shrink its chunks to exercise many of them
  * with small fixtures, and describe a disk of their own size to reach its free-space limit.
  */
-export const openMediaStore = async (root: string): Promise<MediaStore> => {
+export const openMediaStore = async (root: string, fetchImpl: FetchLike): Promise<MediaStore> => {
   const chunkBytes = positive(process.env.LUMEN_E2E_MEDIA_CHUNK_BYTES);
   const segmentBytes = positive(process.env.LUMEN_E2E_MEDIA_SEGMENT_BYTES);
   const diskFile = process.env.LUMEN_E2E_DISK_FILE;
   return MediaStore.load({
     root,
+    fetchImpl,
     geometry: {
       chunkBytes: chunkBytes ?? defaultGeometry.chunkBytes,
       segmentBytes: segmentBytes ?? defaultGeometry.segmentBytes,

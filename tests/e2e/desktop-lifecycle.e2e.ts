@@ -1,7 +1,7 @@
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { openDatabase } from "./support/database";
-import { connectDesktop, expect, test } from "./support/desktop";
+import { connectDesktop, expect, quitDesktop, test } from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
 import { password } from "./support/server";
 
@@ -114,7 +114,7 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
   await expect
     .poll(() => page.evaluate(() => window.lumen.player.state()))
     .toMatchObject({ itemId: item?.id });
-  await app.close();
+  await quitDesktop(app);
   const db = openDatabase(server.databasePath);
   try {
     expect(
@@ -179,11 +179,6 @@ test("switching accounts stops playback, isolates catalog and credentials, and r
     automatic: null,
     update: null,
   });
-  await expect(
-    page.evaluate(() =>
-      window.lumen.library.artwork({ id: "http://127.0.0.1/arbitrary", revision: "bad" }),
-    ),
-  ).rejects.toThrow();
 });
 
 test("a stalled progress response cannot block native pause, local samples or final teardown", async ({

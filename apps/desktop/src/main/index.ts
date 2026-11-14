@@ -4,15 +4,18 @@ import {
   type BrowserWindow,
   nativeTheme,
   powerSaveBlocker,
+  protocol,
   screen,
   session,
   shell,
 } from "electron";
+import { ARTWORK_SCHEME } from "../shared/artworkUrl";
 import { composesVideo } from "../shared/videoCompositor";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import { createTokenVault } from "./accounts/TokenVault";
 import type { ServerClient } from "./api/ServerClient";
+import { serverTransport } from "./api/serverTransport";
 import { ArtworkCache } from "./artwork/ArtworkCache";
 import { DownloadManager } from "./downloads/DownloadManager";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
@@ -39,9 +42,8 @@ let bridge: PlaybackBridge | null = null;
 let player: PlayerController | null = null;
 let surface: MpvSurface | CompositorSurface | null = null;
 let downloads: DownloadManager | null = null;
-let closingDownloads: Promise<void> | null = null;
-let quitting = false;
 let closingPlayback: Promise<void> | null = null;
+let quitting: "no" | "shuttingDown" | "ready" = "no";
 
 const stopPlayerBeforeClose = (): Promise<void> => {
   if (closingPlayback !== null) return closingPlayback;
@@ -87,6 +89,9 @@ const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 const rendererPath = join(import.meta.dirname, "../renderer/index.html");
 
 if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform", "x11");
+protocol.registerSchemesAsPrivileged([
+  { scheme: ARTWORK_SCHEME, privileges: { standard: true, secure: true } },
+]);
 
 const bootstrap = async (): Promise<void> => {
   await app.whenReady();
@@ -102,11 +107,27 @@ const bootstrap = async (): Promise<void> => {
   const windowState = await openMainWindowState(
     join(app.getPath("userData"), "main-window-state.json"),
   );
-  bridge = new PlaybackBridge();
+  // Media has a connection pool of its own, so streaming bodies never hold a click in a queue.
+  const [apiSession, mediaSession] = [
+    session.fromPartition("lumen-api"),
+    session.fromPartition("lumen-media"),
+  ];
+  // Servers are reached as Node's fetch reached them, without the system proxy.
+  await Promise.all([apiSession, mediaSession].map((each) => each.setProxy({ mode: "direct" })));
+  const mediaTransport = serverTransport(mediaSession);
+  bridge = new PlaybackBridge(mediaTransport);
   await bridge.listen();
-  const store = await openMediaStore(join(app.getPath("userData"), "media"));
+  const store = await openMediaStore(join(app.getPath("userData"), "media"), mediaTransport);
   const clients = new Map<string, ServerClient>();
   const artwork = new ArtworkCache((partition) => session.fromPartition(partition));
+  protocol.handle(ARTWORK_SCHEME, (request) => {
+    const connectionId = registry.active()?.connectionId;
+    const client = connectionId === undefined ? undefined : clients.get(connectionId);
+    return artwork.respond(
+      request.url,
+      connectionId === undefined || client === undefined ? null : { connectionId, client },
+    );
+  });
   mainWindow = createMainWindow({
     preloadPath,
     bounds: placeMainWindow(windowState.current, {
@@ -184,6 +205,7 @@ const bootstrap = async (): Promise<void> => {
     registry,
     clients,
     artwork,
+    serverTransport: serverTransport(apiSession),
     player,
     downloads,
     bridge,
@@ -202,32 +224,27 @@ const bootstrap = async (): Promise<void> => {
   mainWindow.once("closed", updates.start());
 };
 
-app.on("before-quit", (event) => {
-  if (quitting && closingPlayback !== null) {
-    event.preventDefault();
-    return;
-  }
-  if (!quitting && (player?.getState() != null || closingPlayback !== null)) {
-    event.preventDefault();
-    quitting = true;
-    void stopPlayerBeforeClose().finally(() => app.quit());
-    return;
-  }
+const shutDown = async (): Promise<void> => {
+  if (player?.getState() != null || closingPlayback !== null) await stopPlayerBeforeClose();
   // Downloads record what they hold before the app goes, so nothing is fetched twice.
-  if (downloads !== null && closingDownloads === null) {
+  await Promise.race([
+    downloads?.close().catch((cause: unknown) => console.error("Failed to stop downloads", cause)),
+    new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
+  ]);
+  downloads = null;
+};
+
+app.on("before-quit", (event) => {
+  if (quitting !== "ready") {
     event.preventDefault();
-    const closing = downloads;
-    closingDownloads = Promise.race([
-      closing.close().catch((cause: unknown) => console.error("Failed to stop downloads", cause)),
-      new Promise<void>((resolve) => setTimeout(resolve, 3_000)),
-    ]).finally(() => {
-      downloads = null;
-      app.quit();
-    });
-    return;
-  }
-  if (closingDownloads !== null && downloads !== null) {
-    event.preventDefault();
+    if (quitting === "no") {
+      quitting = "shuttingDown";
+      void shutDown().finally(() => {
+        quitting = "ready";
+        // macOS ignores a quit requested while it is still handling the ⌘Q that fired this event.
+        setImmediate(() => app.quit());
+      });
+    }
     return;
   }
   surface?.dispose();
