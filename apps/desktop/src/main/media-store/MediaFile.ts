@@ -532,10 +532,13 @@ export class MediaFile extends EventEmitter {
     try {
       while (fetch.cursor < fetch.end) {
         if (fetch.paced) {
-          // Fetch only a window ahead of the readers; stop once no reader has come for a while.
+          // Fetch only a window ahead of the readers it reaches; stop once none has come for a
+          // while. A reader past the cursor, as after a seek ahead, is served by its own fetch.
           for (;;) {
             if (fetch.controller.signal.aborted) return;
-            const furthest = Math.max(-1, ...[...this.readers].map((reader) => reader.position));
+            const reach = fetch.cursor + this.geometry.chunkBytes * 2;
+            const positions = [...this.readers].map((reader) => reader.position);
+            const furthest = Math.max(-1, ...positions.filter((position) => position <= reach));
             if (furthest >= 0) idleSince = Date.now();
             else if (Date.now() - idleSince > IDLE_FETCH_MS) return;
             if (furthest >= 0 && fetch.cursor - furthest <= this.lookahead(fetch.target)) break;
