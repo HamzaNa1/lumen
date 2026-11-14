@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { EventEmitter, once } from "node:events";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { createServer, type Server as HttpServer } from "node:http";
@@ -61,11 +62,56 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
     sizeBytes,
     mimeType: "video/x-matroska",
   };
+  // Counts the bytes the file takes from each response, which is what it pulls over the network.
+  const requests: { start: number; bytes: number; ended: Promise<void> }[] = [];
+  const taken = new EventEmitter();
+  const fetchImpl = async (input: URL, init: RequestInit) => {
+    const response = await fetch(input, init);
+    const upstreamBody = response.body?.getReader();
+    if (upstreamBody === undefined) return response;
+    const range = new Headers(init.headers).get("range") ?? "";
+    let finish = () => {};
+    const request = {
+      start: Number(/bytes=(\d+)/u.exec(range)?.[1]),
+      bytes: 0,
+      ended: new Promise<void>((resolve) => {
+        finish = resolve;
+      }),
+    };
+    requests.push(request);
+    const body = new ReadableStream<Uint8Array>(
+      {
+        async pull(controller) {
+          try {
+            const { value, done } = await upstreamBody.read();
+            if (done) {
+              finish();
+              controller.close();
+              return;
+            }
+            request.bytes += value.length;
+            taken.emit("bytes");
+            controller.enqueue(value);
+          } catch (cause) {
+            finish();
+            controller.error(cause);
+          }
+        },
+        async cancel(reason) {
+          finish();
+          await upstreamBody.cancel(reason);
+        },
+      },
+      { highWaterMark: 0 },
+    );
+    return new Response(body, { status: response.status, headers: response.headers });
+  };
   const file = await MediaFile.open({
     root,
     spec,
     geometry: defaultGeometry,
     allowSegment: async () => true,
+    fetchImpl,
   });
   file.addSource({ origin: upstream.origin, path: "/media", token: "token", kind: "playback" });
   const read = async (start: number, end: number): Promise<Buffer> => {
@@ -82,6 +128,16 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
       if (received >= bytes) break;
     }
   };
+  /** Resolves once the response from `start` has ended or handed the file more than `limit`. */
+  const settled = async (start: number, limit: number) => {
+    const request = requests.find((candidate) => candidate.start === start);
+    if (request === undefined) throw new Error(`No request from ${start}`);
+    const overran = (async () => {
+      while (request.bytes <= limit) await once(taken, "bytes");
+    })();
+    await Promise.race([request.ended, overran]);
+    return request.bytes;
+  };
   return {
     media,
     spec,
@@ -89,6 +145,7 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
     upstream,
     read,
     readThenLeave,
+    settled,
     dispose: async () => {
       await file.close();
       await upstream.close();
@@ -125,6 +182,22 @@ test("seeking back to the start after playing on reads the start again", async (
     await stream.readThenLeave(0, 6 * CHUNK);
     expect((await stream.read(0, CHUNK)).equals(media.subarray(0, CHUNK))).toBe(true);
   } finally {
+    await stream.dispose();
+  }
+});
+
+test("a request the player left behind by seeking ahead stops fetching", async () => {
+  // Resuming a film: MPV reads the header, then opens a request halfway in. The request from the
+  // start must stop instead of racing to the new reader with bytes nobody reads.
+  const stream = await streamedFile(64 * CHUNK);
+  const resume = stream.file.read(48 * CHUNK, 64 * CHUNK, new AbortController().signal);
+  try {
+    await stream.readThenLeave(0, 2 * CHUNK);
+    await resume.next();
+    // At most the header and the window paced ahead of it, 16 MiB without a known bitrate.
+    expect(await stream.settled(0, 20 * CHUNK)).toBeLessThanOrEqual(20 * CHUNK);
+  } finally {
+    await resume.return(undefined);
     await stream.dispose();
   }
 });
