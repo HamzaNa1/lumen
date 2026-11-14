@@ -339,7 +339,7 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
       if (recovery === "runtime") {
         let sessionId = original?.sessionId;
         for (let failure = 0; failure < 4; failure++) {
-          await wire.command(["quit"]).catch(() => undefined);
+          await wire.crash();
           if (failure < 3) {
             await expect
               .poll(

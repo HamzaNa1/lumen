@@ -1,8 +1,12 @@
+import childProcess from "node:child_process";
+import { once } from "node:events";
 import { syncBuiltinESMExports } from "node:module";
 import net from "node:net";
 
 // Delay or reject individual frames on the real MPV socket; decoding and the application stay live.
 const connect = net.createConnection;
+const spawn = childProcess.spawn;
+let player = null;
 let mode = null;
 let decoderRestrictions = {};
 let expectedSpeed = null;
@@ -40,6 +44,14 @@ const hold = (entry, send) => {
 };
 
 globalThis.__lumenMpvWire = {
+  async crash() {
+    const child = player;
+    if (!child || child.exitCode !== null || child.signalCode !== null)
+      throw new Error("MPV child is not running");
+    const exited = once(child, "exit");
+    if (!child.kill("SIGKILL")) throw new Error("Could not terminate the MPV child");
+    await exited;
+  },
   restrictDecoders(value) {
     decoderRestrictions = value;
   },
@@ -84,6 +96,15 @@ globalThis.__lumenMpvWire = {
       write(`${JSON.stringify({ command: args, request_id: id })}\n`, "utf8");
     });
   },
+};
+childProcess.spawn = (...args) => {
+  const child = spawn(...args);
+  if (
+    Array.isArray(args[1]) &&
+    args[1].some((arg) => arg.startsWith("--input-ipc-server=") && arg.includes("lumen-mpv-"))
+  )
+    player = child;
+  return child;
 };
 net.createConnection = (...args) => {
   const connected = connect(...args);
