@@ -7,18 +7,20 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MediaFile } from "../../apps/desktop/src/main/media-store/MediaFile";
 import { defaultGeometry, MediaStore } from "../../apps/desktop/src/main/media-store/MediaStore";
-import { MediaPreload } from "../../apps/desktop/src/main/player/MediaPreload";
+import { MediaPreload, startupRanges } from "../../apps/desktop/src/main/player/MediaPreload";
 import { expect, test } from "./support/server";
 
 const CHUNK = defaultGeometry.chunkBytes;
 
 /**
  * A server holding one file, answering ranges as Lumen's server does. A request from the start
- * sends `headBytes` and then holds the rest back, as a long file is still arriving while the
- * player looks elsewhere in it.
+ * sends `headBytes` and then holds the rest back until released, as a long file is still
+ * arriving while the player looks elsewhere in it.
  */
 const serveFile = async (media: Buffer, revision: string, headBytes: number) => {
   const starts: number[] = [];
+  const held: Array<() => void> = [];
+  let holding = true;
   const server: HttpServer = createServer((request, response) => {
     const match = /bytes=(\d+)-(\d*)/u.exec(request.headers.range ?? "");
     const start = Number(match?.[1] ?? 0);
@@ -29,8 +31,10 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
       "content-range": `bytes ${start}-${end}/${media.length}`,
       etag: revision,
     });
-    if (start === 0) response.write(media.subarray(0, Math.min(headBytes, end + 1)));
-    else response.end(media.subarray(start, end + 1));
+    if (start === 0 && holding) {
+      response.write(media.subarray(0, Math.min(headBytes, end + 1)));
+      held.push(() => response.end(media.subarray(Math.min(headBytes, end + 1), end + 1)));
+    } else response.end(media.subarray(start, end + 1));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -38,6 +42,10 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
   return {
     origin: `http://127.0.0.1:${address.port}`,
     starts,
+    release: () => {
+      holding = false;
+      for (const send of held.splice(0)) send();
+    },
     close: () =>
       new Promise<void>((resolve) => {
         server.close(() => resolve());
@@ -239,6 +247,44 @@ test("the start and end of the next file, preloaded into memory, serve the playe
     expect(upstream.starts.slice(fetched)).toContain(0);
   } finally {
     preload.drop();
+    await stream.dispose();
+  }
+});
+
+test("what a player reads before its first frame is fetched at once, to the byte, and kept while it seeks", async () => {
+  // The server sends the start of the file and holds the rest back, so the other ranges can
+  // only arrive if nothing waits on the start.
+  const stream = await streamedFile(20 * CHUNK, 64 * 1024);
+  try {
+    const { media, file, upstream } = stream;
+    const size = media.length;
+    const at = Math.round(size * 0.6);
+    const ranges = startupRanges(size, 100, 60);
+    file.warm(ranges);
+    await expect.poll(() => upstream.starts.length).toBe(3);
+    expect(upstream.starts.toSorted((a, b) => a - b)).toEqual(
+      ranges.map(([start]) => start).toSorted((a, b) => a - b),
+    );
+    const startsAt = (offset: number) => upstream.starts.filter((start) => start === offset);
+    const matches = async (start: number, end: number) =>
+      expect((await stream.read(start, end)).equals(media.subarray(start, end))).toBe(true);
+    // The way MPV resumes a Matroska file: its headers, the index at the end, then the cluster.
+    await matches(0, 4096);
+    await matches(size - 7000, size);
+    await matches(at - 100 * 1024, at + 300 * 1024);
+    // Seeking around asks for more places than a player may fetch at once.
+    for (const chunk of [3, 6, 9, 16]) await stream.readThenLeave(chunk * CHUNK, 64 * 1024);
+    // None of that cost the start its fetch, nor the end and resume point their bytes.
+    upstream.release();
+    await matches(0, CHUNK);
+    await matches(size - 7000, size);
+    await matches(at - 100 * 1024, at + 300 * 1024);
+    for (const [start] of ranges) expect(startsAt(start)).toHaveLength(1);
+    // Once no player reads the file, they are let go.
+    file.releaseMemory();
+    await matches(size - 7000, size);
+    expect(startsAt(19 * CHUNK)).toHaveLength(1);
+  } finally {
     await stream.dispose();
   }
 });

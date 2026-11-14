@@ -22,6 +22,7 @@ import {
 } from "@lumen/contracts";
 import { app, powerSaveBlocker } from "electron";
 import type { ServerClient } from "../api/ServerClient";
+import { ignoreFailure } from "../failures";
 import { mediaSpecOf } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
 import { collectAudioDiagnostics } from "./AudioDiagnostics";
@@ -31,11 +32,13 @@ import { MediaPreload } from "./MediaPreload";
 import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import {
+  type HeldMedia,
   isDecoderError,
   MediaDecodeFailure,
   MediaLoadCancelled,
   MpvMediaSource,
   mediaFailure,
+  openHeldMedia,
 } from "./MpvMediaSource";
 import { MpvProcess } from "./MpvProcess";
 import type { MpvSurface } from "./MpvSurface";
@@ -152,7 +155,14 @@ export class PlayerController extends EventEmitter {
     let ipc: MpvIpc | null = reused?.ipc ?? null;
     let sessionReporter: PlaybackSessionReporter | null = null;
     let media: MpvMediaSource | null = null;
+    let held: Promise<HeldMedia | null> | null = null;
     let startedActive: ActiveSession | null = null;
+    const startAtSeconds =
+      input.startAtSeconds !== undefined &&
+      Number.isFinite(input.startAtSeconds) &&
+      input.startAtSeconds > 0
+        ? input.startAtSeconds
+        : 0;
     try {
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       this.diagnosticsItemId = input.itemId;
@@ -165,6 +175,19 @@ export class PlayerController extends EventEmitter {
       );
       sessionReporter = reporter;
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
+      // What the player reads first is fetched while MPV starts, not when it asks.
+      if (this.store !== undefined) {
+        held = openHeldMedia({
+          store: this.store,
+          client: input.client,
+          session,
+          diagnostics,
+          startAtSeconds,
+          takePreload: (spec) => this.preload?.take(spec) ?? null,
+        });
+        // A file that failed to open is reported by the load that awaits it.
+        held.catch(ignoreFailure);
+      }
       if (playerProcess === null || ipc === null) {
         const spawned = MpvProcess.start({
           cwd: process.cwd(),
@@ -208,8 +231,7 @@ export class PlayerController extends EventEmitter {
         connectionId: input.connectionId,
         diagnostics,
         active: () => this.active?.session === session,
-        takePreload: (spec) => this.preload?.take(spec) ?? null,
-        ...(this.store === undefined ? {} : { store: this.store }),
+        ...(held === null ? {} : { held }),
       });
       const sessionIpc = ipc;
       const onMediaFailure = (cause: Error) => {
@@ -284,12 +306,6 @@ export class PlayerController extends EventEmitter {
       await ipc.command(["set_property", "audio-channels", audioOutput]);
       await ipc.command(["set_property", "volume", volume]);
       await ipc.command(["set_property", "mute", muted ? "yes" : "no"]);
-      const startAtSeconds =
-        input.startAtSeconds !== undefined &&
-        Number.isFinite(input.startAtSeconds) &&
-        input.startAtSeconds > 0
-          ? input.startAtSeconds
-          : 0;
       active.loaded = true;
       await active.media.start(startAtSeconds);
       // Whatever was preloaded and not taken was for another item.
@@ -348,6 +364,8 @@ export class PlayerController extends EventEmitter {
         else await startedActive.stopping;
       } else {
         if (this.active === null && generation === this.startGeneration) this.surface.hide();
+        // Until the media source exists, nothing else lets go of the file.
+        if (media === null) void held?.then((opened) => opened?.release(), ignoreFailure);
         await this.cleanup({
           reporter: sessionReporter,
           process: playerProcess,

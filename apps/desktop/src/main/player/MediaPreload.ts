@@ -29,6 +29,34 @@ export const preloadChunks = (
   return [...chunks].sort((a, b) => a - b);
 };
 
+const STARTUP_HEAD_BYTES = 64 * 1024;
+const STARTUP_TAIL_BYTES = 128 * 1024;
+const STARTUP_RESUME_BYTES = 512 * 1024;
+
+/**
+ * The bytes a player reads before its first frame of a file it opens now: the headers at the
+ * start, the index at the end, and around where resuming lands, estimated at an even bitrate.
+ * They share the link with one another, so each is only as large as a player usually reads.
+ */
+export const startupRanges = (
+  sizeBytes: number,
+  durationSeconds: number | null,
+  positionSeconds: number,
+): ReadonlyArray<readonly [number, number]> => {
+  const ranges: Array<readonly [number, number]> = [
+    [0, Math.min(sizeBytes, STARTUP_HEAD_BYTES)],
+    [Math.max(0, sizeBytes - STARTUP_TAIL_BYTES), sizeBytes],
+  ];
+  if (durationSeconds !== null && durationSeconds > 0 && positionSeconds > 0) {
+    const at = Math.round(sizeBytes * Math.min(1, positionSeconds / durationSeconds));
+    ranges.push([
+      Math.max(0, at - STARTUP_RESUME_BYTES),
+      Math.min(sizeBytes, at + STARTUP_RESUME_BYTES),
+    ]);
+  }
+  return ranges;
+};
+
 export interface PreloadRequest {
   readonly spec: MediaSpec;
   readonly origin: string;
@@ -75,15 +103,12 @@ export class MediaPreload {
     const wanted = preloadChunks(spec.sizeBytes, request.durationSeconds, this.chunkBytes).filter(
       (chunk) => !request.held(chunk),
     );
+    const runs = await Promise.allSettled(
+      runsOf(wanted).map((run) => this.fetchRun(request, pending, run)),
+    );
     let bytes = 0;
-    try {
-      for (const run of runsOf(wanted)) {
-        bytes += await this.fetchRun(request, pending, run);
-      }
-      return { bytes, failed: false };
-    } catch {
-      return { bytes, failed: true };
-    }
+    for (const run of runs) if (run.status === "fulfilled") bytes += run.value;
+    return { bytes, failed: runs.some((run) => run.status === "rejected") };
   }
 
   /** Hands over what is held for this file, if anything, and lets it go. */

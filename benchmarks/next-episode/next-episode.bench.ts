@@ -1,10 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { copyFile, mkdir, writeFile } from "node:fs/promises";
-import { request } from "node:http";
 import { join } from "node:path";
-import { Transform } from "node:stream";
 import { connectDesktop, expect, test } from "../../tests/e2e/support/desktop";
-import { NetworkProxy } from "../../tests/e2e/support/proxy";
+import { median, slowLink } from "../slow-link";
 
 // Times "next episode" in the real desktop app, from the action to MPV playing the episode.
 // LUMEN_NEXT_EPISODE_MEDIA plays a file of your own; otherwise a 1080p Matroska file is made.
@@ -20,46 +18,6 @@ const marks = [
   "media_delivery",
   "playback_ready",
 ] as const;
-
-const median = (values: number[]) => {
-  const sorted = values.toSorted((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  return sorted.length % 2 === 0
-    ? ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
-    : (sorted[middle] ?? 0);
-};
-
-/** Puts the server behind a link with the configured latency and bandwidth. */
-const slowLink = async (upstream: string) => {
-  const proxy = await new NetworkProxy(upstream).start();
-  let linkFreeAtMs = 0;
-  const pace = () =>
-    new Transform({
-      transform(chunk: Buffer, _encoding, callback) {
-        if (megabitsPerSecond <= 0) return callback(null, chunk);
-        const now = performance.now();
-        linkFreeAtMs =
-          Math.max(now, linkFreeAtMs) + (chunk.byteLength * 8) / (megabitsPerSecond * 1000);
-        setTimeout(() => callback(null, chunk), linkFreeAtMs - now);
-      },
-    });
-  proxy.intercept = async (incoming, response) => {
-    await new Promise((resolve) => setTimeout(resolve, rttMs));
-    const outbound = request(
-      new URL(incoming.url ?? "/", upstream),
-      { method: incoming.method, headers: incoming.headers },
-      (remote) => {
-        response.writeHead(remote.statusCode ?? 502, remote.headers);
-        remote.pipe(pace()).pipe(response);
-      },
-    );
-    outbound.on("error", () => response.destroy());
-    response.on("close", () => outbound.destroy());
-    incoming.pipe(outbound);
-    return true;
-  };
-  return proxy;
-};
 
 test("next episode", async ({ server, admin, desktop }) => {
   test.setTimeout(900_000);
@@ -84,7 +42,10 @@ test("next episode", async ({ server, admin, desktop }) => {
     (item) => item.kind === "show",
   );
   const { page } = desktop;
-  const link = rttMs > 0 || megabitsPerSecond > 0 ? await slowLink(server.origin) : null;
+  const link =
+    rttMs > 0 || megabitsPerSecond > 0
+      ? await slowLink(server.origin, rttMs, megabitsPerSecond)
+      : null;
   await connectDesktop(page, link ?? server);
   await page.evaluate((route) => {
     location.hash = route;

@@ -98,6 +98,8 @@ interface Fetch {
   /** Paced by the readers: it fetches only a window ahead of them. */
   readonly paced: boolean;
   readonly background: boolean;
+  /** Fetched before any reader asks, at full speed, and held until no player reads the file. */
+  readonly warm: boolean;
   readonly controller: AbortController;
   cursor: number;
   done: Promise<void>;
@@ -161,6 +163,8 @@ export class MediaFile extends EventEmitter {
   private readonly memoryStore: MemoryByteStore;
   /** Memory chunks held before any reader came, which readers moving on do not let go of. */
   private readonly kept = new Set<number>();
+  /** Bytes a warm fetch left in part of a memory chunk, as the start and end it holds. */
+  private readonly partial = new Map<number, readonly [number, number]>();
   private readonly fetches = new Set<Fetch>();
   private readonly readers = new Set<Reader>();
   private readonly sources = new Map<symbol, UpstreamSource>();
@@ -327,6 +331,8 @@ export class MediaFile extends EventEmitter {
     };
     consider(this.disk.heldUntil(position), "disk");
     consider(this.memory.heldUntil(position), "memory");
+    const partial = this.partial.get(this.memory.chunkOf(position));
+    if (partial !== undefined && partial[0] <= position) consider(partial[1], "memory");
     for (const fetch of this.fetches)
       if (this.writingFrom(fetch) <= position && position < fetch.cursor)
         consider(fetch.cursor, fetch.target);
@@ -431,7 +437,20 @@ export class MediaFile extends EventEmitter {
       if (
         this.writingFrom(fetch) <= offset &&
         offset < fetch.end &&
-        offset - fetch.cursor <= this.geometry.chunkBytes * 2
+        // A warm fetch runs unpaced over a short range, so it gets anywhere in it soon.
+        (fetch.warm || offset - fetch.cursor <= this.geometry.chunkBytes * 2)
+      )
+        return true;
+    return false;
+  }
+
+  /** Whether a warm fetch is bringing part of this chunk, which nothing else should fetch meanwhile. */
+  private warming(chunk: number): boolean {
+    for (const fetch of this.fetches)
+      if (
+        fetch.warm &&
+        fetch.start < this.disk.endOf(chunk) &&
+        this.disk.startOf(chunk) < fetch.end
       )
         return true;
     return false;
@@ -440,27 +459,79 @@ export class MediaFile extends EventEmitter {
   /** Makes sure a fetch is bringing the bytes at `offset`. */
   demand(offset: number): void {
     if (this.closed || this.changed || this.covered(offset)) return;
-    const foreground = [...this.fetches].filter((fetch) => !fetch.background);
+    const foreground = [...this.fetches].filter((fetch) => !fetch.background && !fetch.warm);
     // A player asks for new places as it seeks, so the oldest request is the one it has left.
     if (foreground.length >= MAX_FOREGROUND_FETCHES) foreground[0]?.controller.abort();
-    this.startFetch(offset, false);
+    this.startFetch(offset, "reader");
   }
 
-  private startFetch(offset: number, background: boolean): Fetch | null {
+  /**
+   * Fetches the bytes a player is about to read, every range at once and at full speed, so it
+   * does not discover them one round trip at a time. In memory each range starts at its exact
+   * byte, as a player may need a few kilobytes where a chunk costs the link a megabyte; the disk
+   * records whole chunks only. Each runs to the end of a chunk, so what a reader goes on to fetch
+   * after it starts on a chunk of its own.
+   */
+  warm(ranges: ReadonlyArray<readonly [number, number]>): void {
+    if (this.closed || this.changed || this.sources.size === 0) return;
+    const whole = this.wantsDisk();
+    const wanted = ranges
+      .filter(([start, end]) => start < end && start < this.spec.sizeBytes)
+      .map(([start, end]) => ({
+        start: whole
+          ? this.disk.startOf(this.disk.chunkOf(Math.max(0, start)))
+          : Math.max(0, start),
+        end: this.disk.endOf(this.disk.chunkOf(Math.min(this.spec.sizeBytes, end) - 1)),
+      }))
+      .sort((a, b) => a.start - b.start);
+    let reached = 0;
+    for (const { start, end } of wanted) {
+      let offset = Math.max(start, reached);
+      while (offset < end) {
+        const held = this.heldAt(offset);
+        if (held !== null) {
+          offset = held.until;
+          continue;
+        }
+        let after = this.disk.chunkOf(offset) + 1;
+        while (this.disk.startOf(after) < end && !this.isHeld(after)) after += 1;
+        const until = Math.min(end, this.disk.startOf(after));
+        this.launch(offset, until, "warm");
+        offset = until;
+      }
+      reached = Math.max(reached, end);
+    }
+  }
+
+  private startFetch(offset: number, kind: "reader" | "download"): Fetch | null {
     const first = this.disk.chunkOf(offset);
     if (first >= this.disk.count) return null;
     let after = first;
-    while (after < this.disk.count && !this.isHeld(after)) after += 1;
+    while (
+      after < this.disk.count &&
+      !this.isHeld(after) &&
+      (after === first || !this.warming(after))
+    )
+      after += 1;
     if (after === first) return null;
-    const target: Target = this.wantsDisk() ? "disk" : "memory";
+    return this.launch(
+      this.disk.startOf(first),
+      after >= this.disk.count ? this.spec.sizeBytes : this.disk.startOf(after),
+      kind,
+    );
+  }
+
+  private launch(start: number, end: number, kind: "reader" | "download" | "warm"): Fetch {
+    const background = kind === "download";
     const fetch: Fetch = {
-      start: this.disk.startOf(first),
-      end: after >= this.disk.count ? this.spec.sizeBytes : this.disk.startOf(after),
-      target,
-      paced: this.pins === 0,
+      start,
+      end,
+      target: this.wantsDisk() ? "disk" : "memory",
+      paced: this.pins === 0 && kind !== "warm",
       background,
+      warm: kind === "warm",
       controller: new AbortController(),
-      cursor: this.disk.startOf(first),
+      cursor: start,
       done: Promise.resolve(),
     };
     this.fetches.add(fetch);
@@ -572,9 +643,16 @@ export class MediaFile extends EventEmitter {
   private markWritten(fetch: Fetch, before: number): void {
     const map = fetch.target === "disk" ? this.disk : this.memory;
     for (let chunk = map.chunkOf(before); chunk < map.count; chunk += 1) {
-      if (map.startOf(chunk) < fetch.start) continue;
+      const whole = map.startOf(chunk) >= fetch.start && map.endOf(chunk) <= fetch.cursor;
+      if (whole) {
+        map.set(chunk);
+        if (fetch.target === "memory") this.partial.delete(chunk);
+        if (fetch.warm && fetch.target === "memory") this.kept.add(chunk);
+      } else if (fetch.warm && fetch.target === "memory") {
+        const from = Math.max(fetch.start, map.startOf(chunk));
+        this.partial.set(chunk, [from, Math.min(fetch.cursor, map.endOf(chunk))]);
+      }
       if (map.endOf(chunk) > fetch.cursor) break;
-      map.set(chunk);
     }
     if (fetch.target === "disk") {
       this.touch(fetch.cursor - 1);
@@ -596,11 +674,12 @@ export class MediaFile extends EventEmitter {
     this.memory.clear(chunk);
     this.memoryStore.dropChunk(chunk);
     this.kept.delete(chunk);
+    this.partial.delete(chunk);
   }
 
   /**
    * Holds chunks fetched before the file opened, such as the start of the next episode. They
-   * stay in memory until no player reads the file, however far its readers move.
+   * stay in memory until no player reads the file, however far its readers move, as warm ones do.
    */
   async adoptMemory(chunks: ReadonlyMap<number, Buffer>): Promise<number> {
     let adopted = 0;
@@ -619,7 +698,7 @@ export class MediaFile extends EventEmitter {
   /** Lets go of every chunk held in memory, once no player reads the file. */
   releaseMemory(): void {
     for (let chunk = 0; chunk < this.memory.count; chunk += 1)
-      if (this.memory.has(chunk)) this.dropMemory(chunk);
+      if (this.memory.has(chunk) || this.partial.has(chunk)) this.dropMemory(chunk);
   }
 
   private markChanged(): void {
@@ -645,7 +724,10 @@ export class MediaFile extends EventEmitter {
       const offset = this.disk.startOf(chunk);
       const running = [...this.fetches].find(
         (fetch) =>
-          fetch.target === "disk" && fetch.start <= offset && offset < fetch.end && !fetch.paced,
+          (fetch.target === "disk" || fetch.warm) &&
+          fetch.start < this.disk.endOf(chunk) &&
+          offset < fetch.end &&
+          !fetch.paced,
       );
       if (running !== undefined) {
         await this.nextChange(signal, 1_000);
@@ -653,7 +735,7 @@ export class MediaFile extends EventEmitter {
       }
       // Anything in memory there is dropped: the disk copy is the one that lasts.
       if (this.memory.has(chunk)) this.dropMemory(chunk);
-      const fetch = this.startFetch(offset, true);
+      const fetch = this.startFetch(offset, "download");
       if (fetch === null) continue;
       const stop = () => fetch.controller.abort();
       signal.addEventListener("abort", stop, { once: true });
