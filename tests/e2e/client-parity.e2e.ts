@@ -31,9 +31,13 @@ test("real desktop and browser render shared routes, forms and menus with matchi
     }, route);
     for (const current of [page, desktop.page]) {
       await expect(
-        current
-          .getByRole("navigation", { name: "Primary" })
-          .getByRole("link", { name: "movies", exact: true }),
+        route === "/settings"
+          ? current
+              .getByRole("navigation", { name: "Settings" })
+              .getByRole("link", { name: "Playback", exact: true })
+          : current
+              .getByRole("navigation", { name: "Primary" })
+              .getByRole("link", { name: "movies", exact: true }),
       ).toBeVisible();
       await expect(current.locator(".main-content").first()).toBeVisible();
     }
@@ -78,12 +82,22 @@ test("real desktop and browser render shared routes, forms and menus with matchi
   await expect(
     page.getByRole("navigation", { name: "Primary" }).getByRole("link", { name: "Downloads" }),
   ).toHaveCount(0);
-  await page.goto(`${server.origin}web/settings`);
+  await page.goto(`${server.origin}web/settings/server`);
   await desktop.page.evaluate(() => {
-    location.hash = "/settings";
+    location.hash = "/settings/server";
   });
-  await expect(desktop.page.getByRole("heading", { name: "Downloads and storage" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Downloads and storage" })).toHaveCount(0);
+  await expect(
+    desktop.page
+      .getByRole("navigation", { name: "Settings" })
+      .getByRole("link", { name: "Downloads" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "Settings" }).getByRole("link", { name: "Downloads" }),
+  ).toHaveCount(0);
+  // A category this client does not have falls back to the first one.
+  await page.goto(`${server.origin}web/settings/downloads`);
+  await expect(page).toHaveURL(/\/web\/settings\/playback$/);
+  await page.goto(`${server.origin}web/settings/server`);
   await expect(desktop.page.getByRole("button", { name: "Switch server…" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Switch server…" })).toHaveCount(0);
   for (const current of [page, desktop.page]) {

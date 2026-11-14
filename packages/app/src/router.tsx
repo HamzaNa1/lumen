@@ -1,5 +1,5 @@
 import type { RouterHistory } from "@tanstack/history";
-import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
 import { App } from "./App";
 import { HomePage, LibraryIndexPage, LibraryPage, SearchPage } from "./BrowsePages";
@@ -7,7 +7,13 @@ import { DownloadsPage } from "./Downloads";
 import { EpisodePage, ItemPage, SeasonPage, ShowPage } from "./ItemPages";
 import { JobLogPage } from "./JobLogPage";
 import { PlayerPage } from "./PlayerPage";
-import { SettingsPage } from "./SettingsPage";
+import {
+  DownloadSettingsPage,
+  PlaybackSettingsPage,
+  ServerSettingsPage,
+  TranscodingSettingsPage,
+  UpdateSettingsPage,
+} from "./SettingsPage";
 
 const rootRoute = createRootRoute({ component: App });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
@@ -62,8 +68,19 @@ const downloadsRoute = createRoute({
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
-  component: SettingsPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/settings/playback", replace: true });
+  },
 });
+const settingsCategoryRoutes = (
+  [
+    ["/settings/playback", PlaybackSettingsPage],
+    ["/settings/downloads", DownloadSettingsPage],
+    ["/settings/transcoding", TranscodingSettingsPage],
+    ["/settings/updates", UpdateSettingsPage],
+    ["/settings/server", ServerSettingsPage],
+  ] as const
+).map(([path, component]) => createRoute({ getParentRoute: () => rootRoute, path, component }));
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/admin",
@@ -92,6 +109,7 @@ const routeTree = rootRoute.addChildren([
   playerRoute,
   downloadsRoute,
   settingsRoute,
+  ...settingsCategoryRoutes,
   adminRoute,
   adminUsersRoute,
   jobLogRoute,

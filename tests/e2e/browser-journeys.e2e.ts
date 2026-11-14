@@ -30,15 +30,38 @@ test("browser sign-in protects cookies, restores routes and propagates logout ac
       JSON.stringify({ cookie: document.cookie, localStorage, sessionStorage }),
     ),
   ).not.toContain(cookie?.value ?? "missing");
-  for (const path of ["search", "settings", "admin", "admin/users", "admin/jobs", "library"]) {
+  for (const path of [
+    "search",
+    "settings/server",
+    "admin",
+    "admin/users",
+    "admin/jobs",
+    "library",
+  ]) {
     await page.goto(`${server.origin}web/${path}`);
-    await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+    await expect(
+      page.getByRole("navigation", { name: path.startsWith("settings") ? "Settings" : "Primary" }),
+    ).toBeVisible();
     await page.reload();
     await expect(page.locator(".page").first()).toBeVisible();
   }
+  // Settings categories replace each other, so Back returns to where settings was opened.
+  await page.goto(`${server.origin}web/search`);
+  await page.locator(".account-trigger").click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsNav = page.getByRole("navigation", { name: "Settings" });
+  await settingsNav.getByRole("link", { name: "Transcoding" }).click();
+  await settingsNav.getByRole("link", { name: "Server" }).click();
+  await expect(page).toHaveURL(/\/web\/settings\/server$/);
+  await settingsNav.getByRole("button", { name: "Back" }).click();
+  await expect(page).toHaveURL(/\/web\/search$/);
+  await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  // Opened directly, there is nowhere to go back to, so Back goes home.
   const other = await context.newPage();
   await other.goto(`${server.origin}web/settings`);
-  await expect(other.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  await expect(other.getByRole("heading", { name: "Playback" })).toBeVisible();
+  await other.getByRole("button", { name: "Back" }).click();
+  await expect(other).toHaveURL(/\/web\/$/);
   await page.goto(`${server.origin}web/settings`);
   await page.locator(".account-trigger").click();
   await page.getByRole("menuitem", { name: /Sign out/ }).click();
@@ -498,7 +521,11 @@ test("administrators configure transcoding from Settings and persist changes", a
 }, testInfo) => {
   await signIn(page, server);
   await page.goto(`${server.origin}web/settings`);
-  const panel = page.getByRole("region", { name: "Server transcoding" });
+  await page
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("link", { name: "Transcoding" })
+    .click();
+  const panel = page.locator(".page");
   await expect(panel.getByRole("switch", { name: /^Enable transcoding/ })).toBeChecked();
   await panel.getByLabel("CPU threads per job", { exact: true }).fill("3");
   let finishSave = () => {};

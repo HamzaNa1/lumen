@@ -293,6 +293,13 @@ body:has(.app-shell) {
     background 120ms ease,
     color 120ms ease;
 }
+.nav-back {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  cursor: pointer;
+}
 .nav-item > svg {
   flex: none;
   color: var(--text-tertiary);
