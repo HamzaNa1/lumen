@@ -15,8 +15,31 @@ const captureSpeed = async (
   const playback = owner.status.group?.playback;
   expect(playback?.paused).toBe(false);
   if (!playback) throw new Error("Group playback is missing");
-  const startedAtMs = Date.now();
-  const attempt = await wire.disturb(mode, watchPosition(playback, owner.serverNow));
+  let startedAtMs = Date.now();
+  let attempt = await wire.disturb(mode, watchPosition(playback, owner.serverNow));
+  if (mode === "fail-speed") {
+    const rejected = async () =>
+      (await wire.snapshot()).commands.find(
+        (entry) => entry.id > attempt.afterId && entry.outcome === "rejected",
+      );
+    await expect.poll(rejected).toMatchObject({
+      command: ["set_property", "speed", attempt.expectedSpeed],
+    });
+    const failedId = (await rejected())?.id ?? Infinity;
+    await expect
+      .poll(async () =>
+        (await wire.snapshot()).commands.find(
+          (entry) => entry.id > failedId && isSpeed(entry) && entry.error === "success",
+        ),
+      )
+      .toMatchObject({ command: ["set_property", "speed", 1] });
+    await wire.release();
+    const resumed = owner.status.group?.playback;
+    if (!resumed) throw new Error("Group playback is missing after speed recovery");
+    // Real playback can settle inside the deadband after the rejection; create a new drift.
+    startedAtMs = Date.now();
+    attempt = await wire.disturb("hold-speed", watchPosition(resumed, owner.serverNow));
+  }
   await expect
     .poll(async () => (await wire.snapshot()).captured, {
       timeout: 8000,
@@ -164,7 +187,7 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
               .poll(() => wire.command(["get_property", "speed"]))
               .toBe(initialCorrection);
           }
-          const { afterId, expectedSpeed, captured, startedAtMs } = await captureSpeed(
+          const { expectedSpeed, captured, startedAtMs } = await captureSpeed(
             wire,
             owner,
             scenario === "fail-speed" ? "fail-speed" : "hold-speed",
@@ -184,21 +207,6 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
             expect(Math.abs(drift)).toBeGreaterThanOrEqual(0.15);
             expect(Math.abs(drift)).toBeLessThan(1);
             expect(Math.sign(drift)).toBe(Math.sign(expectedSpeed - 1));
-          }
-          if (scenario === "fail-speed") {
-            const attempts = (await wire.snapshot()).commands.filter(
-              (entry) => entry.id > afterId && entry.id < captured.id && isSpeed(entry),
-            );
-            const rejected = attempts.find((entry) => entry.outcome === "rejected");
-            expect(rejected?.command).toEqual(["set_property", "speed", expectedSpeed]);
-            expect(
-              attempts.some(
-                (entry) =>
-                  entry.id > (rejected?.id ?? Infinity) &&
-                  entry.command[2] === 1 &&
-                  entry.error === "success",
-              ),
-            ).toBe(true);
           }
           const leaving =
             scenario === "disconnect"
