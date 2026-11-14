@@ -204,8 +204,8 @@ const go = (page: Page, route: string) =>
   }, route);
 
 const openSettings = async (page: Page) => {
-  await go(page, "/settings");
-  await expect(page.getByRole("heading", { name: "Downloads and storage" })).toBeVisible();
+  await go(page, "/settings/downloads");
+  await expect(page.getByRole("combobox", { name: "Streaming cache" })).toBeVisible();
 };
 
 const leavePlayer = async (page: Page) => {

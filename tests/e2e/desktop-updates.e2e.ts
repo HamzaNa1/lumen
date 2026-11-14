@@ -328,7 +328,9 @@ releaseTest(
       window.location.hash = "#/settings";
     });
     await expect(page.getByRole("heading", { name: "Playback" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: "Updates" })).toHaveCount(0);
+    const settingsNav = page.getByRole("navigation", { name: "Settings" });
+    await expect(settingsNav.getByRole("link", { name: "General" })).toBeVisible();
+    await expect(settingsNav.getByRole("link", { name: "Updates" })).toHaveCount(0);
     // The button follows what the main process reports, as an installer's download would.
     const report = (status: AppUpdateStatus) =>
       app.evaluate(({ BrowserWindow }, status) => {
@@ -341,9 +343,12 @@ releaseTest(
     });
     const downloading = page.getByRole("button", { name: "Downloading Lumen 9999.0.0, 40%" });
     await expect(downloading).toHaveAttribute("data-state", "active");
+    await settingsNav.getByRole("link", { name: "Updates" }).click();
+    await expect(page.getByRole("switch", { name: /^Update automatically/ })).toBeChecked();
     // The download finishes while the sidebar is not on screen; it must not miss that.
+    await settingsNav.getByRole("link", { name: "General" }).click();
     await page.getByRole("button", { name: "Switch server…" }).click();
-    await expect(page.getByRole("navigation", { name: "Primary" })).toHaveCount(0);
+    await expect(page.locator(".sidebar")).toHaveCount(0);
     await report({ automatic: true, update: { version: "9999.0.0", phase: "ready", progress: 1 } });
     await page.getByRole("button", { name: "Back", exact: true }).click();
     await expect(

@@ -20,7 +20,7 @@ export const useAppUpdateChanges = (): void => {
   );
 };
 
-const useAppUpdateStatus = (updates: AppUpdatesRuntime) =>
+export const useAppUpdateStatus = (updates: AppUpdatesRuntime) =>
   useQuery({ queryKey: APP_UPDATES_KEY, queryFn: updates.status, staleTime: Infinity });
 
 /** A newer version of the app, beside the brand until the viewer installs it. */
@@ -93,18 +93,15 @@ export const AppUpdateSettings = ({
   const automatic = status.data?.automatic ?? null;
   if (automatic === null) return null;
   return (
-    <section className="settings-group" aria-labelledby="settings-updates">
-      <h2 id="settings-updates">Updates</h2>
-      <div className="settings-card">
-        <div className="settings-row">
-          <SwitchField
-            label="Update automatically"
-            description="New versions download in the background and install the next time Lumen starts."
-            checked={automatic}
-            onCheckedChange={(checked) => setAutomatic.mutate(checked)}
-          />
-        </div>
+    <div className="settings-card">
+      <div className="settings-row">
+        <SwitchField
+          label="Update automatically"
+          description="New versions download in the background and install the next time Lumen starts."
+          checked={automatic}
+          onCheckedChange={(checked) => setAutomatic.mutate(checked)}
+        />
       </div>
-    </section>
+    </div>
   );
 };

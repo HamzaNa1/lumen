@@ -708,65 +708,62 @@ export const DownloadSettingsSection = (): React.ReactElement | null => {
   if (runtime.downloads === null || state.data == null) return null;
   const { settings, usage } = state.data;
   return (
-    <section className="settings-group" aria-labelledby="settings-downloads">
-      <h2 id="settings-downloads">Downloads and storage</h2>
-      <div className="settings-card">
-        <Row
-          label="Streaming cache"
-          description="Keeps recently streamed video on this device so going back or rewatching doesn’t download it again. Downloads aren’t affected."
-        >
-          {usage.cacheBytes > 0 ? (
-            <Button size="sm" variant="ghost" onClick={() => clear.mutate(undefined)}>
-              Clear {formatBytes(usage.cacheBytes)}
-            </Button>
-          ) : null}
-          <SelectField
-            label="Streaming cache"
-            hideLabel
-            value={settings.streamingCache}
-            disabled={update.isPending}
-            options={cacheOptions}
-            onValueChange={(streamingCache) => update.mutate({ streamingCache })}
-          />
-        </Row>
-        <FreeSpaceLimitRow
-          value={settings.minimumFreeSpacePercent}
-          totalBytes={usage.totalBytes}
-          disabled={update.isPending}
-          onCommit={(minimumFreeSpacePercent) => update.mutate({ minimumFreeSpacePercent })}
-        />
-        <Row
-          label="Delete watched downloads"
-          description="Downloads you keep are never deleted automatically."
-        >
-          <SelectField
-            label="Delete watched downloads"
-            hideLabel
-            value={settings.deleteWatchedAfter}
-            disabled={update.isPending}
-            options={watchedOptions}
-            onValueChange={(deleteWatchedAfter) => update.mutate({ deleteWatchedAfter })}
-          />
-        </Row>
-        <Row label="Remove downloads not opened in">
-          <SelectField
-            label="Remove downloads not opened in"
-            hideLabel
-            value={settings.removeUnopenedAfter}
-            disabled={update.isPending}
-            options={unopenedOptions}
-            onValueChange={(removeUnopenedAfter) => update.mutate({ removeUnopenedAfter })}
-          />
-        </Row>
-        {update.isError || clear.isError ? (
-          <p className="form-error" role="alert">
-            <CircleAlert aria-hidden="true" size={15} />
-            <span>
-              {errorMessage(update.error ?? clear.error, "Could not save download settings")}
-            </span>
-          </p>
+    <div className="settings-card">
+      <Row
+        label="Streaming cache"
+        description="Keeps recently streamed video on this device so going back or rewatching doesn’t download it again. Downloads aren’t affected."
+      >
+        {usage.cacheBytes > 0 ? (
+          <Button size="sm" variant="ghost" onClick={() => clear.mutate(undefined)}>
+            Clear {formatBytes(usage.cacheBytes)}
+          </Button>
         ) : null}
-      </div>
-    </section>
+        <SelectField
+          label="Streaming cache"
+          hideLabel
+          value={settings.streamingCache}
+          disabled={update.isPending}
+          options={cacheOptions}
+          onValueChange={(streamingCache) => update.mutate({ streamingCache })}
+        />
+      </Row>
+      <FreeSpaceLimitRow
+        value={settings.minimumFreeSpacePercent}
+        totalBytes={usage.totalBytes}
+        disabled={update.isPending}
+        onCommit={(minimumFreeSpacePercent) => update.mutate({ minimumFreeSpacePercent })}
+      />
+      <Row
+        label="Delete watched downloads"
+        description="Downloads you keep are never deleted automatically."
+      >
+        <SelectField
+          label="Delete watched downloads"
+          hideLabel
+          value={settings.deleteWatchedAfter}
+          disabled={update.isPending}
+          options={watchedOptions}
+          onValueChange={(deleteWatchedAfter) => update.mutate({ deleteWatchedAfter })}
+        />
+      </Row>
+      <Row label="Remove downloads not opened in">
+        <SelectField
+          label="Remove downloads not opened in"
+          hideLabel
+          value={settings.removeUnopenedAfter}
+          disabled={update.isPending}
+          options={unopenedOptions}
+          onValueChange={(removeUnopenedAfter) => update.mutate({ removeUnopenedAfter })}
+        />
+      </Row>
+      {update.isError || clear.isError ? (
+        <p className="form-error" role="alert">
+          <CircleAlert aria-hidden="true" size={15} />
+          <span>
+            {errorMessage(update.error ?? clear.error, "Could not save download settings")}
+          </span>
+        </p>
+      ) : null}
+    </div>
   );
 };

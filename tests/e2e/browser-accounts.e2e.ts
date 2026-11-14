@@ -146,6 +146,13 @@ test("a late unauthorized response and suspended tab cannot erase a newer browse
     await page.reload();
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Administration", exact: true })).toHaveCount(0);
+    // Server settings are for administrators only: hidden, and a direct link falls back.
+    await page.goto(`${server.origin}web/settings/server`);
+    await expect(page).toHaveURL(/\/web\/settings\/playback$/);
+    const settingsNav = page.getByRole("navigation", { name: "Settings" });
+    await expect(settingsNav.getByText("Client", { exact: true })).toBeVisible();
+    await expect(settingsNav.getByText("Server", { exact: true })).toHaveCount(0);
+    await expect(settingsNav.getByRole("link")).toHaveText(["Playback"]);
   } finally {
     held.release();
   }

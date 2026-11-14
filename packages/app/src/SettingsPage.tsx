@@ -1,10 +1,12 @@
+import type { AppUpdatesRuntime } from "@lumen/client/runtime";
 import type { TrackPreferencesPatch } from "@lumen/contracts";
 import { Button, Form, Modal, SelectField, TextField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Navigate } from "@tanstack/react-router";
 import { CircleAlert } from "lucide-react";
 import { type ReactNode, useState } from "react";
-import { AppUpdateSettings } from "./AppUpdates";
-import { DeviceOnly, DownloadSettingsSection } from "./Downloads";
+import { AppUpdateSettings, useAppUpdateStatus } from "./AppUpdates";
+import { DownloadSettingsSection } from "./Downloads";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
 import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
@@ -169,41 +171,91 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
   );
 };
 
-export const SettingsPage = (): React.ReactElement => {
-  const { account, openConnections } = useWorkspace();
-  const { capabilities, appUpdates } = useRuntime();
+const SettingsCategoryPage = ({
+  title,
+  children,
+}: {
+  readonly title: string;
+  readonly children: ReactNode;
+}): React.ReactElement => (
+  <div className="page page-narrow">
+    <PageHeader title={title} />
+    {children}
+  </div>
+);
+
+/** A category this client does not have, or a server one for a viewer, falls back to the first. */
+const toFirstCategory = <Navigate to="/settings/playback" replace />;
+
+export const PlaybackSettingsPage = (): React.ReactElement => {
+  const { account } = useWorkspace();
   return (
-    <div className="page page-narrow">
-      <PageHeader title="Settings" />
-      <section className="settings-group" aria-labelledby="settings-playback">
-        <h2 id="settings-playback">Playback</h2>
-        <div className="settings-card">
-          <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
-        </div>
-      </section>
-      <DeviceOnly>
-        <DownloadSettingsSection />
-      </DeviceOnly>
-      {account.role === "admin" ? (
-        <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
-      ) : null}
-      {appUpdates === null ? null : <AppUpdateSettings updates={appUpdates} />}
-      <section className="settings-group" aria-labelledby="settings-server">
-        <h2 id="settings-server">Server</h2>
-        <div className="settings-card">
-          <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
-            {account.role === "admin" ? <RenameServer serverName={account.serverName} /> : null}
-          </SettingsRow>
-          {capabilities.serverSwitching ? (
-            <div className="settings-row settings-row-actions">
-              <Button onClick={() => openConnections("saved")}>Switch server…</Button>
-              <Button variant="ghost" onClick={() => openConnections("add")}>
-                Add server…
-              </Button>
-            </div>
-          ) : null}
-        </div>
-      </section>
-    </div>
+    <SettingsCategoryPage title="Playback">
+      <div className="settings-card">
+        <TrackSettings key={account.connectionId} connectionId={account.connectionId} />
+      </div>
+    </SettingsCategoryPage>
+  );
+};
+
+export const DownloadSettingsPage = (): React.ReactElement => {
+  const { downloads } = useRuntime();
+  if (downloads === null) return toFirstCategory;
+  return (
+    <SettingsCategoryPage title="Downloads">
+      <DownloadSettingsSection />
+    </SettingsCategoryPage>
+  );
+};
+
+export const TranscodingSettingsPage = (): React.ReactElement => {
+  const { account } = useWorkspace();
+  if (account.role !== "admin") return toFirstCategory;
+  return (
+    <SettingsCategoryPage title="Transcoding">
+      <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
+    </SettingsCategoryPage>
+  );
+};
+
+const UpdateSettings = ({
+  updates,
+}: {
+  readonly updates: AppUpdatesRuntime;
+}): React.ReactElement | null => {
+  const status = useAppUpdateStatus(updates);
+  if (status.data?.automatic === null) return toFirstCategory;
+  return (
+    <SettingsCategoryPage title="Updates">
+      <AppUpdateSettings updates={updates} />
+    </SettingsCategoryPage>
+  );
+};
+
+export const UpdateSettingsPage = (): React.ReactElement => {
+  const { appUpdates } = useRuntime();
+  return appUpdates === null ? toFirstCategory : <UpdateSettings updates={appUpdates} />;
+};
+
+export const ServerSettingsPage = (): React.ReactElement => {
+  const { account, openConnections } = useWorkspace();
+  const { capabilities } = useRuntime();
+  if (account.role !== "admin") return toFirstCategory;
+  return (
+    <SettingsCategoryPage title="General">
+      <div className="settings-card">
+        <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
+          <RenameServer serverName={account.serverName} />
+        </SettingsRow>
+        {capabilities.serverSwitching ? (
+          <div className="settings-row settings-row-actions">
+            <Button onClick={() => openConnections("saved")}>Switch server…</Button>
+            <Button variant="ghost" onClick={() => openConnections("add")}>
+              Add server…
+            </Button>
+          </div>
+        ) : null}
+      </div>
+    </SettingsCategoryPage>
   );
 };
