@@ -3,7 +3,6 @@ import type {
   AccountsRuntime,
   AdminRuntime,
   AppUpdatesRuntime,
-  ArtworkRuntime,
   CatalogRuntime,
   DownloadsRuntime,
   TrackSettingsRuntime,
@@ -34,8 +33,6 @@ export interface DesktopBridge {
   >;
   readonly library: Omit<CatalogRuntime, "libraries"> & {
     readonly list: CatalogRuntime["libraries"];
-    /** A data URL, since the renderer cannot authenticate to the server itself. */
-    readonly artwork: ArtworkRuntime["url"];
   };
   readonly admin: AdminRuntime;
   readonly downloads: DownloadsRuntime;

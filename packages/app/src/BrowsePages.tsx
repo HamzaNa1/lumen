@@ -34,6 +34,7 @@ import {
 import { episodeCode, kindLabel, libraryCount, plural, resumeLabel } from "./format";
 import { useRuntime } from "./Runtime";
 import {
+  ARTWORK_SIZE,
   CatalogCard,
   PageHeader,
   PosterGridSkeleton,
@@ -179,8 +180,7 @@ const LibraryTile = ({
     queryFn: () => runtime.catalog.items(library.id),
     enabled: knownArtwork === null,
   });
-  const artwork = useArtwork(knownArtwork ?? firstPoster(items.data?.items), scope);
-  const imageUrl = artwork.data;
+  const imageUrl = useArtwork(knownArtwork ?? firstPoster(items.data?.items), ARTWORK_SIZE.card);
   const [failedImage, setFailedImage] = useState<string | null>(null);
   return (
     <article className="media-card">
@@ -190,7 +190,7 @@ const LibraryTile = ({
         params={{ libraryId: library.id }}
       >
         <span className="media-card-art">
-          {imageUrl != null && failedImage !== imageUrl ? (
+          {imageUrl !== null && failedImage !== imageUrl ? (
             <img
               className="poster"
               src={imageUrl}

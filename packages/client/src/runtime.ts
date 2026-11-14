@@ -94,8 +94,8 @@ export interface CatalogRuntime {
 }
 
 export interface ArtworkRuntime {
-  /** Something an image element can load, or null when the artwork is unavailable. */
-  readonly url: (artwork: ArtworkRef) => Promise<string | null>;
+  /** Where an image element loads the artwork, scaled to one of `ARTWORK_WIDTHS` when it can be. */
+  readonly url: (artwork: ArtworkRef, width: number) => string;
 }
 
 export interface AdminRuntime {

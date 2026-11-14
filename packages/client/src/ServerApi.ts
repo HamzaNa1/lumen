@@ -344,6 +344,10 @@ export class ServerApi {
     return this.serverIdentity?.capabilities?.libraryFolders === true;
   }
 
+  get supportsArtworkWidths(): boolean {
+    return this.serverIdentity?.capabilities?.artworkWidths === true;
+  }
+
   /** The server this client talks to, once it has said who it is. */
   get serverId(): string | null {
     return this.serverIdentity?.serverId ?? null;
@@ -669,39 +673,60 @@ export class ServerApi {
   /**
    * Where an image is served. Naming its revision asks for exactly those bytes, which the server
    * lets a cache keep without asking again; without one the image is revalidated on every use.
+   * A width is passed on only to a server that scales artwork, so an older server's full image is
+   * never kept under a URL that a newer one would answer smaller.
    */
-  artworkPath(artwork: ArtworkRef): string {
+  artworkPath(artwork: ArtworkRef, width?: number): string {
     const path = `/api/v1/artwork/${encodeURIComponent(artwork.id)}`;
-    return artwork.revision === null
-      ? path
-      : `${path}?${new URLSearchParams({ revision: artwork.revision }).toString()}`;
+    const query = new URLSearchParams();
+    if (artwork.revision !== null) query.set("revision", artwork.revision);
+    if (width !== undefined && this.supportsArtworkWidths) query.set("width", String(width));
+    return query.size === 0 ? path : `${path}?${query.toString()}`;
   }
 
   /**
-   * The image itself, for platforms that cannot load artwork straight from the server. A platform
-   * with an HTTP cache of its own passes that cache's fetch as the transport.
+   * The server's answer for an image, for platforms that cannot load artwork straight from the
+   * server; null when it is not an image. A platform with an HTTP cache of its own passes that
+   * cache's fetch as the transport.
    */
-  async artworkImage(
+  async artworkResponse(
     artwork: ArtworkRef,
-    transport: FetchLike = this.fetchImpl,
-  ): Promise<ArtworkImage | null> {
+    options: { readonly width?: number; readonly transport?: FetchLike } = {},
+  ): Promise<{ readonly mimeType: ArtworkImage["mimeType"]; readonly response: Response } | null> {
     const headers = new Headers();
     this.credentials.authorize({ method: "GET", headers });
-    const scope = this.scope;
-    const response = await transport(new URL(this.artworkPath(artwork), this.serverOrigin), {
-      headers,
-      redirect: "manual",
-      signal: scope.signal,
-      ...(this.credentials.cookies === undefined ? {} : { credentials: this.credentials.cookies }),
-    });
-    if (!response.ok) return null;
+    const response = await (options.transport ?? this.fetchImpl)(
+      new URL(this.artworkPath(artwork, options.width), this.serverOrigin),
+      {
+        headers,
+        redirect: "manual",
+        signal: this.scope.signal,
+        ...(this.credentials.cookies === undefined
+          ? {}
+          : { credentials: this.credentials.cookies }),
+      },
+    );
     const mimeType = ARTWORK_MIME_TYPES.find(
       (candidate) => candidate === response.headers.get("content-type")?.split(";")[0],
     );
-    if (mimeType === undefined) return null;
-    const bytes = new Uint8Array(await response.arrayBuffer());
+    if (!response.ok || mimeType === undefined) {
+      await response.body?.cancel();
+      return null;
+    }
+    return { mimeType, response };
+  }
+
+  /** The image itself, read into memory. */
+  async artworkImage(
+    artwork: ArtworkRef,
+    options: { readonly width?: number; readonly transport?: FetchLike } = {},
+  ): Promise<ArtworkImage | null> {
+    const scope = this.scope;
+    const answer = await this.artworkResponse(artwork, options);
+    if (answer === null) return null;
+    const bytes = new Uint8Array(await answer.response.arrayBuffer());
     if (scope.signal.aborted) throw new RequestCancelledError();
-    return bytes.length > MAX_ARTWORK_BYTES ? null : { mimeType, bytes };
+    return bytes.length > MAX_ARTWORK_BYTES ? null : { mimeType: answer.mimeType, bytes };
   }
 
   // Administration

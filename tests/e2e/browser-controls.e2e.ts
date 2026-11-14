@@ -229,7 +229,8 @@ test("an episode's still covers the player until the episode, or the one after i
   });
   const still = page.locator(".media-player-artwork");
   await startPlayback(page, server, library.id, openingEpisode);
-  await expect(still).toHaveAttribute("src", /\/api\/v1\/artwork\//);
+  // The still fills the player, so it asks for the largest width the server scales to.
+  await expect(still).toHaveAttribute("src", /\/api\/v1\/artwork\/.*[?&]width=1920/);
   const openingStill = await still.getAttribute("src");
   held.resolve();
   await playing(page);

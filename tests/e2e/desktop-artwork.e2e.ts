@@ -1,8 +1,25 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ElectronApplication } from "@playwright/test";
 import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
 import { password } from "./support/server";
+
+interface Ref {
+  readonly id: string;
+  readonly revision: string | null;
+}
+
+const artworkUrl = (ref: Ref, width = 320) =>
+  `lumen-artwork://artwork/${ref.id}?width=${width}${ref.revision === null ? "" : `&revision=${ref.revision}`}`;
+
+/** What the renderer gets for an artwork URL, read in the main process past the page's image cache. */
+const loadArtwork = (app: ElectronApplication, url: string) =>
+  app.evaluate(async ({ session }, url) => {
+    const response = await session.defaultSession.fetch(url);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    return response.ok ? bytes.toString("base64") : null;
+  }, url);
 
 test("account artwork partitions reject late responses and removing one account clears only its cache", async ({
   server,
@@ -41,8 +58,8 @@ test("account artwork partitions reject late responses and removing one account 
   try {
     await connectDesktop(page, proxy);
     const a = (await page.evaluate(() => window.lumen.accounts.list())).activeConnectionId ?? "";
-    const image = await page.evaluate((ref) => window.lumen.library.artwork(ref), ref);
-    expect(image).toMatch(/^data:image\/png;base64,/);
+    const image = await loadArtwork(app, artworkUrl(ref));
+    expect(image).not.toBeNull();
     const tokenA = tokens.at(-1);
     await page.evaluate(
       (origin) => window.lumen.accounts.discoverServer(origin),
@@ -58,21 +75,17 @@ test("account artwork partitions reject late responses and removing one account 
       ).activeConnectionId ?? "";
     expect(b).not.toBe(a);
     const beforeB = tokens.length;
-    expect(await page.evaluate((ref) => window.lumen.library.artwork(ref), ref)).toBe(image);
+    expect(await loadArtwork(app, artworkUrl(ref))).toBe(image);
     expect(tokens.length).toBeGreaterThan(beforeB);
     expect(tokens.at(-1)).not.toBe(tokenA);
     await page.evaluate((id) => window.lumen.accounts.activate(id), a);
     const beforeA = tokens.length;
-    expect(await page.evaluate((ref) => window.lumen.library.artwork(ref), ref)).toBe(image);
+    expect(await loadArtwork(app, artworkUrl(ref))).toBe(image);
     expect(tokens).toHaveLength(beforeA);
     hold = true;
-    const pending = page.evaluate(
-      (ref) =>
-        window.lumen.library.artwork(ref).then(
-          () => "leaked",
-          () => "cancelled",
-        ),
-      { ...ref, revision: "0".repeat(64) },
+    const pending = loadArtwork(app, artworkUrl({ ...ref, revision: "0".repeat(64) })).then(
+      (bytes) => (bytes === null ? "cancelled" : "leaked"),
+      () => "cancelled",
     );
     await captured.promise;
     await page.evaluate((id) => window.lumen.accounts.activate(id), b);
@@ -94,7 +107,7 @@ test("account artwork partitions reject late responses and removing one account 
     await expect.poll(async () => (await sizes())[0]).toBe(0);
     expect((await sizes())[1]).toBeGreaterThan(0);
     const beforeRetained = tokens.length;
-    expect(await page.evaluate((ref) => window.lumen.library.artwork(ref), ref)).toBe(image);
+    expect(await loadArtwork(app, artworkUrl(ref))).toBe(image);
     expect(tokens).toHaveLength(beforeRetained);
   } finally {
     held.release();
@@ -102,7 +115,7 @@ test("account artwork partitions reject late responses and removing one account 
   }
 });
 
-test("native artwork cache persists by account and revision, rejects arbitrary URLs and refetches changed files", async ({
+test("native artwork loads scaled through the app protocol, persists by account and revision, rejects arbitrary URLs and refetches changed files", async ({
   server,
   admin,
   desktop,
@@ -123,39 +136,47 @@ test("native artwork cache persists by account and revision, rejects arbitrary U
   const reads = () => proxy.requests.filter((request) => request.path.includes("/artwork/")).length;
   try {
     await connectDesktop(desktop.page, proxy);
+    // The library's poster loads in the page itself, as plain bytes from the app's own scheme.
+    const card = desktop.page.locator(".library-tile img");
+    await expect(card).toHaveAttribute("src", /^lumen-artwork:\/\/artwork\//);
+    await expect
+      .poll(() => card.evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth))
+      .toBeGreaterThan(0);
     const ref = await artwork();
-    const url = await desktop.page.evaluate((ref) => window.lumen.library.artwork(ref), ref);
-    expect(url).toMatch(/^data:image\/png;base64,/);
+    const image = await loadArtwork(desktop.app, artworkUrl(ref));
+    // The fixture is 480 pixels wide; the server scaled it to the step the URL names.
+    expect(Buffer.from(image ?? "", "base64").readUInt32BE(16)).toBe(320);
     const before = reads();
-    expect(await desktop.page.evaluate((ref) => window.lumen.library.artwork(ref), ref)).toBe(url);
+    expect(await loadArtwork(desktop.app, artworkUrl(ref))).toBe(image);
     expect(reads()).toBe(before);
     await desktop.app.close();
     const reopened = await launchDesktop(desktop.profile);
     try {
       const page = await mainDesktopPage(reopened);
       await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
-      expect(await page.evaluate((ref) => window.lumen.library.artwork(ref), ref)).toBe(url);
+      expect(await loadArtwork(reopened, artworkUrl(ref))).toBe(image);
       expect(reads()).toBe(before);
       // Change the PNG contents at the same path, preserving a valid image signature.
-      const original = Buffer.from(url?.split(",")[1] ?? "", "base64");
+      const original = await readFile(poster);
       await writeFile(poster, Buffer.concat([original, Buffer.from("revision-two")]));
       await server.scan(token, library.id, "full");
       const next = await artwork();
       expect(next.revision).not.toBe(ref.revision);
-      const changed = await page.evaluate((ref) => window.lumen.library.artwork(ref), next);
-      expect(changed).not.toBe(url);
+      const changed = await loadArtwork(reopened, artworkUrl(next));
+      expect(changed).not.toBeNull();
       expect(reads()).toBeGreaterThan(before);
-      await expect(
-        page.evaluate(() =>
-          window.lumen.library.artwork({ id: "https://example.invalid", revision: null }),
-        ),
-      ).rejects.toThrow();
+      const afterChange = reads();
+      for (const url of [
+        artworkUrl({ id: "https%3A%2F%2Fexample.invalid", revision: null }),
+        artworkUrl(next, 500),
+        `lumen-artwork://elsewhere/${next.id}?width=320`,
+      ])
+        expect(await loadArtwork(reopened, url)).toBeNull();
+      expect(reads()).toBe(afterChange);
       const connection =
         (await page.evaluate(() => window.lumen.accounts.list())).activeConnectionId ?? "";
       await page.evaluate((id) => window.lumen.accounts.remove(id), connection);
-      await expect(
-        page.evaluate((ref) => window.lumen.library.artwork(ref), next),
-      ).rejects.toThrow();
+      expect(await loadArtwork(reopened, artworkUrl(next))).toBeNull();
     } finally {
       await reopened.close();
     }

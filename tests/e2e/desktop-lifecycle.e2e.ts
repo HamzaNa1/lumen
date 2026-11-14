@@ -179,11 +179,6 @@ test("switching accounts stops playback, isolates catalog and credentials, and r
     automatic: null,
     update: null,
   });
-  await expect(
-    page.evaluate(() =>
-      window.lumen.library.artwork({ id: "http://127.0.0.1/arbitrary", revision: "bad" }),
-    ),
-  ).rejects.toThrow();
 });
 
 test("a stalled progress response cannot block native pause, local samples or final teardown", async ({

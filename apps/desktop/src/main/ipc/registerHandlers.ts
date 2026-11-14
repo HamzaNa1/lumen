@@ -1,6 +1,5 @@
 import { viewerPlayback, WatchPlaybackController } from "@lumen/client";
 import {
-  ArtworkRef,
   AudioOutput,
   ConnectionInput,
   DownloadSettingsPatch,
@@ -356,12 +355,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   );
   handle("library:adjacent-episodes", async (_event, raw) =>
     activeClient(dependencies).adjacentEpisodes(decode(Schema.String, raw)),
-  );
-  handle("library:artwork", async (_event, raw) =>
-    activeClient(dependencies).artworkDataUrl(
-      decode(ArtworkRef, raw),
-      dependencies.artwork.transportFor(activeConnectionId(dependencies)),
-    ),
   );
   handle("library:search", async (_event, raw) => {
     const input = decode(

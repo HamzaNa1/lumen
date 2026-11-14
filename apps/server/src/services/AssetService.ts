@@ -22,12 +22,17 @@ export interface AssetFile {
   readonly mimeType: string;
 }
 
+export interface ArtworkFile extends AssetFile {
+  /** The original's width in pixels, as the catalog recorded it. */
+  readonly width: number;
+}
+
 export interface AssetServiceShape {
   readonly artwork: (
     principal: AuthPrincipal,
     artworkId: string,
     nowMs: number,
-  ) => Effect.Effect<AssetFile, unknown>;
+  ) => Effect.Effect<ArtworkFile, unknown>;
   readonly sidecar: (
     principal: AuthPrincipal,
     sidecarId: string,
@@ -47,6 +52,7 @@ export const makeAssetService = (config?: ServerConfig) =>
             rootPath: libraryRoots.path,
             path: artworkTable.relativePath,
             mimeType: artworkTable.mimeType,
+            width: artworkTable.width,
           })
           .from(artworkTable)
           .leftJoin(mediaSources, eq(mediaSources.id, artworkTable.sourceId))
@@ -73,6 +79,7 @@ export const makeAssetService = (config?: ServerConfig) =>
           size: details.size,
           modifiedAtMs: Math.trunc(details.mtimeMs),
           mimeType: row.mimeType,
+          width: row.width,
         };
       },
     );

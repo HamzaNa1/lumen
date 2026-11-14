@@ -28,6 +28,7 @@ import {
 import { ItemSettings } from "./ItemSettings";
 import { useRuntime } from "./Runtime";
 import {
+  ARTWORK_SIZE,
   CatalogCard,
   itemDetailsQuery,
   itemPage,
@@ -119,16 +120,14 @@ const DetailsHeader = ({
   readonly actions?: ReactNode;
   readonly onBack: () => void;
 }): React.ReactElement => {
-  const { scope } = useWorkspace();
   const { item } = details;
   const [failedImages, setFailedImages] = useState<ReadonlyArray<string>>([]);
-  const poster = useArtwork(posterOf(item), scope);
-  const backdrop = useArtwork(backdropOf(item) ?? fallbackBackdrop, scope);
-  const usable = (url: string | null | undefined): url is string =>
-    url != null && !failedImages.includes(url);
+  const poster = useArtwork(posterOf(item), ARTWORK_SIZE.card);
+  const backdrop = useArtwork(backdropOf(item) ?? fallbackBackdrop, ARTWORK_SIZE.page);
+  const usable = (url: string | null): url is string => url !== null && !failedImages.includes(url);
   const markFailed = (url: string): void => setFailedImages((previous) => [...previous, url]);
-  const posterUrl = usable(poster.data) ? poster.data : null;
-  const heroUrl = usable(backdrop.data) ? backdrop.data : posterUrl;
+  const posterUrl = usable(poster) ? poster : null;
+  const heroUrl = usable(backdrop) ? backdrop : posterUrl;
   const genres = metadataList(item.genresJson);
   return (
     <header className={`details-header${landscape ? " is-landscape" : ""}`}>

@@ -4,10 +4,12 @@ import {
   type BrowserWindow,
   nativeTheme,
   powerSaveBlocker,
+  protocol,
   screen,
   session,
   shell,
 } from "electron";
+import { ARTWORK_SCHEME } from "../shared/artworkUrl";
 import { composesVideo } from "../shared/videoCompositor";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
@@ -86,6 +88,9 @@ const preloadPath = join(import.meta.dirname, "../preload/index.cjs");
 const rendererPath = join(import.meta.dirname, "../renderer/index.html");
 
 if (process.platform === "linux") app.commandLine.appendSwitch("ozone-platform", "x11");
+protocol.registerSchemesAsPrivileged([
+  { scheme: ARTWORK_SCHEME, privileges: { standard: true, secure: true } },
+]);
 
 const bootstrap = async (): Promise<void> => {
   await app.whenReady();
@@ -106,6 +111,14 @@ const bootstrap = async (): Promise<void> => {
   const store = await openMediaStore(join(app.getPath("userData"), "media"));
   const clients = new Map<string, ServerClient>();
   const artwork = new ArtworkCache((partition) => session.fromPartition(partition));
+  protocol.handle(ARTWORK_SCHEME, (request) => {
+    const connectionId = registry.active()?.connectionId;
+    const client = connectionId === undefined ? undefined : clients.get(connectionId);
+    return artwork.respond(
+      request.url,
+      connectionId === undefined || client === undefined ? null : { connectionId, client },
+    );
+  });
   mainWindow = createMainWindow({
     preloadPath,
     bounds: placeMainWindow(windowState.current, {
