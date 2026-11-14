@@ -52,11 +52,14 @@ try {
 
   await expectStatus("/web", 308);
   const page = await (await expectStatus("/web/", 200)).text();
-  const assets = [...page.matchAll(/(?:src|href)="(\/web\/assets\/[^"]+)"/gu)].map(
-    (match) => match[1] ?? "",
-  );
+  const assets = [...page.matchAll(/(?:src|href)="([^"]+)"/gu)].map((match) => match[1] ?? "");
   if (assets.length === 0) throw new Error("The page references no built assets");
-  for (const asset of assets) await expectStatus(asset, 200);
+  // A reference the build could not resolve is left as written and points outside the app.
+  for (const asset of assets) {
+    if (!asset.startsWith("/web/assets/"))
+      throw new Error(`The page references ${asset}, which the build did not bundle`);
+    await expectStatus(asset, 200);
+  }
   await expectStatus("/web/library/anything", 200);
   await expectStatus("/web/assets/missing.js", 404);
   const info = (await (await expectStatus("/api/v1/server", 200)).json()) as {
