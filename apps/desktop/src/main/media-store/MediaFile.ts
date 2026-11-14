@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { EventEmitter, once } from "node:events";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { ChunkMap, nextChunkToDownload } from "@lumen/client";
+import { ChunkMap, type FetchLike, nextChunkToDownload } from "@lumen/client";
 import type { PlayableMedia } from "@lumen/contracts";
 import { ignoreFailure } from "../failures";
 import { DiskByteStore, MemoryByteStore, SpaceExhausted } from "./ByteStore";
@@ -193,7 +193,7 @@ export class MediaFile extends EventEmitter {
     readonly store: DiskByteStore,
     disk: ChunkMap,
     usedAtMs: Readonly<Record<string, number>>,
-    private readonly fetchImpl: typeof fetch,
+    private readonly fetchImpl: FetchLike,
   ) {
     super();
     this.setMaxListeners(0);
@@ -210,7 +210,7 @@ export class MediaFile extends EventEmitter {
     readonly spec: MediaSpec;
     readonly geometry: MediaGeometry;
     readonly allowSegment: (file: MediaFile) => Promise<boolean>;
-    readonly fetchImpl?: typeof fetch;
+    readonly fetchImpl?: FetchLike;
   }): Promise<MediaFile> {
     const { spec, geometry } = options;
     const directory = join(options.root, mediaKey(spec));

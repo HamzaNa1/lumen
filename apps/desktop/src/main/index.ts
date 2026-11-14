@@ -15,6 +15,7 @@ import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import { createTokenVault } from "./accounts/TokenVault";
 import type { ServerClient } from "./api/ServerClient";
+import { serverTransport } from "./api/serverTransport";
 import { ArtworkCache } from "./artwork/ArtworkCache";
 import { DownloadManager } from "./downloads/DownloadManager";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
@@ -106,9 +107,17 @@ const bootstrap = async (): Promise<void> => {
   const windowState = await openMainWindowState(
     join(app.getPath("userData"), "main-window-state.json"),
   );
-  bridge = new PlaybackBridge();
+  // Media has a connection pool of its own, so streaming bodies never hold a click in a queue.
+  const [apiSession, mediaSession] = [
+    session.fromPartition("lumen-api"),
+    session.fromPartition("lumen-media"),
+  ];
+  // Servers are reached as Node's fetch reached them, without the system proxy.
+  await Promise.all([apiSession, mediaSession].map((each) => each.setProxy({ mode: "direct" })));
+  const mediaTransport = serverTransport(mediaSession);
+  bridge = new PlaybackBridge(mediaTransport);
   await bridge.listen();
-  const store = await openMediaStore(join(app.getPath("userData"), "media"));
+  const store = await openMediaStore(join(app.getPath("userData"), "media"), mediaTransport);
   const clients = new Map<string, ServerClient>();
   const artwork = new ArtworkCache((partition) => session.fromPartition(partition));
   protocol.handle(ARTWORK_SCHEME, (request) => {
@@ -196,6 +205,7 @@ const bootstrap = async (): Promise<void> => {
     registry,
     clients,
     artwork,
+    serverTransport: serverTransport(apiSession),
     player,
     downloads,
     bridge,

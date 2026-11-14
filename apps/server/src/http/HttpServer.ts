@@ -37,7 +37,17 @@ interface HttpServerOptions<Data> {
     context: RequestContext & HttpUpgrade<Data>,
   ) => Response | undefined | Promise<Response | undefined>;
   readonly websocket?: HttpSocketHandler<Data>;
+  readonly timeouts?: HttpTimeouts;
 }
+
+export interface HttpTimeouts {
+  /** How long a request may go without a byte moving before its socket is closed. */
+  readonly activeMs: number;
+  /** How long a connection waits for its next request, so a client's next one finds it open. */
+  readonly idleMs: number;
+}
+
+const defaultTimeouts: HttpTimeouts = { activeMs: 10_000, idleMs: 60_000 };
 
 const webRequest = (incoming: IncomingMessage, origin: URL, signal: AbortSignal): Request => {
   const headers = new Headers();
@@ -82,11 +92,17 @@ export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise
     `http://${options.hostname.includes(":") ? `[${options.hostname}]` : options.hostname}`,
   );
   const handler = options.websocket;
+  const timeouts = options.timeouts ?? defaultTimeouts;
   const sockets = new WebSocketServer({
     noServer: true,
     maxPayload: handler?.maxPayloadLength ?? 4096,
   });
   const server = createServer((incoming, outgoing) => {
+    // The socket timer covers both waits. Bun's own keep-alive timer is off: the next request's
+    // first bytes clear it and nothing re-arms one, so a request stalled there stayed open.
+    incoming.socket.setTimeout(timeouts.activeMs);
+    outgoing.setHeader("keep-alive", `timeout=${Math.floor(timeouts.idleMs / 1000)}`);
+    outgoing.once("finish", () => incoming.socket.setTimeout(timeouts.idleMs));
     const abort = new AbortController();
     outgoing.on("close", () => {
       if (!outgoing.writableFinished) abort.abort();
@@ -108,7 +124,8 @@ export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise
       }
     });
   });
-  server.setTimeout(10_000, (socket) => socket.destroy());
+  server.keepAliveTimeout = 0;
+  server.setTimeout(timeouts.activeMs, (socket) => socket.destroy());
   server.on("upgrade", (incoming, socket, head) => {
     const abort = new AbortController();
     socket.on("close", () => abort.abort());
