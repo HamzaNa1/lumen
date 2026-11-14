@@ -14,6 +14,7 @@ export interface WireEntry {
   releasedAtMs: number | null;
 }
 interface Wire {
+  crash(): Promise<void>;
   restrictDecoders(value: { video?: string; audio?: string }): void;
   arm(
     mode: "hold-speed" | "fail-speed" | "hold-sample" | "hold-unpause" | "hold-stop",
@@ -32,6 +33,7 @@ interface Wire {
 }
 type MainGlobal = typeof globalThis & { __lumenMpvWire: Wire };
 export const mpvWire = (app: ElectronApplication) => ({
+  crash: () => app.evaluate(() => (globalThis as MainGlobal).__lumenMpvWire.crash()),
   restrictDecoders: (value: { video?: string; audio?: string }) =>
     app.evaluate(
       (_electron, value) => (globalThis as MainGlobal).__lumenMpvWire.restrictDecoders(value),
