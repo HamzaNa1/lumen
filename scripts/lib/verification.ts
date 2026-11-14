@@ -6,6 +6,7 @@ type Runtime = "api" | "browser" | "native" | "tooling";
 // Every suite is assigned to a real execution boundary and the products it gates.
 export const suites: Record<string, { runtime: Runtime; products: readonly Product[] }> = {
   "administration.e2e.ts": { runtime: "api", products: ["server"] },
+  "transport-timeouts.e2e.ts": { runtime: "api", products: ["server"] },
   "transport.e2e.ts": { runtime: "api", products: ["server", "desktop"] },
   "client-boundaries.e2e.ts": { runtime: "api", products: ["server", "desktop"] },
   "authentication.e2e.ts": { runtime: "api", products: ["server"] },
@@ -46,6 +47,8 @@ export const suites: Record<string, { runtime: Runtime; products: readonly Produ
   "desktop-tracks.e2e.ts": { runtime: "native", products: ["desktop"] },
   "downloads.e2e.ts": { runtime: "native", products: ["server", "desktop"] },
   "media-streaming.e2e.ts": { runtime: "native", products: ["desktop"] },
+  // Layout parity compares two clients built from the same revision.
+  "client-parity.e2e.ts": { runtime: "native", products: [] },
   "mixed-playback.e2e.ts": { runtime: "native", products: ["server", "desktop"] },
   "verification.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
   "protection.e2e.ts": { runtime: "tooling", products: ["server", "desktop"] },
