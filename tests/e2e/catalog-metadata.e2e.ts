@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { openDatabase } from "./support/database";
 import { expect, type Item, repository, test } from "./support/server";
@@ -147,6 +147,43 @@ test("local NFO metadata and artwork update on scan, cache by revision, scale on
   });
   const search = await server.api<{ items: Item[] }>("/search?q=Changed", { token });
   expect(search.items.map((item) => item.id)).toContain(item?.id);
+});
+
+test("concurrent requests scale each image once, waiting past the scales that run at a time", async ({
+  server,
+  admin,
+}) => {
+  const token = admin.accessToken;
+  const library = await server.library(token, "movies", []);
+  const still = await readFile(join(repository, "tests/fixtures/still.png"));
+  for (const name of ["Alpha", "Beta", "Gamma", "Delta"]) {
+    await mkdir(join(library.path, name));
+    await server.media(library.path, `${name}/${name}.mp4`);
+    // The same pixels in different bytes, so each poster is its own revision.
+    await writeFile(
+      join(library.path, name, "poster.png"),
+      Buffer.concat([still, Buffer.from(name)]),
+    );
+  }
+  await server.scan(token, library.id, "full");
+  const urls = await Promise.all(
+    (await server.items(token, library.id)).map(async (item) => {
+      const { item: details } = await server.api<{
+        item: { artworkId: string; artworkRevision: string };
+      }>(`/items/${item.id}`, { token });
+      return `/api/v1/artwork/${details.artworkId}?revision=${details.artworkRevision}&width=320`;
+    }),
+  );
+  expect(new Set(urls).size).toBe(4);
+  const headers = { authorization: `Bearer ${token}` };
+  const responses = await Promise.all(
+    [...urls, ...urls].map((url) => server.request(url, { headers })),
+  );
+  for (const response of responses) {
+    expect(response.headers.get("cache-control")).toContain("immutable");
+    expect(Buffer.from(await response.arrayBuffer()).readUInt32BE(16)).toBe(320);
+  }
+  expect(await readdir(join(server.root, "artwork-variants"))).toHaveLength(4);
 });
 
 for (const [from, to, end, edited] of [
