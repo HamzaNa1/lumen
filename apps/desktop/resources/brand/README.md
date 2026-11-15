@@ -1,6 +1,6 @@
 # Lumen identity
 
-The Lumen mark pairs an `L` with a forward play symbol. The lime form carries the product's existing light motif, while the dark field matches the private-cinema interface.
+The Lumen mark is a lowercase `lm`, the unit symbol for the lumen. The lime `l` and warm-white `m` sit on a dark rounded square.
 
 ## Files
 

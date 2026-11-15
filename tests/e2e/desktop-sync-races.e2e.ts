@@ -1,5 +1,5 @@
 import { watchPosition } from "@lumen/contracts";
-import { WatchGroupClient } from "../../packages/client/src/index";
+import { type PlaybackDiagnosticEvent, WatchGroupClient } from "../../packages/client/src/index";
 import { connectDesktop, expect, test } from "./support/desktop";
 import { mpvWire, type WireEntry } from "./support/mpv-wire";
 import { latch, NetworkProxy } from "./support/proxy";
@@ -7,51 +7,97 @@ import { latch, NetworkProxy } from "./support/proxy";
 const isSpeed = (entry: WireEntry) =>
   entry.command[0] === "set_property" && entry.command[1] === "speed";
 
+type Timeline = () => Promise<ReadonlyArray<PlaybackDiagnosticEvent>>;
+
+/** Moves MPV off the group clock until the controller sends the speed correction `reached` finds. */
+const provoke = async (
+  wire: ReturnType<typeof mpvWire>,
+  owner: WatchGroupClient,
+  timeline: Timeline,
+  mode: "hold-speed" | "fail-speed",
+  reached: (afterId: number) => Promise<WireEntry | null | undefined>,
+) => {
+  // Later disturbances keep the first one's direction, which a scenario may depend on.
+  let speed: number | undefined;
+  for (let disturbance = 1; ; disturbance += 1) {
+    const playback = owner.status.group?.playback;
+    expect(playback?.paused).toBe(false);
+    if (!playback) throw new Error("Group playback is missing");
+    const startedAtMs = Date.now();
+    const attempt = await wire.disturb(mode, watchPosition(playback, owner.serverNow), speed);
+    speed = attempt.expectedSpeed;
+    const settledAtMs = Date.now();
+    const direction = Math.sign(attempt.expectedSpeed - 1);
+    let correction: WireEntry | null | undefined;
+    await expect
+      .poll(
+        async () => {
+          correction = await reached(attempt.afterId);
+          if (correction) return true;
+          // A loaded runner can play slowly after the seek and absorb the drift before the
+          // controller has sustained it long enough to correct. Disturb again only when the
+          // controller itself measured the drift gone, or corrected less than expected.
+          const passed = (await wire.snapshot()).commands.some(
+            (entry) =>
+              entry.id > attempt.afterId &&
+              isSpeed(entry) &&
+              entry.outcome === "sent" &&
+              entry.command[2] !== 1,
+          );
+          const absorbed = (await timeline()).some(
+            ({ atMs, kind, fields }) =>
+              atMs >= settledAtMs &&
+              kind === "watch_synchronization" &&
+              fields.event === "drift_sample" &&
+              fields.advancing === true &&
+              (Math.sign(Number(fields.driftSeconds)) !== direction ||
+                Math.abs(Number(fields.driftSeconds)) < 0.15),
+          );
+          return passed || absorbed;
+        },
+        { timeout: 8000, intervals: [25, 50, 100] },
+      )
+      .toBe(true);
+    if (correction) {
+      expect(correction.command).toEqual(["set_property", "speed", attempt.expectedSpeed]);
+      return { ...attempt, correction, startedAtMs };
+    }
+    expect(disturbance, "Playback absorbed every disturbance before a correction").toBeLessThan(3);
+    await wire.release();
+  }
+};
+
 const captureSpeed = async (
   wire: ReturnType<typeof mpvWire>,
   owner: WatchGroupClient,
+  timeline: Timeline,
   mode: "hold-speed" | "fail-speed",
 ) => {
-  const playback = owner.status.group?.playback;
-  expect(playback?.paused).toBe(false);
-  if (!playback) throw new Error("Group playback is missing");
-  let startedAtMs = Date.now();
-  let attempt = await wire.disturb(mode, watchPosition(playback, owner.serverNow));
   if (mode === "fail-speed") {
-    const rejected = async () =>
+    const rejection = await provoke(wire, owner, timeline, mode, async (afterId) =>
       (await wire.snapshot()).commands.find(
-        (entry) => entry.id > attempt.afterId && entry.outcome === "rejected",
-      );
-    await expect.poll(rejected).toMatchObject({
-      command: ["set_property", "speed", attempt.expectedSpeed],
-    });
-    const failedId = (await rejected())?.id ?? Infinity;
+        (entry) => entry.id > afterId && entry.outcome === "rejected",
+      ),
+    );
     await expect
       .poll(async () =>
         (await wire.snapshot()).commands.find(
-          (entry) => entry.id > failedId && isSpeed(entry) && entry.error === "success",
+          (entry) =>
+            entry.id > rejection.correction.id && isSpeed(entry) && entry.error === "success",
         ),
       )
       .toMatchObject({ command: ["set_property", "speed", 1] });
     await wire.release();
-    const resumed = owner.status.group?.playback;
-    if (!resumed) throw new Error("Group playback is missing after speed recovery");
-    // Real playback can settle inside the deadband after the rejection; create a new drift.
-    startedAtMs = Date.now();
-    attempt = await wire.disturb("hold-speed", watchPosition(resumed, owner.serverNow));
   }
-  await expect
-    .poll(async () => (await wire.snapshot()).captured, {
-      timeout: 8000,
-      intervals: [25, 50, 100],
-    })
-    .toMatchObject({
-      command: ["set_property", "speed", attempt.expectedSpeed],
-      outcome: "held",
-    });
-  const captured = (await wire.snapshot()).captured;
-  if (!captured) throw new Error("Speed fault was not captured");
-  return { ...attempt, captured, startedAtMs };
+  const { correction: captured, ...attempt } = await provoke(
+    wire,
+    owner,
+    timeline,
+    "hold-speed",
+    async () => (await wire.snapshot()).captured,
+  );
+  expect(captured.outcome).toBe("held");
+  return { ...attempt, captured };
 };
 
 test.use({ mpvFaults: true });
@@ -181,7 +227,8 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           let initialCorrection: number | undefined;
           if (scenario === "disconnect") {
             // Exercise the previously missed case within an existing scenario, without another test.
-            initialCorrection = (await captureSpeed(wire, owner, "hold-speed")).expectedSpeed;
+            initialCorrection = (await captureSpeed(wire, owner, timeline, "hold-speed"))
+              .expectedSpeed;
             await wire.release();
             await expect
               .poll(() => wire.command(["get_property", "speed"]))
@@ -190,6 +237,7 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
           const { expectedSpeed, captured, startedAtMs } = await captureSpeed(
             wire,
             owner,
+            timeline,
             scenario === "fail-speed" ? "fail-speed" : "hold-speed",
           );
           if (initialCorrection !== undefined) expect(expectedSpeed).not.toBe(initialCorrection);

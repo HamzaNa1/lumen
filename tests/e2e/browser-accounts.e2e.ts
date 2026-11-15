@@ -1,4 +1,4 @@
-import { signIn } from "./support/browser";
+import { openSettings, signIn } from "./support/browser";
 import { latch } from "./support/proxy";
 import { expect, password, test } from "./support/server";
 
@@ -146,6 +146,12 @@ test("a late unauthorized response and suspended tab cannot erase a newer browse
     await page.reload();
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
     await expect(page.getByRole("link", { name: "Administration", exact: true })).toHaveCount(0);
+    // Server settings are for administrators only.
+    const settings = await openSettings(page);
+    await expect(settings.getByText("Server", { exact: true })).toHaveCount(0);
+    await expect(
+      settings.getByRole("navigation", { name: "Settings" }).getByRole("button"),
+    ).toHaveText(["Playback"]);
   } finally {
     held.release();
   }

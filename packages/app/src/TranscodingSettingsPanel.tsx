@@ -25,8 +25,7 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
     update.reset();
   };
   return (
-    <section className="settings-group" aria-labelledby="settings-transcoding">
-      <h2 id="settings-transcoding">Server transcoding</h2>
+    <>
       {settings.isPending ? (
         <p role="status">Loading transcoding settings…</p>
       ) : settings.isError ? (
@@ -150,6 +149,6 @@ export const TranscodingSettingsPanel = ({ connectionId }: { readonly connection
           </div>
         </Form>
       ) : null}
-    </section>
+    </>
   );
 };

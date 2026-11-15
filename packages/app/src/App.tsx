@@ -415,7 +415,6 @@ export const App = (): React.ReactElement => {
         <div className="connect-column">
           <div className="connect-brand">
             <LumenMark />
-            <span>Lumen</span>
           </div>
           <section className="connect-card">
             <header className="connect-heading">

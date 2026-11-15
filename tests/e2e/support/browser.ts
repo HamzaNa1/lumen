@@ -9,6 +9,19 @@ export async function signIn(page: Page, server: Server, username = "admin") {
   await page.getByRole("button", { name: "Sign in", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
 }
+/** Opens the settings dialog from the account menu, at one of its categories. */
+export async function openSettings(page: Page, category = "Playback") {
+  await page.locator(".account-trigger").click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings
+    .getByRole("navigation", { name: "Settings" })
+    .getByRole("button", { name: category, exact: true })
+    .click();
+  await expect(settings.getByRole("heading", { name: category, exact: true })).toBeVisible();
+  return settings;
+}
+
 export async function playing(page: Page) {
   const player = page.getByRole("region", { name: "Media player" });
   await expect.poll(() => player.getAttribute("data-status")).toMatch(/ready|blocked/);

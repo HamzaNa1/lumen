@@ -29,9 +29,10 @@ runtime success.
 This avoids ANGLE's EGL/D3D texture bridge and its DLL identity requirements.
 The alternative was mpv 0.41 OpenGL through Electron's ANGLE libraries. Direct
 D3D11 removes that extra context, extension negotiation, and texture wrapper.
-Electron 44.4.5 still supplies the Vulkan loader (an unconditional DLL import
-of the pinned libmpv) and D3D shader compiler. Both downloads are hash pinned;
-all packaged files, including licenses, are covered by the native manifest.
+The pinned Electron release still supplies the Vulkan loader (an unconditional
+DLL import of the pinned libmpv) and D3D shader compiler. Both downloads are
+hash pinned; all packaged files, including licenses, are covered by the native
+manifest.
 
 The helper requests the default D3D11 hardware adapter, prints its LUID to
 stderr, and fails on device, sharing, render, or completion errors. Electron

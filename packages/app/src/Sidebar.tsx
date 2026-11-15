@@ -1,6 +1,6 @@
 import type { AccountSummary, LibrarySummary } from "@lumen/contracts";
 import { AccountMenu } from "@lumen/ui";
-import { Link, useNavigate } from "@tanstack/react-router";
+import { Link } from "@tanstack/react-router";
 import {
   Activity,
   ArrowDownToLine,
@@ -13,11 +13,12 @@ import {
   Tv,
   Users,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { AppUpdateButton } from "./AppUpdates";
 import { DeviceOnly } from "./Downloads";
 import { LumenMark } from "./LumenMark";
 import { useRuntime } from "./Runtime";
+import { SettingsDialog } from "./SettingsDialog";
 import { WatchGroups } from "./WatchGroups";
 import { useLibraries } from "./Workspace";
 
@@ -58,14 +59,13 @@ export const Sidebar = ({
   readonly onRemove: (id: string) => void;
   readonly onAddServer: () => void;
 }): React.ReactElement => {
-  const navigate = useNavigate();
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const runtime = useRuntime();
   const libraries = useLibraries(scope);
   return (
     <>
       <div className="sidebar-brand">
         <LumenMark />
-        <span>Lumen</span>
         {runtime.appUpdates === null ? null : <AppUpdateButton updates={runtime.appUpdates} />}
       </div>
       <nav className="nav" aria-label="Primary">
@@ -131,10 +131,11 @@ export const Sidebar = ({
           onActivate={onActivate}
           onRemove={onRemove}
           onAddServer={onAddServer}
-          onOpenSettings={() => void navigate({ to: "/settings" })}
+          onOpenSettings={() => setSettingsOpen(true)}
           canSwitchServers={runtime.capabilities.serverSwitching}
         />
       </div>
+      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </>
   );
 };

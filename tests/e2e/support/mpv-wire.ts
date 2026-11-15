@@ -41,13 +41,14 @@ export const mpvWire = (app: ElectronApplication) => ({
     ),
   arm: (mode: Parameters<Wire["arm"]>[0]) =>
     app.evaluate((_electron, mode) => (globalThis as MainGlobal).__lumenMpvWire.arm(mode), mode),
-  disturb: (mode: "hold-speed" | "fail-speed", targetSeconds: number) =>
+  /** Seeks MPV off the group clock, towards `speed` when given, else away from its current speed. */
+  disturb: (mode: "hold-speed" | "fail-speed", targetSeconds: number, speed?: number) =>
     app.evaluate(
-      async (_electron, { mode, targetSeconds, atMs }) => {
+      async (_electron, { mode, targetSeconds, atMs, speed }) => {
         const wire = (globalThis as MainGlobal).__lumenMpvWire;
-        const speed = await wire.command(["get_property", "speed"]);
-        if (typeof speed !== "number") throw new Error("MPV did not report its speed");
-        const expectedSpeed = speed < 1 ? 1.01 : 0.99;
+        const current = speed ?? (await wire.command(["get_property", "speed"]));
+        if (typeof current !== "number") throw new Error("MPV did not report its speed");
+        const expectedSpeed = speed ?? (current < 1 ? 1.01 : 0.99);
         const afterId = wire.arm(mode, expectedSpeed);
         const groupPosition = () => targetSeconds + (Date.now() - atMs) / 1000;
         // Where MPV should sit relative to the group: inside the soft band, short of the seek threshold.
@@ -72,7 +73,7 @@ export const mpvWire = (app: ElectronApplication) => ({
         }
         return { afterId, expectedSpeed };
       },
-      { mode, targetSeconds, atMs: Date.now() },
+      { mode, targetSeconds, atMs: Date.now(), speed },
     ),
   snapshot: () => app.evaluate(() => (globalThis as MainGlobal).__lumenMpvWire.snapshot()),
   release: () => app.evaluate(() => (globalThis as MainGlobal).__lumenMpvWire.release()),

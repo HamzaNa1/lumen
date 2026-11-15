@@ -1,5 +1,5 @@
 import type { RouterHistory } from "@tanstack/history";
-import { createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
+import { createRootRoute, createRoute, createRouter, redirect } from "@tanstack/react-router";
 import { AdminLibrariesPage, AdminUsersPage } from "./AdminPages";
 import { App } from "./App";
 import { HomePage, LibraryIndexPage, LibraryPage, SearchPage } from "./BrowsePages";
@@ -7,7 +7,6 @@ import { DownloadsPage } from "./Downloads";
 import { EpisodePage, ItemPage, SeasonPage, ShowPage } from "./ItemPages";
 import { JobLogPage } from "./JobLogPage";
 import { PlayerPage } from "./PlayerPage";
-import { SettingsPage } from "./SettingsPage";
 
 const rootRoute = createRootRoute({ component: App });
 const homeRoute = createRoute({ getParentRoute: () => rootRoute, path: "/", component: HomePage });
@@ -59,10 +58,13 @@ const downloadsRoute = createRoute({
   path: "/downloads",
   component: DownloadsPage,
 });
+// Settings is a dialog now; an old link to its page lands on home.
 const settingsRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/settings",
-  component: SettingsPage,
+  beforeLoad: () => {
+    throw redirect({ to: "/", replace: true });
+  },
 });
 const adminRoute = createRoute({
   getParentRoute: () => rootRoute,

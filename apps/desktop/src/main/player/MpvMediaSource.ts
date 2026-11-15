@@ -3,6 +3,7 @@ import { type PlayerSession, resolveTrackSelection, type TrackKind } from "@lume
 import { ignoreFailure } from "../failures";
 import { type MediaFile, type MediaSpec, mediaSpecOf } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
+import { startupRanges } from "./MediaPreload";
 import type { MpvIpc } from "./MpvIpc";
 import type { PlaybackBridge } from "./PlaybackBridge";
 import type { PlaybackClient } from "./PlaybackClient";
@@ -15,6 +16,51 @@ export const mediaFailure = (message: string): Error =>
   /decod|codec|file format|unrecognized format/i.test(message)
     ? new MediaDecodeFailure(message)
     : new Error(message);
+
+export interface HeldMedia {
+  readonly file: MediaFile;
+  readonly release: () => void;
+}
+
+/**
+ * Opens the file a session plays directly, with the session's grant to fill it, and starts
+ * fetching what the player reads before its first frame, before the player asks for any of it.
+ */
+export const openHeldMedia = async (options: {
+  readonly store: MediaStore;
+  readonly client: PlaybackClient;
+  readonly session: PlayerSession;
+  readonly diagnostics: PlaybackDiagnostics;
+  readonly startAtSeconds: number;
+  /** Bytes of this file fetched before it played, held in memory, if any. */
+  readonly takePreload?: (spec: MediaSpec) => ReadonlyMap<number, Buffer> | null;
+}): Promise<HeldMedia | null> => {
+  const { store, client, session, diagnostics } = options;
+  const spec = mediaSpecOf(client.serverId, session.sourceId, session.media);
+  if (spec === null) return null;
+  const { file, release } = await store.acquire(spec);
+  const preloaded = options.takePreload?.(spec) ?? null;
+  if (preloaded !== null)
+    diagnostics.record("preload_adopted", { bytes: await file.adoptMemory(preloaded) });
+  if (session.durationSeconds !== null && session.durationSeconds > 0)
+    file.bitrate = spec.sizeBytes / session.durationSeconds;
+  const removeSource = client.offline
+    ? () => undefined
+    : file.addSource({
+        origin: client.serverOrigin,
+        path: session.streamUrl,
+        token: session.grantToken,
+        kind: "playback",
+      });
+  file.warm(startupRanges(spec.sizeBytes, session.durationSeconds, options.startAtSeconds));
+  return {
+    file,
+    release: () => {
+      removeSource();
+      release();
+    },
+  };
+};
 
 /** Owns the current HTTP stream and translates the converted segment's clock to source time. */
 export class MpvMediaSource {
@@ -31,8 +77,7 @@ export class MpvMediaSource {
   private loadAbort: AbortController | null = null;
   private tail: Promise<void> = Promise.resolve();
   private closed = false;
-  private held: Promise<{ readonly file: MediaFile; readonly release: () => void } | null> | null =
-    null;
+  private readonly held: Promise<HeldMedia | null>;
 
   constructor(
     private readonly options: {
@@ -43,12 +88,14 @@ export class MpvMediaSource {
       connectionId: string;
       diagnostics: PlaybackDiagnostics;
       active: () => boolean;
-      /** Where the file's bytes are kept; without it every stream is proxied as it arrives. */
-      store?: MediaStore;
-      /** Bytes of this file fetched before it played, held in memory, if any. */
-      takePreload?: (spec: MediaSpec) => ReadonlyMap<number, Buffer> | null;
+      /** The file as this device holds it; without it every stream is proxied as it arrives. */
+      held?: Promise<HeldMedia | null>;
     },
   ) {
+    this.held = options.held ?? Promise.resolve(null);
+    void this.held.then((held) => {
+      if (!this.closed) this.heldFile = held?.file ?? null;
+    }, ignoreFailure);
     const selected = resolveTrackSelection(
       options.session.streams,
       options.session.sourceId,
@@ -138,56 +185,13 @@ export class MpvMediaSource {
     this.revision += 1;
     this.loadAbort?.abort();
     if (this.capability !== null) this.options.bridge.revoke(this.capability);
+    this.heldFile = null;
     // A file that failed to open was reported by the load that awaited it.
-    void this.held?.then((held) => held?.release(), ignoreFailure);
+    void this.held.then((held) => held?.release(), ignoreFailure);
   }
 
-  /** The file as this device holds it, once direct playback has opened it. */
+  /** The file as this device holds it, once it is open. */
   heldFile: MediaFile | null = null;
-
-  private heldSpec(): MediaSpec | null {
-    const { client, session, store } = this.options;
-    return store === undefined
-      ? null
-      : mediaSpecOf(client.serverId, session.sourceId, session.media);
-  }
-
-  /** Opens the held file once for the whole playback, with this session's grant to fill it. */
-  private acquireHeld(): Promise<{
-    readonly file: MediaFile;
-    readonly release: () => void;
-  } | null> {
-    this.held ??= (async () => {
-      const spec = this.heldSpec();
-      const store = this.options.store;
-      if (spec === null || store === undefined) return null;
-      const { file, release } = await store.acquire(spec);
-      const { client, session, diagnostics } = this.options;
-      const preloaded = this.options.takePreload?.(spec) ?? null;
-      if (preloaded !== null)
-        diagnostics.record("preload_adopted", { bytes: await file.adoptMemory(preloaded) });
-      if (session.durationSeconds !== null && session.durationSeconds > 0)
-        file.bitrate = spec.sizeBytes / session.durationSeconds;
-      const removeSource = client.offline
-        ? () => undefined
-        : file.addSource({
-            origin: client.serverOrigin,
-            path: session.streamUrl,
-            token: session.grantToken,
-            kind: "playback",
-          });
-      this.heldFile = file;
-      return {
-        file,
-        release: () => {
-          removeSource();
-          release();
-          if (this.heldFile === file) this.heldFile = null;
-        },
-      };
-    })();
-    return this.held;
-  }
 
   private load(converted: boolean, position: number): Promise<void> {
     const revision = ++this.revision;
@@ -233,7 +237,7 @@ export class MpvMediaSource {
           );
         }
         let transferError: Error | null = null;
-        const held = converted ? null : await this.acquireHeld();
+        const held = converted ? null : await this.held;
         assertCurrent();
         if (held === null && client.offline)
           throw new Error("This item needs the server, which cannot be reached");
