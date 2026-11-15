@@ -354,23 +354,19 @@ export const makeHttpHandler = (
       const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
       try {
         const adaptive = adaptiveRequestFor(url.pathname);
-        if (adaptive !== null) {
-          if (media.sessionId.startsWith("download:"))
-            throw badRequest("Downloads keep the original file");
-          if (media.preloaded === true)
-            throw badRequest("Only the item a session plays can be converted");
+        const transcode = url.searchParams.get("transcode") === "1";
+        if ((adaptive !== null || transcode) && media.sessionId.startsWith("download:"))
+          throw badRequest("Downloads keep the original file");
+        if ((adaptive !== null || transcode) && media.preloaded === true)
+          throw badRequest("Only the item a session plays can be converted");
+        if (adaptive !== null)
           return await adaptiveStreams.serve(
             request,
             media,
             adaptive,
             url.searchParams.get("grant"),
           );
-        }
-        if (url.searchParams.get("transcode") === "1" && media.sessionId.startsWith("download:"))
-          throw badRequest("Downloads keep the original file");
-        if (url.searchParams.get("transcode") === "1" && media.preloaded === true)
-          throw badRequest("Only the item a session plays can be converted");
-        if (url.searchParams.get("transcode") === "1")
+        if (transcode)
           return await transcoder.serve(request, media, () =>
             call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now())),
           );

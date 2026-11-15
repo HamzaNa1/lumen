@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
 import { mpvWire } from "./support/mpv-wire";
@@ -363,6 +364,68 @@ test("desktop moves between the original and converted qualities, and between qu
       .toMatchObject({ quality: { choice: "original", playing: "original" } });
     await expect.poll(height).toBe(720);
     expect(masters()).toBe(1);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("desktop Auto moves an original that stops arriving onto converted pieces and keeps playing", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
+  const library = await server.library(admin.accessToken, "movies", []);
+  const file = join(library.path, "Film.mkv");
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", file],
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  const proxy = await new NetworkProxy(server.origin).start();
+  // The original stops arriving a few seconds in, as on a link that cannot carry it.
+  let allowance = Math.round(statSync(file).size * 0.1);
+  proxy.intercept = async (request, response) => {
+    if (request.method !== "GET" || !/^\/api\/v1\/media\/[^/?]+(?:\?|$)/u.test(request.url ?? ""))
+      return false;
+    const upstream = await fetch(new URL(request.url ?? "/", proxy.upstream), {
+      headers: {
+        authorization: request.headers.authorization ?? "",
+        range: request.headers.range ?? "bytes=0-",
+      },
+    });
+    response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
+    for await (const chunk of upstream.body ?? []) {
+      const part = Buffer.from(chunk).subarray(0, Math.max(0, allowance));
+      allowance -= part.length;
+      response.write(part);
+      if (allowance <= 0) return true;
+    }
+    response.end();
+    return true;
+  };
+  const { page } = desktop;
+  try {
+    await connectDesktop(page, proxy);
+    await page.getByRole("link", { name: "movies", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Play Film", exact: true })
+      .first()
+      .click({ force: true });
+    const state = () => page.evaluate(() => window.lumen.player.state());
+    await expect.poll(state).toMatchObject({
+      paused: false,
+      quality: { choice: "auto", playing: "original" },
+    });
+    await expect.poll(async () => (await state())?.quality?.playing).toMatch(/^\d+p$/u);
+    const switchedAt = (await state())?.positionSeconds ?? 0;
+    expect((await state())?.quality?.choice).toBe("auto");
+    await expect
+      .poll(async () => (await state())?.positionSeconds ?? 0)
+      .toBeGreaterThan(switchedAt + 2);
+    expect(await state()).toMatchObject({ paused: false });
   } finally {
     await proxy.close();
   }

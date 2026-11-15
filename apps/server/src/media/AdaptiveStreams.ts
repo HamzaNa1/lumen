@@ -464,15 +464,15 @@ export const encoderArguments = (options: {
   );
   args.push("-colorspace", "bt709", "-color_primaries", "bt709", "-color_trc", "bt709");
   args.push("-c:v", H264_ENCODERS[config.encoder].name, "-g", "100000");
-  const rate = ["-maxrate", `${maxKbps}k`, "-bufsize", `${maxKbps * 2}k`];
-  if (config.encoder === "cpu")
-    args.push("-preset", "veryfast", "-crf", "23", ...rate, "-sc_threshold", "0");
-  else if (config.encoder === "nvenc") {
-    if (gpu !== null) args.push("-gpu", gpu);
-    args.push("-rc", "vbr", "-cq", "25", "-b:v", `${Math.round(maxKbps * 0.7)}k`, ...rate);
-    args.push("-no-scenecut", "1");
-  } else args.push("-rc_mode", "VBR", "-b:v", `${Math.round(maxKbps * 0.7)}k`, ...rate, "-bf", "0");
-  if (config.encoder !== "vaapi") args.push("-forced-idr", "1");
+  const target = `${Math.round(maxKbps * 0.7)}k`;
+  // Quality-led rate control, capped so each piece stays within its quality's budget.
+  const rateControl = {
+    cpu: ["-preset", "veryfast", "-crf", "23", "-sc_threshold", "0", "-forced-idr", "1"],
+    nvenc: ["-rc", "vbr", "-cq", "25", "-b:v", target, "-no-scenecut", "1", "-forced-idr", "1"],
+    vaapi: ["-rc_mode", "VBR", "-b:v", target, "-bf", "0"],
+  }[config.encoder];
+  args.push(...rateControl, "-maxrate", `${maxKbps}k`, "-bufsize", `${maxKbps * 2}k`);
+  if (gpu !== null && config.encoder === "nvenc") args.push("-gpu", gpu);
   args.push("-profile:v", "main");
   // A keyframe on the first frame at or after every multiple of the piece length.
   args.push(

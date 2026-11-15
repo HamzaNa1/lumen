@@ -163,8 +163,23 @@ test("adaptive conversion cuts every quality and restart at the same source time
     ...["-c:v", "libx264", "-preset", "ultrafast", "-g", "240", "-c:a", "aac"],
     join(library.path, "Wide.mkv"),
   ]);
+  await server.media(library.path, "Broken.mp4");
   await server.scan(admin.accessToken, library.id);
-  const item = (await server.items(admin.accessToken, library.id))[0];
+  const items = await server.items(admin.accessToken, library.id);
+  const broken = await server.play(
+    admin.accessToken,
+    items.find((entry) => entry.title === "Broken")?.id ?? "",
+  );
+  // A file replaced by something FFmpeg cannot read is refused, so the client keeps the original.
+  await writeFile(join(library.path, "Broken.mp4"), Buffer.alloc(4096, 7));
+  const unreadable = await server.request(`${broken.streamUrl}/adaptive/0/master.m3u8`, {
+    headers: { authorization: `Bearer ${broken.grantToken}` },
+  });
+  expect(unreadable.status).toBe(503);
+  expect(await unreadable.json()).toMatchObject({
+    message: "The file could not be read for conversion",
+  });
+  const item = items.find((entry) => entry.title === "Wide");
   const playback = await server.play(admin.accessToken, item?.id ?? "");
   const base = `${playback.streamUrl}/adaptive/0`;
   const headers = { authorization: `Bearer ${playback.grantToken}` };

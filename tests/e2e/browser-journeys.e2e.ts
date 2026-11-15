@@ -511,12 +511,17 @@ test("auto quality steps down on a slow link and back up without stalling once i
     if (match?.[1] !== undefined) pieces.push(match[1]);
   });
   const network = await page.context().newCDPSession(page);
+  // Only media is slowed: the page's own scripts arriving late is not what Auto answers to.
   const throttle = (bytesPerSecond: number) =>
-    network.send("Network.emulateNetworkConditions", {
-      offline: false,
-      latency: 0,
-      downloadThroughput: bytesPerSecond,
-      uploadThroughput: -1,
+    network.send("Network.emulateNetworkConditionsByRule", {
+      matchedNetworkConditions: [
+        {
+          urlPattern: `${new URL(server.origin).origin}/api/v1/media/*`,
+          latency: 0,
+          downloadThroughput: bytesPerSecond,
+          uploadThroughput: -1,
+        },
+      ],
     });
   await network.send("Network.enable");
   await signIn(page, server);

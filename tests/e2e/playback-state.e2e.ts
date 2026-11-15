@@ -177,6 +177,7 @@ test("a playback session preloads one other item's bytes, never converts them, a
   expect(next).toMatchObject({ itemId: other?.id, media: { revision: expect.any(String) } });
   expect(await fetchStatus(next.streamPath)).toBe(206);
   expect(await fetchStatus(next.streamPath, "?transcode=1"), "preloads never convert").toBe(400);
+  expect(await fetchStatus(next.streamPath, "/adaptive/0/master.m3u8")).toBe(400);
   expect(await fetchStatus(playback.streamUrl)).toBe(206);
   await preload(other?.id, 403, token);
   await preload(secret?.id, 403);
