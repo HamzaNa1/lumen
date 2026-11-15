@@ -1195,7 +1195,7 @@ export const makeHttpHandler = (
     }
     throw notFound("Endpoint not found");
   };
-  return async (request: Request, context?: RequestContext): Promise<Response> => {
+  const handle = async (request: Request, context?: RequestContext): Promise<Response> => {
     const startedAt = performance.now();
     const requestId = requestIdFor(request);
     const pathname = new URL(request.url).pathname;
@@ -1287,4 +1287,10 @@ export const makeHttpHandler = (
     );
     return response;
   };
+  // Converted pieces are written by FFmpeg on its own, so it would outlive the server.
+  const close = () => {
+    transcoder.stopAll();
+    adaptiveStreams.stopAll();
+  };
+  return Object.assign(handle, { close });
 };
