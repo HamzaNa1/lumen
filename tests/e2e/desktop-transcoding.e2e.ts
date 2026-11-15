@@ -287,3 +287,78 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled", "unsupported"]
       await proxy.close();
     }
   });
+
+test("desktop moves between the original and converted qualities, and between qualities without reloading", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", []);
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"],
+    join(library.path, "Film.mkv"),
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  const proxy = await new NetworkProxy(server.origin).start();
+  const { page, app } = desktop;
+  try {
+    await connectDesktop(page, proxy);
+    await page.getByRole("link", { name: "movies", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Play Film", exact: true })
+      .first()
+      .click({ force: true });
+    const state = () => page.evaluate(() => window.lumen.player.state());
+    await expect.poll(state).toMatchObject({
+      paused: false,
+      quality: { choice: "auto", playing: "original" },
+    });
+    const sessionId = (await state())?.sessionId ?? "";
+    expect((await state())?.quality?.options.map((option) => option.id)).toEqual([
+      "original",
+      "720p",
+      "480p",
+      "360p",
+    ]);
+    const choose = (choice: string) =>
+      page.evaluate(
+        ({ sessionId, choice }) => window.lumen.player.selectQuality(sessionId, choice),
+        { sessionId, choice },
+      );
+    const height = () => mpvWire(app).command(["get_property", "video-params/h"]);
+    const masters = () =>
+      proxy.requests.filter((request) => request.path.includes("/master.m3u8")).length;
+
+    // Leaving the original reloads MPV once, onto converted pieces.
+    await choose("360p");
+    await expect.poll(state).toMatchObject({ quality: { choice: "360p", playing: "360p" } });
+    await expect.poll(height).toBe(360);
+    expect(masters()).toBe(1);
+
+    // Between qualities, held pieces past a short margin are replaced and MPV is not reloaded.
+    await choose("720p");
+    await expect.poll(height).toBe(720);
+    await expect.poll(state).toMatchObject({ quality: { playing: "720p" } });
+    expect(masters()).toBe(1);
+    expect(
+      proxy.requests.some((request) => /\/adaptive\/0\/720p\/\d+\.ts/u.test(request.path)),
+    ).toBe(true);
+
+    // A seek within converted pieces is MPV's own, not a new stream.
+    await page.evaluate((id) => window.lumen.player.seek(id, 24), sessionId);
+    await expect.poll(state).toMatchObject({ paused: false, quality: { playing: "720p" } });
+    await expect.poll(async () => (await state())?.positionSeconds ?? 0).toBeGreaterThanOrEqual(24);
+    expect(masters()).toBe(1);
+
+    await choose("original");
+    await expect
+      .poll(state)
+      .toMatchObject({ quality: { choice: "original", playing: "original" } });
+    await expect.poll(height).toBe(720);
+    expect(masters()).toBe(1);
+  } finally {
+    await proxy.close();
+  }
+});

@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import {
   API_VERSION,
   BrowserSession,
@@ -26,6 +27,7 @@ import { createLogger, type Logger } from "../core/Logger";
 import type { ServerIdentity } from "../database/Identity";
 import * as S from "../http/Schemas";
 import type { JobServiceShape } from "../jobs/JobService";
+import { AdaptiveStreams, adaptiveRequestFor } from "../media/AdaptiveStreams";
 import { ArtworkVariants } from "../media/ArtworkVariants";
 import type { MetadataProvider } from "../media/Tmdb";
 import { Transcoder } from "../media/Transcoder";
@@ -221,6 +223,9 @@ export const makeHttpHandler = (
     );
   };
   const transcoder = new Transcoder(() => call(services.transcodingSettings.read()));
+  const adaptiveStreams = new AdaptiveStreams(join(config.dataDir, "transcode"), transcoder, () =>
+    call(services.transcodingSettings.read()),
+  );
   const artworkVariants = new ArtworkVariants({
     dataDir: config.dataDir,
     ffmpeg: async () => (await call(services.transcodingSettings.read())).ffmpeg,
@@ -251,6 +256,7 @@ export const makeHttpHandler = (
             preload: true,
             libraryFolders: true,
             artworkWidths: true,
+            adaptiveStreaming: true,
           },
         },
         200,
@@ -347,6 +353,19 @@ export const makeHttpHandler = (
       mediaSessions.set(request, media.sessionId);
       const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
       try {
+        const adaptive = adaptiveRequestFor(url.pathname);
+        if (adaptive !== null) {
+          if (media.sessionId.startsWith("download:"))
+            throw badRequest("Downloads keep the original file");
+          if (media.preloaded === true)
+            throw badRequest("Only the item a session plays can be converted");
+          return await adaptiveStreams.serve(
+            request,
+            media,
+            adaptive,
+            url.searchParams.get("grant"),
+          );
+        }
         if (url.searchParams.get("transcode") === "1" && media.sessionId.startsWith("download:"))
           throw badRequest("Downloads keep the original file");
         if (url.searchParams.get("transcode") === "1" && media.preloaded === true)
@@ -380,7 +399,10 @@ export const makeHttpHandler = (
           await body(request, config.maxRequestBodyBytes),
         );
         await call(services.transcodingSettings.save(settings));
-        if (!settings.enabled) transcoder.stopAll();
+        if (!settings.enabled) {
+          transcoder.stopAll();
+          adaptiveStreams.stopAll();
+        }
       }
       return json(TranscodingSettings, await call(services.transcodingSettings.read()));
     }
@@ -1100,6 +1122,7 @@ export const makeHttpHandler = (
     ) {
       await call(services.playback.stop(principal, parts[4], Date.now()));
       transcoder.stop(parts[4], principal.user.id);
+      adaptiveStreams.stop(parts[4], principal.user.id);
       return ack();
     }
     if (

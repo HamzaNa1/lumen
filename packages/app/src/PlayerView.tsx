@@ -144,6 +144,10 @@ export const PlayerView = ({
             trackAction((id) => runtime.playback.dismissTrackMemoryError(id));
         }}
         onResetTrack={(kind) => trackAction((id) => runtime.playback.resetTrack(id, kind))}
+        quality={player?.quality}
+        onSelectQuality={(choice) =>
+          trackAction((id) => runtime.playback.selectQuality(id, choice))
+        }
         subtitleSelection={capabilities.nativeAudioOutput}
         headerActions={
           <div className="media-player-header-actions">

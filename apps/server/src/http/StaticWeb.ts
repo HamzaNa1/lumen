@@ -63,7 +63,9 @@ const pageHeaders = (request: Request): Record<string, string> => {
       "script-src 'self'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data:",
-      "media-src 'self'",
+      // MediaSource hands the element a blob: URL for converted pieces; their worker is a file.
+      "media-src 'self' blob:",
+      "worker-src 'self'",
       `connect-src 'self' ${socketOrigin}`,
       "object-src 'none'",
       "base-uri 'self'",

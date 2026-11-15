@@ -106,6 +106,7 @@ const api: DesktopBridge = {
       return invoke<{ ok: true }>("player:surface", bounds);
     },
     selectAudio: (sessionId, streamId) => invoke("player:select-audio", { sessionId, streamId }),
+    selectQuality: (sessionId, choice) => invoke("player:select-quality", { sessionId, choice }),
     selectSubtitle: (sessionId, streamId) =>
       invoke("player:select-subtitle", { sessionId, streamId }),
     audioOutput: (sessionId, output) => invoke("player:audio-output", { sessionId, output }),

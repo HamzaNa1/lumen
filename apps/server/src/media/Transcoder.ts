@@ -3,10 +3,10 @@ import type { TranscodingSettings } from "@lumen/contracts";
 import { badRequest, ServerError } from "../core/Errors";
 import { H264_ENCODERS } from "./VideoEncoders";
 
-const unavailable = (message: string) =>
+export const unavailable = (message: string) =>
   new ServerError({ status: 503, code: "service_unavailable", message });
 
-interface Job {
+export interface Job {
   readonly sessionId: string;
   readonly userId: string;
   readonly gpu: string | null;
@@ -29,6 +29,49 @@ export class Transcoder {
     if (this.starts.get(sessionId)?.userId === userId) this.starts.delete(sessionId);
     for (const job of this.jobs)
       if (job.sessionId === sessionId && job.userId === userId) job.stop();
+  }
+
+  /**
+   * Stops the session's earlier encoders, waits for them to exit, then claims a slot for a new
+   * one under the current policy. `beforeClaim` runs once the earlier encoders are gone, so a
+   * caller can give up without claiming anything.
+   */
+  async admit(
+    sessionId: string,
+    video: string,
+    beforeClaim: () => void = () => {},
+  ): Promise<{ readonly config: TranscodingSettings; readonly gpu: string | null }> {
+    const previous = [...this.jobs].filter((job) => job.sessionId === sessionId);
+    for (const job of previous) job.stop();
+    await Promise.all(previous.map((job) => job.finished));
+    const config = await this.settings();
+    beforeClaim();
+    if (!config.enabled) throw unavailable("Transcoding is disabled on this server");
+    if (this.jobs.size >= config.maxJobs) throw unavailable("All transcoding slots are busy");
+    if (
+      !config.softwareVideo &&
+      (video === "vp8" || (video === "h264" && config.encoder === "cpu"))
+    )
+      throw unavailable("Software video encoding is disabled on this server");
+    let gpu: string | null = null;
+    if (video === "h264" && config.encoder !== "cpu") {
+      const loads = config.gpus.map((device) => ({
+        device,
+        count: [...this.jobs].filter((job) => job.gpu === device).length,
+      }));
+      loads.sort((a, b) => a.count - b.count);
+      const selected = loads[0];
+      if (!selected || selected.count >= config.gpuJobs)
+        throw unavailable("All GPU slots are busy");
+      gpu = selected.device;
+    }
+    return { config, gpu };
+  }
+
+  /** Counts a running encoder against the limits until `finished` settles. */
+  track(job: Job): void {
+    this.jobs.add(job);
+    void job.finished.then(() => this.jobs.delete(job));
   }
 
   async serve(
@@ -72,39 +115,18 @@ export class Transcoder {
     if (request.signal.aborted) throw badRequest("Playback request was cancelled");
     const pending = Symbol();
     this.starts.set(media.sessionId, { userId: media.userId, id: pending });
-    const previous = [...this.jobs].filter((job) => job.sessionId === media.sessionId);
-    for (const job of previous) job.stop();
-    await Promise.all(previous.map((job) => job.finished));
-    let config: TranscodingSettings;
+    let admitted: { readonly config: TranscodingSettings; readonly gpu: string | null };
     try {
-      config = await this.settings();
-    } catch (cause) {
+      admitted = await this.admit(media.sessionId, video, () => {
+        if (this.starts.get(media.sessionId)?.id !== pending)
+          throw badRequest("Playback request was superseded");
+        this.starts.delete(media.sessionId);
+        if (request.signal.aborted) throw badRequest("Playback request was cancelled");
+      });
+    } finally {
       if (this.starts.get(media.sessionId)?.id === pending) this.starts.delete(media.sessionId);
-      throw cause;
     }
-    if (this.starts.get(media.sessionId)?.id !== pending)
-      throw badRequest("Playback request was superseded");
-    this.starts.delete(media.sessionId);
-    if (!config.enabled) throw unavailable("Transcoding is disabled on this server");
-    if (request.signal.aborted) throw badRequest("Playback request was cancelled");
-    if (this.jobs.size >= config.maxJobs) throw unavailable("All transcoding slots are busy");
-    if (
-      !config.softwareVideo &&
-      (video === "vp8" || (video === "h264" && config.encoder === "cpu"))
-    )
-      throw unavailable("Software video encoding is disabled on this server");
-    let gpu: string | null = null;
-    if (video === "h264" && config.encoder !== "cpu") {
-      const loads = config.gpus.map((device) => ({
-        device,
-        count: [...this.jobs].filter((job) => job.gpu === device).length,
-      }));
-      loads.sort((a, b) => a.count - b.count);
-      const selected = loads[0];
-      if (!selected || selected.count >= config.gpuJobs)
-        throw unavailable("All GPU slots are busy");
-      gpu = selected.device;
-    }
+    const { config, gpu } = admitted;
     const args = [
       "-hide_banner",
       "-loglevel",

@@ -1,3 +1,4 @@
+export * from "./adaptive.ts";
 export * from "./api.ts";
 export * from "./app-updates.ts";
 export * from "./downloads.ts";

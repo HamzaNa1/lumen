@@ -1,4 +1,5 @@
 import { Schema } from "effect";
+import { PlayerQuality } from "./adaptive.ts";
 import { Sha256Digest, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 import { ServerInfo } from "./server.ts";
 import { TrackMemory } from "./track-memory.ts";
@@ -316,6 +317,8 @@ export const PlayerState = Schema.Struct({
   buffering: Schema.optional(Schema.Boolean),
   /** The platform refuses to start playback until the viewer interacts with the player. */
   awaitingInteraction: Schema.optional(Schema.Boolean),
+  /** Left out where the viewer has no quality to choose. */
+  quality: Schema.optional(PlayerQuality),
 });
 export type PlayerState = Schema.Schema.Type<typeof PlayerState>;
 

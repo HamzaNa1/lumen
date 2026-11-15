@@ -1,8 +1,24 @@
-import { type PlaybackDiagnostics, setTranscodingParameters } from "@lumen/client";
-import { type PlayerSession, resolveTrackSelection, type TrackKind } from "@lumen/contracts";
+import {
+  originalFits,
+  originalKbps,
+  type PlaybackDiagnostics,
+  qualityState,
+  setTranscodingParameters,
+  startingRendition,
+  type ThroughputEstimator,
+} from "@lumen/client";
+import {
+  type AdaptiveRendition,
+  adaptiveRenditionsFor,
+  type PlayerQuality,
+  type PlayerSession,
+  resolveTrackSelection,
+  type TrackKind,
+} from "@lumen/contracts";
 import { ignoreFailure } from "../failures";
 import { type MediaFile, type MediaSpec, mediaSpecOf } from "../media-store/MediaFile";
 import type { MediaStore } from "../media-store/MediaStore";
+import { AdaptiveStream } from "./AdaptiveStream";
 import { startupRanges } from "./MediaPreload";
 import type { MpvIpc } from "./MpvIpc";
 import type { PlaybackBridge } from "./PlaybackBridge";
@@ -62,9 +78,20 @@ export const openHeldMedia = async (options: {
   };
 };
 
+/** What MPV plays: the file itself, a single conversion, or converted pieces from this quality. */
+type Delivery = "original" | "converted" | AdaptiveRendition;
+
+/** MPV reads only this far ahead of converted pieces; the bridge holds the rest. */
+const ADAPTIVE_CACHE_SECONDS = 12;
+const ORIGINAL_CACHE_SECONDS = 60;
+
 /** Owns the current HTTP stream and translates the converted segment's clock to source time. */
 export class MpvMediaSource {
   transcoded = false;
+  /** Set while converted pieces play. */
+  adaptive: AdaptiveStream | null = null;
+  /** "auto", "original", or a rendition id. */
+  qualityChoice = "auto";
   offset = 0;
   loading = false;
   interrupted = false;
@@ -90,11 +117,20 @@ export class MpvMediaSource {
       active: () => boolean;
       /** The file as this device holds it; without it every stream is proxied as it arrives. */
       held?: Promise<HeldMedia | null>;
+      /** Measures the connection across playbacks from the same server. */
+      estimator: ThroughputEstimator;
     },
   ) {
     this.held = options.held ?? Promise.resolve(null);
     void this.held.then((held) => {
-      if (!this.closed) this.heldFile = held?.file ?? null;
+      if (this.closed || held === null) return;
+      this.heldFile = held.file;
+      // The original's fetches measure the link while it plays, at the file's average bitrate.
+      held.file.on("throughput", (bytes: number, milliseconds: number) => {
+        const kbps = this.originalKbps;
+        if (kbps !== null && this.playsOriginal)
+          options.estimator.sample(bytes, milliseconds, (bytes * 8) / 1000 / kbps);
+      });
     }, ignoreFailure);
     const selected = resolveTrackSelection(
       options.session.streams,
@@ -110,20 +146,82 @@ export class MpvMediaSource {
   }
 
   get streams() {
-    return this.transcoded
+    return this.transcoded || this.adaptive !== null
       ? this.options.session.streams.filter((stream) => stream.kind === "audio")
       : this.options.session.streams.filter((stream) => this.trackIds.has(stream.id));
   }
 
+  /** The qualities the server converts this file into; none where it cannot, or need not. */
+  get renditions(): ReadonlyArray<AdaptiveRendition> {
+    const { client, session } = this.options;
+    // Bytes kept on this device play as they are: there is nothing to adapt to.
+    if (
+      client.supportsAdaptive !== true ||
+      client.offline === true ||
+      !session.media?.video ||
+      this.conversionFailed
+    )
+      return [];
+    if (this.heldFile?.complete === true) return [];
+    return adaptiveRenditionsFor(session.media.video.size?.height ?? null);
+  }
+
+  get originalKbps(): number | null {
+    return originalKbps(
+      this.options.session.media?.sizeBytes,
+      this.options.session.durationSeconds,
+    );
+  }
+
+  /** Whether the original file can play at all; false once MPV failed to decode it. */
+  private originalPlays = true;
+  /** Set once converted pieces failed to start, as when the server has conversion turned off. */
+  private conversionFailed = false;
+
+  quality(): PlayerQuality | undefined {
+    const renditions = this.renditions;
+    // A file MPV cannot decode plays as one conversion, which has no qualities to offer.
+    if (renditions.length === 0 || !this.originalPlays) return undefined;
+    return qualityState({
+      choice: this.qualityChoice,
+      playing: this.adaptive?.playingRendition.id ?? "original",
+      original: {
+        height: this.options.session.media?.video?.size?.height ?? null,
+        kbps: this.originalKbps,
+      },
+      renditions,
+      measuredKbps: this.options.estimator.kbps,
+    });
+  }
+
   async start(position: number): Promise<void> {
+    await this.held.catch(() => null);
+    const delivery = this.startingDelivery();
     try {
-      await this.load(false, position);
+      await this.load(delivery, position).catch((cause: unknown) => {
+        if (typeof delivery !== "object" || cause instanceof MediaLoadCancelled) throw cause;
+        // Conversion can be off on a server that offers it; the original still plays.
+        this.conversionFailed = true;
+        return this.load("original", position);
+      });
     } catch (cause) {
       if (!(cause instanceof MediaDecodeFailure)) throw cause;
       await this.convert(position);
     }
   }
 
+  /** Where Auto starts, or the viewer's own choice. */
+  private startingDelivery(): Delivery {
+    const renditions = this.renditions;
+    if (renditions.length === 0 || this.qualityChoice === "original") return "original";
+    const chosen = renditions.find((rendition) => rendition.id === this.qualityChoice);
+    if (chosen !== undefined) return chosen;
+    if (this.originalPlays && originalFits(this.options.estimator.kbps, this.originalKbps))
+      return "original";
+    return startingRendition(renditions, this.options.estimator.kbps) ?? "original";
+  }
+
+  /** The original failed to decode: the server converts it as one stream from `position`. */
   convert(position: number): Promise<void> {
     if (!this.options.client.supportsTranscoding)
       return Promise.reject(
@@ -131,16 +229,53 @@ export class MpvMediaSource {
           "This server does not support transcoding. Update the server to play this media.",
         ),
       );
-    return this.load(true, position);
+    this.originalPlays = false;
+    return this.load("converted", position);
+  }
+
+  /**
+   * Swaps between the original and converted pieces at a position: a brief reload. When
+   * converted pieces fail to start, the original plays on and they are no longer offered.
+   */
+  switchTo(delivery: "original" | AdaptiveRendition, position: number): Promise<void> {
+    return this.load(delivery, position).catch((cause: unknown) => {
+      if (delivery === "original" || cause instanceof MediaLoadCancelled || !this.originalPlays)
+        throw cause;
+      this.conversionFailed = true;
+      this.qualityChoice = "auto";
+      return this.load("original", position);
+    });
+  }
+
+  get playsOriginal(): boolean {
+    return this.adaptive === null && !this.transcoded;
+  }
+
+  get originalUsable(): boolean {
+    return this.originalPlays;
+  }
+
+  /** "auto", "original", or a rendition id. */
+  async selectQuality(choice: string, position: number): Promise<void> {
+    const rendition = this.renditions.find((candidate) => candidate.id === choice);
+    if (choice !== "auto" && rendition === undefined && choice !== "original")
+      throw new Error("Quality is unavailable");
+    if (choice === "original" && !this.originalPlays)
+      throw new Error("This file needs converting to play here");
+    this.qualityChoice = choice;
+    if (choice === "original" && !this.playsOriginal) await this.load("original", position);
+    else if (rendition !== undefined && this.adaptive === null)
+      await this.switchTo(rendition, position);
+    else this.adaptive?.choose(choice);
   }
 
   async select(kind: TrackKind, streamId: string | null, position: number): Promise<void> {
-    if (kind === "subtitle" && this.transcoded && streamId !== null)
+    if (kind === "subtitle" && (this.transcoded || this.adaptive !== null) && streamId !== null)
       throw new Error("Subtitles are unavailable during server transcoding");
-    if (kind === "audio" && this.transcoded) {
+    if (kind === "audio" && (this.transcoded || this.adaptive !== null)) {
       this.audioId = streamId;
       try {
-        await this.convert(position);
+        await this.load(this.adaptive?.loadingRendition ?? "converted", position);
       } catch (cause) {
         if (!(cause instanceof MediaLoadCancelled)) throw cause;
         await this.waitForReplacement();
@@ -184,6 +319,8 @@ export class MpvMediaSource {
     this.closed = true;
     this.revision += 1;
     this.loadAbort?.abort();
+    this.adaptive?.close();
+    this.adaptive = null;
     if (this.capability !== null) this.options.bridge.revoke(this.capability);
     this.heldFile = null;
     // A file that failed to open was reported by the load that awaited it.
@@ -193,7 +330,9 @@ export class MpvMediaSource {
   /** The file as this device holds it, once it is open. */
   heldFile: MediaFile | null = null;
 
-  private load(converted: boolean, position: number): Promise<void> {
+  private load(delivery: Delivery, position: number): Promise<void> {
+    const converted = delivery === "converted";
+    const adaptiveRendition = typeof delivery === "object" ? delivery : null;
     const revision = ++this.revision;
     this.transcoded = converted;
     this.interrupted = false;
@@ -218,26 +357,58 @@ export class MpvMediaSource {
         assertCurrent();
         const url = new URL(session.streamUrl, client.serverOrigin);
         const offset = converted ? position : 0;
+        const audios = session.streams
+          .filter((stream) => stream.kind === "audio")
+          .sort((a, b) => a.ordinal - b.ordinal);
+        const audioIndex = Math.max(
+          0,
+          audios.findIndex((stream) => stream.id === this.audioId),
+        );
+        this.adaptive?.close();
+        this.adaptive = null;
+        let adaptive: AdaptiveStream | null = null;
+        if (adaptiveRendition !== null) {
+          adaptive = new AdaptiveStream({
+            serverOrigin: client.serverOrigin,
+            basePath: `${url.pathname}/adaptive/${audioIndex}`,
+            bearer: session.grantToken,
+            renditions: this.renditions,
+            start: adaptiveRendition,
+            choice: this.qualityChoice,
+            startSeconds: position,
+            estimator: this.options.estimator,
+            diagnostics: this.options.diagnostics,
+          });
+          try {
+            await adaptive.open();
+          } catch (cause) {
+            adaptive.close();
+            throw cause;
+          }
+          if (this.closed || revision !== this.revision) adaptive.close();
+          assertCurrent();
+          this.adaptive = adaptive;
+        }
+        await ipc.command([
+          "set_property",
+          "cache-secs",
+          adaptive === null ? ORIGINAL_CACHE_SECONDS : ADAPTIVE_CACHE_SECONDS,
+        ]);
+        assertCurrent();
         if (converted) {
-          const audios = session.streams
-            .filter((stream) => stream.kind === "audio")
-            .sort((a, b) => a.ordinal - b.ordinal);
           setTranscodingParameters(
             url,
             {
               format: "mp4",
               video: session.media?.video === null ? "none" : "h264",
               audio: "aac",
-              audioIndex: Math.max(
-                0,
-                audios.findIndex((stream) => stream.id === this.audioId),
-              ),
+              audioIndex,
             },
             position,
           );
         }
         let transferError: Error | null = null;
-        const held = converted ? null : await this.held;
+        const held = converted || adaptive !== null ? null : await this.held;
         assertCurrent();
         if (held === null && client.offline)
           throw new Error("This item needs the server, which cannot be reached");
@@ -248,30 +419,35 @@ export class MpvMediaSource {
         const detachHeld = () => held?.file.off("failure", onHeldFailure);
         detach = detachHeld;
         const registered =
-          held === null
+          adaptive !== null
             ? bridge.register({
-                onStatus: (status) => {
-                  if (status >= 400)
-                    transferError = new Error(
-                      converted
-                        ? `Server transcoding is unavailable (HTTP ${status}). Check server settings and capacity.`
-                        : `Media request failed (HTTP ${status})`,
-                    );
-                },
-                connectionId: this.options.connectionId,
-                serverOrigin: client.serverOrigin,
-                streamPath: url.pathname + url.search,
-                bearer: session.grantToken,
+                adaptive,
                 active: () => !this.closed && this.options.active(),
-                sessionId: session.sessionId,
-                diagnostics: this.options.diagnostics,
               })
-            : bridge.register({
-                file: held.file,
-                active: () => !this.closed && this.options.active(),
-                sessionId: session.sessionId,
-                diagnostics: this.options.diagnostics,
-              });
+            : held === null
+              ? bridge.register({
+                  onStatus: (status) => {
+                    if (status >= 400)
+                      transferError = new Error(
+                        converted
+                          ? `Server transcoding is unavailable (HTTP ${status}). Check server settings and capacity.`
+                          : `Media request failed (HTTP ${status})`,
+                      );
+                  },
+                  connectionId: this.options.connectionId,
+                  serverOrigin: client.serverOrigin,
+                  streamPath: url.pathname + url.search,
+                  bearer: session.grantToken,
+                  active: () => !this.closed && this.options.active(),
+                  sessionId: session.sessionId,
+                  diagnostics: this.options.diagnostics,
+                })
+              : bridge.register({
+                  file: held.file,
+                  active: () => !this.closed && this.options.active(),
+                  sessionId: session.sessionId,
+                  diagnostics: this.options.diagnostics,
+                });
         this.capability = registered.capability;
         await ipc.command(["set_property", "pause", "yes"]);
         assertCurrent();
@@ -329,18 +505,19 @@ export class MpvMediaSource {
             if (track === null || typeof track !== "object" || typeof track.id !== "number")
               continue;
             if (track.type !== "audio" && track.type !== "sub") continue;
-            const stream = converted
-              ? session.streams.find(
-                  (stream) => stream.id === this.audioId && track.type === "audio",
-                )
-              : session.streams.find(
-                  (stream) =>
-                    stream.ordinal === track["ff-index"] &&
-                    stream.kind === (track.type === "audio" ? "audio" : "subtitle"),
-                );
+            const stream =
+              converted || adaptive !== null
+                ? session.streams.find(
+                    (stream) => stream.id === this.audioId && track.type === "audio",
+                  )
+                : session.streams.find(
+                    (stream) =>
+                      stream.ordinal === track["ff-index"] &&
+                      stream.kind === (track.type === "audio" ? "audio" : "subtitle"),
+                  );
             if (stream) this.trackIds.set(stream.id, track.id);
           }
-        if (converted) this.subtitleId = null;
+        if (converted || adaptive !== null) this.subtitleId = null;
         for (const [kind, streamId] of [
           ["audio", this.audioId],
           ["sub", this.subtitleId],
@@ -365,6 +542,7 @@ export class MpvMediaSource {
         } while (appliedPause !== this.paused);
         this.options.diagnostics.record("media_delivery", {
           transcoded: converted,
+          adaptive: adaptiveRendition?.id ?? null,
           startSeconds: position,
         });
       })

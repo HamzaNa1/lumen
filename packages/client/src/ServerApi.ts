@@ -320,6 +320,10 @@ export class ServerApi {
     return this.serverIdentity?.capabilities?.transcoding === true;
   }
 
+  get supportsAdaptive(): boolean {
+    return this.serverIdentity?.capabilities?.adaptiveStreaming === true;
+  }
+
   get supportsWatchGroups(): boolean {
     return this.serverIdentity?.capabilities?.watchGroups === true;
   }

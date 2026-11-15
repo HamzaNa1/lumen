@@ -11,7 +11,10 @@ interface Budget {
 
 export const mediaTrackIdFor = (request: Request): string | null => {
   if (request.method !== "GET" && request.method !== "HEAD") return null;
-  return /^\/api\/v1\/media\/([^/]+)$/u.exec(new URL(request.url).pathname)?.[1] ?? null;
+  return (
+    /^\/api\/v1\/media\/([^/]+)(?:\/adaptive\/.+)?$/u.exec(new URL(request.url).pathname)?.[1] ??
+    null
+  );
 };
 
 export const isMediaRequest = (request: Request): boolean => mediaTrackIdFor(request) !== null;
