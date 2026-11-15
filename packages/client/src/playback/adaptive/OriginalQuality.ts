@@ -9,6 +9,8 @@ export const RETURN_TO_ORIGINAL = true;
 const ORIGINAL_HEADROOM = 1.5;
 /** Leaving the original starts before the buffer runs out, while the switch can still hide. */
 const LEAVE_BELOW_SECONDS = 12;
+/** Running dry for less than this, as a load or a seek briefly does, is not a stall. */
+const STALL_SECONDS = 2;
 /** How long the link must keep proving headroom before a mid-play return. */
 export const RETURN_AFTER_SECONDS = 30;
 
@@ -17,14 +19,18 @@ export const originalFits = (estimateKbps: number | null, originalKbps: number |
   originalKbps !== null &&
   (estimateKbps === null || estimateKbps >= originalKbps * ORIGINAL_HEADROOM);
 
+/** Whether the original has run dry for long enough to prove the link cannot carry it. */
+export const originalStalled = (stalledSeconds: number): boolean => stalledSeconds >= STALL_SECONDS;
+
 /** Whether Auto should give up the original for the converted qualities. */
 export const shouldLeaveOriginal = (state: {
-  readonly stalled: boolean;
+  /** How long playback has been starved of data, outside a seek. */
+  readonly stalledSeconds: number;
   readonly bufferAheadSeconds: number;
   readonly estimateKbps: number | null;
   readonly originalKbps: number | null;
 }): boolean =>
-  state.stalled ||
+  originalStalled(state.stalledSeconds) ||
   (state.bufferAheadSeconds < LEAVE_BELOW_SECONDS &&
     state.estimateKbps !== null &&
     state.originalKbps !== null &&

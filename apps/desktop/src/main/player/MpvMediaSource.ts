@@ -8,6 +8,7 @@ import {
   type ThroughputEstimator,
 } from "@lumen/client";
 import {
+  ADAPTIVE_PIECE_SECONDS,
   type AdaptiveRendition,
   adaptiveRenditionsFor,
   type PlayerQuality,
@@ -81,8 +82,11 @@ export const openHeldMedia = async (options: {
 /** What MPV plays: the file itself, a single conversion, or converted pieces from this quality. */
 type Delivery = "original" | "converted" | AdaptiveRendition;
 
-/** MPV reads only this far ahead of converted pieces; the bridge holds the rest. */
-const ADAPTIVE_CACHE_SECONDS = 12;
+/**
+ * MPV reads only this far ahead of converted pieces; the bridge holds the rest in memory. What
+ * MPV has read can no longer be replaced, so a better quality reaches the screen this much sooner.
+ */
+const ADAPTIVE_CACHE_SECONDS = ADAPTIVE_PIECE_SECONDS;
 const ORIGINAL_CACHE_SECONDS = 60;
 
 /** Owns the current HTTP stream and translates the converted segment's clock to source time. */

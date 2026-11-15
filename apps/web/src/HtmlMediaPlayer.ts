@@ -4,6 +4,7 @@ import {
   OriginalReturn,
   originalFits,
   originalKbps,
+  originalStalled,
   PLAYBACK_REPORT_INTERVAL_MS,
   PlaybackDiagnostics,
   type PlaybackSessionApi,
@@ -158,6 +159,8 @@ interface ActiveSession {
   readonly originalReturn: OriginalReturn;
   /** Where the buffer ended at the last connection sample while the original played. */
   lastBufferSample: { readonly atMs: number; readonly endSeconds: number } | null;
+  /** When playback ran dry outside a seek; null while it has data. */
+  starvedSinceMs: number | null;
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
@@ -719,6 +722,7 @@ export class HtmlMediaPlayer {
       originalUsable: quality.originalUsable,
       originalReturn: new OriginalReturn(),
       lastBufferSample: null,
+      starvedSinceMs: null,
     };
     this.active = active;
     try {
@@ -913,13 +917,20 @@ export class HtmlMediaPlayer {
     if (
       Number.isFinite(ahead) &&
       shouldLeaveOriginal({
-        stalled: active.buffering && !this.element.paused,
+        stalledSeconds:
+          active.starvedSinceMs === null || this.element.paused
+            ? 0
+            : (nowMs - active.starvedSinceMs) / 1000,
         bufferAheadSeconds: ahead,
         estimateKbps: this.estimator.kbps,
         originalKbps: active.originalKbps,
       })
     ) {
-      if (active.buffering && active.originalKbps !== null)
+      if (
+        active.starvedSinceMs !== null &&
+        originalStalled((nowMs - active.starvedSinceMs) / 1000) &&
+        active.originalKbps !== null
+      )
         this.estimator.capAt(active.originalKbps * 0.9);
       const rendition = startingRendition(active.renditions, this.estimator.kbps);
       if (rendition !== undefined) this.switchInBackground(active, rendition);
@@ -1071,6 +1082,8 @@ export class HtmlMediaPlayer {
     };
     const buffering = (waiting: boolean) => (): void => {
       active.buffering = waiting;
+      if (!waiting) active.starvedSinceMs = null;
+      else if (!this.element.seeking) active.starvedSinceMs ??= performance.now();
       update();
     };
     const record = (kind: string): void => {
@@ -1103,6 +1116,7 @@ export class HtmlMediaPlayer {
     };
     const onSeeking = (): void => {
       resumesPastSeconds = this.element.currentTime;
+      active.starvedSinceMs = null;
       update();
     };
     const onPlaying = (): void => {
@@ -1122,7 +1136,10 @@ export class HtmlMediaPlayer {
     const onSeeked = (): void => {
       // WebKit can keep HAVE_CURRENT_DATA after seeking in a fully downloaded file,
       // even while its clock advances. No further canplay/playing event is guaranteed.
-      if (this.bufferedAhead() > 0) active.buffering = false;
+      if (this.bufferedAhead() > 0) {
+        active.buffering = false;
+        active.starvedSinceMs = null;
+      }
       update();
     };
     const onError = (): void => {

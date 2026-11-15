@@ -226,7 +226,9 @@ test("adaptive conversion cuts every quality and restart at the same source time
   expect(late.start - next.start).toBeCloseTo(4, 1);
   const audio = await piece("audio/3.ts");
   expect(audio.codecs).toEqual(["aac"]);
-  expect(Math.abs(audio.start - late.start)).toBeLessThan(0.05);
+  // Neither stream has a frame exactly on the cut: video starts at the first frame after it, and
+  // audio at the frame that reaches it. Two video frames plus one audio frame bound the gap.
+  expect(Math.abs(audio.start - late.start)).toBeLessThan(2 * (1001 / 24000) + 1024 / 48000);
 
   await server.api(`/playback/sessions/${playback.sessionId}`, {
     token: admin.accessToken,

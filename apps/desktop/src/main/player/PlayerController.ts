@@ -5,6 +5,7 @@ import {
   measuredSize,
   OriginalReturn,
   originalFits,
+  originalStalled,
   PlaybackDiagnostics,
   PlaybackSessionReporter,
   PlaybackUnavailableError,
@@ -128,6 +129,8 @@ export class PlayerController extends EventEmitter {
   private diagnostics = new PlaybackDiagnostics();
   private diagnosticsItemId: string | null = null;
   private starved = false;
+  /** When MPV ran dry outside a seek; null while it has data. */
+  private starvedSinceMs: number | null = null;
   private intentionalPause = false;
   private lastBufferSampleMs = 0;
   private displaySleepBlocker: number | null = null;
@@ -594,15 +597,17 @@ export class PlayerController extends EventEmitter {
       return;
     }
     if (!media.playsOriginal || state.paused) return;
+    const stalledSeconds =
+      this.starvedSinceMs === null ? 0 : (Date.now() - this.starvedSinceMs) / 1000;
     if (
       shouldLeaveOriginal({
-        stalled: state.buffering === true,
+        stalledSeconds,
         bufferAheadSeconds: aheadSeconds,
         estimateKbps: estimator.kbps,
         originalKbps: media.originalKbps,
       })
     ) {
-      if (state.buffering === true && media.originalKbps !== null)
+      if (originalStalled(stalledSeconds) && media.originalKbps !== null)
         estimator.capAt(media.originalKbps * 0.9);
       const rendition = startingRendition(media.renditions, estimator.kbps);
       if (rendition !== undefined) run(rendition);
@@ -926,6 +931,7 @@ export class PlayerController extends EventEmitter {
     this.state = null;
     this.syncDisplaySleepBlocker();
     this.starved = false;
+    this.starvedSinceMs = null;
     this.intentionalPause = false;
     this.startingProcess = active.process;
     active.reporter.retire();
@@ -969,6 +975,7 @@ export class PlayerController extends EventEmitter {
     this.state = null;
     this.syncDisplaySleepBlocker();
     this.starved = false;
+    this.starvedSinceMs = null;
     this.intentionalPause = false;
     active?.reporter.retire();
     active?.media.close();
@@ -1090,6 +1097,8 @@ export class PlayerController extends EventEmitter {
           );
           this.lastBufferSampleMs = now;
         }
+        if (!starved) this.starvedSinceMs = null;
+        else if (!this.starved) this.starvedSinceMs = now;
         this.starved = starved;
       }
       this.state = next;

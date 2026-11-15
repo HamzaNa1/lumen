@@ -54,6 +54,8 @@ export class AdaptiveStream {
   private loading: AdaptiveRendition;
   private choice: string;
   private positionSeconds: number;
+  /** The last video piece MPV read. Replacing it or one before it would not change the picture. */
+  private readThrough = -1;
   private closed = false;
 
   constructor(
@@ -138,7 +140,7 @@ export class AdaptiveStream {
     void this.pump();
   }
 
-  /** "auto" or a rendition id; a manual choice shows within a couple of pieces. */
+  /** "auto" or a rendition id; a manual choice shows from the first piece MPV has not read. */
   choose(choice: string): void {
     this.choice = choice;
     const chosen = this.options.renditions.find((rendition) => rendition.id === choice);
@@ -194,6 +196,7 @@ export class AdaptiveStream {
       return;
     }
     const lane = match[1] === "v" ? this.video : this.audio;
+    if (lane === this.video) this.readThrough = index;
     const piece = await this.piece(lane, index, response);
     if (piece === null) {
       if (!response.headersSent) response.writeHead(this.closed ? 404 : 502).end();
@@ -292,10 +295,14 @@ export class AdaptiveStream {
       renditions: this.options.renditions,
       load: this.loading,
       positionSeconds: this.positionSeconds,
-      keepSeconds: this.choice === "auto" ? this.upgradeAfter : 2 * ADAPTIVE_PIECE_SECONDS,
+      keepSeconds: this.choice === "auto" ? this.upgradeAfter : 0,
     });
     if (from === null) return null;
-    for (let index = this.indexAt(from); index <= last; index += 1) {
+    for (
+      let index = Math.max(this.indexAt(from), this.readThrough + 1);
+      index <= last;
+      index += 1
+    ) {
       const held = this.video.held.get(index);
       if (
         held?.rendition != null &&
