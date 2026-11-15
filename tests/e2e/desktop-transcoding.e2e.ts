@@ -293,6 +293,9 @@ test("desktop moves between the original and converted qualities, and between qu
   admin,
   desktop,
 }) => {
+  // The released server a desktop release is checked against may predate converted qualities.
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
   const library = await server.library(admin.accessToken, "movies", []);
   execFileSync("ffmpeg", [
     ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
