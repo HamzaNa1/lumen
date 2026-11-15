@@ -7,51 +7,75 @@ import { latch, NetworkProxy } from "./support/proxy";
 const isSpeed = (entry: WireEntry) =>
   entry.command[0] === "set_property" && entry.command[1] === "speed";
 
+/** Moves MPV off the group clock until the controller sends the speed correction `reached` finds. */
+const provoke = async (
+  wire: ReturnType<typeof mpvWire>,
+  owner: WatchGroupClient,
+  mode: "hold-speed" | "fail-speed",
+  reached: (afterId: number) => Promise<WireEntry | null | undefined>,
+) => {
+  for (let disturbance = 1; ; disturbance += 1) {
+    const playback = owner.status.group?.playback;
+    expect(playback?.paused).toBe(false);
+    if (!playback) throw new Error("Group playback is missing");
+    const startedAtMs = Date.now();
+    const attempt = await wire.disturb(mode, watchPosition(playback, owner.serverNow));
+    const lead = Math.sign(1 - attempt.expectedSpeed);
+    let correction: WireEntry | null | undefined;
+    let absorbed = false;
+    await expect
+      .poll(
+        async () => {
+          correction = await reached(attempt.afterId);
+          if (correction) return true;
+          // A loaded runner can play slowly after the seek and absorb the drift before the
+          // controller has sustained it long enough to correct, so that correction never comes.
+          // Below 0.24 seconds the controller would also choose a smaller correction than expected.
+          const offset = await wire.offset(watchPosition(playback, owner.serverNow));
+          absorbed = Math.sign(offset) !== lead || Math.abs(offset) < 0.25;
+          return absorbed;
+        },
+        { timeout: 8000, intervals: [25, 50, 100] },
+      )
+      .toBe(true);
+    if (correction) {
+      expect(correction.command).toEqual(["set_property", "speed", attempt.expectedSpeed]);
+      return { ...attempt, correction, startedAtMs };
+    }
+    expect(disturbance, "Playback absorbed every disturbance before a correction").toBeLessThan(3);
+    await wire.release();
+  }
+};
+
 const captureSpeed = async (
   wire: ReturnType<typeof mpvWire>,
   owner: WatchGroupClient,
   mode: "hold-speed" | "fail-speed",
 ) => {
-  const playback = owner.status.group?.playback;
-  expect(playback?.paused).toBe(false);
-  if (!playback) throw new Error("Group playback is missing");
-  let startedAtMs = Date.now();
-  let attempt = await wire.disturb(mode, watchPosition(playback, owner.serverNow));
   if (mode === "fail-speed") {
-    const rejected = async () =>
+    const rejection = await provoke(wire, owner, mode, async (afterId) =>
       (await wire.snapshot()).commands.find(
-        (entry) => entry.id > attempt.afterId && entry.outcome === "rejected",
-      );
-    await expect.poll(rejected).toMatchObject({
-      command: ["set_property", "speed", attempt.expectedSpeed],
-    });
-    const failedId = (await rejected())?.id ?? Infinity;
+        (entry) => entry.id > afterId && entry.outcome === "rejected",
+      ),
+    );
     await expect
       .poll(async () =>
         (await wire.snapshot()).commands.find(
-          (entry) => entry.id > failedId && isSpeed(entry) && entry.error === "success",
+          (entry) =>
+            entry.id > rejection.correction.id && isSpeed(entry) && entry.error === "success",
         ),
       )
       .toMatchObject({ command: ["set_property", "speed", 1] });
     await wire.release();
-    const resumed = owner.status.group?.playback;
-    if (!resumed) throw new Error("Group playback is missing after speed recovery");
-    // Real playback can settle inside the deadband after the rejection; create a new drift.
-    startedAtMs = Date.now();
-    attempt = await wire.disturb("hold-speed", watchPosition(resumed, owner.serverNow));
   }
-  await expect
-    .poll(async () => (await wire.snapshot()).captured, {
-      timeout: 8000,
-      intervals: [25, 50, 100],
-    })
-    .toMatchObject({
-      command: ["set_property", "speed", attempt.expectedSpeed],
-      outcome: "held",
-    });
-  const captured = (await wire.snapshot()).captured;
-  if (!captured) throw new Error("Speed fault was not captured");
-  return { ...attempt, captured, startedAtMs };
+  const { correction: captured, ...attempt } = await provoke(
+    wire,
+    owner,
+    "hold-speed",
+    async () => (await wire.snapshot()).captured,
+  );
+  expect(captured.outcome).toBe("held");
+  return { ...attempt, captured };
 };
 
 test.use({ mpvFaults: true });

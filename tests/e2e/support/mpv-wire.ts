@@ -74,6 +74,19 @@ export const mpvWire = (app: ElectronApplication) => ({
       },
       { mode, targetSeconds, atMs: Date.now() },
     ),
+  /** Seconds MPV plays ahead of a group position measured now. */
+  offset: (targetSeconds: number) =>
+    app.evaluate(
+      async (_electron, { targetSeconds, atMs }) => {
+        const position = await (globalThis as MainGlobal).__lumenMpvWire.command([
+          "get_property",
+          "time-pos",
+        ]);
+        if (typeof position !== "number") throw new Error("MPV did not report its position");
+        return position - (targetSeconds + (Date.now() - atMs) / 1000);
+      },
+      { targetSeconds, atMs: Date.now() },
+    ),
   snapshot: () => app.evaluate(() => (globalThis as MainGlobal).__lumenMpvWire.snapshot()),
   release: () => app.evaluate(() => (globalThis as MainGlobal).__lumenMpvWire.release()),
   command: (args: (string | number)[]) =>
