@@ -119,16 +119,39 @@ test("real multitrack media exposes languages and roles and remembers independen
       (sessionId) => window.lumen.player.selectSubtitle(sessionId, null),
       current?.sessionId ?? "",
     );
-    await desktop.page.evaluate(
-      (sessionId) => window.lumen.player.resetTrack(sessionId, "audio"),
-      current?.sessionId ?? "",
+    expect(current?.trackPreferences).toEqual({ audioLanguage: "en", subtitleLanguage: null });
+    const english = current?.streams.find(
+      (stream) => stream.kind === "audio" && stream.language === "eng" && !stream.commentary,
     );
-    expect(await desktop.page.evaluate(() => window.lumen.player.state())).toMatchObject({
-      selectedSubtitleStreamId: null,
+    await desktop.page.getByRole("button", { name: "Playback settings", exact: true }).click();
+    await desktop.page.getByRole("combobox", { name: "Audio track" }).click();
+    const marked = desktop.page.getByRole("option", { name: / · Default$/ });
+    await expect(marked).toHaveCount(1);
+    await expect(marked).not.toContainText("Commentary");
+    await marked.click();
+    await expect
+      .poll(() => desktop.page.evaluate(() => window.lumen.player.state()))
+      .toMatchObject({ selectedAudioStreamId: english?.id, selectedSubtitleStreamId: null });
+    // Picking the default follows the settings again rather than remembering English for this title.
+    await server.api("/me/track-preferences", {
+      token,
+      method: "PATCH",
+      body: { audioLanguage: "ja" },
     });
+    await desktop.page.evaluate(() => window.lumen.player.stop());
+    await desktop.page.evaluate((itemId) => window.lumen.player.start(itemId), state?.itemId ?? "");
+    const japanese = state?.streams.find((stream) => stream.language === "jpn");
+    await expect
+      .poll(() => desktop.page.evaluate(() => window.lumen.player.state()))
+      .toMatchObject({
+        selectedAudioStreamId: japanese?.id,
+        selectedSubtitleStreamId: null,
+        trackPreferences: { audioLanguage: "ja", subtitleLanguage: null },
+      });
+    const reopened = await desktop.page.evaluate(() => window.lumen.player.state());
     failSave = true;
     await desktop.page.evaluate(({ id, audio }) => window.lumen.player.selectAudio(id, audio), {
-      id: current?.sessionId ?? "",
+      id: reopened?.sessionId ?? "",
       audio: commentary?.id ?? "",
     });
     expect(await desktop.page.evaluate(() => window.lumen.player.state())).toMatchObject({
@@ -138,7 +161,7 @@ test("real multitrack media exposes languages and roles and remembers independen
     failSave = false;
     await desktop.page.evaluate(
       (id) => window.lumen.player.retryTrackMemory(id),
-      current?.sessionId ?? "",
+      reopened?.sessionId ?? "",
     );
     expect(await desktop.page.evaluate(() => window.lumen.player.state())).toMatchObject({
       trackMemoryError: null,
@@ -146,11 +169,11 @@ test("real multitrack media exposes languages and roles and remembers independen
     failSave = true;
     await desktop.page.evaluate(
       (id) => window.lumen.player.selectSubtitle(id, null),
-      current?.sessionId ?? "",
+      reopened?.sessionId ?? "",
     );
     await desktop.page.evaluate(
       (id) => window.lumen.player.dismissTrackMemoryError(id),
-      current?.sessionId ?? "",
+      reopened?.sessionId ?? "",
     );
     expect(await desktop.page.evaluate(() => window.lumen.player.state())).toMatchObject({
       trackMemoryError: null,

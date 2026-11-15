@@ -6,6 +6,7 @@ import {
   type TrackChoiceInput,
   type TrackKind,
   type TrackMemory,
+  type TrackPreferences,
 } from "@lumen/contracts";
 
 export interface TrackSelectionOptions {
@@ -17,6 +18,8 @@ export interface TrackSelectionOptions {
   /** Null means persistence is unsupported; the local selection remains in effect. */
   readonly save: (input: TrackChoiceInput) => Promise<TrackMemory | null>;
   readonly onError: (message: string | null) => void;
+  /** The server answered a save with the viewer's settings, which may have changed elsewhere. */
+  readonly onPreferences: (preferences: TrackPreferences) => void;
 }
 
 /** One queue per playback session keeps physical selection and persistence in user-action order. */
@@ -97,7 +100,10 @@ export class TrackSelectionController {
       return;
     }
     this.options.assertActive();
-    if (memory !== null) this.memory = memory;
+    if (memory !== null) {
+      this.memory = memory;
+      this.options.onPreferences(memory.preferences);
+    }
     this.pending.delete(input.kind);
     if (input.choice === null && memory !== null) {
       const selected = resolveTrackSelection(

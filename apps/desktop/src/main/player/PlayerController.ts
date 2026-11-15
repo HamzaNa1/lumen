@@ -20,6 +20,7 @@ import {
 } from "@lumen/client";
 import {
   type AudioOutput,
+  DEFAULT_TRACK_PREFERENCES,
   type IpcPlayerSurfaceBounds,
   isWatchCompleted,
   type PlaybackInfo,
@@ -351,6 +352,7 @@ export class PlayerController extends EventEmitter {
         selectedAudioStreamId: active.media.audioId,
         selectedSubtitleStreamId: active.media.subtitleId,
         audioOutput,
+        trackPreferences: session.trackMemory?.preferences ?? DEFAULT_TRACK_PREFERENCES,
         ...this.qualityOf(active),
       };
       active.selection = new TrackSelectionController({
@@ -366,6 +368,10 @@ export class PlayerController extends EventEmitter {
         save: (choice) => active.client.saveTrackChoice(session.sessionId, choice),
         onError: (trackMemoryError) => {
           this.state = { ...this.requireState(), trackMemoryError };
+          this.publish();
+        },
+        onPreferences: (trackPreferences) => {
+          this.state = { ...this.requireState(), trackPreferences };
           this.publish();
         },
       });

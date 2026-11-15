@@ -1,4 +1,9 @@
-import type { PlayerAction, PlayerDisplay, PlayerState } from "@lumen/contracts";
+import {
+  defaultTracks,
+  type PlayerAction,
+  type PlayerDisplay,
+  type PlayerState,
+} from "@lumen/contracts";
 import { MediaPlayer } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
@@ -177,6 +182,9 @@ export const PlayerView = ({
         trackSelection={capabilities.trackSelection}
         selectedAudioStreamId={player?.selectedAudioStreamId ?? null}
         selectedSubtitleStreamId={player?.selectedSubtitleStreamId ?? null}
+        {...(player?.trackPreferences === undefined
+          ? {}
+          : { defaultTracks: defaultTracks(player.streams, player.trackPreferences) })}
         audioOutput={player?.audioOutput ?? "stereo"}
         onAudioOutput={
           nativeAudio === null || !capabilities.nativeAudioOutput

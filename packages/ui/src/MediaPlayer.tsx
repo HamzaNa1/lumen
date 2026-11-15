@@ -78,6 +78,11 @@ interface MediaPlayerProps {
   readonly streams: ReadonlyArray<PlayableStream>;
   readonly selectedAudioStreamId: string | null;
   readonly selectedSubtitleStreamId: string | null;
+  /**
+   * The tracks the viewer's settings pick, marked in the menus; choosing one follows the settings
+   * again. Left out where they are not known. A null subtitle means Off.
+   */
+  readonly defaultTracks?: { readonly audio: string | null; readonly subtitle: string | null };
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
   readonly onAudioOutput?: ((output: AudioOutput) => Promise<void>) | undefined;
@@ -128,6 +133,9 @@ interface MediaPlayerProps {
   readonly onSelectQuality?: (choice: string) => void;
 }
 
+const markDefault = (label: string, isDefault: boolean): string =>
+  isDefault ? `${label} · Default` : label;
+
 /** Stretches of the timeline drawn on the seek bar, such as what is buffered. */
 const timelineRanges = ({
   className,
@@ -177,6 +185,7 @@ export const MediaPlayer = ({
   streams,
   selectedAudioStreamId,
   selectedSubtitleStreamId,
+  defaultTracks,
   audioOutput,
   onAudioOutput,
   onPlaybackInfo,
@@ -649,42 +658,45 @@ export const MediaPlayer = ({
                         modal={false}
                         value={selectedAudioStreamId}
                         disabled={inactive}
-                        options={[
-                          ...(onResetTrack === undefined
-                            ? []
-                            : [{ value: "settings", label: "Use my settings" }]),
-                          ...audioStreams.map((stream, index) => ({
-                            value: stream.id,
-                            label: audioLabels[index] ?? "",
-                          })),
-                        ]}
+                        options={audioStreams.map((stream, index) => ({
+                          value: stream.id,
+                          label: markDefault(
+                            audioLabels[index] ?? "",
+                            defaultTracks?.audio === stream.id,
+                          ),
+                        }))}
                         onValueChange={(value) =>
-                          value === "settings" ? onResetTrack?.("audio") : onSelectAudio(value)
+                          onResetTrack !== undefined && defaultTracks?.audio === value
+                            ? onResetTrack("audio")
+                            : onSelectAudio(value)
                         }
                       />
                     ) : null}
-                    {subtitleStreams.length > 0 ||
-                    (onResetTrack !== undefined && subtitleSelection) ? (
+                    {subtitleStreams.length > 0 ? (
                       <SelectField
                         label="Subtitles"
                         modal={false}
                         value={selectedSubtitleStreamId ?? "off"}
                         disabled={inactive}
                         options={[
-                          ...(onResetTrack === undefined
-                            ? []
-                            : [{ value: "settings", label: "Use my settings" }]),
-                          { value: "off", label: "Off" },
+                          {
+                            value: "off",
+                            label: markDefault("Off", defaultTracks?.subtitle === null),
+                          },
                           ...subtitleStreams.map((stream, index) => ({
                             value: stream.id,
-                            label: subtitleLabels[index] ?? "",
+                            label: markDefault(
+                              subtitleLabels[index] ?? "",
+                              defaultTracks?.subtitle === stream.id,
+                            ),
                           })),
                         ]}
-                        onValueChange={(value) =>
-                          value === "settings"
-                            ? onResetTrack?.("subtitle")
-                            : onSelectSubtitle(value === "off" ? null : value)
-                        }
+                        onValueChange={(value) => {
+                          const streamId = value === "off" ? null : value;
+                          if (onResetTrack !== undefined && defaultTracks?.subtitle === streamId)
+                            onResetTrack("subtitle");
+                          else onSelectSubtitle(streamId);
+                        }}
                       />
                     ) : null}
                     {trackSelection && audioStreams.length === 0 && subtitleStreams.length === 0 ? (

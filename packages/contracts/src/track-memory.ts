@@ -149,6 +149,13 @@ const matchOverride = (
   return distinguished.length === 1 ? distinguished[0] : undefined;
 };
 
+const byLanguage = (tracks: ReadonlyArray<PlayableStream>, language: string | null) => {
+  const normalized = normalizeTrackLanguage(language);
+  return normalized === null
+    ? undefined
+    : tracks.find((track) => normalizeTrackLanguage(track.language) === normalized);
+};
+
 export const resolveTrackSelection = (
   streams: ReadonlyArray<PlayableStream>,
   sourceId: string,
@@ -157,12 +164,6 @@ export const resolveTrackSelection = (
   const ordered = [...streams].sort((a, b) => a.ordinal - b.ordinal);
   const audio = ordered.filter((stream) => stream.kind === "audio");
   const subtitles = ordered.filter((stream) => stream.kind === "subtitle");
-  const byLanguage = (tracks: ReadonlyArray<PlayableStream>, language: string | null) => {
-    const normalized = normalizeTrackLanguage(language);
-    return normalized === null
-      ? undefined
-      : tracks.find((track) => normalizeTrackLanguage(track.language) === normalized);
-  };
   return {
     audio:
       (memory.audio === null ? undefined : matchOverride(audio, sourceId, memory.audio)) ??
@@ -178,4 +179,13 @@ export const resolveTrackSelection = (
           byLanguage(subtitles, memory.preferences.subtitleLanguage) ??
           null),
   };
+};
+
+/** The tracks the viewer's settings pick when the title has no choice of its own. */
+export const defaultTracks = (
+  streams: ReadonlyArray<PlayableStream>,
+  preferences: TrackPreferences,
+): { audio: string | null; subtitle: string | null } => {
+  const selected = resolveTrackSelection(streams, "", { preferences, audio: null, subtitle: null });
+  return { audio: selected.audio?.id ?? null, subtitle: selected.subtitle?.id ?? null };
 };

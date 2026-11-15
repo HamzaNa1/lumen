@@ -33,11 +33,13 @@ import type {
 } from "@lumen/contracts";
 import {
   adaptiveRenditionsFor,
+  DEFAULT_TRACK_PREFERENCES,
   rememberTitleVolume,
   resolveTrackSelection,
   type TrackChoiceInput,
   type TrackKind,
   type TrackMemory,
+  type TrackPreferences,
   volumeForTitle,
 } from "@lumen/contracts";
 import { AdaptiveSource, adaptivePlaybackSupported } from "./AdaptiveSource";
@@ -138,6 +140,7 @@ interface ActiveSession {
   selectedAudioStreamId: string | null;
   selection: TrackSelectionController | null;
   trackMemoryError: string | null;
+  trackPreferences: TrackPreferences;
   buffering: boolean;
   awaitingInteraction: boolean;
   /** A request to play that the browser is holding, having neither started nor refused it. */
@@ -708,6 +711,7 @@ export class HtmlMediaPlayer {
       selectedAudioStreamId: null,
       selection: null,
       trackMemoryError: null,
+      trackPreferences: session.trackMemory?.preferences ?? DEFAULT_TRACK_PREFERENCES,
       buffering: false,
       awaitingInteraction: false,
       heldPlay: null,
@@ -751,6 +755,10 @@ export class HtmlMediaPlayer {
         save: (choice) => this.api.saveTrackChoice(session.sessionId, choice),
         onError: (message) => {
           active.trackMemoryError = message;
+          this.publishIfActive(active);
+        },
+        onPreferences: (preferences) => {
+          active.trackPreferences = preferences;
           this.publishIfActive(active);
         },
       });
@@ -1305,6 +1313,7 @@ export class HtmlMediaPlayer {
       selectedAudioStreamId: active.selectedAudioStreamId,
       selectedSubtitleStreamId: null,
       trackMemoryError: active.trackMemoryError,
+      trackPreferences: active.trackPreferences,
       // The browser decides the channel layout; this is the closest of the two descriptions.
       audioOutput: "auto-safe",
       buffering: active.buffering && !element.paused,
