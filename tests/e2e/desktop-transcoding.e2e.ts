@@ -337,20 +337,22 @@ test("desktop moves between the original and converted qualities, and between qu
     await expect.poll(height).toBe(360);
     expect(masters()).toBe(1);
 
-    // Between qualities, held pieces past a short margin are replaced and MPV is not reloaded.
-    await choose("720p");
-    await expect.poll(height).toBe(720);
-    await expect.poll(state).toMatchObject({ quality: { playing: "720p" } });
-    expect(masters()).toBe(1);
-    expect(
-      proxy.requests.some((request) => /\/adaptive\/0\/720p\/\d+\.ts/u.test(request.path)),
-    ).toBe(true);
+    // The bridge holds 360p well ahead of the playhead.
+    await expect
+      .poll(async () => (await state())?.bufferedRanges.at(-1)?.endSeconds ?? 0)
+      .toBeGreaterThanOrEqual(28);
 
-    // A seek within converted pieces is MPV's own, not a new stream.
+    // A manual pick is never served a worse piece MPV has not read yet, even one already held, and
+    // neither the pick nor a seek between converted pieces reloads MPV.
+    await choose("720p");
     await page.evaluate((id) => window.lumen.player.seek(id, 24), sessionId);
+    await expect.poll(height).toBe(720);
     await expect.poll(state).toMatchObject({ paused: false, quality: { playing: "720p" } });
     await expect.poll(async () => (await state())?.positionSeconds ?? 0).toBeGreaterThanOrEqual(24);
     expect(masters()).toBe(1);
+    expect(proxy.requests.some((request) => /\/adaptive\/0\/720p\/6\.ts/u.test(request.path))).toBe(
+      true,
+    );
 
     await choose("original");
     await expect

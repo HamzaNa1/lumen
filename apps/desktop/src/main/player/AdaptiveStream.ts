@@ -140,7 +140,10 @@ export class AdaptiveStream {
     void this.pump();
   }
 
-  /** "auto" or a rendition id; a manual choice shows from the first piece MPV has not read. */
+  /**
+   * "auto" or a rendition id. Auto never makes MPV wait for a better piece; a manual choice is
+   * kept even when MPV has to wait for it, from the first piece MPV has not read.
+   */
   choose(choice: string): void {
     this.choice = choice;
     const chosen = this.options.renditions.find((rendition) => rendition.id === choice);
@@ -213,7 +216,7 @@ export class AdaptiveStream {
       this.positionSeconds = this.starts[index] ?? this.positionSeconds;
     for (let attempt = 0; attempt < FETCH_ATTEMPTS * 2; attempt += 1) {
       const held = lane.held.get(index);
-      if (held !== undefined) return held;
+      if (held !== undefined && !this.belowChoice(held)) return held;
       if (this.closed || response.destroyed) return null;
       await new Promise<void>((resolve) => {
         const waiters = lane.waiting.get(index) ?? new Set();
@@ -237,6 +240,16 @@ export class AdaptiveStream {
       });
     }
     return lane.held.get(index) ?? null;
+  }
+
+  /** A held piece worse than the quality the viewer picked, which MPV must not be given. */
+  private belowChoice(piece: Piece): boolean {
+    return (
+      this.choice !== "auto" &&
+      piece.rendition !== null &&
+      this.options.renditions.indexOf(piece.rendition) >
+        this.options.renditions.indexOf(this.loading)
+    );
   }
 
   private isWanted(lane: Lane, index: number): boolean {
@@ -279,7 +292,10 @@ export class AdaptiveStream {
 
   /** The next piece a lane should fetch, or null when it has all it needs. */
   private next(lane: Lane): number | null {
-    for (const index of lane.waiting.keys()) if (!lane.held.has(index)) return index;
+    for (const index of lane.waiting.keys()) {
+      const held = lane.held.get(index);
+      if (held === undefined || this.belowChoice(held)) return index;
+    }
     const first = this.indexAt(this.positionSeconds);
     const last = Math.min(
       this.durations.length - 1,
