@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { connectDesktop, expect, test } from "./support/desktop";
+import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
 import { NetworkProxy } from "./support/proxy";
 import { repository } from "./support/server";
 
@@ -123,9 +123,10 @@ test("real multitrack media exposes languages and roles and remembers independen
     const english = current?.streams.find(
       (stream) => stream.kind === "audio" && stream.language === "eng" && !stream.commentary,
     );
-    await desktop.page.getByRole("button", { name: "Playback settings", exact: true }).click();
-    await desktop.page.getByRole("combobox", { name: "Audio track" }).click();
-    const marked = desktop.page.getByRole("option", { name: / · Default$/ });
+    const overlay = await desktopPlayerPage(desktop.app);
+    await overlay.getByRole("button", { name: "Playback settings", exact: true }).click();
+    await overlay.getByRole("combobox", { name: "Audio track" }).click();
+    const marked = overlay.getByRole("option", { name: / · Default$/ });
     await expect(marked).toHaveCount(1);
     await expect(marked).not.toContainText("Commentary");
     await marked.click();
