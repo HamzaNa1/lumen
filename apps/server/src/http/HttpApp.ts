@@ -396,8 +396,8 @@ export const makeHttpHandler = (
         );
         await call(services.transcodingSettings.save(settings));
         if (!settings.enabled) {
-          transcoder.stopAll();
           adaptiveStreams.stopAll();
+          void transcoder.stopAll();
         }
       }
       return json(TranscodingSettings, await call(services.transcodingSettings.read()));
@@ -1287,10 +1287,10 @@ export const makeHttpHandler = (
     );
     return response;
   };
-  // Converted pieces are written by FFmpeg on its own, so it would outlive the server.
+  // FFmpeg would outlive the server, and on Windows its open source file cannot be removed.
   const close = () => {
-    transcoder.stopAll();
     adaptiveStreams.stopAll();
+    return transcoder.stopAll();
   };
   return Object.assign(handle, { close });
 };

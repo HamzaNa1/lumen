@@ -20,9 +20,12 @@ export class Transcoder {
   private readonly starts = new Map<string, { readonly userId: string; readonly id: symbol }>();
   constructor(private readonly settings: () => Promise<TranscodingSettings>) {}
 
-  stopAll(): void {
+  /** Resolves once every encoder has exited and released the files it reads. */
+  async stopAll(): Promise<void> {
     this.starts.clear();
-    for (const job of this.jobs) job.stop();
+    const jobs = [...this.jobs];
+    for (const job of jobs) job.stop();
+    await Promise.all(jobs.map((job) => job.finished));
   }
 
   stop(sessionId: string, userId: string): void {
