@@ -43,9 +43,8 @@ if [[ "$RUNNER_OS" == Linux ]]; then
   # Always reap the installer, including when a concurrent download fails.
   trap 'wait "$packages_pid"' EXIT
 elif [[ "$RUNNER_OS" == macOS ]]; then
-  packages=(ffmpeg)
-  if [[ "$E2E_NATIVE" == true ]]; then packages+=(mpv); fi
-  brew install "${packages[@]}"
+  # Native tests use the MPV that bundle-mpv builds from its pinned release.
+  brew install ffmpeg
 elif [[ "$RUNNER_OS" == Windows ]]; then
   packages=(ffmpeg)
   # Windows native tests use the renamed MPV executable from bundle-mpv.

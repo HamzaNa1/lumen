@@ -13,8 +13,8 @@ if(WIN32)
   target_include_directories(lumen-video-helper PRIVATE vendor)
   target_link_libraries(lumen-video-helper PRIVATE d3d11 dxgi)
 elseif(APPLE)
-  # Headers of the libmpv release that is bundled beside the helper.
-  find_path(MPV_INCLUDE_DIR mpv/render_gl.h HINTS /opt/homebrew/opt/mpv/include /usr/local/opt/mpv/include REQUIRED)
+  # Headers of the libmpv release that is bundled beside the helper, passed by its bundle script.
+  find_path(MPV_INCLUDE_DIR mpv/render_gl.h REQUIRED)
   add_executable(lumen-video-helper helper.cpp platform_macos.cpp)
   target_include_directories(lumen-video-helper PRIVATE ${MPV_INCLUDE_DIR})
   target_link_libraries(lumen-video-helper PRIVATE "-framework CoreFoundation" "-framework IOSurface" "-framework OpenGL")

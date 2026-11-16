@@ -29,8 +29,9 @@ runs:
       if: runner.os == 'macOS'
       shell: bash
       run: |
-        brew install mpv dylibbundler
-        bash apps/desktop/scripts/bundle-macos-mpv.sh
+        MPV_PREFIX="$RUNNER_TEMP/mpv" bash apps/desktop/scripts/bundle-macos-mpv.sh
+        # Native audio tests run the player built from the same release.
+        echo "$RUNNER_TEMP/mpv/bin" >> "$GITHUB_PATH"
     - name: Configure MSVC (Windows)
       if: runner.os == 'Windows'
       uses: ilammy/msvc-dev-cmd@v1

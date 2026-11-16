@@ -63,9 +63,11 @@ with a supported GPU before release.
 libmpv has no Metal render API, so the helper uses the OpenGL render API on an
 offscreen CGL core-profile context, the same API mpv's own `cocoa-cb` output
 uses. Each of the three slots is an `IOSurface` bound as a rectangle texture
-and framebuffer. A GL fence completes before publication. The stable Homebrew
-mpv 0.41.0 is enough; the helper compiles against that release's headers and
-loads the `libmpv.dylib` bundled beside it. Virtual machines, including GitHub's
+and framebuffer. A GL fence completes before publication. Stable mpv 0.41.0 is
+enough. mpv publishes no macOS libmpv and Homebrew moves to each new release,
+so the bundle script builds libmpv from that release's hash-pinned source
+against Homebrew's libraries; the helper compiles against its headers and loads
+the `libmpv.dylib` bundled beside it. Virtual machines, including GitHub's
 hosted macOS runners, have Metal but no accelerated OpenGL renderer, so the
 helper falls back to Apple's software renderer there and applies mpv's `fast`
 profile; its default scalers cannot keep up with playback on the CPU.
