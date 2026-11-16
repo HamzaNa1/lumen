@@ -4,6 +4,7 @@ import type {
   AdminRuntime,
   AppUpdatesRuntime,
   CatalogRuntime,
+  ClientVersions,
   DownloadsRuntime,
   TrackSettingsRuntime,
   Unsubscribe,
@@ -25,6 +26,7 @@ import type {
  * window needs: where the video surface sits, and messages to and from the controls window.
  */
 export interface DesktopBridge {
+  readonly versions: () => Promise<ClientVersions>;
   readonly watch: WatchRuntime;
   readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: Pick<

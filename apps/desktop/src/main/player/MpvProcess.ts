@@ -1,6 +1,8 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { Schema } from "effect";
 import { composesVideo } from "../../shared/videoCompositor";
 import { type HelperFrame, HelperFrames } from "./HelperFrames";
 import { mpvCacheArguments } from "./MpvCache";
@@ -15,6 +17,31 @@ export interface MpvProcessOptions {
   readonly onFailure?: (error: Error) => void;
   readonly onExit?: (code: number | null) => void;
 }
+
+const nativeDirectories = (resourcesPath: string, cwd: string): string[] => [
+  join(resourcesPath, "resources", "native"),
+  join(resourcesPath, "app.asar.unpacked", "resources", "native"),
+  join(cwd, "resources", "native"),
+];
+
+const MpvManifest = Schema.Struct({ mpvVersion: Schema.String });
+
+/** The MPV a packaged build bundles, as the build recorded it. Null for one it did not package. */
+export const bundledMpvVersion = async (
+  resourcesPath: string,
+  cwd: string,
+): Promise<string | null> => {
+  const path = nativeDirectories(resourcesPath, cwd)
+    .map((directory) => join(directory, "mpv-manifest.json"))
+    .find(existsSync);
+  if (path === undefined) return null;
+  try {
+    return Schema.decodeUnknownSync(MpvManifest)(JSON.parse(await readFile(path, "utf8")))
+      .mpvVersion;
+  } catch {
+    return null;
+  }
+};
 
 export class MpvProcess {
   private readonly child: ChildProcess;
@@ -62,9 +89,9 @@ export class MpvProcess {
           ? "Lumen Video Helper"
           : "mpv";
     const candidates = [
-      join(options.resourcesPath, "resources", "native", executable),
-      join(options.resourcesPath, "app.asar.unpacked", "resources", "native", executable),
-      join(options.cwd, "resources", "native", executable),
+      ...nativeDirectories(options.resourcesPath, options.cwd).map((directory) =>
+        join(directory, executable),
+      ),
       ...(helper ? [] : ["/usr/local/bin/mpv", "/usr/bin/mpv"]),
     ];
     const binary = candidates.find(existsSync) ?? executable;

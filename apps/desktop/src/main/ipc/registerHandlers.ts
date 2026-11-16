@@ -17,12 +17,13 @@ import {
   WatchAction,
 } from "@lumen/contracts";
 import { Schema } from "effect";
-import { type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
+import { app, type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
 import type { AccountRegistry } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
 import { type AccountSession, ServerClient, ServerHttpError } from "../api/ServerClient";
 import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { Account, DownloadManager } from "../downloads/DownloadManager";
+import { bundledMpvVersion } from "../player/MpvProcess";
 import type { PlaybackBridge } from "../player/PlaybackBridge";
 import { type PlaybackClient, withOfflineFallback } from "../player/PlaybackClient";
 import { type PlayerController, watchPlayerFor } from "../player/PlayerController";
@@ -657,6 +658,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("downloads:artwork", async (_event, raw) =>
     dependencies.downloads.artwork(decode(Schema.String, raw)),
   );
+  handle("app:versions", async () => ({
+    client: app.getVersion(),
+    mpv: { version: await bundledMpvVersion(process.resourcesPath, process.cwd()) },
+  }));
   handle("updates:status", async () => dependencies.updates.status);
   handle("updates:download", () => dependencies.updates.download());
   handle("updates:install", async () => dependencies.updates.install());

@@ -6,6 +6,7 @@ import {
   CircleArrowUp,
   Cpu,
   HardDrive,
+  Info,
   type LucideIcon,
   Play,
   Server,
@@ -197,6 +198,40 @@ const ServerSettings = (): React.ReactElement => {
   );
 };
 
+const CLIENT_VERSIONS_KEY = ["client-versions"] as const;
+
+const useClientVersions = () => {
+  const { versions } = useRuntime();
+  return useQuery({ queryKey: CLIENT_VERSIONS_KEY, queryFn: versions, staleTime: Infinity });
+};
+
+const AboutSettings = (): React.ReactElement => {
+  const { accounts } = useRuntime();
+  const { account } = useWorkspace();
+  const client = useClientVersions();
+  // Asked fresh each time, since the server may have been upgraded since this client connected.
+  const server = useQuery({
+    queryKey: ["server-version", account.connectionId],
+    queryFn: async () =>
+      (await accounts.discoverServer(account.origin)).identity.serverVersion ?? null,
+    retry: false,
+  });
+  const mpv = client.data?.mpv ?? null;
+  return (
+    <div className="settings-card">
+      <SettingsRow label="App">{client.data?.client ?? null}</SettingsRow>
+      <SettingsRow label="Server" description={account.serverName}>
+        {server.isPending
+          ? "Checking…"
+          : server.isError
+            ? "Unavailable"
+            : (server.data ?? "Unknown")}
+      </SettingsRow>
+      {mpv === null ? null : <SettingsRow label="MPV">{mpv.version ?? "Unknown"}</SettingsRow>}
+    </div>
+  );
+};
+
 interface Category {
   readonly id: string;
   readonly label: string;
@@ -211,6 +246,8 @@ const useCategoryGroups = (): ReadonlyArray<{
   const { account } = useWorkspace();
   const { downloads, appUpdates } = useRuntime();
   const updates = useAppUpdateStatus(appUpdates);
+  // Read while Settings opens, so About shows them in the frame it is chosen.
+  useClientVersions();
   const client: Category[] = [
     {
       id: "playback",
@@ -237,6 +274,7 @@ const useCategoryGroups = (): ReadonlyArray<{
       icon: CircleArrowUp,
       content: () => <AppUpdateSettings updates={appUpdates} />,
     });
+  client.push({ id: "about", label: "About", icon: Info, content: () => <AboutSettings /> });
   if (account.role !== "admin") return [{ title: "Client", categories: client }];
   return [
     { title: "Client", categories: client },

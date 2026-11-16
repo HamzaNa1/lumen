@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Page } from "@playwright/test";
-import { openMovie, openSettings, pause, playing, signIn } from "./support/browser";
+import { openMovie, openSettings, pause, playing, settingsValue, signIn } from "./support/browser";
 import { openDatabase } from "./support/database";
-import { expect, test } from "./support/server";
+import { expect, serverVersion, test } from "./support/server";
 
 /** Conversion as one stream: the path of browsers without MediaSource, and of "Original". */
 const requireConversion = (page: Page, webm = false) =>
@@ -43,7 +43,17 @@ test("browser sign-in protects cookies, restores routes and propagates logout ac
   await page.goto(`${server.origin}web/search`);
   const settings = await openSettings(page);
   const categories = settings.getByRole("navigation", { name: "Settings" });
-  await expect(categories.getByRole("button")).toHaveText(["Playback", "General", "Transcoding"]);
+  await expect(categories.getByRole("button")).toHaveText([
+    "Playback",
+    "About",
+    "General",
+    "Transcoding",
+  ]);
+  // The web app ships inside its server, so it reports the server's version, and has no MPV.
+  await categories.getByRole("button", { name: "About" }).click();
+  await expect(settingsValue(settings, "App")).toHaveText(serverVersion);
+  await expect(settingsValue(settings, "Server")).toHaveText(serverVersion);
+  await expect(settings.getByText("MPV", { exact: true })).toHaveCount(0);
   await categories.getByRole("button", { name: "General" }).click();
   await expect(settings.getByRole("button", { name: "Rename…" })).toBeVisible();
   await page.keyboard.press("Escape");

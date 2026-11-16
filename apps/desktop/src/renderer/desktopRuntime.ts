@@ -37,6 +37,7 @@ const mountNativeSurface = (
 /** The shared application's platform on desktop: everything goes through the main process. */
 export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
   trackSettings: bridge.trackSettings,
+  versions: bridge.versions,
   capabilities: {
     serverSwitching: true,
     nativeAudioOutput: true,

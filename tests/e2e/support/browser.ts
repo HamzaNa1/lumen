@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, password, type Server } from "./server";
 
 export async function signIn(page: Page, server: Server, username = "admin") {
@@ -21,6 +21,13 @@ export async function openSettings(page: Page, category = "Playback") {
   await expect(settings.getByRole("heading", { name: category, exact: true })).toBeVisible();
   return settings;
 }
+
+/** The value a settings row shows beside its label. */
+export const settingsValue = (settings: Locator, label: string): Locator =>
+  settings
+    .locator(".settings-row")
+    .filter({ has: settings.page().getByText(label, { exact: true }) })
+    .locator(".settings-row-value");
 
 export async function playing(page: Page) {
   const player = page.getByRole("region", { name: "Media player" });
