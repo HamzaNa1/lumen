@@ -6,8 +6,8 @@ if [[ "$(uname -m)" != 'arm64' ]]; then
   echo 'macOS releases require an Apple Silicon runner.' >&2
   exit 1
 fi
-mpv_version='0.41.0'
-mpv_sha256='ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
+mpv_version='0.42.0'
+mpv_sha256='bcfebbfa2b65a6d88dc97ea18117831072373e38b5785a2afb874ed4df5070dd'
 formulas=(meson ninja pkgconf dylibbundler ffmpeg jpeg-turbo libarchive libass libbluray libplacebo
   little-cms2 luajit mujs rubberband uchardet vulkan-loader zimg)
 if [[ "${1:-}" == '--dependency-versions' ]]; then
