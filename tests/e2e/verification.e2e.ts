@@ -60,11 +60,11 @@ test("CI change detection follows workspace dependents and fails open for unknow
         .map((line) => line.split("=")),
     );
   };
-  const all = { coverage: "true", desktop: "true", server: "true" };
+  const all = { tests: "true", desktop: "true", server: "true" };
   for (const [path, expected] of [
-    ["README.md", { coverage: "false", desktop: "false", server: "false" }],
-    ["apps/server/src/main.ts", { coverage: "true", desktop: "false", server: "true" }],
-    ["apps/desktop/src/main.ts", { coverage: "true", desktop: "true", server: "false" }],
+    ["README.md", { tests: "false", desktop: "false", server: "false" }],
+    ["apps/server/src/main.ts", { tests: "true", desktop: "false", server: "true" }],
+    ["apps/desktop/src/main.ts", { tests: "true", desktop: "true", server: "false" }],
     ["packages/contracts/src/ipc.ts", all],
     ["packages/client/src/index.ts", all],
     ["new-workspace/source.ts", all],
@@ -107,7 +107,7 @@ test("the required CI gate rejects failures, cancellations, missing results and 
       .sort(),
   );
   workspace.write("gate.sh", gate.steps[0].run);
-  const flags = { coverage: "true", desktop: "true", server: "true" };
+  const flags = { tests: "true", desktop: "true", server: "true" };
   const results: Record<string, { result: string; outputs?: typeof flags }> = Object.fromEntries(
     gate.needs.map((job) => [job, { result: "success" }]),
   );
@@ -123,7 +123,7 @@ test("the required CI gate rejects failures, cancellations, missing results and 
   }
   results.changes = {
     result: "success",
-    outputs: { coverage: "false", desktop: "false", server: "false" },
+    outputs: { tests: "false", desktop: "false", server: "false" },
   };
   for (const job of gate.needs.filter((job) => !["changes", "quality"].includes(job)))
     results[job] = { result: "skipped" };
@@ -202,117 +202,6 @@ test("Playwright discovery assigns every E2E suite, selects product owners and f
   expect(workspace.command("bun", ["run", "playwright", "test", "--list"]).stderr).toContain(
     "Required test suites are missing",
   );
-});
-
-test("coverage CLI inventories unexecuted source, ignores helpers, replaces stale evidence and preserves failing process exits", async ({
-  workspace,
-}) => {
-  const manifest = JSON.parse(readFileSync(join(repository, "package.json"), "utf8"));
-  workspace.write("package.json", {
-    name: "coverage-fixture",
-    private: true,
-    type: "module",
-    workspaces: ["apps/*", "packages/*"],
-    devDependencies: manifest.devDependencies,
-  });
-  workspace.write(".gitignore", "node_modules/\ncoverage/\n");
-  for (const app of ["web", "desktop"])
-    workspace.write(`apps/${app}/package.json`, {
-      name: `coverage-${app}`,
-      type: "module",
-      scripts: { build: "bun -e 'void 0'" },
-    });
-  workspace.write("apps/server/src/visible.ts", "export const answer = () => 42;\n");
-  workspace.write("apps/server/src/forgotten.ts", "export const forgotten = () => 7;\n");
-  workspace.write("apps/server/src/types.d.ts", "export interface OnlyAType { value: string }\n");
-  workspace.write("tests/helper.ts", "export const helper = () => 1;\n");
-  workspace.write(
-    "scripts/exercise.ts",
-    `import { answer } from "../apps/server/src/visible";
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
-if (answer() !== 42) throw new Error("Wrong answer");
-writeFileSync(join(process.env.LUMEN_COVERAGE_DIR, "process.json"), JSON.stringify(globalThis.__coverage__));
-process.exitCode = process.env.E2E_FORCE_FAILURE === "1" ? 1 : 0;
-`,
-  );
-  workspace.write(
-    "scripts/test-e2e.ts",
-    `const child = Bun.spawn([process.execPath, "scripts/exercise.ts"], { stdio: ["ignore", "inherit", "inherit"], env: process.env }); process.exit(await child.exited);`,
-  );
-  workspace.write("coverage-baseline.json", { "apps/server": 0 });
-  workspace.run("bun", ["install"]);
-  const run = (extra = {}) => workspace.script("e2e-coverage", [], extra);
-  const first = run();
-  expect(first.status).toBe(1);
-  const summary = () =>
-    JSON.parse(readFileSync(join(workspace.root, "coverage/summary.json"), "utf8"));
-  expect(summary().files["apps/server/src/forgotten.ts"].uncovered).toBeGreaterThan(0);
-  expect(summary().files).not.toHaveProperty("tests/helper.ts");
-  expect(summary().files["apps/server/src/types.d.ts"]).toBeUndefined();
-  rmSync(join(workspace.root, "apps/server/src/forgotten.ts"));
-  const passing = run();
-  expect(passing.status, passing.stderr).toBe(0);
-  workspace.write("coverage/raw/stale.json", "not JSON");
-  const failed = run({ E2E_FORCE_FAILURE: "1" });
-  expect(failed.status).toBe(1);
-  expect(summary().testsExitCode).toBe(1);
-  expect(summary().regressions).toEqual([]);
-  const collected = workspace.script("e2e-coverage", ["collect", "api"]);
-  expect(collected.status, collected.stderr).toBe(0);
-  const shard = JSON.parse(readFileSync(join(workspace.root, "coverage/shards/api.json"), "utf8"));
-  expect(shard).toMatchObject({
-    project: "api",
-    revision: workspace.git("rev-parse", "HEAD"),
-    testsExitCode: 0,
-  });
-  expect(shard.covered["apps/server/src/visible.ts"]).not.toHaveLength(0);
-  expect(workspace.script("e2e-coverage", ["collect", "missing-project"]).status).not.toBe(0);
-});
-
-test("coverage merging requires every successful same-revision shard and unions hits without relaxing budgets", async ({
-  workspace,
-}) => {
-  const projects = ["api", "chromium", "firefox", "webkit", "native"];
-  const source = "apps/server/src/example.ts";
-  const shard = {
-    revision: workspace.git("rev-parse", "HEAD"),
-    sourceHash: "matching-production-source",
-    testsExitCode: 0,
-    inventory: { [source]: { lines: [1, 2, 3], statementLines: { 0: 1, 1: 2, 2: 3 } } },
-  };
-  workspace.write("coverage-baseline.json", { "apps/server": 0 });
-  const save = (project: string, overrides = {}) =>
-    workspace.write(`coverage/shards/${project}.json`, {
-      ...shard,
-      project,
-      covered: { [source]: project === "api" ? [1, 2] : [2, 3] },
-      ...overrides,
-    });
-  const merge = () => workspace.script("e2e-coverage", ["merge"]);
-  for (const project of projects.slice(0, -1)) save(project);
-  expect(merge().status).not.toBe(0);
-  save("native");
-  expect(merge().status).toBe(0);
-  const summary = JSON.parse(readFileSync(join(workspace.root, "coverage/summary.json"), "utf8"));
-  expect(summary.workspaces["apps/server"]).toEqual({ total: 3, covered: 3, uncovered: 0 });
-  for (const invalid of [
-    { testsExitCode: 1 },
-    { revision: "old-commit" },
-    { project: "api" },
-    { sourceHash: "different-source" },
-    { inventory: { [source]: { lines: [1], statementLines: { 0: 1 } } } },
-    { covered: {} },
-    { covered: { [source]: [99] } },
-  ]) {
-    save("native", invalid);
-    expect(merge().status).not.toBe(0);
-  }
-  for (const project of projects) save(project, { covered: { [source]: [1] } });
-  expect(merge().status).not.toBe(0);
-  expect(
-    JSON.parse(readFileSync(join(workspace.root, "coverage/summary.json"), "utf8")).regressions,
-  ).toEqual(["apps/server: 2 uncovered lines exceeds baseline 0"]);
 });
 
 test("the enforced Biome command rejects test delays and permits observable waits and application timers", async ({

@@ -16,25 +16,17 @@ for (const [key, values] of [
     test(`server CLI rejects ${key}=${JSON.stringify(value)} before listening`, async ({
       playwright: _playwright,
     }, testInfo) => {
-      const result = spawnSync(
-        "bun",
-        [
-          "--preload",
-          join(repository, "tests/e2e/support/process-coverage.ts"),
-          join(repository, "apps/server/src/main.ts"),
-        ],
-        {
-          cwd: repository,
-          encoding: "utf8",
-          timeout: 10_000,
-          env: {
-            ...process.env,
-            LUMEN_DATA_DIR: testInfo.outputPath("data"),
-            LUMEN_DATABASE_PATH: testInfo.outputPath("server.sqlite"),
-            [key]: value,
-          },
+      const result = spawnSync("bun", [join(repository, "apps/server/src/main.ts")], {
+        cwd: repository,
+        encoding: "utf8",
+        timeout: 10_000,
+        env: {
+          ...process.env,
+          LUMEN_DATA_DIR: testInfo.outputPath("data"),
+          LUMEN_DATABASE_PATH: testInfo.outputPath("server.sqlite"),
+          [key]: value,
         },
-      );
+      });
       expect(result.error).toBeUndefined();
       expect(result.status).not.toBe(0);
       expect(result.stdout + result.stderr).toContain("Server failed to start");
@@ -44,27 +36,19 @@ for (const [key, values] of [
 test("production startup fails when the web build is missing", async ({
   playwright: _playwright,
 }, testInfo) => {
-  const result = spawnSync(
-    "bun",
-    [
-      "--preload",
-      join(repository, "tests/e2e/support/process-coverage.ts"),
-      join(repository, "apps/server/src/main.ts"),
-    ],
-    {
-      cwd: repository,
-      encoding: "utf8",
-      timeout: 10_000,
-      env: {
-        ...process.env,
-        NODE_ENV: "production",
-        LUMEN_WEB_APP: "required",
-        LUMEN_WEB_ROOT: testInfo.outputPath("missing-web"),
-        LUMEN_DATABASE_PATH: testInfo.outputPath("server.sqlite"),
-        LUMEN_DATA_DIR: testInfo.outputPath("data"),
-      },
+  const result = spawnSync("bun", [join(repository, "apps/server/src/main.ts")], {
+    cwd: repository,
+    encoding: "utf8",
+    timeout: 10_000,
+    env: {
+      ...process.env,
+      NODE_ENV: "production",
+      LUMEN_WEB_APP: "required",
+      LUMEN_WEB_ROOT: testInfo.outputPath("missing-web"),
+      LUMEN_DATABASE_PATH: testInfo.outputPath("server.sqlite"),
+      LUMEN_DATA_DIR: testInfo.outputPath("data"),
     },
-  );
+  });
   expect(result.error).toBeUndefined();
   expect(result.status).not.toBe(0);
   expect(result.stdout + result.stderr).toContain("Server failed to start");
@@ -142,20 +126,12 @@ test("migration CLI creates a usable database and emits bounded text logs on suc
 }) => {
   await server.stop();
   const run = (path: string) =>
-    spawnSync(
-      "bun",
-      [
-        "--preload",
-        join(repository, "tests/e2e/support/process-coverage.ts"),
-        join(repository, "apps/server/src/database/migrate.ts"),
-      ],
-      {
-        cwd: repository,
-        encoding: "utf8",
-        timeout: 10000,
-        env: { ...process.env, LUMEN_DATABASE_PATH: path, LUMEN_LOG_FORMAT: "text" },
-      },
-    );
+    spawnSync("bun", [join(repository, "apps/server/src/database/migrate.ts")], {
+      cwd: repository,
+      encoding: "utf8",
+      timeout: 10000,
+      env: { ...process.env, LUMEN_DATABASE_PATH: path, LUMEN_LOG_FORMAT: "text" },
+    });
   const success = run(server.databasePath);
   expect(success.status, success.stderr).toBe(0);
   expect(success.stdout).toContain("[Database] Applying pending database migrations");

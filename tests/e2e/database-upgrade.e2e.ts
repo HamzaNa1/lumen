@@ -26,20 +26,16 @@ test("manual compaction reclaims deleted pages and preserves the catalog and acc
     before.close();
   }
   const size = (await stat(server.databasePath)).size;
-  const output = execFileSync(
-    "bun",
-    ["--preload", "./tests/e2e/support/process-coverage.ts", "apps/server/src/database/compact.ts"],
-    {
-      cwd: repository,
-      env: {
-        ...process.env,
-        LUMEN_DATABASE_PATH: server.databasePath,
-        LUMEN_DATA_DIR: server.root,
-        LUMEN_LOG_FORMAT: "json",
-      },
-      encoding: "utf8",
+  const output = execFileSync("bun", ["apps/server/src/database/compact.ts"], {
+    cwd: repository,
+    env: {
+      ...process.env,
+      LUMEN_DATABASE_PATH: server.databasePath,
+      LUMEN_DATA_DIR: server.root,
+      LUMEN_LOG_FORMAT: "json",
     },
-  );
+    encoding: "utf8",
+  });
   expect(output).toContain('"event":"database_compacted"');
   expect((await stat(server.databasePath)).size).toBeLessThan(size / 2);
   const after = openDatabase(server.databasePath);

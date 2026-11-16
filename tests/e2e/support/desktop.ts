@@ -2,7 +2,6 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { _electron, type ElectronApplication, type Page } from "@playwright/test";
 import type {} from "../../../apps/desktop/src/shared/bridge";
-import { collectBrowserCoverage } from "./coverage";
 import { test as base, expect, password, repository, type Server } from "./server";
 
 const require = createRequire(join(repository, "apps/desktop/package.json"));
@@ -17,7 +16,6 @@ export const test = base.extend<{
     const profile = join(server.root, "desktop-profile");
     const app = await launchDesktop(profile, mpvFaults, desktopEnvironment);
     const child = app.process();
-    const flush = await collectBrowserCoverage(app.context());
     const logs: string[] = [];
     child.stderr?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
     try {
@@ -46,7 +44,6 @@ export const test = base.extend<{
           });
       }
     } finally {
-      if (child.exitCode === null && child.signalCode === null) await flush();
       const deadline = AbortSignal.timeout(30_000);
       let forced = false;
       const kill = () => {

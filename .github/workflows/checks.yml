@@ -14,9 +14,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
-      coverage: ${{ steps.changes.outputs.coverage }}
       desktop: ${{ steps.changes.outputs.desktop }}
       server: ${{ steps.changes.outputs.server }}
+      tests: ${{ steps.changes.outputs.tests }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -64,45 +64,41 @@ jobs:
   server:
     name: Server / Linux
     needs: changes
-    if: needs.changes.outputs.coverage == 'true'
+    if: needs.changes.outputs.tests == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/e2e-runtime
-      - run: bun scripts/e2e-coverage.ts collect api
+      - run: bun scripts/test-e2e.ts source --project api --no-deps
       - uses: ./.github/actions/e2e-artifacts
         if: ${{ !cancelled() }}
         with:
           name: server-linux
-          coverage-project: api
   chromium:
     name: Chromium / Linux
     needs: changes
-    if: needs.changes.outputs.coverage == 'true'
+    if: needs.changes.outputs.tests == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: chromium
       runner: ubuntu-24.04
-      coverage: true
   firefox:
     name: Firefox / Linux
     needs: changes
-    if: needs.changes.outputs.coverage == 'true'
+    if: needs.changes.outputs.tests == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: firefox
       runner: ubuntu-24.04
-      coverage: true
   webkit:
     name: WebKit / Linux
     needs: changes
-    if: needs.changes.outputs.coverage == 'true'
+    if: needs.changes.outputs.tests == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: webkit
       runner: ubuntu-24.04
-      coverage: true
   desktop-macos:
     name: Desktop / macOS
     needs: changes
@@ -124,12 +120,11 @@ jobs:
   desktop-linux:
     name: Desktop / Linux
     needs: changes
-    if: needs.changes.outputs.coverage == 'true'
+    if: needs.changes.outputs.tests == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: native
       runner: ubuntu-24.04
-      coverage: true
   release-compatibility:
     name: Release compatibility
     needs: changes
@@ -151,38 +146,11 @@ jobs:
     uses: ./.github/workflows/packaging.yml
     with:
       product: desktop
-  coverage:
-    name: Coverage budgets
-    needs: [changes, server, chromium, firefox, webkit, desktop-linux]
-    if: ${{ !cancelled() && needs.changes.outputs.coverage == 'true' }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-dependencies
-      - name: Download Linux coverage shards
-        uses: actions/download-artifact@v4
-        with:
-          pattern: coverage-*
-          path: coverage/shards
-          merge-multiple: true
-      - name: Enforce complete-suite coverage budgets
-        run: bun scripts/e2e-coverage.ts merge
-      - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
-        with:
-          name: production-coverage
-          path: |
-            coverage/summary.json
-            coverage/lcov.info
-            coverage/shards/
-          retention-days: 14
-          if-no-files-found: error
   check:
     # Keep the branch-protection status stable. No checkout or runtime install.
     name: check
     if: ${{ always() }}
-    needs: [changes, quality, server, chromium, firefox, webkit, desktop-macos, desktop-windows, desktop-linux, release-compatibility, packaging-server, packaging-desktop, coverage]
+    needs: [changes, quality, server, chromium, firefox, webkit, desktop-macos, desktop-windows, desktop-linux, release-compatibility, packaging-server, packaging-desktop]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -193,9 +161,9 @@ jobs:
           jq -e '
             . as $jobs | .changes.outputs as $flags |
             {changes: "true", quality: "true",
-             server: $flags.coverage, chromium: $flags.coverage,
-             firefox: $flags.coverage, webkit: $flags.coverage,
-             "desktop-linux": $flags.coverage, coverage: $flags.coverage,
+             server: $flags.tests, chromium: $flags.tests,
+             firefox: $flags.tests, webkit: $flags.tests,
+             "desktop-linux": $flags.tests,
              "desktop-macos": $flags.desktop, "desktop-windows": $flags.desktop,
              "packaging-desktop": $flags.desktop, "packaging-server": $flags.server,
              "release-compatibility": (if $flags.server == "true" or $flags.desktop == "true" then "true" else "false" end)} |

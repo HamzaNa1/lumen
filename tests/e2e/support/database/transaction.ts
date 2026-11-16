@@ -1,5 +1,3 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { Effect } from "../../../../packages/database/node_modules/effect/dist/index.js";
 import {
   Database,
@@ -211,10 +209,3 @@ const result = await Effect.runPromise(
   ),
 );
 console.log(JSON.stringify(result));
-if (process.env.LUMEN_COVERAGE_DIR)
-  writeFileSync(
-    join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),
-    JSON.stringify(
-      (globalThis as typeof globalThis & { __coverage__?: unknown }).__coverage__ ?? {},
-    ),
-  );

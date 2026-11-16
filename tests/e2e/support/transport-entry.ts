@@ -1,5 +1,3 @@
-import { writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { ServerClient } from "../../../apps/desktop/src/main/api/ServerClient";
 import { PlaybackBridge } from "../../../apps/desktop/src/main/player/PlaybackBridge";
 import { serveHttp } from "../../../apps/server/src/http/HttpServer";
@@ -118,12 +116,5 @@ process.once("SIGTERM", async () => {
   await bridge.close();
   await server.stop(true);
   await brief.stop(true);
-  if (process.env.LUMEN_COVERAGE_DIR)
-    writeFileSync(
-      join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),
-      JSON.stringify(
-        (globalThis as typeof globalThis & { __coverage__?: unknown }).__coverage__ ?? {},
-      ),
-    );
   process.exit(0);
 });

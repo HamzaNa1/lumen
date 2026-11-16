@@ -7,7 +7,6 @@
       "!**/dist",
       "!**/out",
       "!**/release",
-      "!**/coverage",
       "!**/playwright-report",
       "!**/test-results",
       "!bun.lock"

@@ -1,4 +1,3 @@
-import "./process-coverage";
 import { inspect } from "node:util";
 import "./tmdb-origin";
 import "./scan-filesystem-faults";

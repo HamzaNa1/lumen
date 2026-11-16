@@ -63,8 +63,6 @@ test("migrations validate foreign keys once per migration state and never record
     const result = spawnSync(
       "bun",
       [
-        "--preload",
-        join(repository, "tests/e2e/support/process-coverage.ts"),
         join(repository, "tests/e2e/support/database/migrate-entry.ts"),
         filename,
         migrations,
