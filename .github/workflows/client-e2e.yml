@@ -8,11 +8,8 @@ on:
       runner:
         required: true
         type: string
-      coverage:
-        default: false
-        type: boolean
       shards:
-        description: JSON array of contiguous shard numbers; coverage uses a single shard.
+        description: JSON array of contiguous shard numbers.
         default: '[1]'
         type: string
 permissions:
@@ -39,16 +36,11 @@ jobs:
         shell: bash
         env:
           PROJECT: ${{ inputs.project }}
-          COLLECT_COVERAGE: ${{ inputs.coverage }}
           SHARD: ${{ matrix.shard }}
           SHARD_COUNT: ${{ strategy.job-total }}
           LUMEN_E2E_WORKERS: ${{ runner.os == 'Linux' && inputs.project != 'native' && '3' || '2' }}
         run: |
           command=(bun scripts/test-e2e.ts source --project "$PROJECT" --no-deps --shard "$SHARD/$SHARD_COUNT")
-          if [[ "$COLLECT_COVERAGE" == true ]]; then
-            [[ "$SHARD_COUNT" == 1 ]] || { echo 'Coverage requires one complete project per job' >&2; exit 1; }
-            command=(bun scripts/e2e-coverage.ts collect "$PROJECT")
-          fi
           if [[ "$RUNNER_OS" == Linux ]]; then
             xvfb-run -a bash scripts/with-window-manager.sh "${command[@]}"
           else
@@ -58,4 +50,3 @@ jobs:
         if: ${{ !cancelled() }}
         with:
           name: ${{ inputs.project }}-${{ inputs.runner }}-${{ matrix.shard }}
-          coverage-project: ${{ inputs.coverage && inputs.project || '' }}

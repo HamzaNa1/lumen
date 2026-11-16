@@ -184,6 +184,8 @@ export interface PlaybackRuntime {
   readonly seek: (sessionId: string, positionSeconds: number) => Promise<PlayerState>;
   readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;
   readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
+  /** "auto", "original", or one of `PlayerState.quality.options`. */
+  readonly selectQuality: (sessionId: string, choice: string) => Promise<PlayerState>;
   readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<PlayerState>;
   /** What the player can tell about the playback in progress, for the viewer to troubleshoot it. */
   readonly info: (sessionId: string) => Promise<PlaybackInfo>;

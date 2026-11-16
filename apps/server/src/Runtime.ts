@@ -310,6 +310,7 @@ const startConfiguredServer = async (
             worker,
             scheduler,
           ]);
+          await handler.close();
           const failure = outcomes.find((outcome) => outcome.status === "rejected");
           if (failure?.status === "rejected") throw failure.reason;
         } catch (cause) {

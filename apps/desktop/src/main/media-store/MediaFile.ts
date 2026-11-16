@@ -7,6 +7,9 @@ import type { PlayableMedia } from "@lumen/contracts";
 import { ignoreFailure } from "../failures";
 import { DiskByteStore, MemoryByteStore, SpaceExhausted } from "./ByteStore";
 
+/** A stretch of reads must carry this much before it says anything about the link. */
+const THROUGHPUT_SAMPLE_BYTES = 1024 * 1024;
+
 /** One revision of one file on one server: the unit bytes are kept and shared under. */
 export interface MediaSpec {
   readonly serverId: string;
@@ -600,6 +603,13 @@ export class MediaFile extends EventEmitter {
     const body = response.body.getReader();
     const onAbort = () => void body.cancel().catch(ignoreFailure);
     fetch.controller.signal.addEventListener("abort", onAbort, { once: true });
+    // Bytes read back to back say how fast the link is; a paced wait ends the stretch.
+    let stretch = { startedAt: performance.now(), bytes: 0 };
+    const reportStretch = () => {
+      if (stretch.bytes >= THROUGHPUT_SAMPLE_BYTES)
+        this.emit("throughput", stretch.bytes, performance.now() - stretch.startedAt);
+      stretch = { startedAt: performance.now(), bytes: 0 };
+    };
     try {
       while (fetch.cursor < fetch.end) {
         if (fetch.paced) {
@@ -614,9 +624,11 @@ export class MediaFile extends EventEmitter {
             else if (Date.now() - idleSince > IDLE_FETCH_MS) return;
             if (furthest >= 0 && fetch.cursor - furthest <= this.lookahead(fetch.target)) break;
             if (furthest < 0 && fetch.cursor - fetch.start <= this.geometry.chunkBytes * 2) break;
+            reportStretch();
             await once(this, "reader", {
               signal: AbortSignal.any([fetch.controller.signal, AbortSignal.timeout(1_000)]),
             }).catch(ignoreFailure);
+            stretch = { startedAt: performance.now(), bytes: 0 };
           }
         }
         const chunk = this.disk.chunkOf(fetch.cursor);
@@ -629,10 +641,13 @@ export class MediaFile extends EventEmitter {
         else await this.memoryStore.write(fetch.cursor, data);
         const before = fetch.cursor;
         fetch.cursor += data.length;
+        stretch.bytes += data.length;
+        if (stretch.bytes >= THROUGHPUT_SAMPLE_BYTES * 4) reportStretch();
         this.markWritten(fetch, before);
         this.emit("progress");
       }
       if (fetch.cursor < fetch.end) throw new Error("Media response ended early");
+      reportStretch();
     } finally {
       fetch.controller.signal.removeEventListener("abort", onAbort);
       await body.cancel().catch(ignoreFailure);

@@ -1,6 +1,6 @@
 {
   "baseCommit": "9668285422494dd8e19162dd7700a63d10999874",
-  "decision": "Replace implementation-level mocks and historical renderer shims with process, HTTP, filesystem, browser, Electron and MPV scenarios. Related former suites share end-to-end journeys; the unchanged workspace uncovered-line budgets remain enforced.",
+  "decision": "Replace implementation-level mocks and historical renderer shims with process, HTTP, filesystem, browser, Electron and MPV scenarios. Related former suites share end-to-end journeys.",
   "suites": [
     {
       "removedSuite": "tests/browser/artwork-cache.e2e.ts",
@@ -508,10 +508,6 @@
     },
     {
       "removedSuite": "tests/tooling/check-products.test.ts",
-      "replacementSuites": ["tests/e2e/verification.e2e.ts"]
-    },
-    {
-      "removedSuite": "tests/tooling/coverage.test.ts",
       "replacementSuites": ["tests/e2e/verification.e2e.ts"]
     },
     {

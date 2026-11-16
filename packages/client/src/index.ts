@@ -2,6 +2,8 @@ export * from "./errors.ts";
 export * from "./ids.ts";
 export * from "./media-cache/ChunkMap.ts";
 export * from "./media-cache/Retention.ts";
+export * from "./playback/adaptive/AdaptiveQuality.ts";
+export * from "./playback/adaptive/OriginalQuality.ts";
 export * from "./playback/PlaybackDiagnostics.ts";
 export * from "./playback/PlaybackInfo.ts";
 export * from "./playback/PlaybackSessionReporter.ts";

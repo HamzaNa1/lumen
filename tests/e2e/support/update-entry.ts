@@ -1,5 +1,5 @@
 import type { EventEmitter } from "node:events";
-import { chmodSync, writeFileSync } from "node:fs";
+import { chmodSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { app, BrowserWindow } from "electron";
@@ -16,13 +16,6 @@ const url = process.env.LUMEN_E2E_UPDATE_URL;
 if (!root || !url) throw new Error("Missing updater fixture configuration");
 app.setPath("userData", root);
 app.setPath("cache", root);
-process.on("exit", () => {
-  if (process.env.LUMEN_COVERAGE_DIR)
-    writeFileSync(
-      join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),
-      JSON.stringify((globalThis as unknown as { __coverage__?: unknown }).__coverage__ ?? {}),
-    );
-});
 const errors: string[] = [];
 console.error = (...values: unknown[]) => {
   errors.push(values.map(String).join(" "));

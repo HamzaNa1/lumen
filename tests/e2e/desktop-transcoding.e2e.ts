@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
 import { mpvWire } from "./support/mpv-wire";
@@ -287,3 +288,145 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled", "unsupported"]
       await proxy.close();
     }
   });
+
+test("desktop moves between the original and converted qualities, and between qualities without reloading", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  // The released server a desktop release is checked against may predate converted qualities.
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
+  const library = await server.library(admin.accessToken, "movies", []);
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"],
+    join(library.path, "Film.mkv"),
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  const proxy = await new NetworkProxy(server.origin).start();
+  const { page, app } = desktop;
+  try {
+    await connectDesktop(page, proxy);
+    await page.getByRole("link", { name: "movies", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Play Film", exact: true })
+      .first()
+      .click({ force: true });
+    const state = () => page.evaluate(() => window.lumen.player.state());
+    await expect.poll(state).toMatchObject({
+      paused: false,
+      quality: { choice: "auto", playing: "original" },
+    });
+    const sessionId = (await state())?.sessionId ?? "";
+    expect((await state())?.quality?.options.map((option) => option.id)).toEqual([
+      "original",
+      "720p",
+      "480p",
+      "360p",
+    ]);
+    const choose = (choice: string) =>
+      page.evaluate(
+        ({ sessionId, choice }) => window.lumen.player.selectQuality(sessionId, choice),
+        { sessionId, choice },
+      );
+    const height = () => mpvWire(app).command(["get_property", "video-params/h"]);
+    const masters = () =>
+      proxy.requests.filter((request) => request.path.includes("/master.m3u8")).length;
+
+    // Leaving the original reloads MPV once, onto converted pieces.
+    await choose("360p");
+    await expect.poll(state).toMatchObject({ quality: { choice: "360p", playing: "360p" } });
+    await expect.poll(height).toBe(360);
+    expect(masters()).toBe(1);
+
+    // The bridge holds 360p well ahead of the playhead.
+    await expect
+      .poll(async () => (await state())?.bufferedRanges.at(-1)?.endSeconds ?? 0)
+      .toBeGreaterThanOrEqual(28);
+
+    // A manual pick is never served a worse piece MPV has not read yet, even one already held, and
+    // neither the pick nor a seek between converted pieces reloads MPV.
+    await choose("720p");
+    await page.evaluate((id) => window.lumen.player.seek(id, 24), sessionId);
+    await expect.poll(height).toBe(720);
+    await expect.poll(state).toMatchObject({ paused: false, quality: { playing: "720p" } });
+    await expect.poll(async () => (await state())?.positionSeconds ?? 0).toBeGreaterThanOrEqual(24);
+    expect(masters()).toBe(1);
+    expect(proxy.requests.some((request) => /\/adaptive\/0\/720p\/6\.ts/u.test(request.path))).toBe(
+      true,
+    );
+
+    await choose("original");
+    await expect
+      .poll(state)
+      .toMatchObject({ quality: { choice: "original", playing: "original" } });
+    await expect.poll(height).toBe(720);
+    expect(masters()).toBe(1);
+  } finally {
+    await proxy.close();
+  }
+});
+
+test("desktop Auto moves an original that stops arriving onto converted pieces and keeps playing", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
+  const library = await server.library(admin.accessToken, "movies", []);
+  const file = join(library.path, "Film.mkv");
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", file],
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  const proxy = await new NetworkProxy(server.origin).start();
+  // The original stops arriving a few seconds in, as on a link that cannot carry it.
+  let allowance = Math.round(statSync(file).size * 0.1);
+  proxy.intercept = async (request, response) => {
+    if (request.method !== "GET" || !/^\/api\/v1\/media\/[^/?]+(?:\?|$)/u.test(request.url ?? ""))
+      return false;
+    const upstream = await fetch(new URL(request.url ?? "/", proxy.upstream), {
+      headers: {
+        authorization: request.headers.authorization ?? "",
+        range: request.headers.range ?? "bytes=0-",
+      },
+    });
+    response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
+    for await (const chunk of upstream.body ?? []) {
+      const part = Buffer.from(chunk).subarray(0, Math.max(0, allowance));
+      allowance -= part.length;
+      response.write(part);
+      if (allowance <= 0) return true;
+    }
+    response.end();
+    return true;
+  };
+  const { page } = desktop;
+  try {
+    await connectDesktop(page, proxy);
+    await page.getByRole("link", { name: "movies", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Play Film", exact: true })
+      .first()
+      .click({ force: true });
+    const state = () => page.evaluate(() => window.lumen.player.state());
+    await expect.poll(state).toMatchObject({
+      paused: false,
+      quality: { choice: "auto", playing: "original" },
+    });
+    await expect.poll(async () => (await state())?.quality?.playing).toMatch(/^\d+p$/u);
+    const switchedAt = (await state())?.positionSeconds ?? 0;
+    expect((await state())?.quality?.choice).toBe("auto");
+    await expect
+      .poll(async () => (await state())?.positionSeconds ?? 0)
+      .toBeGreaterThan(switchedAt + 2);
+    expect(await state()).toMatchObject({ paused: false });
+  } finally {
+    await proxy.close();
+  }
+});

@@ -6,6 +6,7 @@ import type { ReadableStream as NodeReadableStream } from "node:stream/web";
 import type { FetchLike, PlaybackDiagnostics } from "@lumen/client";
 import { decideRange } from "@lumen/contracts";
 import type { MediaFile } from "../media-store/MediaFile";
+import type { AdaptiveStream } from "./AdaptiveStream";
 
 /** A stream proxied as it is: converted media, which has no bytes worth keeping. */
 interface ProxiedCapability {
@@ -27,7 +28,13 @@ interface HeldCapability {
   readonly sessionId?: string;
 }
 
-type Capability = ProxiedCapability | HeldCapability;
+/** Converted pieces in the quality the stream picks, as one HLS stream for MPV. */
+interface AdaptiveCapability {
+  readonly adaptive: AdaptiveStream;
+  readonly active: () => boolean;
+}
+
+type Capability = ProxiedCapability | HeldCapability | AdaptiveCapability;
 interface Transfer {
   readonly controller: AbortController;
   readonly response: ServerResponse;
@@ -85,7 +92,8 @@ export class PlaybackBridge {
     if (this.closing !== null || this.port === 0) throw new Error("Bridge is not listening");
     const capability = randomBytes(32).toString("base64url");
     this.capabilities.set(capability, input);
-    return { url: `http://127.0.0.1:${this.port}/${capability}/file`, capability };
+    const file = "adaptive" in input ? "master.m3u8" : "file";
+    return { url: `http://127.0.0.1:${this.port}/${capability}/${file}`, capability };
   }
 
   revoke(capability: string): void {
@@ -131,17 +139,27 @@ export class PlaybackBridge {
     const entry = capability === undefined ? undefined : this.capabilities.get(capability);
     if (
       capability === undefined ||
-      segments.length !== 2 ||
-      segments[1] !== "file" ||
       entry === undefined ||
       !entry.active() ||
-      request.headers.host !== `127.0.0.1:${this.port}`
+      request.headers.host !== `127.0.0.1:${this.port}` ||
+      ("adaptive" in entry
+        ? segments.length < 2 || segments.length > 3
+        : segments.length !== 2 || segments[1] !== "file")
     ) {
       response.writeHead(404).end();
       return;
     }
     if (request.method !== "GET" && request.method !== "HEAD") {
       response.writeHead(405, { allow: "GET, HEAD" }).end();
+      return;
+    }
+    if ("adaptive" in entry) {
+      await entry.adaptive
+        .serve(segments.slice(1).join("/"), request.method, response)
+        .catch(() => {
+          if (!response.headersSent) response.writeHead(502).end();
+          else response.destroy();
+        });
       return;
     }
     if ("file" in entry) {

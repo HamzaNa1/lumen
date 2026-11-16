@@ -1,7 +1,8 @@
 import { Schema } from "effect";
+import { PlayerQuality } from "./adaptive.ts";
 import { Sha256Digest, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 import { ServerInfo } from "./server.ts";
-import { TrackMemory } from "./track-memory.ts";
+import { TrackMemory, TrackPreferences } from "./track-memory.ts";
 
 // Application models shared by every client. They describe what the apps render, independent of
 // how a platform transports them (HTTP for the browser, IPC for the desktop renderer).
@@ -312,10 +313,14 @@ export const PlayerState = Schema.Struct({
   selectedSubtitleStreamId: Schema.NullOr(Uuid),
   audioOutput: AudioOutput,
   trackMemoryError: Schema.optional(Schema.NullOr(Schema.String)),
+  /** The viewer's audio and subtitle settings, which pick the tracks marked as default. */
+  trackPreferences: Schema.optional(TrackPreferences),
   /** Playback stalled waiting for data. */
   buffering: Schema.optional(Schema.Boolean),
   /** The platform refuses to start playback until the viewer interacts with the player. */
   awaitingInteraction: Schema.optional(Schema.Boolean),
+  /** Left out where the viewer has no quality to choose. */
+  quality: Schema.optional(PlayerQuality),
 });
 export type PlayerState = Schema.Schema.Type<typeof PlayerState>;
 

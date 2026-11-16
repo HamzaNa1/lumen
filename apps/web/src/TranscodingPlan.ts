@@ -24,7 +24,7 @@ const audioCodecs: Readonly<Record<string, string>> = {
   truehd: "mlpa",
 };
 
-const selectedAudio = (session: PlayerSession) => {
+export const selectedAudio = (session: PlayerSession) => {
   const streams = session.streams
     .filter((stream) => stream.kind === "audio")
     .sort((a, b) => a.ordinal - b.ordinal);

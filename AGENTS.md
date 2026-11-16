@@ -91,8 +91,7 @@ The most common defect in a repo like this is a change that works on the path yo
   - Add `--no-deps` with `--project native`, or Playwright runs every other project before it.
   - Native suites open real Electron windows and need an unlocked graphical session. Run the suite you need, not the whole project.
 - Before you push, run `bun run lint` and `bun run typecheck` (seconds each), plus the suites that own what you changed, in each project they belong to. One browser is enough locally.
-- **Do not run the full suite.** No `bun run check`, `bun run test`, `bun run test:coverage`, `check:server`, or `check:desktop` unless I ask. CI owns three browsers, native runs on three operating systems, coverage, release compatibility, and packaging.
-- CI fails when a workspace's uncovered lines exceed its budget in `coverage-baseline.json`. New production code has to be executed by a scenario. Never raise a budget without the developer's sign-off.
+- **Do not run the full suite.** No `bun run check`, `bun run test`, `check:server`, or `check:desktop` unless I ask. CI owns three browsers, native runs on three operating systems, release compatibility, and packaging.
 - A new suite file must be registered in `scripts/lib/verification.ts` with its runtime and products, or the runner refuses to start.
 - Test behavior that can break, such as scanning and reconciliation, auth and permission checks, migrations, media delivery and range handling, playback state, races, version compatibility, and the logic a bug fix changed. Leave out tests for what types already guarantee, trivial logic, copy text, and static markup.
 - Extend before you add. When an existing scenario or table covers the behavior, add a row or an assertion there. Write a new `test` only when no case fits.
@@ -143,7 +142,7 @@ Decisions and their alternatives: `docs/adr/`. Setup and releases: `README.md`.
 - `packages/client` - client logic shared by both adapters: the server API, playback, watch groups, media cache rules.
 - `packages/contracts` - Effect Schema contracts for the API, IPC, and WebSocket, plus small pure helpers. No heavy runtime logic.
 - `packages/database` - Drizzle tables, migrations, and repositories.
-- `tests/e2e` - the suites, with fixtures in `support/`. `scripts/` holds check, coverage, and release tooling.
+- `tests/e2e` - the suites, with fixtures in `support/`. `scripts/` holds check and release tooling.
 
 ## Taste
 

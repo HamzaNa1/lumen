@@ -53,6 +53,7 @@ export interface DesktopBridge {
     readonly volume: (sessionId: string, volume: number, muted: boolean) => Promise<PlayerState>;
     readonly surface: (bounds: IpcPlayerSurfaceBounds | null) => Promise<unknown>;
     readonly selectAudio: (sessionId: string, streamId: string) => Promise<PlayerState>;
+    readonly selectQuality: (sessionId: string, choice: string) => Promise<PlayerState>;
     readonly selectSubtitle: (sessionId: string, streamId: string | null) => Promise<PlayerState>;
     readonly audioOutput: (sessionId: string, output: AudioOutput) => Promise<PlayerState>;
     readonly info: (sessionId: string) => Promise<PlaybackInfo>;

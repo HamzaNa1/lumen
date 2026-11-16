@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { productWorkspaces } from "./products";
 
-export const allChecks = { coverage: true, desktop: true, server: true };
+export const allChecks = { tests: true, desktop: true, server: true };
 
 export function affectedChecks(root: string, files: readonly string[]) {
   const workspaces = ["apps", "packages"].flatMap((directory) =>
@@ -42,7 +42,7 @@ export function affectedChecks(root: string, files: readonly string[]) {
     workspaces.filter(({ name }) => affected.has(name)).map(({ path }) => path),
   );
   return {
-    coverage: affected.size > 0,
+    tests: affected.size > 0,
     desktop: productWorkspaces("desktop").some((path) => paths.has(path)),
     server: productWorkspaces("server").some((path) => paths.has(path)),
   };

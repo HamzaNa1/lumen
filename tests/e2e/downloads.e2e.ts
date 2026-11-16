@@ -150,13 +150,17 @@ const heldFiles = async (profile: string) => {
       .filter((entry) => entry.isFile() && entry.name.startsWith("seg-"))
       .map((entry) => entry.name)
       .sort();
-    if (entries.some((entry) => entry.name === "index.json"))
-      found.push({
-        directory,
-        bytes: Buffer.concat(
-          await Promise.all(segments.map((name) => readFile(join(directory, name)))),
-        ),
-      });
+    if (entries.some((entry) => entry.name === "index.json")) {
+      // The desktop may delete this file while it is walked; one that vanishes is not held.
+      const bytes = await Promise.all(segments.map((name) => readFile(join(directory, name))))
+        .then((parts) => Buffer.concat(parts))
+        .catch((error: NodeJS.ErrnoException) => {
+          if (error.code === "ENOENT") return null;
+          throw error;
+        });
+      if (bytes === null) return;
+      found.push({ directory, bytes });
+    }
     for (const entry of entries) if (entry.isDirectory()) await walk(join(directory, entry.name));
   };
   await walk(root);

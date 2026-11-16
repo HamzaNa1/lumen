@@ -6,7 +6,6 @@ import { dirname, join, resolve } from "node:path";
 import { test as base, expect } from "@playwright/test";
 
 import { collectBrowserErrors } from "./browser-errors";
-import { collectBrowserCoverage } from "./coverage";
 
 export const repository = resolve(import.meta.dirname, "../../..");
 export const password = "correct horse battery staple";
@@ -54,7 +53,6 @@ export class Server {
       stdio: ["ignore", "pipe", "pipe", "ipc"],
       env: {
         ...environment,
-        LUMEN_COVERAGE_DIR: process.env.LUMEN_COVERAGE_DIR,
         LUMEN_DATABASE_PATH: this.databasePath,
         LUMEN_DATA_DIR: this.root,
         LUMEN_HOST: "127.0.0.1",
@@ -234,31 +232,17 @@ export class Server {
   }
 }
 
-export const test = base.extend<
-  { server: Server; admin: Account; serverEnvironment: NodeJS.ProcessEnv },
-  { processCoverage: undefined }
->({
+export const test = base.extend<{
+  server: Server;
+  admin: Account;
+  serverEnvironment: NodeJS.ProcessEnv;
+}>({
   serverEnvironment: [{}, { option: true }],
-  processCoverage: [
-    async ({ playwright: _playwright }, use) => {
-      await use(undefined);
-      if (process.env.LUMEN_COVERAGE_DIR)
-        await writeFile(
-          join(process.env.LUMEN_COVERAGE_DIR, `${crypto.randomUUID()}.json`),
-          JSON.stringify(
-            (globalThis as typeof globalThis & { __coverage__?: unknown }).__coverage__ ?? {},
-          ),
-        );
-    },
-    { scope: "worker", auto: true },
-  ],
   context: async ({ context }, use) => {
     const errors = await collectBrowserErrors(context);
-    const flush = await collectBrowserCoverage(context);
     try {
       await use(context);
     } finally {
-      await flush();
       expect(errors, "Uncaught browser errors").toEqual([]);
     }
   },

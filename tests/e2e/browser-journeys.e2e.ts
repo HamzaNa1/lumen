@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,8 +7,10 @@ import { openMovie, openSettings, pause, playing, signIn } from "./support/brows
 import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
 
+/** Conversion as one stream: the path of browsers without MediaSource, and of "Original". */
 const requireConversion = (page: Page, webm = false) =>
   page.addInitScript((webm) => {
+    for (const name of ["MediaSource", "ManagedMediaSource"]) Reflect.deleteProperty(window, name);
     const canPlayType = HTMLMediaElement.prototype.canPlayType;
     HTMLMediaElement.prototype.canPlayType = function (type) {
       return type.includes("matroska") || (webm && type.includes("mp4"))
@@ -484,6 +487,79 @@ test.describe("native browser audio", () => {
       expect(await page.locator("video").getAttribute("src")).not.toContain("transcode=1");
       expect(conversions).toEqual([]);
     });
+});
+
+test("auto quality steps down on a slow link and back up without stalling once it recovers", async ({
+  server,
+  admin,
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "Throttles the link through the Chromium protocol");
+  const library = await server.library(admin.accessToken, "movies", []);
+  // MPEG-4 Part 2 needs its video converted, so Auto plays converted pieces from the start.
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "90"],
+    ...["-c:v", "mpeg4", "-q:v", "4", "-c:a", "aac"],
+    join(library.path, "Film.mkv"),
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  const pieces: string[] = [];
+  page.on("request", (request) => {
+    const match = /\/adaptive\/\d+\/(\d+p)\/\d+\.ts/u.exec(request.url());
+    if (match?.[1] !== undefined) pieces.push(match[1]);
+  });
+  const network = await page.context().newCDPSession(page);
+  // Only media is slowed: the page's own scripts arriving late is not what Auto answers to.
+  const throttle = (bytesPerSecond: number) =>
+    network.send("Network.emulateNetworkConditionsByRule", {
+      matchedNetworkConditions: [
+        {
+          urlPattern: `${new URL(server.origin).origin}/api/v1/media/*`,
+          latency: 0,
+          downloadThroughput: bytesPerSecond,
+          uploadThroughput: -1,
+        },
+      ],
+    });
+  await network.send("Network.enable");
+  await signIn(page, server);
+  await throttle(180_000);
+  await openMovie(page, server, library.id);
+  const video = page.locator("video");
+  expect(await video.getAttribute("src")).toMatch(/^blob:/u);
+
+  const quality = async () => {
+    await page.mouse.move(300, 300);
+    const settings = page.getByRole("button", { name: "Playback settings" });
+    if ((await settings.getAttribute("aria-expanded")) !== "true") await settings.click();
+    return (await page.locator(".media-player-quality-value").textContent()) ?? "";
+  };
+  await expect.poll(() => pieces.includes("360p")).toBe(true);
+  await expect.poll(quality).toBe("Auto (360p)");
+
+  await throttle(-1);
+  const stalls = await video.evaluate((element: HTMLVideoElement) => {
+    const seen = { count: 0 };
+    element.addEventListener("waiting", () => {
+      if (!element.seeking) seen.count += 1;
+    });
+    (window as unknown as { stalls: typeof seen }).stalls = seen;
+    return seen.count;
+  });
+  expect(stalls).toBe(0);
+  await expect.poll(quality).toBe("Auto (720p)");
+  expect(
+    await page.evaluate(() => (window as unknown as { stalls: { count: number } }).stalls.count),
+  ).toBe(0);
+
+  // A manual choice takes over from Auto and shows in the menu at once. A lower one keeps the
+  // better pieces already held, so it changes what is fetched next rather than what is on screen.
+  await page.locator(".media-player-quality-row").click();
+  await page.getByRole("menuitemradio", { name: /^480p/u }).click();
+  await page.getByRole("button", { name: "Back to settings" }).click();
+  await expect.poll(quality).toBe("480p");
 });
 
 test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {

@@ -1,18 +1,30 @@
 import {
   describePlayback,
   measuredSize,
+  OriginalReturn,
+  originalFits,
+  originalKbps,
+  originalStalled,
   PLAYBACK_REPORT_INTERVAL_MS,
   PlaybackDiagnostics,
   type PlaybackSessionApi,
   PlaybackSessionReporter,
   PlaybackUnsupportedError,
   type PlayerBuffer,
+  qualityState,
+  RETURN_TO_ORIGINAL,
+  rememberedThroughput,
+  rememberThroughput,
   ServerHttpError,
   setTranscodingParameters,
+  shouldLeaveOriginal,
+  startingRendition,
+  ThroughputEstimator,
   TrackSelectionController,
   type WatchPlaybackSample,
 } from "@lumen/client";
 import type {
+  AdaptiveRendition,
   PlayableStream,
   PlaybackInfo,
   PlayerSession,
@@ -20,16 +32,21 @@ import type {
   VolumeMemory,
 } from "@lumen/contracts";
 import {
+  adaptiveRenditionsFor,
+  DEFAULT_TRACK_PREFERENCES,
   rememberTitleVolume,
   resolveTrackSelection,
   type TrackChoiceInput,
   type TrackKind,
   type TrackMemory,
+  type TrackPreferences,
   volumeForTitle,
 } from "@lumen/contracts";
+import { AdaptiveSource, adaptivePlaybackSupported } from "./AdaptiveSource";
 import {
   audioCodecProbe,
   fallbackTranscodingPlan,
+  selectedAudio,
   type TranscodingPlan,
   transcodingPlan,
 } from "./TranscodingPlan";
@@ -75,6 +92,8 @@ export interface MediaElementLike {
 
 export interface BrowserPlaybackApi {
   readonly serverOrigin: string;
+  /** Whether the server converts into pieces of several qualities; older servers do not. */
+  readonly supportsAdaptive?: boolean;
   readonly saveTrackChoice: (
     sessionId: string,
     input: TrackChoiceInput,
@@ -121,6 +140,7 @@ interface ActiveSession {
   selectedAudioStreamId: string | null;
   selection: TrackSelectionController | null;
   trackMemoryError: string | null;
+  trackPreferences: TrackPreferences;
   buffering: boolean;
   awaitingInteraction: boolean;
   /** A request to play that the browser is holding, having neither started nor refused it. */
@@ -132,6 +152,18 @@ interface ActiveSession {
   suspendedPositionSeconds: number | null;
   desiredPaused: boolean;
   replacingSource: boolean;
+  /** Qualities the server converts this file into; empty where adaptive playback is unavailable. */
+  renditions: ReadonlyArray<AdaptiveRendition>;
+  /** "auto", "original", or a rendition id. */
+  qualityChoice: string;
+  readonly originalKbps: number | null;
+  /** Whether Auto may pick the original: it plays as it is, or with only its audio converted. */
+  readonly originalUsable: boolean;
+  readonly originalReturn: OriginalReturn;
+  /** Where the buffer ended at the last connection sample while the original played. */
+  lastBufferSample: { readonly atMs: number; readonly endSeconds: number } | null;
+  /** When playback ran dry outside a seek; null while it has data. */
+  starvedSinceMs: number | null;
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
@@ -188,6 +220,15 @@ export class HtmlMediaPlayer {
   private readonly playAnswerTimeoutMs: number;
   private active: ActiveSession | null = null;
   private conversion: TranscodingPlan | null = null;
+  /** Set while converted pieces play; the original file plays otherwise. */
+  private adaptive: AdaptiveSource | null = null;
+  /** What the next load plays: the original, or converted pieces starting in this quality. */
+  private nextAdaptive: AdaptiveRendition | null = null;
+  private estimator = new ThroughputEstimator();
+  /** The quality choice of a session being opened, before it is the active one. */
+  private openingChoice = "auto";
+  /** The audio track converted pieces carry, as its position among the file's audio tracks. */
+  private adaptiveAudioIndex = 0;
   private timeOffset = 0;
   private forceConversion = false;
   private generation = 0;
@@ -225,6 +266,7 @@ export class HtmlMediaPlayer {
     if (generation !== this.generation) throw cancelled();
     this.recoveries = [];
     this.forceConversion = false;
+    this.estimator = new ThroughputEstimator(rememberedThroughput(this.api.serverOrigin));
     const diagnostics = new PlaybackDiagnostics();
     this.diagnostics = diagnostics;
     try {
@@ -253,6 +295,18 @@ export class HtmlMediaPlayer {
     const active = this.requireActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
+    // A seek interrupts playback anyway, so it is where Auto returns to the original for free.
+    if (
+      this.adaptive !== null &&
+      RETURN_TO_ORIGINAL &&
+      active.qualityChoice === "auto" &&
+      active.originalUsable &&
+      this.estimator.kbps !== null &&
+      originalFits(this.estimator.kbps, active.originalKbps)
+    ) {
+      await this.replaceStream(active, null, positionSeconds);
+      return this.publishIfActive(active);
+    }
     if (this.conversion !== null) {
       active.replacingSource = true;
       this.unload();
@@ -362,6 +416,18 @@ export class HtmlMediaPlayer {
   }
 
   private async applyAudio(active: ActiveSession, streamId: string | null): Promise<void> {
+    if (this.adaptive !== null) {
+      const audioIndex = active.streams.findIndex((stream) => stream.id === streamId);
+      if (audioIndex < 0) throw new Error("Audio stream is unavailable");
+      active.selectedAudioStreamId = streamId;
+      this.adaptiveAudioIndex = audioIndex;
+      await this.replaceStream(
+        active,
+        this.adaptive.loadingRendition,
+        this.snapshot(active).positionSeconds,
+      );
+      return;
+    }
     if (this.conversion !== null) {
       const audioIndex = active.streams.findIndex((stream) => stream.id === streamId);
       if (audioIndex < 0) throw new Error("Audio stream is unavailable");
@@ -398,6 +464,23 @@ export class HtmlMediaPlayer {
     if (tracks[index]?.enabled !== true)
       throw new Error("This browser could not switch audio tracks");
     active.selectedAudioStreamId = streamId;
+  }
+
+  /** "auto", "original", or a rendition id. */
+  async selectQuality(sessionId: string, choice: string): Promise<PlayerState> {
+    const active = this.requireActive(sessionId);
+    const rendition = active.renditions.find((candidate) => candidate.id === choice) ?? null;
+    if (choice !== "auto" && choice !== "original" && rendition === null)
+      throw new Error("Quality is unavailable");
+    active.qualityChoice = choice;
+    active.originalReturn.reset();
+    const position = this.snapshot(active).positionSeconds;
+    if (choice === "original" && this.adaptive !== null)
+      await this.replaceStream(active, null, position);
+    else if (rendition !== null && this.adaptive === null)
+      await this.replaceStream(active, rendition, position);
+    else this.adaptive?.choose(choice);
+    return this.publishIfActive(active);
   }
 
   /**
@@ -462,6 +545,7 @@ export class HtmlMediaPlayer {
 
   async stop(): Promise<void> {
     this.generation += 1;
+    rememberThroughput(this.api.serverOrigin, this.estimator.kbps);
     await this.stopActive();
   }
 
@@ -527,6 +611,7 @@ export class HtmlMediaPlayer {
     itemId: string,
     startAtSeconds: number,
     paused: boolean,
+    previousChoice?: string,
   ): Promise<void> {
     const session = await this.api.startPlayback(itemId);
     const reporter = new PlaybackSessionReporter(this.sessionApi(), session.sessionId, () => {
@@ -536,20 +621,57 @@ export class HtmlMediaPlayer {
       await reporter.end();
       throw cancelled();
     }
+    const plan = transcodingPlan(
+      session,
+      (mime) => this.element.canPlayType(mime),
+      this.element.audioTracks !== undefined,
+    );
+    const renditions =
+      this.api.supportsAdaptive === true &&
+      adaptivePlaybackSupported() &&
+      this.element.canPlayType('video/mp4; codecs="avc1.4d4028"') !== "" &&
+      typeof HTMLMediaElement !== "undefined" &&
+      this.element instanceof HTMLMediaElement &&
+      session.media?.video != null
+        ? adaptiveRenditionsFor(session.media.video.size?.height ?? null)
+        : [];
+    this.adaptiveAudioIndex = selectedAudio(session).index;
+    this.openingChoice = previousChoice ?? "auto";
+    const quality: {
+      renditions: ReadonlyArray<AdaptiveRendition>;
+      choice: string;
+      originalKbps: number | null;
+      originalUsable: boolean;
+    } = {
+      renditions,
+      choice: previousChoice ?? "auto",
+      originalKbps: originalKbps(session.media?.sizeBytes, session.durationSeconds),
+      originalUsable: !this.forceConversion && (plan === null || plan.video === "copy"),
+    };
     try {
       this.conversion = this.forceConversion
         ? fallbackTranscodingPlan(session, (mime) => this.element.canPlayType(mime))
-        : transcodingPlan(
-            session,
-            (mime) => this.element.canPlayType(mime),
-            this.element.audioTracks !== undefined,
-          );
+        : plan;
+      this.nextAdaptive = this.startingQuality(quality);
       this.applyRememberedVolume(session);
       try {
-        await this.load(generation, session, this.conversion === null ? 0 : startAtSeconds);
+        await this.loadAt(generation, session, startAtSeconds).catch(async (cause: unknown) => {
+          // Conversion can be off on a server that offers it; the original still plays.
+          if (
+            generation !== this.generation ||
+            this.nextAdaptive === null ||
+            !quality.originalUsable
+          )
+            throw cause;
+          quality.renditions = [];
+          this.nextAdaptive = null;
+          this.unload();
+          await this.loadAt(generation, session, startAtSeconds);
+        });
       } catch (cause) {
         if (
           generation !== this.generation ||
+          this.nextAdaptive !== null ||
           (this.conversion !== null &&
             this.conversion.video !== "copy" &&
             this.conversion.audio !== "copy") ||
@@ -557,19 +679,13 @@ export class HtmlMediaPlayer {
         )
           throw cause;
         this.forceConversion = true;
+        quality.originalUsable = false;
         this.conversion = fallbackTranscodingPlan(session, (mime) =>
           this.element.canPlayType(mime),
         );
+        this.nextAdaptive = renditions.length === 0 ? null : this.startingQuality(quality);
         this.unload();
-        await this.load(generation, session, startAtSeconds);
-      }
-      // The element is shared: metadata may have arrived for a newer start's source.
-      if (generation !== this.generation) throw cancelled();
-      if (this.conversion === null && Number.isFinite(startAtSeconds) && startAtSeconds > 0) {
-        this.element.currentTime = startAtSeconds;
-        // Starting while the initial seek is pending can leave WebKit waiting indefinitely.
-        if (this.element.seeking) await this.waitForMediaEvent(generation, "seeked");
-        if (generation !== this.generation) throw cancelled();
+        await this.loadAt(generation, session, startAtSeconds);
       }
     } catch (cause) {
       // Only the latest start owns the element. A replaced one must leave its successor's
@@ -584,7 +700,9 @@ export class HtmlMediaPlayer {
     // Offer audio tracks only when the browser exposes exactly the tracks the server lists.
     const switchable =
       audioStreams.length > 0 &&
-      (this.conversion !== null || this.element.audioTracks?.length === audioStreams.length);
+      (this.conversion !== null ||
+        this.adaptive !== null ||
+        this.element.audioTracks?.length === audioStreams.length);
     const active: ActiveSession = {
       session,
       reporter,
@@ -593,6 +711,7 @@ export class HtmlMediaPlayer {
       selectedAudioStreamId: null,
       selection: null,
       trackMemoryError: null,
+      trackPreferences: session.trackMemory?.preferences ?? DEFAULT_TRACK_PREFERENCES,
       buffering: false,
       awaitingInteraction: false,
       heldPlay: null,
@@ -601,6 +720,13 @@ export class HtmlMediaPlayer {
       suspendedPositionSeconds: null,
       desiredPaused: paused,
       replacingSource: false,
+      renditions: quality.renditions,
+      qualityChoice: quality.choice,
+      originalKbps: quality.originalKbps,
+      originalUsable: quality.originalUsable,
+      originalReturn: new OriginalReturn(),
+      lastBufferSample: null,
+      starvedSinceMs: null,
     };
     this.active = active;
     try {
@@ -610,7 +736,8 @@ export class HtmlMediaPlayer {
         session.trackMemory,
       ).audio;
       if (switchable && selected !== null) {
-        if (this.conversion !== null) active.selectedAudioStreamId = selected.id;
+        if (this.conversion !== null || this.adaptive !== null)
+          active.selectedAudioStreamId = selected.id;
         else await this.applyAudio(active, selected.id);
       }
 
@@ -628,6 +755,10 @@ export class HtmlMediaPlayer {
         save: (choice) => this.api.saveTrackChoice(session.sessionId, choice),
         onError: (message) => {
           active.trackMemoryError = message;
+          this.publishIfActive(active);
+        },
+        onPreferences: (preferences) => {
+          active.trackPreferences = preferences;
           this.publishIfActive(active);
         },
       });
@@ -652,6 +783,199 @@ export class HtmlMediaPlayer {
     const { volume, muted } = volumeForTitle(memory, session.titleId ?? null);
     this.element.volume = volume / 100;
     this.element.muted = muted;
+  }
+
+  /** Where Auto starts, or the viewer's own choice: null plays the original. */
+  private startingQuality(quality: {
+    readonly renditions: ReadonlyArray<AdaptiveRendition>;
+    readonly choice: string;
+    readonly originalKbps: number | null;
+    readonly originalUsable: boolean;
+  }): AdaptiveRendition | null {
+    const { renditions, choice } = quality;
+    if (renditions.length === 0 || choice === "original") return null;
+    const chosen = renditions.find((rendition) => rendition.id === choice);
+    if (chosen !== undefined) return chosen;
+    if (quality.originalUsable && originalFits(this.estimator.kbps, quality.originalKbps))
+      return null;
+    return startingRendition(renditions, this.estimator.kbps) ?? null;
+  }
+
+  /** Loads what `nextAdaptive` names and brings it to `start`. */
+  private async loadAt(generation: number, session: PlayerSession, start: number): Promise<void> {
+    const rendition = this.nextAdaptive;
+    if (rendition !== null) {
+      await this.loadAdaptive(generation, session, rendition, start);
+      return;
+    }
+    await this.load(generation, session, this.conversion === null ? 0 : start);
+    // The element is shared: metadata may have arrived for a newer start's source.
+    if (generation !== this.generation) throw cancelled();
+    if (this.conversion === null && Number.isFinite(start) && start > 0) {
+      this.element.currentTime = start;
+      // Starting while the initial seek is pending can leave WebKit waiting indefinitely.
+      if (this.element.seeking) await this.waitForMediaEvent(generation, "seeked");
+      if (generation !== this.generation) throw cancelled();
+    }
+  }
+
+  private async loadAdaptive(
+    generation: number,
+    session: PlayerSession,
+    rendition: AdaptiveRendition,
+    start: number,
+  ): Promise<void> {
+    const Hls = await AdaptiveSource.load();
+    if (generation !== this.generation) throw cancelled();
+    const element = this.element as HTMLMediaElement;
+    const url = new URL(
+      `${session.streamUrl}/adaptive/${this.adaptiveAudioIndex}/master.m3u8`,
+      this.api.serverOrigin,
+    );
+    url.searchParams.set("grant", session.grantToken);
+    const renditions = adaptiveRenditionsFor(session.media?.video?.size?.height ?? null);
+    const source = new AdaptiveSource(element, {
+      url: url.toString(),
+      startSeconds: start,
+      renditions,
+      start: rendition,
+      choice: this.active?.qualityChoice ?? this.openingChoice,
+      estimator: this.estimator,
+      onChange: () => {
+        if (this.active !== null && this.adaptive === source) this.publish(this.active);
+      },
+      onFatal: (cause) => {
+        const active = this.active;
+        if (active !== null && this.adaptive === source)
+          void this.withoutConversion(active, this.snapshot(active).positionSeconds, cause);
+      },
+    });
+    this.adaptive = source;
+    this.timeOffset = 0;
+    await this.waitForMediaEvent(generation, "loadedmetadata", () => source.attach(Hls));
+  }
+
+  /**
+   * Swaps the original for converted pieces or back, at a position: the one move between them
+   * that cannot be seamless, since the two are different streams.
+   */
+  private async replaceStream(
+    active: ActiveSession,
+    rendition: AdaptiveRendition | null,
+    positionSeconds: number,
+  ): Promise<void> {
+    active.replacingSource = true;
+    active.lastBufferSample = null;
+    this.unload();
+    this.nextAdaptive = rendition;
+    if (rendition === null && this.conversion !== null && !active.originalUsable)
+      this.conversion = fallbackTranscodingPlan(active.session, (mime) =>
+        this.element.canPlayType(mime),
+      );
+    const generation = ++this.generation;
+    try {
+      await this.loadAt(generation, active.session, positionSeconds);
+    } catch (cause) {
+      if (generation === this.generation) active.replacingSource = false;
+      if (generation === this.generation || this.active !== active) throw cause;
+    }
+    if (this.active !== active) throw inactive();
+    if (generation !== this.generation) return;
+    active.replacingSource = false;
+    if (!active.desiredPaused) await this.play(active);
+  }
+
+  /**
+   * Auto's moves between the original and converted pieces, checked as playback goes on: away
+   * from the original when the connection cannot keep it fed, back once it has proven it can.
+   */
+  private watchQuality(active: ActiveSession): void {
+    if (active.replacingSource || active.qualityChoice !== "auto" || active.renditions.length === 0)
+      return;
+    const nowMs = performance.now();
+    const adaptive = this.adaptive;
+    if (adaptive !== null) {
+      adaptive.decide();
+      if (
+        active.originalUsable &&
+        active.originalReturn.observe(nowMs, this.estimator.kbps, active.originalKbps)
+      )
+        this.switchInBackground(active, null);
+      return;
+    }
+    if (!active.originalUsable) return;
+    // The original's connection is measured by how fast the buffer grows while the browser
+    // fetches: seconds of file gained, at the file's average bitrate.
+    const ahead = this.bufferedAhead();
+    const end = this.element.currentTime + (Number.isFinite(ahead) ? ahead : 0);
+    const last = active.lastBufferSample;
+    if (
+      last !== null &&
+      active.originalKbps !== null &&
+      this.element.networkState === 2 &&
+      Number.isFinite(ahead) &&
+      end > last.endSeconds
+    )
+      this.estimator.sample(
+        ((end - last.endSeconds) * active.originalKbps * 1000) / 8,
+        nowMs - last.atMs,
+        end - last.endSeconds,
+      );
+    active.lastBufferSample = { atMs: nowMs, endSeconds: end };
+    if (
+      Number.isFinite(ahead) &&
+      shouldLeaveOriginal({
+        stalledSeconds:
+          active.starvedSinceMs === null || this.element.paused
+            ? 0
+            : (nowMs - active.starvedSinceMs) / 1000,
+        bufferAheadSeconds: ahead,
+        estimateKbps: this.estimator.kbps,
+        originalKbps: active.originalKbps,
+      })
+    ) {
+      if (
+        active.starvedSinceMs !== null &&
+        originalStalled((nowMs - active.starvedSinceMs) / 1000) &&
+        active.originalKbps !== null
+      )
+        this.estimator.capAt(active.originalKbps * 0.9);
+      const rendition = startingRendition(active.renditions, this.estimator.kbps);
+      if (rendition !== undefined) this.switchInBackground(active, rendition);
+    }
+  }
+
+  /** A switch Auto makes on its own; failing it ends playback as any other loss of media would. */
+  private switchInBackground(active: ActiveSession, rendition: AdaptiveRendition | null): void {
+    const position = this.snapshot(active).positionSeconds;
+    void this.replaceStream(active, rendition, position).catch((cause: unknown) =>
+      this.withoutConversion(active, position, cause),
+    );
+  }
+
+  /**
+   * Converted pieces failed, as when an administrator turns conversion off: the original plays
+   * on and the qualities are no longer offered. Without a playable original, playback ends.
+   */
+  private async withoutConversion(
+    active: ActiveSession,
+    positionSeconds: number,
+    cause: unknown,
+  ): Promise<void> {
+    if (this.active !== active) return;
+    const failure = cause instanceof Error ? cause : new Error("Playback could not continue.");
+    if (!active.originalUsable || active.renditions.length === 0) {
+      await this.fail(failure);
+      return;
+    }
+    active.renditions = [];
+    active.qualityChoice = "auto";
+    try {
+      await this.replaceStream(active, null, positionSeconds);
+      this.publishIfActive(active);
+    } catch {
+      if (this.active === active) await this.fail(failure);
+    }
   }
 
   /** Points the element at the media and waits until the browser can tell whether it will play. */
@@ -766,6 +1090,8 @@ export class HtmlMediaPlayer {
     };
     const buffering = (waiting: boolean) => (): void => {
       active.buffering = waiting;
+      if (!waiting) active.starvedSinceMs = null;
+      else if (!this.element.seeking) active.starvedSinceMs ??= performance.now();
       update();
     };
     const record = (kind: string): void => {
@@ -790,11 +1116,15 @@ export class HtmlMediaPlayer {
     let resumesPastSeconds = 0;
     const onWaiting = (): void => {
       record("browser_waiting");
+      const loading = this.adaptive?.loadingRendition;
+      if (loading !== undefined && !this.element.seeking)
+        this.estimator.capAt(loading.maxKbps * 0.9);
       resumesPastSeconds = this.element.currentTime;
       buffering(true)();
     };
     const onSeeking = (): void => {
       resumesPastSeconds = this.element.currentTime;
+      active.starvedSinceMs = null;
       update();
     };
     const onPlaying = (): void => {
@@ -814,7 +1144,10 @@ export class HtmlMediaPlayer {
     const onSeeked = (): void => {
       // WebKit can keep HAVE_CURRENT_DATA after seeking in a fully downloaded file,
       // even while its clock advances. No further canplay/playing event is guaranteed.
-      if (this.bufferedAhead() > 0) active.buffering = false;
+      if (this.bufferedAhead() > 0) {
+        active.buffering = false;
+        active.starvedSinceMs = null;
+      }
       update();
     };
     const onError = (): void => {
@@ -846,7 +1179,11 @@ export class HtmlMediaPlayer {
       if (this.active === active && !active.suspended)
         void active.reporter.tick(this.snapshot(active));
     }, PLAYBACK_REPORT_INTERVAL_MS);
+    const qualityTimer = setInterval(() => {
+      if (this.active === active && !active.suspended) this.watchQuality(active);
+    }, 1000);
     return () => {
+      clearInterval(qualityTimer);
       clearInterval(timer);
       for (const [type, listener] of listeners) this.element.removeEventListener(type, listener);
     };
@@ -881,7 +1218,13 @@ export class HtmlMediaPlayer {
     await this.stopActive({ saveProgress: false, announce: false });
     if (generation !== this.generation) return;
     try {
-      await this.open(generation, active.session.itemId, positionSeconds, wasPaused);
+      await this.open(
+        generation,
+        active.session.itemId,
+        positionSeconds,
+        wasPaused,
+        active.qualityChoice,
+      );
     } catch (cause) {
       if (generation !== this.generation) return;
       // The old session was retired quietly; now that nothing replaces it, say that it is gone.
@@ -924,6 +1267,8 @@ export class HtmlMediaPlayer {
   }
 
   private unload(): void {
+    this.adaptive?.destroy();
+    this.adaptive = null;
     this.element.pause();
     this.element.removeAttribute("src");
     this.element.load();
@@ -968,10 +1313,28 @@ export class HtmlMediaPlayer {
       selectedAudioStreamId: active.selectedAudioStreamId,
       selectedSubtitleStreamId: null,
       trackMemoryError: active.trackMemoryError,
+      trackPreferences: active.trackPreferences,
       // The browser decides the channel layout; this is the closest of the two descriptions.
       audioOutput: "auto-safe",
       buffering: active.buffering && !element.paused,
       awaitingInteraction: active.awaitingInteraction,
+      ...(active.renditions.length === 0
+        ? {}
+        : {
+            quality: qualityState({
+              choice: active.qualityChoice,
+              playing:
+                this.adaptive === null
+                  ? "original"
+                  : (this.adaptive.playingRendition ?? this.adaptive.loadingRendition).id,
+              original: {
+                height: active.session.media?.video?.size?.height ?? null,
+                kbps: active.originalKbps,
+              },
+              renditions: active.renditions,
+              measuredKbps: this.estimator.kbps,
+            }),
+          }),
     };
   }
 

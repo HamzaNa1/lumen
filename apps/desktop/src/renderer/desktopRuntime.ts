@@ -74,6 +74,7 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
     seek: bridge.player.seek,
     volume: bridge.player.volume,
     selectAudio: bridge.player.selectAudio,
+    selectQuality: bridge.player.selectQuality,
     resetTrack: bridge.player.resetTrack,
     retryTrackMemory: bridge.player.retryTrackMemory,
     dismissTrackMemoryError: bridge.player.dismissTrackMemoryError,

@@ -1,4 +1,10 @@
-import type { Dimensions, PlayableStream, PlaybackInfo } from "@lumen/contracts";
+import type {
+  Dimensions,
+  PlayableStream,
+  PlaybackInfo,
+  PlayerQuality,
+  QualityOption,
+} from "@lumen/contracts";
 
 const languageNames = new Intl.DisplayNames(undefined, { type: "language" });
 
@@ -161,4 +167,29 @@ export const playbackInfoSections = (info: PlaybackInfo): ReadonlyArray<Playback
       ["Audio sample rate", audio?.sampleRateHz == null ? null : `${audio.sampleRateHz} Hz`],
     ]),
   ].filter((candidate) => candidate.rows.length > 0);
+};
+
+/** How a quality option reads in the menu: "Original", "1080p". */
+export const qualityOptionLabel = (option: QualityOption): string =>
+  option.id === "original" ? "Original" : option.id;
+
+/** What is on screen now: "Original", "720p". */
+export const qualityPlayingLabel = (quality: PlayerQuality): string => {
+  const playing = quality.options.find((option) => option.id === quality.playing);
+  return playing === undefined ? quality.playing : qualityOptionLabel(playing);
+};
+
+/** The quality as the settings row shows it: "Auto (720p)", "Original", "480p". */
+export const qualityLabel = (quality: PlayerQuality): string => {
+  const playingLabel = qualityPlayingLabel(quality);
+  if (quality.choice === "auto") return `Auto (${playingLabel})`;
+  const chosen = quality.options.find((option) => option.id === quality.choice);
+  return chosen === undefined ? playingLabel : qualityOptionLabel(chosen);
+};
+
+/** The badge on the settings button for what is on screen, as video sites mark it. */
+export const qualityBadge = (quality: PlayerQuality): string | null => {
+  const height = quality.options.find((option) => option.id === quality.playing)?.height ?? null;
+  if (height === null) return null;
+  return height >= 2160 ? "4K" : height >= 720 ? "HD" : null;
 };

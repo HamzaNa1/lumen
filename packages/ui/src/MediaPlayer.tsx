@@ -1,8 +1,18 @@
 import { Slider } from "@base-ui/react/slider";
-import type { AudioOutput, BufferedRange, PlayableStream, PlaybackInfo } from "@lumen/contracts";
+import type {
+  AudioOutput,
+  BufferedRange,
+  PlayableStream,
+  PlaybackInfo,
+  PlayerQuality,
+} from "@lumen/contracts";
 import {
   Activity,
   ArrowLeft,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Gauge,
   LoaderCircle,
   Maximize,
   Minimize,
@@ -24,6 +34,10 @@ import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
   formatEndsAt,
   formatPlayerTime,
+  qualityBadge,
+  qualityLabel,
+  qualityOptionLabel,
+  qualityPlayingLabel,
   streamLabels,
   trackSelectionWarning,
 } from "./PlayerFormatting";
@@ -64,6 +78,11 @@ interface MediaPlayerProps {
   readonly streams: ReadonlyArray<PlayableStream>;
   readonly selectedAudioStreamId: string | null;
   readonly selectedSubtitleStreamId: string | null;
+  /**
+   * The tracks the viewer's settings pick, marked in the menus; choosing one follows the settings
+   * again. Left out where they are not known. A null subtitle means Off.
+   */
+  readonly defaultTracks?: { readonly audio: string | null; readonly subtitle: string | null };
   readonly audioOutput: AudioOutput;
   /** Omitted where the player does not control the audio device. */
   readonly onAudioOutput?: ((output: AudioOutput) => Promise<void>) | undefined;
@@ -108,7 +127,14 @@ interface MediaPlayerProps {
   readonly onVolume: (volume: number, muted: boolean) => void;
   readonly onSelectAudio: (streamId: string) => void;
   readonly onSelectSubtitle: (streamId: string | null) => void;
+  /** Left out where the viewer has no quality to choose. */
+  readonly quality?: PlayerQuality | undefined;
+  /** "auto", "original", or a rendition id. */
+  readonly onSelectQuality?: (choice: string) => void;
 }
+
+const markDefault = (label: string, isDefault: boolean): string =>
+  isDefault ? `${label} · Default` : label;
 
 /** Stretches of the timeline drawn on the seek bar, such as what is buffered. */
 const timelineRanges = ({
@@ -159,6 +185,7 @@ export const MediaPlayer = ({
   streams,
   selectedAudioStreamId,
   selectedSubtitleStreamId,
+  defaultTracks,
   audioOutput,
   onAudioOutput,
   onPlaybackInfo,
@@ -182,12 +209,17 @@ export const MediaPlayer = ({
   onVolume,
   onSelectAudio,
   onSelectSubtitle,
+  quality,
+  onSelectQuality,
 }: MediaPlayerProps): React.ReactElement => {
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   // How far along the timeline the pointer rests, from 0 at its start to 1 at its end.
   const [timelineHover, setTimelineHover] = useState<number | null>(null);
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsView, setSettingsView] = useState<"main" | "quality">("main");
+  // The viewer's pick shows at once; the player catches up when the new pieces arrive.
+  const [pickedQuality, setPickedQuality] = useState<string | null>(null);
   // Stays open while the controls hide, so it can be read over the video.
   const [infoOpen, setInfoOpen] = useState(false);
   const [audioOutputError, setAudioOutputError] = useState<string | null>(null);
@@ -197,6 +229,9 @@ export const MediaPlayer = ({
   const audioLabels = streamLabels(audioStreams);
   const subtitleLabels = streamLabels(subtitleStreams);
   const trackWarning = trackSelectionWarning(trackSelection, subtitleSelection);
+  const qualityChoices = quality !== undefined && quality.options.length > 1 ? quality : null;
+  const shownQualityChoice = pickedQuality ?? qualityChoices?.choice ?? "auto";
+  const badge = qualityChoices === null ? null : qualityBadge(qualityChoices);
   const timelineEnd = duration ?? Math.max(position, 1);
   const seekValue = Math.min(seekPreview ?? position, timelineEnd);
   const volumeValue = volumePreview ?? volume;
@@ -238,6 +273,8 @@ export const MediaPlayer = ({
   const closeSettings = (): void => {
     if (!settingsOpen) return;
     setSettingsOpen(false);
+    setSettingsView("main");
+    setPickedQuality(null);
     setAudioOutputError(null);
     onDismissErrors?.();
   };
@@ -509,9 +546,86 @@ export const MediaPlayer = ({
                   onClick={() => (settingsOpen ? closeSettings() : setSettingsOpen(true))}
                 >
                   <Settings2 aria-hidden="true" size={19} />
+                  {badge === null ? null : (
+                    <span className="media-player-quality-badge" aria-hidden="true">
+                      {badge}
+                    </span>
+                  )}
                 </Button>
-                {settingsOpen ? (
+                {settingsOpen && settingsView === "quality" && qualityChoices !== null ? (
+                  <div
+                    className="media-player-settings-panel media-player-quality-panel"
+                    id="media-player-settings-panel"
+                  >
+                    <div className="media-player-quality-header">
+                      <Button
+                        variant="icon"
+                        aria-label="Back to settings"
+                        onClick={() => setSettingsView("main")}
+                      >
+                        <ChevronLeft aria-hidden="true" size={18} />
+                      </Button>
+                      <strong>Quality</strong>
+                    </div>
+                    <div role="menu" aria-label="Quality">
+                      {[
+                        { id: "auto", label: "Auto", kbps: null },
+                        ...qualityChoices.options.map((option) => ({
+                          id: option.id,
+                          label: qualityOptionLabel(option),
+                          kbps: option.kbps,
+                        })),
+                      ].map((option) => {
+                        const measured = qualityChoices.measuredKbps;
+                        const tooMuch =
+                          option.kbps !== null && measured !== null && option.kbps > measured * 0.9;
+                        return (
+                          <button
+                            key={option.id}
+                            type="button"
+                            role="menuitemradio"
+                            aria-checked={shownQualityChoice === option.id}
+                            className="media-player-quality-option"
+                            onClick={() => {
+                              setPickedQuality(option.id);
+                              onSelectQuality?.(option.id);
+                            }}
+                          >
+                            <span className="media-player-quality-check">
+                              {shownQualityChoice === option.id ? (
+                                <Check aria-hidden="true" size={16} />
+                              ) : null}
+                            </span>
+                            <span className="media-player-quality-name">
+                              {option.label}
+                              {option.id === "auto" && qualityChoices.choice === "auto" ? (
+                                <small>{qualityPlayingLabel(qualityChoices)}</small>
+                              ) : null}
+                            </span>
+                            {tooMuch ? (
+                              <span className="media-player-quality-warning">May buffer</span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </div>
+                ) : settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
+                    {qualityChoices === null ? null : (
+                      <button
+                        type="button"
+                        className="media-player-quality-row"
+                        onClick={() => setSettingsView("quality")}
+                      >
+                        <Gauge aria-hidden="true" size={16} />
+                        <span>Quality</span>
+                        <span className="media-player-quality-value">
+                          {qualityLabel({ ...qualityChoices, choice: shownQualityChoice })}
+                        </span>
+                        <ChevronRight aria-hidden="true" size={16} />
+                      </button>
+                    )}
                     {trackWarning === null ? null : (
                       <div className="media-player-settings-warning" role="note">
                         <TriangleAlert aria-hidden="true" size={16} />
@@ -544,42 +658,45 @@ export const MediaPlayer = ({
                         modal={false}
                         value={selectedAudioStreamId}
                         disabled={inactive}
-                        options={[
-                          ...(onResetTrack === undefined
-                            ? []
-                            : [{ value: "settings", label: "Use my settings" }]),
-                          ...audioStreams.map((stream, index) => ({
-                            value: stream.id,
-                            label: audioLabels[index] ?? "",
-                          })),
-                        ]}
+                        options={audioStreams.map((stream, index) => ({
+                          value: stream.id,
+                          label: markDefault(
+                            audioLabels[index] ?? "",
+                            defaultTracks?.audio === stream.id,
+                          ),
+                        }))}
                         onValueChange={(value) =>
-                          value === "settings" ? onResetTrack?.("audio") : onSelectAudio(value)
+                          onResetTrack !== undefined && defaultTracks?.audio === value
+                            ? onResetTrack("audio")
+                            : onSelectAudio(value)
                         }
                       />
                     ) : null}
-                    {subtitleStreams.length > 0 ||
-                    (onResetTrack !== undefined && subtitleSelection) ? (
+                    {subtitleStreams.length > 0 ? (
                       <SelectField
                         label="Subtitles"
                         modal={false}
                         value={selectedSubtitleStreamId ?? "off"}
                         disabled={inactive}
                         options={[
-                          ...(onResetTrack === undefined
-                            ? []
-                            : [{ value: "settings", label: "Use my settings" }]),
-                          { value: "off", label: "Off" },
+                          {
+                            value: "off",
+                            label: markDefault("Off", defaultTracks?.subtitle === null),
+                          },
                           ...subtitleStreams.map((stream, index) => ({
                             value: stream.id,
-                            label: subtitleLabels[index] ?? "",
+                            label: markDefault(
+                              subtitleLabels[index] ?? "",
+                              defaultTracks?.subtitle === stream.id,
+                            ),
                           })),
                         ]}
-                        onValueChange={(value) =>
-                          value === "settings"
-                            ? onResetTrack?.("subtitle")
-                            : onSelectSubtitle(value === "off" ? null : value)
-                        }
+                        onValueChange={(value) => {
+                          const streamId = value === "off" ? null : value;
+                          if (onResetTrack !== undefined && defaultTracks?.subtitle === streamId)
+                            onResetTrack("subtitle");
+                          else onSelectSubtitle(streamId);
+                        }}
                       />
                     ) : null}
                     {trackSelection && audioStreams.length === 0 && subtitleStreams.length === 0 ? (

@@ -564,6 +564,16 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, streamId: Schema.String }), raw);
     return dependencies.player.selectAudioStream(input.sessionId, input.streamId);
   });
+  handle("player:select-quality", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({
+        sessionId: Schema.String,
+        choice: Schema.String.check(Schema.isMinLength(1)),
+      }),
+      raw,
+    );
+    return dependencies.player.selectQuality(input.sessionId, input.choice);
+  });
   handle("player:select-subtitle", async (_event, raw) => {
     const input = decode(
       Schema.Struct({ sessionId: Schema.String, streamId: Schema.NullOr(Schema.String) }),

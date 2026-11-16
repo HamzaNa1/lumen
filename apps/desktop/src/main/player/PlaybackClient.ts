@@ -10,6 +10,8 @@ export interface PlaybackClient extends PlaybackSessionApi {
   /** The server the bytes belong to; null until the server has said who it is. */
   readonly serverId: string | null;
   readonly supportsTranscoding: boolean;
+  /** Whether the server converts into pieces of several qualities; older servers do not. */
+  readonly supportsAdaptive?: boolean;
   readonly startPlayback: (itemId: string) => Promise<PlayerSession>;
   readonly saveTrackChoice: (
     sessionId: string,
@@ -40,6 +42,9 @@ export const withOfflineFallback = (
     },
     get supportsTranscoding() {
       return current.supportsTranscoding;
+    },
+    get supportsAdaptive() {
+      return current.supportsAdaptive === true;
     },
     get offline() {
       return current.offline === true;

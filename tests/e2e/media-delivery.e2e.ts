@@ -152,6 +152,106 @@ test("transcoding produces playable H264/AAC, supports offsets and retains grant
   expect((await server.request(url, { headers })).status).toBe(404);
 });
 
+test("adaptive conversion cuts every quality and restart at the same source times", async ({
+  server,
+  admin,
+}, testInfo) => {
+  const library = await server.library(admin.accessToken, "movies", []);
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24000/1001"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "18"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-g", "240", "-c:a", "aac"],
+    join(library.path, "Wide.mkv"),
+  ]);
+  await server.media(library.path, "Broken.mp4");
+  await server.scan(admin.accessToken, library.id);
+  const items = await server.items(admin.accessToken, library.id);
+  const broken = await server.play(
+    admin.accessToken,
+    items.find((entry) => entry.title === "Broken")?.id ?? "",
+  );
+  // A file replaced by something FFmpeg cannot read is refused, so the client keeps the original.
+  await writeFile(join(library.path, "Broken.mp4"), Buffer.alloc(4096, 7));
+  const unreadable = await server.request(`${broken.streamUrl}/adaptive/0/master.m3u8`, {
+    headers: { authorization: `Bearer ${broken.grantToken}` },
+  });
+  expect(unreadable.status).toBe(503);
+  expect(await unreadable.json()).toMatchObject({
+    message: "The file could not be read for conversion",
+  });
+  const item = items.find((entry) => entry.title === "Wide");
+  const playback = await server.play(admin.accessToken, item?.id ?? "");
+  const base = `${playback.streamUrl}/adaptive/0`;
+  const headers = { authorization: `Bearer ${playback.grantToken}` };
+  expect((await server.request(`${base}/master.m3u8`)).status).toBe(401);
+
+  const master = await (await server.request(`${base}/master.m3u8`, { headers })).text();
+  expect(master).toContain('#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID="audio"');
+  expect([...master.matchAll(/^(\d+p)\.m3u8$/gmu)].map((match) => match[1])).toEqual([
+    "720p",
+    "480p",
+    "360p",
+  ]);
+  expect(master).toContain("RESOLUTION=640x360");
+  // The browser cannot attach a bearer token to playlist entries, so the grant travels with them.
+  const shared = await (
+    await server.request(`${base}/master.m3u8?grant=${playback.grantToken}`)
+  ).text();
+  expect(shared).toContain(`720p.m3u8?grant=${playback.grantToken}`);
+  const playlist = await (await server.request(`${base}/360p.m3u8`, { headers })).text();
+  expect(playlist.match(/#EXTINF/gu)).toHaveLength(5);
+  expect(playlist).toContain("#EXT-X-ENDLIST");
+  expect((await server.request(`${base}/1080p.m3u8`, { headers })).status).toBe(404);
+  expect((await server.request(`${base}/360p/5.ts`, { headers })).status).toBe(404);
+
+  const piece = async (path: string) => {
+    const response = await server.request(`${base}/${path}`, { headers });
+    expect(response.status, path).toBe(200);
+    const output = testInfo.outputPath(path.replace("/", "-"));
+    await writeFile(output, Buffer.from(await response.arrayBuffer()));
+    const probe = JSON.parse(
+      execFileSync(
+        "ffprobe",
+        [
+          ...["-v", "error", "-show_entries", "stream=codec_name,height:packet=pts_time,flags"],
+          ...["-of", "json", output],
+        ],
+        { encoding: "utf8" },
+      ),
+    ) as {
+      streams: ReadonlyArray<{ codec_name: string; height?: number }>;
+      packets: ReadonlyArray<{ pts_time: string; flags: string }>;
+    };
+    return {
+      codecs: probe.streams.map((stream) => stream.codec_name),
+      height: probe.streams[0]?.height,
+      start: Number(probe.packets[0]?.pts_time),
+      keyframes: probe.packets.filter((packet) => packet.flags.startsWith("K")).length,
+    };
+  };
+  // Asking for piece 3 first starts the encoder there; piece 1 is behind it and restarts it.
+  const late = await piece("720p/3.ts");
+  const early = await piece("720p/1.ts");
+  const other = await piece("360p/3.ts");
+  const next = await piece("720p/2.ts");
+  expect(late).toMatchObject({ codecs: ["h264"], height: 720, keyframes: 1 });
+  expect(other).toMatchObject({ codecs: ["h264"], height: 360, keyframes: 1 });
+  expect(other.start).toBe(late.start);
+  expect(late.start - early.start).toBeCloseTo(8, 1);
+  expect(late.start - next.start).toBeCloseTo(4, 1);
+  const audio = await piece("audio/3.ts");
+  expect(audio.codecs).toEqual(["aac"]);
+  // Neither stream has a frame exactly on the cut: video starts at the first frame after it, and
+  // audio at the frame that reaches it. Two video frames plus one audio frame bound the gap.
+  expect(Math.abs(audio.start - late.start)).toBeLessThan(2 * (1001 / 24000) + 1024 / 48000);
+
+  await server.api(`/playback/sessions/${playback.sessionId}`, {
+    token: admin.accessToken,
+    method: "DELETE",
+  });
+  expect((await server.request(`${base}/master.m3u8`, { headers })).status).toBe(404);
+});
+
 test.describe("transcoding disabled", () => {
   test("preserves direct play and rejects conversion", async ({ server, admin }) => {
     const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
@@ -197,6 +297,9 @@ test.describe("transcoding disabled", () => {
     expect((await server.request(`${playback.streamUrl}?transcode=1`, { headers })).status).toBe(
       503,
     );
+    expect(
+      (await server.request(`${playback.streamUrl}/adaptive/0/master.m3u8`, { headers })).status,
+    ).toBe(503);
     const direct = await server.request(playback.streamUrl, { headers });
     expect(direct.status).toBe(200);
     await direct.arrayBuffer();
