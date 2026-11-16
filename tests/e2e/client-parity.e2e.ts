@@ -1,6 +1,9 @@
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 import type { Locator } from "@playwright/test";
-import { openSettings, signIn } from "./support/browser";
+import { openSettings, settingsValue, signIn } from "./support/browser";
 import { connectDesktop, expect, test } from "./support/desktop";
+import { repository, serverVersion } from "./support/server";
 
 test("real desktop and browser render shared routes, forms and menus with matching content and layout", async ({
   server,
@@ -85,13 +88,38 @@ test("real desktop and browser render shared routes, forms and menus with matchi
   expect(await settingsText(desktopSettings)).toBe(await settingsText(browserSettings));
   const categories = (settings: Locator) =>
     settings.getByRole("navigation", { name: "Settings" }).getByRole("button");
-  await expect(categories(browserSettings)).toHaveText(["Playback", "General", "Transcoding"]);
-  await expect(categories(desktopSettings)).toHaveText([
+  await expect(categories(browserSettings)).toHaveText([
     "Playback",
-    "Downloads",
+    "About",
     "General",
     "Transcoding",
   ]);
+  await expect(categories(desktopSettings)).toHaveText([
+    "Playback",
+    "Downloads",
+    "About",
+    "General",
+    "Transcoding",
+  ]);
+  // Each reports its own version beside the server's; only the desktop plays in MPV.
+  for (const settings of [browserSettings, desktopSettings]) {
+    await categories(settings).getByText("About", { exact: true }).click();
+    await expect(settingsValue(settings, "Server")).toHaveText(serverVersion);
+  }
+  await expect(settingsValue(browserSettings, "App")).toHaveText(serverVersion);
+  await expect(browserSettings.getByText("MPV", { exact: true })).toHaveCount(0);
+  await expect(settingsValue(desktopSettings, "App")).toHaveText(
+    await desktop.app.evaluate(({ app }) => app.getVersion()),
+  );
+  // Only a build that bundled MPV recorded its version; a development checkout may not have.
+  const mpvVersion = await readFile(
+    join(repository, "apps/desktop/resources/native/mpv-manifest.json"),
+    "utf8",
+  ).then(
+    (text) => (JSON.parse(text) as { mpvVersion: string }).mpvVersion,
+    () => "Unknown",
+  );
+  await expect(settingsValue(desktopSettings, "MPV")).toHaveText(mpvVersion);
   for (const settings of [browserSettings, desktopSettings])
     await categories(settings).getByText("General", { exact: true }).click();
   await expect(desktopSettings.getByRole("button", { name: "Switch server…" })).toBeVisible();
