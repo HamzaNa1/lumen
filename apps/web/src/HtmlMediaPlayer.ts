@@ -834,6 +834,7 @@ export class HtmlMediaPlayer {
     );
     url.searchParams.set("grant", session.grantToken);
     const renditions = adaptiveRenditionsFor(session.media?.video?.size?.height ?? null);
+    let failLoad: (cause: Error) => void = () => {};
     const source = new AdaptiveSource(element, {
       url: url.toString(),
       startSeconds: start,
@@ -845,14 +846,19 @@ export class HtmlMediaPlayer {
         if (this.active !== null && this.adaptive === source) this.publish(this.active);
       },
       onFatal: (cause) => {
+        if (this.adaptive !== source) return;
         const active = this.active;
-        if (active !== null && this.adaptive === source)
-          void this.withoutConversion(active, this.snapshot(active).positionSeconds, cause);
+        // While a session is still opening, nothing plays yet: the load it waits on fails instead.
+        if (active === null) failLoad(cause);
+        else void this.withoutConversion(active, this.snapshot(active).positionSeconds, cause);
       },
     });
     this.adaptive = source;
     this.timeOffset = 0;
-    await this.waitForMediaEvent(generation, "loadedmetadata", () => source.attach(Hls));
+    await this.waitForMediaEvent(generation, "loadedmetadata", (fail) => {
+      failLoad = fail;
+      source.attach(Hls);
+    });
   }
 
   /**
@@ -995,7 +1001,7 @@ export class HtmlMediaPlayer {
   private waitForMediaEvent(
     generation: number,
     event: "loadedmetadata" | "seeked",
-    start: () => void = () => {},
+    start: (fail: (cause: Error) => void) => void = () => {},
   ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
       const settle = (outcome: () => void): void => {
@@ -1026,7 +1032,7 @@ export class HtmlMediaPlayer {
       this.element.addEventListener(event, onReady);
       this.element.addEventListener("error", onError);
       try {
-        start();
+        start((cause) => settle(() => reject(cause)));
       } catch (cause) {
         settle(() => reject(cause));
       }

@@ -74,9 +74,7 @@ for (const failure of ["invalid-media", "load-timeout", "network-error"] as cons
         .click({ force: true });
       await expect.poll(() => requested).toBe(true);
       if (failure === "load-timeout") await page.clock.fastForward(20_001);
-      await expect(page.getByText("Playback failed", { exact: true })).toBeVisible({
-        timeout: 25_000,
-      });
+      await expect(page.getByText("Playback failed", { exact: true })).toBeVisible();
       const db = openDatabase(server.databasePath, { readOnly: true });
       try {
         await expect
