@@ -79,8 +79,19 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
     ]),
     signIn(page, server),
   ]);
+  // The player also names the episode after this one, so only its heading says what plays, and
+  // only a new source shows that it is the episode playing and not the end of the one before.
+  const title = page.locator(".media-player-header").getByRole("heading");
+  const source = () => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentSrc);
+  let before = "";
+  const plays = async (episode: string) => {
+    await expect(title).toHaveText(episode);
+    await expect.poll(source, often).not.toBe(before);
+    await playing(page);
+    before = await source();
+  };
   await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
-  await playing(page);
+  await plays("Together");
   await page.getByRole("button", { name: "Episodes", exact: true }).click();
   const drawer = page.getByRole("complementary", { name: "Episodes" });
   await expect(drawer.getByRole("article")).toHaveCount(3);
@@ -92,16 +103,14 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   await expect(drawer.getByRole("article")).toHaveCount(3);
   await drawer.getByRole("button", { name: "Play Return", exact: true }).click();
   await expect(drawer).toBeHidden();
-  await playing(page);
-  await expect(page.getByRole("region", { name: "Media player" })).toContainText("Return");
+  await plays("Return");
   await page.unroute("**/api/v1/items/*/children*");
   await page.getByRole("button", { name: "Previous", exact: true }).click();
-  await playing(page);
+  await plays("Overlap");
   await page.locator("video").evaluate((v: HTMLVideoElement) => {
     v.currentTime = v.duration - 0.2;
   });
-  await expect(page.getByRole("region", { name: "Media player" })).toContainText("Return");
-  await playing(page);
+  await plays("Return");
 });
 
 const twoEpisodes = [
