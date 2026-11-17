@@ -236,8 +236,10 @@ export const test = base.extend<{
   server: Server;
   admin: Account;
   serverEnvironment: NodeJS.ProcessEnv;
+  startServer: boolean;
 }>({
   serverEnvironment: [{}, { option: true }],
+  startServer: [true, { option: true }],
   context: async ({ context }, use) => {
     const errors = await collectBrowserErrors(context);
     try {
@@ -246,13 +248,13 @@ export const test = base.extend<{
       expect(errors, "Uncaught browser errors").toEqual([]);
     }
   },
-  server: async ({ playwright: _playwright, serverEnvironment }, use, testInfo) => {
+  server: async ({ playwright: _playwright, serverEnvironment, startServer }, use, testInfo) => {
     const server = new Server(
       await mkdtemp(join(tmpdir(), "lumen-e2e-")),
       ["firefox", "webkit"].includes(testInfo.project.name) ? "webm" : "mp4",
     );
     try {
-      await server.start(serverEnvironment);
+      if (startServer) await server.start(serverEnvironment);
       await use(server);
     } finally {
       await server.stop();

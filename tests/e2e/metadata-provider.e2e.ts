@@ -156,14 +156,28 @@ test("provider matching and episode order refresh preserve identity, survive res
   expect((await children()).items).toEqual(mapped);
   unavailable = false;
   missingMapping = true;
-  await waitForRun(
-    await server.api(orderPath, {
-      token,
-      method: "PUT",
-      body: { tmdbSeriesId: "65942", groupId },
-    }),
-    "failed",
-  );
+  const failing = await server.api<{ runId: string }>(orderPath, {
+    token,
+    method: "PUT",
+    body: { tmdbSeriesId: "65942", groupId },
+  });
+  // Each failed attempt is retried after 2s, then 4s (retryDelayMs in apps/server/src/jobs/ServerJobs.ts).
+  for (const [attempts, retryDelayMs] of [
+    [1, 2_000],
+    [2, 4_000],
+  ] as const) {
+    await expect
+      .poll(async () =>
+        (
+          await server.api<{ status: string; attempts: number }[]>(`/scans/${failing.runId}/jobs`, {
+            token,
+          })
+        ).map((job) => `${job.status}:${job.attempts}`),
+      )
+      .toEqual([`queued:${attempts}`, `queued:${attempts}`]);
+    await server.advanceTime(retryDelayMs);
+  }
+  await waitForRun(failing, "failed");
   expect((await children()).items).toEqual(mapped);
 });
 

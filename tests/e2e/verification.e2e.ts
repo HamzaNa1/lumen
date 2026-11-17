@@ -1,4 +1,5 @@
 import { cpSync, readFileSync, rmSync, symlinkSync } from "node:fs";
+import { availableParallelism } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "./support/cli";
 import { repository } from "./support/server";
@@ -152,63 +153,101 @@ test("Playwright discovery assigns every E2E suite, selects product owners and r
   }
   // Discovery must resolve the same packages without starting servers or building either product.
   symlinkSync(join(repository, "node_modules"), join(workspace.root, "node_modules"), "junction");
-  const discover = (project: string, env: Record<string, string> = {}) => {
-    const result = workspace.command(
-      "bun",
-      ["run", "playwright", "test", "--list", "--project", project, "--no-deps"],
-      { LUMEN_BROWSER_PRODUCT: "source", ...env },
-    );
+  // Listing only reads the workspace, so listings run alongside each other; the list reporter
+  // keeps them from writing the configured reports into one shared folder.
+  let free = availableParallelism();
+  const waiting: (() => void)[] = [];
+  const listings = new Map<string, ReturnType<typeof workspace.commandAsync>>();
+  const list = (args: string[], env: Record<string, string> = {}) => {
+    const key = JSON.stringify([args, env]);
+    const listing =
+      listings.get(key) ??
+      (async () => {
+        if (free > 0) free--;
+        else await new Promise<void>((resolve) => waiting.push(resolve));
+        try {
+          return await workspace.commandAsync(
+            "bun",
+            ["run", "playwright", "test", "--list", "--reporter=list", ...args],
+            env,
+          );
+        } finally {
+          const next = waiting.shift();
+          if (next) next();
+          else free++;
+        }
+      })();
+    listings.set(key, listing);
+    return listing;
+  };
+  const discover = async (project: string, env: Record<string, string> = {}) => {
+    const result = await list(["--project", project, "--no-deps"], {
+      LUMEN_BROWSER_PRODUCT: "source",
+      ...env,
+    });
     expect(result.status, result.stderr).toBe(0);
     return result.stdout.split("\n").filter((line) => line.includes(`[${project}]`));
   };
-  for (const [project, total] of [
-    ["native", 3],
-    ["api", 3],
-    ["chromium", 2],
-  ] as const) {
-    const all = discover(project);
-    const shards = Array.from({ length: total }, (_, index) =>
-      discover(project, { LUMEN_E2E_SHARD: `${index + 1}/${total}` }),
-    );
-    for (const shard of shards) expect(shard.length).toBeGreaterThan(0);
-    expect(shards.flat().sort()).toEqual(all.sort());
-  }
-  expect(
-    workspace.command("bun", ["run", "playwright", "test", "--list"], {
-      LUMEN_E2E_SHARD: "4/3",
-    }).stderr,
-  ).toContain("Invalid shard");
   const desktopChange = { LUMEN_E2E_CHANGED_PRODUCTS: "desktop" };
-  const desktopApi = discover("api", desktopChange).join("\n");
-  expect(desktopApi).toContain("client-boundaries.e2e.ts");
-  expect(desktopApi).not.toContain("catalog.e2e.ts");
-  // Native scenarios start a real server, so a server-only change still reaches all of them.
-  expect(discover("native", { LUMEN_E2E_CHANGED_PRODUCTS: "server" })).toEqual(discover("native"));
-  expect(
-    workspace.command("bun", ["run", "playwright", "test", "--list", "--project", "chromium"], {
-      LUMEN_BROWSER_PRODUCT: "source",
-      ...desktopChange,
-    }).status,
-  ).not.toBe(0);
-  for (const product of ["source", "server", "desktop"]) {
-    const result = workspace.command("bun", ["run", "playwright", "test", "--list"], {
-      LUMEN_BROWSER_PRODUCT: product,
-    });
-    expect(result.status, result.stderr).toBe(0);
-    expect(result.stdout).toContain("mixed-playback.e2e.ts");
-    expect(result.stdout).toContain("release-tooling.e2e.ts");
-    expect(result.stdout.includes("client-parity.e2e.ts")).toBe(product === "source");
-    expect(result.stdout.includes("transport-timeouts.e2e.ts")).toBe(product !== "desktop");
-    if (product === "desktop") {
-      expect(result.stdout).not.toContain("browser-journeys.e2e.ts");
-      expect(result.stdout).not.toContain("browser-groups.e2e.ts");
-      expect(result.stdout).not.toContain("watch-transport.e2e.ts");
-      expect(result.stdout).not.toContain("catalog.e2e.ts");
-    } else {
-      for (const browser of ["chromium", "firefox", "webkit"])
-        expect(result.stdout).toContain(`[${browser}]`);
-    }
-  }
+  await Promise.all([
+    ...(
+      [
+        ["native", 3],
+        ["api", 3],
+        ["chromium", 2],
+      ] as const
+    ).map(async ([project, total]) => {
+      const [all, ...shards] = await Promise.all([
+        discover(project),
+        ...Array.from({ length: total }, (_, index) =>
+          discover(project, { LUMEN_E2E_SHARD: `${index + 1}/${total}` }),
+        ),
+      ]);
+      for (const shard of shards) expect(shard.length).toBeGreaterThan(0);
+      expect(shards.flat().sort()).toEqual(all.sort());
+    }),
+    (async () => {
+      expect((await list([], { LUMEN_E2E_SHARD: "4/3" })).stderr).toContain("Invalid shard");
+    })(),
+    (async () => {
+      const desktopApi = (await discover("api", desktopChange)).join("\n");
+      expect(desktopApi).toContain("client-boundaries.e2e.ts");
+      expect(desktopApi).not.toContain("catalog.e2e.ts");
+    })(),
+    (async () => {
+      // Native scenarios start a real server, so a server-only change still reaches all of them.
+      expect(await discover("native", { LUMEN_E2E_CHANGED_PRODUCTS: "server" })).toEqual(
+        await discover("native"),
+      );
+    })(),
+    (async () => {
+      expect(
+        (
+          await list(["--project", "chromium"], {
+            LUMEN_BROWSER_PRODUCT: "source",
+            ...desktopChange,
+          })
+        ).status,
+      ).not.toBe(0);
+    })(),
+    ...["source", "server", "desktop"].map(async (product) => {
+      const result = await list([], { LUMEN_BROWSER_PRODUCT: product });
+      expect(result.status, result.stderr).toBe(0);
+      expect(result.stdout).toContain("mixed-playback.e2e.ts");
+      expect(result.stdout).toContain("release-tooling.e2e.ts");
+      expect(result.stdout.includes("client-parity.e2e.ts")).toBe(product === "source");
+      expect(result.stdout.includes("transport-timeouts.e2e.ts")).toBe(product !== "desktop");
+      if (product === "desktop") {
+        expect(result.stdout).not.toContain("browser-journeys.e2e.ts");
+        expect(result.stdout).not.toContain("browser-groups.e2e.ts");
+        expect(result.stdout).not.toContain("watch-transport.e2e.ts");
+        expect(result.stdout).not.toContain("catalog.e2e.ts");
+      } else {
+        for (const browser of ["chromium", "firefox", "webkit"])
+          expect(result.stdout).toContain(`[${browser}]`);
+      }
+    }),
+  ]);
   workspace.write("tests/unowned.test.ts", "");
   expect(workspace.command("bun", ["run", "playwright", "test", "--list"]).stderr).toContain(
     "no verification owner",

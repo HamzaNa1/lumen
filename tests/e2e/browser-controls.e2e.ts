@@ -288,12 +288,18 @@ test("a stalled lookup does not hold back what is known, and what it brings fill
   const library = await server.library(admin.accessToken, "shows", twoEpisodes);
   await signIn(page, server);
   await asOlderServer(page);
+  await page.clock.install();
+  const adjacentRequested = Promise.withResolvers<void>();
   const adjacentHeld = Promise.withResolvers<void>();
   await page.route(adjacentEpisodes, async (route) => {
+    adjacentRequested.resolve();
     await adjacentHeld.promise;
     await route.fallback();
   });
   await startPlayback(page, server, library.id, openingEpisode);
+  // The player starts waiting out its lookups in the render that requests them.
+  await adjacentRequested.promise;
+  await page.clock.fastForward(1_500);
   const header = page.locator(".media-player-header");
   await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
   await expect(header.locator(".media-player-title p")).toHaveText("Serial · S01E01");

@@ -41,60 +41,63 @@ test("HTTP rate windows reset independently and every authentication mutation sp
   }
 });
 
-for (const valid of [true, false])
-  test(`a held HTTP body retains its concurrency slot across a sweep and releases it after ${valid ? "success" : "failure"}`, async ({
-    server,
-    admin: _admin,
-  }) => {
-    await server.stop();
-    await server.start({ LUMEN_MAX_CONCURRENT_REQUESTS: "1", LUMEN_TRUSTED_PROXIES: "127.0.0.1" });
-    const peer = { "x-forwarded-for": "192.0.2.30" };
-    const body = valid
-      ? JSON.stringify({
-          username: "admin",
-          password,
-          deviceId: crypto.randomUUID(),
-          deviceName: "Held",
-          platform: "desktop",
-          platformDeviceId: null,
-        })
-      : "invalid-json";
-    const response = Promise.withResolvers<number>();
-    const pending = request(
-      new URL("/api/v1/auth/login", server.origin),
-      {
-        method: "POST",
-        headers: {
-          ...peer,
-          "content-type": "application/json",
-          "content-length": Buffer.byteLength(body),
-        },
-      },
-      (incoming) => {
-        incoming.resume();
-        incoming.on("end", () => response.resolve(incoming.statusCode ?? 0));
-      },
-    );
-    pending.on("error", response.reject);
-    try {
-      pending.write(body.slice(0, 1));
-      await expect
-        .poll(async () => (await server.request("/health/live", { headers: peer })).status)
-        .toBe(429);
-      await server.advanceTime(60_001);
-      for (const path of ["/health/live", "/api/v1/auth/login"]) {
-        const blocked = await server.request(path, { headers: peer });
-        expect(blocked.status).toBe(429);
-        expect(blocked.headers.get("retry-after")).toBe("1");
-      }
-      expect(
-        (await server.request("/health/live", { headers: { "x-forwarded-for": "192.0.2.31" } }))
-          .status,
-      ).toBe(200);
-      pending.end(body.slice(1));
-      expect(await response.promise).toBe(valid ? 200 : 400);
-      expect((await server.request("/health/live", { headers: peer })).status).toBe(200);
-    } finally {
-      pending.destroy();
-    }
+test.describe(() => {
+  test.use({
+    serverEnvironment: { LUMEN_MAX_CONCURRENT_REQUESTS: "1", LUMEN_TRUSTED_PROXIES: "127.0.0.1" },
   });
+  for (const valid of [true, false])
+    test(`a held HTTP body retains its concurrency slot across a sweep and releases it after ${valid ? "success" : "failure"}`, async ({
+      server,
+      admin: _admin,
+    }) => {
+      const peer = { "x-forwarded-for": "192.0.2.30" };
+      const body = valid
+        ? JSON.stringify({
+            username: "admin",
+            password,
+            deviceId: crypto.randomUUID(),
+            deviceName: "Held",
+            platform: "desktop",
+            platformDeviceId: null,
+          })
+        : "invalid-json";
+      const response = Promise.withResolvers<number>();
+      const pending = request(
+        new URL("/api/v1/auth/login", server.origin),
+        {
+          method: "POST",
+          headers: {
+            ...peer,
+            "content-type": "application/json",
+            "content-length": Buffer.byteLength(body),
+          },
+        },
+        (incoming) => {
+          incoming.resume();
+          incoming.on("end", () => response.resolve(incoming.statusCode ?? 0));
+        },
+      );
+      pending.on("error", response.reject);
+      try {
+        pending.write(body.slice(0, 1));
+        await expect
+          .poll(async () => (await server.request("/health/live", { headers: peer })).status)
+          .toBe(429);
+        await server.advanceTime(60_001);
+        for (const path of ["/health/live", "/api/v1/auth/login"]) {
+          const blocked = await server.request(path, { headers: peer });
+          expect(blocked.status).toBe(429);
+          expect(blocked.headers.get("retry-after")).toBe("1");
+        }
+        expect(
+          (await server.request("/health/live", { headers: { "x-forwarded-for": "192.0.2.31" } }))
+            .status,
+        ).toBe(200);
+        pending.end(body.slice(1));
+        expect(await response.promise).toBe(valid ? 200 : 400);
+        expect((await server.request("/health/live", { headers: peer })).status).toBe(200);
+      } finally {
+        pending.destroy();
+      }
+    });
+});
