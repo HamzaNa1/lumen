@@ -120,7 +120,7 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes, idleFetchM
     geometry: defaultGeometry,
     allowSegment: async () => true,
     fetchImpl,
-    idleFetchMs,
+    ...(idleFetchMs === undefined ? {} : { idleFetchMs }),
   });
   file.addSource({ origin: upstream.origin, path: "/media", token: "token", kind: "playback" });
   const read = async (start: number, end: number): Promise<Buffer> => {
