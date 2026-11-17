@@ -1109,6 +1109,7 @@ export class PlayerController extends EventEmitter {
       }
       this.state = next;
       this.publish();
+      this.preloadNext(active, next);
       this.watchQuality(active, next, mpvBufferedAhead(cache));
     } catch (cause) {
       // `property unavailable` is expected while no file is loaded (e.g. in
@@ -1125,7 +1126,6 @@ export class PlayerController extends EventEmitter {
   async tick(): Promise<void> {
     if (this.active === null || this.state === null) return;
     this.onProgress?.({ connectionId: this.active.connectionId, state: this.state });
-    this.preloadNext(this.active, this.state);
     await this.active.reporter.tick(this.state);
   }
 
