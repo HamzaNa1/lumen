@@ -1,5 +1,6 @@
+import { execFileSync } from "node:child_process";
 import { openDatabase } from "./support/database";
-import { expect, password, test } from "./support/server";
+import { expect, password, repository, test } from "./support/server";
 
 test("stored session secrets are hashed, refreshed on use, and invalid after inactivity or revocation", async ({
   server,
@@ -13,7 +14,18 @@ test("stored session secrets are hashed, refreshed on use, and invalid after ina
     expect(secret?.hash).toMatch(/^[a-f0-9]{64}$/);
     expect(admin.accessToken).not.toContain(String(secret?.hash));
     const user = db.prepare("SELECT password_hash AS hash FROM users LIMIT 1").get();
-    expect(user?.hash).not.toBe(password);
+    expect(user?.hash).toMatch(/^\$argon2id\$/);
+    // Test servers hash at a lower cost (support/password-cost.ts); production must not.
+    const productionHash = execFileSync(
+      "bun",
+      [
+        "-e",
+        'const { hashPassword } = await import("./apps/server/src/core/Security"); console.log(await hashPassword(process.argv[1]))',
+        password,
+      ],
+      { cwd: repository, encoding: "utf8" },
+    );
+    expect(productionHash).toMatch(/^\$argon2id\$v=19\$m=65536,t=3,p=1\$/);
     const before = Date.now() - 2 * 3600_000;
     db.prepare("UPDATE auth_sessions SET issued_at_ms = ?, last_used_at_ms = ? WHERE id = ?").run(
       before - 1,

@@ -1,3 +1,4 @@
+import "./password-cost";
 import "./tmdb-origin";
 import { startServer } from "../../../apps/server/src/Runtime";
 
