@@ -1,5 +1,6 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
@@ -236,9 +237,14 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
     await blocked.close();
   }
   rmSync(unsaveable, { recursive: true });
-  const second = await launch();
-  const child = second.process();
+  // This launch installs and quits as it starts, which can be before Playwright attaches to it.
+  const second = spawn(require("electron") as string, [main, "--no-sandbox"], {
+    env,
+    stdio: "ignore",
+  });
   try {
+    const [code] = await once(second, "exit", { signal: AbortSignal.timeout(30_000) });
+    expect(code).toBe(0);
     await expect
       .poll(() => {
         try {
@@ -248,11 +254,10 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
         }
       })
       .toEqual(["--updated", "/S", "--force-run"]);
-    await expect.poll(() => child.exitCode).toBe(0);
     expect(downloads).toBe(fetched);
     expect(settings()).toEqual({ automatic: true, downloaded: "9999.1.0", attempted: "9999.1.0" });
   } finally {
-    await second.close();
+    if (second.exitCode === null && second.signalCode === null) second.kill();
   }
   // The installer ran but this is still the old version: it failed, and is not tried again on its own.
   rmSync(marker);
