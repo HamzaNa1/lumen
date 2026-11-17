@@ -204,10 +204,10 @@ for (const fails of [false, true])
     if (!address || typeof address === "string") throw new Error("Provider did not listen");
     const db = openDatabase(server.databasePath);
     metadata(db);
-    const worker = await ScanWorker.start(server, {
-      LUMEN_E2E_TMDB_ORIGIN: `http://127.0.0.1:${address.port}`,
-    });
-    const successor = await ScanWorker.start(server);
+    const [worker, successor] = await Promise.all([
+      ScanWorker.start(server, { LUMEN_E2E_TMDB_ORIGIN: `http://127.0.0.1:${address.port}` }),
+      ScanWorker.start(server),
+    ]);
     try {
       const sourceId = String(db.prepare("SELECT id FROM media_sources").get()?.id);
       const run = enqueue(db, library.id, "metadata", `metadata:${sourceId}`, sourceId);
