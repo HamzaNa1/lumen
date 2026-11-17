@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { existsSync } from "node:fs";
+import { createConnection } from "node:net";
 import { join } from "node:path";
 import { composesVideo } from "../../shared/videoCompositor";
 import { type HelperFrame, HelperFrames } from "./HelperFrames";
@@ -148,7 +149,24 @@ export class MpvProcess {
       this.textures?.dispose();
     });
     if (this.frames && this.child.stdin?.writable) this.child.stdin.end("quit\n");
-    else this.child.kill("SIGTERM");
+    else this.requestQuit();
     return this.stopping;
+  }
+
+  /**
+   * MPV 0.37 on Linux can leave SIGTERM unanswered after a seek while paused, until the
+   * force-kill, yet quits at once when asked over IPC. The signal is for an unreachable socket.
+   */
+  private requestQuit(): void {
+    let connected = false;
+    const socket = createConnection(this.socket);
+    socket.once("connect", () => {
+      connected = true;
+      socket.end(`${JSON.stringify({ command: ["quit"] })}\n`);
+    });
+    socket.on("error", () => {
+      socket.destroy();
+      if (!connected) this.child.kill("SIGTERM");
+    });
   }
 }
