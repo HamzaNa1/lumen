@@ -38,13 +38,17 @@ try {
     Copy-Item "$build/electron/LICENSE" "$licenses/electron-LICENSE" -Force
     Copy-Item "$build/electron/LICENSES.chromium.html" "$licenses/electron-LICENSES.chromium.html" -Force
     Copy-Item "apps/desktop/native/dependencies.json" "$native/dependencies.json" -Force
-    & cmake -S apps/desktop/native -B "$build/helper" -A x64
+    # CI sets CMAKE_GENERATOR to Ninja inside an MSVC shell, which already fixes the architecture.
+    $platform = if ($env:CMAKE_GENERATOR) { @() } else { @("-A", "x64") }
+    & cmake -S apps/desktop/native -B "$build/helper" @platform -DCMAKE_BUILD_TYPE=Release
     if ($LASTEXITCODE -ne 0) { throw "Helper CMake configuration failed" }
     & cmake --build "$build/helper" --config Release --parallel
     if ($LASTEXITCODE -ne 0) { throw "Helper compilation failed" }
     & ctest --test-dir "$build/helper" -C Release --output-on-failure
     if ($LASTEXITCODE -ne 0) { throw "Helper protocol tests failed" }
-    Copy-Item "$build/helper/Release/Lumen Video Helper.exe" $native -Force
+    $helper = @("$build/helper/Release/Lumen Video Helper.exe", "$build/helper/Lumen Video Helper.exe") |
+        Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
+    Copy-Item -LiteralPath $helper $native -Force
     $env:LUMEN_MPV_VERSION = "20261021-git-e471496c56-client-api-2.6"
     if ($env:GITHUB_ENV) { "LUMEN_MPV_VERSION=$env:LUMEN_MPV_VERSION" >> $env:GITHUB_ENV }
 } finally {

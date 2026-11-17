@@ -25,21 +25,54 @@ runs:
         export LD_LIBRARY_PATH="$native_dir/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
         exec "$native_dir/bin/mpv" "$@"
         EOF
-    - name: Bundle MPV (macOS)
-      if: runner.os == 'macOS'
+    # The bundle is a pure function of these scripts, the runner image and (on macOS) the
+    # Homebrew bottles, so a cached copy built from the same inputs is the same bundle.
+    - name: Resolve MPV build inputs
+      if: runner.os != 'Linux'
+      id: inputs
       shell: bash
       run: |
-        MPV_PREFIX="$RUNNER_TEMP/mpv" bash apps/desktop/scripts/bundle-macos-mpv.sh
-        # Native audio tests run the player built from the same release.
-        echo "$RUNNER_TEMP/mpv/bin" >> "$GITHUB_PATH"
+        inputs="$RUNNER_TEMP/mpv-inputs.txt"
+        {
+          echo "$ImageOS $ImageVersion"
+          if [[ "$RUNNER_OS" == macOS ]]; then
+            bash apps/desktop/scripts/bundle-macos-mpv.sh --dependency-versions
+          fi
+        } > "$inputs"
+        cat "$inputs"
+        echo "hash=$(git hash-object "$inputs")" >> "$GITHUB_OUTPUT"
+    - name: Restore bundled MPV
+      if: runner.os != 'Linux'
+      id: cache
+      uses: actions/cache/restore@v4
+      with:
+        path: |
+          apps/desktop/resources/native
+          ${{ runner.os == 'macOS' && format('{0}/mpv/bin', runner.temp) || '' }}
+        key: mpv-${{ runner.os }}-${{ runner.arch }}-${{ steps.inputs.outputs.hash }}-${{ hashFiles('.github/actions/bundle-mpv/action.yml', 'apps/desktop/scripts/**', 'apps/desktop/native/**') }}
+    - name: Bundle MPV (macOS)
+      if: runner.os == 'macOS' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        HOMEBREW_NO_AUTO_UPDATE: '1'
+        HOMEBREW_NO_INSTALL_CLEANUP: '1'
+        HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+      run: MPV_PREFIX="$RUNNER_TEMP/mpv" bash apps/desktop/scripts/bundle-macos-mpv.sh
+    - name: Put the bundled MPV player on the path (macOS)
+      if: runner.os == 'macOS'
+      shell: bash
+      # Native audio tests run the player built from the same release.
+      run: echo "$RUNNER_TEMP/mpv/bin" >> "$GITHUB_PATH"
     - name: Configure MSVC (Windows)
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
       uses: ilammy/msvc-dev-cmd@v1
       with:
         arch: x64
     - name: Bundle MPV (Windows)
-      if: runner.os == 'Windows'
+      if: runner.os == 'Windows' && steps.cache.outputs.cache-hit != 'true'
       shell: pwsh
+      env:
+        CMAKE_GENERATOR: Ninja
       run: ./apps/desktop/scripts/bundle-windows-mpv.ps1
     - name: Exercise Windows helper on the runner GPU
       if: runner.os == 'Windows'
@@ -49,8 +82,18 @@ runs:
       if: runner.os == 'macOS'
       shell: bash
       run: bun apps/desktop/native/smoke-test.ts "apps/desktop/resources/native/Lumen Video Helper"
-    - name: Seal and verify native MPV files
+    - name: Seal native MPV files
+      if: steps.cache.outputs.cache-hit != 'true'
       shell: bash
-      run: |
-        bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
-        bun apps/desktop/scripts/verify-native-binaries.ts
+      run: bun apps/desktop/scripts/verify-native-binaries.ts --write-manifest
+    - name: Save bundled MPV
+      if: runner.os != 'Linux' && steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: |
+          apps/desktop/resources/native
+          ${{ runner.os == 'macOS' && format('{0}/mpv/bin', runner.temp) || '' }}
+        key: ${{ steps.cache.outputs.cache-primary-key }}
+    - name: Verify native MPV files
+      shell: bash
+      run: bun apps/desktop/scripts/verify-native-binaries.ts
