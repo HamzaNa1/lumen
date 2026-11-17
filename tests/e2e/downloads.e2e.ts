@@ -26,6 +26,7 @@ import {
   mainDesktopPage,
   test,
 } from "./support/desktop";
+import { encode } from "./support/encode";
 import { NetworkProxy } from "./support/proxy";
 import { password, repository, type Server } from "./support/server";
 
@@ -53,27 +54,29 @@ const ffmpeg = (args: string[]) => promisify(execFile)("ffmpeg", args);
 
 /** A 30-second film with its index at the end, as a player finds it in many real files. */
 const makeFilm = (path: string, seconds = 30, tone = 440) =>
-  ffmpeg([
-    "-v",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    `testsrc=duration=${seconds}:size=640x360:rate=24`,
-    "-f",
-    "lavfi",
-    "-i",
-    `sine=frequency=${tone}:duration=${seconds}`,
-    "-c:v",
-    "libx264",
-    "-preset",
-    "ultrafast",
-    "-b:v",
-    "800k",
-    "-c:a",
-    "aac",
+  encode(
+    [
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      `testsrc=duration=${seconds}:size=640x360:rate=24`,
+      "-f",
+      "lavfi",
+      "-i",
+      `sine=frequency=${tone}:duration=${seconds}`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-b:v",
+      "800k",
+      "-c:a",
+      "aac",
+    ],
     path,
-  ]);
+  );
 
 /**
  * Ten minutes of tiny frames: the index at its end is as large as a feature episode's, so the

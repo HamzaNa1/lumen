@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { statSync } from "node:fs";
 import { join } from "node:path";
 import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
+import { encode } from "./support/encode";
 import { mpvWire } from "./support/mpv-wire";
 import { NetworkProxy } from "./support/proxy";
 import { repository } from "./support/server";
@@ -289,6 +290,12 @@ for (const scenario of ["disabled", "cancel", "runtime-disabled", "unsupported"]
     }
   });
 
+const film720 = [
+  ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+  ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+  ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"],
+];
+
 test("desktop moves between the original and converted qualities, and between qualities without reloading", async ({
   server,
   admin,
@@ -298,12 +305,7 @@ test("desktop moves between the original and converted qualities, and between qu
   const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
   test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
   const library = await server.library(admin.accessToken, "movies", []);
-  execFileSync("ffmpeg", [
-    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
-    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
-    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"],
-    join(library.path, "Film.mkv"),
-  ]);
+  await encode(film720, join(library.path, "Film.mkv"));
   await server.scan(admin.accessToken, library.id);
   const proxy = await new NetworkProxy(server.origin).start();
   const { page, app } = desktop;
@@ -378,11 +380,7 @@ test("desktop Auto moves an original that stops arriving onto converted pieces a
   test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
   const library = await server.library(admin.accessToken, "movies", []);
   const file = join(library.path, "Film.mkv");
-  execFileSync("ffmpeg", [
-    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
-    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
-    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", file],
-  ]);
+  await encode(film720, file);
   await server.scan(admin.accessToken, library.id);
   const proxy = await new NetworkProxy(server.origin).start();
   // The original stops arriving a few seconds in, as on a link that cannot carry it.
