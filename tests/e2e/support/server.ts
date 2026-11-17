@@ -218,7 +218,7 @@ export class Server {
     await expect
       .poll(
         async () => (await this.api<{ status: string }>(`/scans/${run.runId}`, { token })).status,
-        { timeout: 30_000 },
+        { timeout: 30_000, intervals: [25] },
       )
       .toBe("succeeded");
     return this.api<Record<string, unknown>>(`/scans/${run.runId}`, { token });
