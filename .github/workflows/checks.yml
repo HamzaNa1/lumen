@@ -15,6 +15,7 @@ jobs:
     timeout-minutes: 5
     outputs:
       desktop: ${{ steps.changes.outputs.desktop }}
+      products: ${{ steps.changes.outputs.products }}
       server: ${{ steps.changes.outputs.server }}
       tests: ${{ steps.changes.outputs.tests }}
     steps:
@@ -71,6 +72,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/e2e-runtime
       - run: bun scripts/test-e2e.ts source --project api --no-deps
+        env:
+          LUMEN_E2E_CHANGED_PRODUCTS: ${{ needs.changes.outputs.products }}
       - uses: ./.github/actions/e2e-artifacts
         if: ${{ !cancelled() }}
         with:
@@ -78,7 +81,7 @@ jobs:
   chromium:
     name: Chromium / Linux
     needs: changes
-    if: needs.changes.outputs.tests == 'true'
+    if: needs.changes.outputs.server == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: chromium
@@ -86,7 +89,7 @@ jobs:
   firefox:
     name: Firefox / Linux
     needs: changes
-    if: needs.changes.outputs.tests == 'true'
+    if: needs.changes.outputs.server == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: firefox
@@ -94,7 +97,7 @@ jobs:
   webkit:
     name: WebKit / Linux
     needs: changes
-    if: needs.changes.outputs.tests == 'true'
+    if: needs.changes.outputs.server == 'true'
     uses: ./.github/workflows/client-e2e.yml
     with:
       project: webkit
@@ -125,6 +128,7 @@ jobs:
     with:
       project: native
       runner: ubuntu-24.04
+      shards: '[1,2,3]'
   release-compatibility:
     name: Release compatibility
     needs: changes
@@ -161,8 +165,8 @@ jobs:
           jq -e '
             . as $jobs | .changes.outputs as $flags |
             {changes: "true", quality: "true",
-             server: $flags.tests, chromium: $flags.tests,
-             firefox: $flags.tests, webkit: $flags.tests,
+             server: $flags.tests, chromium: $flags.server,
+             firefox: $flags.server, webkit: $flags.server,
              "desktop-linux": $flags.tests,
              "desktop-macos": $flags.desktop, "desktop-windows": $flags.desktop,
              "packaging-desktop": $flags.desktop, "packaging-server": $flags.server,

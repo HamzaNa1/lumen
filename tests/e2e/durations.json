@@ -1,0 +1,72 @@
+{
+  "api": {
+    "administration.e2e.ts": 7,
+    "authentication.e2e.ts": 7,
+    "catalog-metadata.e2e.ts": 15,
+    "catalog.e2e.ts": 5,
+    "client-boundaries.e2e.ts": 5,
+    "database-storage.e2e.ts": 3,
+    "database-upgrade.e2e.ts": 14,
+    "download-grants.e2e.ts": 4,
+    "home-music.e2e.ts": 8,
+    "library-diff.e2e.ts": 0,
+    "media-admission.e2e.ts": 3,
+    "media-delivery.e2e.ts": 17,
+    "metadata-provider.e2e.ts": 15,
+    "playback-state.e2e.ts": 5,
+    "rate-limit-races.e2e.ts": 3,
+    "scan-recovery.e2e.ts": 9,
+    "scan-retention.e2e.ts": 5,
+    "scanner-transactions.e2e.ts": 25,
+    "server-failures.e2e.ts": 8,
+    "session-expiry.e2e.ts": 5,
+    "transport-timeouts.e2e.ts": 1,
+    "transport.e2e.ts": 1,
+    "watch-groups.e2e.ts": 5,
+    "watch-recovery.e2e.ts": 41,
+    "watch-transport.e2e.ts": 66
+  },
+  "chromium": {
+    "browser-accounts.e2e.ts": 13,
+    "browser-controls.e2e.ts": 50,
+    "browser-failures.e2e.ts": 64,
+    "browser-groups.e2e.ts": 10,
+    "browser-journeys.e2e.ts": 111
+  },
+  "firefox": {
+    "browser-accounts.e2e.ts": 16,
+    "browser-controls.e2e.ts": 57,
+    "browser-failures.e2e.ts": 67,
+    "browser-groups.e2e.ts": 13,
+    "browser-journeys.e2e.ts": 109
+  },
+  "native": {
+    "client-parity.e2e.ts": 18,
+    "desktop-artwork.e2e.ts": 17,
+    "desktop-lifecycle.e2e.ts": 28,
+    "desktop-sync-races.e2e.ts": 106,
+    "desktop-tracks.e2e.ts": 6,
+    "desktop-transcoding.e2e.ts": 66,
+    "desktop-updates.e2e.ts": 27,
+    "desktop-video-color.e2e.ts": 4,
+    "desktop.e2e.ts": 25,
+    "downloads.e2e.ts": 204,
+    "macos-packaging.e2e.ts": 3,
+    "media-streaming.e2e.ts": 11,
+    "mixed-playback.e2e.ts": 11,
+    "native-audio.e2e.ts": 51
+  },
+  "tooling": {
+    "protection.e2e.ts": 1,
+    "release-notes.e2e.ts": 0,
+    "release-tooling.e2e.ts": 1,
+    "verification.e2e.ts": 14
+  },
+  "webkit": {
+    "browser-accounts.e2e.ts": 21,
+    "browser-controls.e2e.ts": 75,
+    "browser-failures.e2e.ts": 77,
+    "browser-groups.e2e.ts": 19,
+    "browser-journeys.e2e.ts": 138
+  }
+}

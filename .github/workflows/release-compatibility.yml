@@ -13,13 +13,14 @@ permissions:
   contents: read
 jobs:
   verify:
-    name: ${{ matrix.product }} candidate
+    name: ${{ matrix.product }} candidate (${{ matrix.shard }})
     runs-on: ubuntu-24.04
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
         product: ${{ fromJSON(inputs.product == 'server' && '["server"]' || inputs.product == 'desktop' && '["desktop"]' || '["server","desktop"]') }}
+        shard: [1, 2]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/fetch-release-tags
@@ -28,6 +29,7 @@ jobs:
           browsers: ${{ matrix.product == 'server' && 'chromium firefox webkit' || 'chromium' }}
           native: 'true'
       - name: Mixed browser and desktop compatibility
+        if: ${{ matrix.shard == 1 }}
         env:
           PRODUCT: ${{ matrix.product }}
         run: |
@@ -35,20 +37,21 @@ jobs:
           xvfb-run -a bash scripts/with-window-manager.sh bun scripts/check-release-compatibility.ts "$PRODUCT" 2>&1 | tee "compatibility-results/$PRODUCT.log"
       - name: Preserve mixed-client evidence before the next suite
         uses: ./.github/actions/e2e-artifacts
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == 1 }}
         with:
           name: ${{ matrix.product }}-mixed-compatibility
       - name: Product client scenarios against the released counterpart
         if: ${{ !cancelled() }}
         env:
           PRODUCT: ${{ matrix.product }}
+          LUMEN_E2E_SHARD: ${{ matrix.shard }}/2
         run: xvfb-run -a bash scripts/with-window-manager.sh bun scripts/test-browser.ts "$PRODUCT"
       - uses: ./.github/actions/e2e-artifacts
         if: ${{ !cancelled() }}
         with:
-          name: ${{ matrix.product }}-release-compatibility
+          name: ${{ matrix.product }}-release-compatibility-${{ matrix.shard }}
       - uses: actions/upload-artifact@v4
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && matrix.shard == 1 }}
         with:
           name: compatibility-logs-${{ matrix.product }}
           path: compatibility-results/
