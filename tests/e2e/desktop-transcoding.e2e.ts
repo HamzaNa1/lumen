@@ -383,8 +383,8 @@ test("desktop Auto moves an original that stops arriving onto converted pieces a
   await encode(film720, file);
   await server.scan(admin.accessToken, library.id);
   const proxy = await new NetworkProxy(server.origin).start();
-  // The original stops arriving a few seconds in, as on a link that cannot carry it.
-  let allowance = Math.round(statSync(file).size * 0.1);
+  // The original stops arriving a second or two in, as on a link that cannot carry it.
+  let allowance = Math.round(statSync(file).size * 0.04);
   proxy.intercept = async (request, response) => {
     if (request.method !== "GET" || !/^\/api\/v1\/media\/[^/?]+(?:\?|$)/u.test(request.url ?? ""))
       return false;
