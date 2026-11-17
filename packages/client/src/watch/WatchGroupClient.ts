@@ -159,7 +159,8 @@ export class WatchGroupClient {
           }
         } else if (message.type === "groups") this.update({ groups: message.groups });
         else if (message.type === "buffers") this.update({ buffers: message.buffers });
-        else this.update({ group: message.group, error: null });
+        else if (!this.supersedes(message.group))
+          this.update({ group: message.group, error: null });
       } catch {
         socket.close(1002, "Invalid server message");
       }
@@ -303,6 +304,11 @@ export class WatchGroupClient {
         this.update();
       }
     });
+  }
+
+  /** Whether the group already shown is newer than this account of it, which arrived late. */
+  private supersedes(group: WatchGroup | null): boolean {
+    return group !== null && this.group?.id === group.id && this.group.revision > group.revision;
   }
 
   /** The server answered or gave up on a request: the group is whatever it now says it is. */

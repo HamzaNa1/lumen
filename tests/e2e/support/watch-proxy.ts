@@ -13,7 +13,8 @@ export class WatchProxy {
   origin = "";
   hold = false;
   interruptHello = false;
-  readonly pending: (() => void)[] = [];
+  /** Messages held for a client, by type, in the order the server sent them. */
+  readonly pending: { type: string; send: () => void }[] = [];
   private readonly connections = new Set<Socket>();
   private readonly server = new ws.WebSocketServer({ port: 0, host: "127.0.0.1" });
   constructor(upstream: string) {
@@ -40,7 +41,8 @@ export class WatchProxy {
       });
       remote.on("message", (data) => {
         const message = data.toString();
-        if (this.interruptHello && JSON.parse(message).type === "ready") {
+        const { type } = JSON.parse(message) as { type: string };
+        if (this.interruptHello && type === "ready") {
           this.interruptHello = false;
           client.close();
           return;
@@ -48,7 +50,7 @@ export class WatchProxy {
         const send = () => {
           if (client.readyState === ws.WebSocket.OPEN) client.send(message);
         };
-        if (this.hold) this.pending.push(send);
+        if (this.hold) this.pending.push({ type, send });
         else send();
       });
     });
@@ -68,7 +70,7 @@ export class WatchProxy {
     this.hold = false;
     const sends = this.pending.splice(0);
     if (reverse) sends.reverse();
-    for (const send of sends) send();
+    for (const { send } of sends) send();
   }
   async close() {
     this.disconnect();

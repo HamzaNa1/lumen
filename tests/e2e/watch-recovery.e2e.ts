@@ -80,11 +80,11 @@ for (const interrupted of [false, true])
       proxy.hold = true;
       await owner.action({ type: "pause", itemId, paused: true, positionSeconds: 8 });
       await owner.action({ type: "seek", itemId, positionSeconds: 9 });
-      await expect.poll(() => proxy.pending.length).toBeGreaterThanOrEqual(2);
+      await expect.poll(() => proxy.pending.filter(({ type }) => type === "state").length).toBe(2);
       proxy.release(true);
-      await expect
-        .poll(() => viewer.status.group?.playback)
-        .toMatchObject({ paused: true, positionSeconds: 9 });
+      // The reply follows the reversed states down the same socket: the stale one has arrived.
+      await viewer.action({ type: "list" });
+      expect(viewer.status.group?.playback).toMatchObject({ paused: true, positionSeconds: 9 });
       proxy.hold = true;
       const leaving = viewer.action({ type: "leave" });
       expect(viewer.status.group).toBeNull();
