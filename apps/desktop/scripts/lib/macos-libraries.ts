@@ -6,10 +6,7 @@ import { nativeFiles } from "./native-files";
 const run = (command: string, args: string[]): string =>
   execFileSync(command, args, { encoding: "utf8" });
 
-const libraries = (directory: string): string[] =>
-  nativeFiles(directory).filter((path) => path.endsWith(".dylib"));
-
-const isMachOExecutable = (path: string): boolean => {
+const isMachO = (path: string): boolean => {
   const header = Buffer.alloc(4);
   const file = openSync(path, "r");
   try {
@@ -20,6 +17,10 @@ const isMachOExecutable = (path: string): boolean => {
   return header.readUInt32LE() === 0xfeedfacf;
 };
 
+// dylibbundler rewrites every LC_RPATH it fixes to one prefix, executables' included.
+const machOFiles = (directory: string): string[] =>
+  nativeFiles(directory).filter((path) => path.endsWith(".dylib") || isMachO(path));
+
 const rpaths = (library: string): string[] => {
   // macOS installers target arm64; never merge load commands from different slices.
   const commands = run("otool", ["-arch", "arm64", "-l", library]);
@@ -29,22 +30,19 @@ const rpaths = (library: string): string[] => {
 };
 
 export const verifyMacosLibraries = (root: string): void => {
-  const files = libraries(root);
-  if (files.length === 0) throw new Error(`No macOS libraries found in ${root}`);
-  for (const library of files) {
-    const paths = rpaths(library);
+  const files = machOFiles(root);
+  if (!files.some((path) => path.endsWith(".dylib")))
+    throw new Error(`No macOS libraries found in ${root}`);
+  for (const file of files) {
+    const paths = rpaths(file);
     if (new Set(paths).size !== paths.length)
-      throw new Error(`Duplicate LC_RPATH in ${library}: ${paths.join(", ")}`);
-    run("codesign", ["--verify", "--strict", library]);
+      throw new Error(`Duplicate LC_RPATH in ${file}: ${paths.join(", ")}`);
+    run("codesign", ["--verify", "--strict", file]);
   }
 };
 
 export const prepareMacosLibraries = (root: string): void => {
-  // dylibbundler rewrites every LC_RPATH it fixes to one prefix, executables' included.
-  const files = nativeFiles(root).filter(
-    (path) => path.endsWith(".dylib") || isMachOExecutable(path),
-  );
-  for (const library of files) {
+  for (const library of machOFiles(root)) {
     const seen = new Set<string>();
     let changed = false;
     const bundledPrefix = "@loader_path/lib/";
