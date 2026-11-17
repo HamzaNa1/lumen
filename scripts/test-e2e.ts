@@ -38,7 +38,7 @@ const verify = (workspace: string) => {
     run(["apps/desktop/node_modules/electron/install.js"]);
   if (build) {
     run(["run", "--cwd", "apps/web", "build"]);
-    run(["run", "--cwd", "apps/desktop", "build"]);
+    if (needsElectron) run(["run", "--cwd", "apps/desktop", "build"]);
   }
   run(["run", "playwright", "test", ...args.filter((arg) => arg !== "--no-build")]);
 };
