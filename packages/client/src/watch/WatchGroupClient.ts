@@ -69,6 +69,7 @@ export class WatchGroupClient {
      * with a `ready` action. A group does not wait for a client that would never answer.
      */
     private readonly readiness = false,
+    private readonly requestTimeoutMs = 10_000,
   ) {}
 
   /** Whether the server holds a playing group for a member that says it ran out of media. */
@@ -296,7 +297,7 @@ export class WatchGroupClient {
         this.settle(requestId);
         reject(new Error("Watch group request timed out"));
         socket.close();
-      }, 10_000);
+      }, this.requestTimeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       socket.send(JSON.stringify({ requestId, action }));
       if (prediction !== null) {

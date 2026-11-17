@@ -109,6 +109,8 @@ test("unanswered watch commands expire, reconnect without replaying mutations, a
   const viewer = new WatchGroupClient(
     { serverOrigin: proxy.origin, watchAuthentication: () => ({ token: admin.accessToken }) },
     () => {},
+    false,
+    1000,
   );
   try {
     await expect(viewer.action({ type: "list" })).rejects.toThrow("not connected");
