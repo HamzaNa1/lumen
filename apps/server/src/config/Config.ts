@@ -2,6 +2,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { normalizeAddress } from "../http/ClientIdentity";
+import type { WatchTimers } from "../watch-groups/WatchGroups";
 
 const workspaceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
 try {
@@ -82,6 +83,8 @@ export interface ServerConfig {
   /** Exact socket proxy IP addresses permitted to supply forwarding chains. */
   readonly trustedProxies: ReadonlyArray<string>;
   readonly allowedOrigins: ReadonlyArray<string>;
+  /** Only the e2e harness sets this; no environment variable reaches it. */
+  readonly watchTimers?: WatchTimers;
 }
 
 const toOrigins = (raw: string | undefined): string[] =>

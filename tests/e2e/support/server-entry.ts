@@ -13,9 +13,11 @@ process.on("message", (message: { id?: string; advanceMs?: number }) => {
 });
 
 const schedulerTickMs = Number(process.env.LUMEN_E2E_SCHEDULER_TICK_MS);
+const watchTimers = process.env.LUMEN_E2E_WATCH_TIMERS;
 const server = await startServer({
   port: 0,
   ...(Number.isSafeInteger(schedulerTickMs) && schedulerTickMs > 0 ? { schedulerTickMs } : {}),
+  ...(watchTimers === undefined ? {} : { watchTimers: JSON.parse(watchTimers) }),
 });
 process.send?.({ origin: server.server.url.toString() });
 const stop = async () => {

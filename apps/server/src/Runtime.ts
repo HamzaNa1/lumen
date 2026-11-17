@@ -273,7 +273,10 @@ const startConfiguredServer = async (
     const watchGroups = new WatchGroups(
       httpServices,
       (request, origin) => isTrustedOrigin(request, origin, config),
-      { logger: logger.child({ component: "watch-groups" }) },
+      {
+        logger: logger.child({ component: "watch-groups" }),
+        timers: config.watchTimers,
+      },
     );
     const listeningServer = await serveHttp<WatchSocketData>({
       hostname: config.host,
