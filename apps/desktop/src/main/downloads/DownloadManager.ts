@@ -967,7 +967,8 @@ export class DownloadManager extends EventEmitter {
   private fail(download: Download, cause: unknown): void {
     if (isTransient(cause)) {
       const attempts = (this.retryAt.get(download.id)?.attempts ?? 0) + 1;
-      const delay = Math.min(MAX_RETRY_MS, 5_000 * 2 ** (attempts - 1));
+      // A dropped connection is tried again at once, which also hears a refusal behind it sooner.
+      const delay = attempts === 1 ? 0 : Math.min(MAX_RETRY_MS, 5_000 * 2 ** (attempts - 2));
       this.retryAt.set(download.id, { atMs: this.clock() + delay, attempts });
       if (download.status !== "completed") {
         download.status = "waiting";
