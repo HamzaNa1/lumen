@@ -77,18 +77,26 @@ test("watcher notices filesystem changes and queued work survives a server resta
   const token = admin.accessToken;
   const library = await server.library(token, "movies", ["First.mp4"]);
   await server.stop();
-  await server.start({ LUMEN_LIBRARY_WATCH_INTERVAL_MS: "1000" });
+  await server.start({
+    LUMEN_LIBRARY_WATCH_INTERVAL_MS: "1000",
+    LUMEN_E2E_SCHEDULER_TICK_MS: "25",
+  });
   await server.media(library.path, "Second.mp4");
+  // Due under the first server's 60s schedule or the new 1s one, whichever the scheduler holds.
+  await server.advanceTime(60_000);
   await expect
     .poll(async () => (await server.items(token, library.id)).map((item) => item.title).sort(), {
       timeout: 15000,
+      intervals: [25],
     })
     .toEqual(["First", "Second"]);
   await rm(join(library.path, "First.mp4"));
   await writeFile(join(library.path, "keep.txt"), "The root is still mounted");
+  await server.advanceTime(1000);
   await expect
     .poll(async () => (await server.items(token, library.id)).map((item) => item.title), {
       timeout: 15000,
+      intervals: [25],
     })
     .toEqual(["Second"]);
 });

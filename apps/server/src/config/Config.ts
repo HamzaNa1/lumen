@@ -62,6 +62,8 @@ export interface ServerConfig {
   readonly maxEventId: number;
   readonly scanLeaseMs: number;
   readonly libraryWatchIntervalMs: number;
+  /** How often the scheduler looks for due jobs; 1s unless a caller of startServer overrides it. */
+  readonly schedulerTickMs?: number;
   readonly ffprobeTimeoutMs: number;
   readonly ffprobeMaxOutputBytes: number;
   readonly shutdownGraceMs: number;
