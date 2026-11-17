@@ -206,6 +206,7 @@ export class MediaFile extends EventEmitter {
     disk: ChunkMap,
     usedAtMs: Readonly<Record<string, number>>,
     private readonly fetchImpl: FetchLike,
+    private readonly idleFetchMs: number,
   ) {
     super();
     this.setMaxListeners(0);
@@ -223,6 +224,8 @@ export class MediaFile extends EventEmitter {
     readonly geometry: MediaGeometry;
     readonly allowSegment: (file: MediaFile) => Promise<boolean>;
     readonly fetchImpl?: FetchLike;
+    /** How long a paced fetch runs on with no reader in reach. */
+    readonly idleFetchMs?: number;
   }): Promise<MediaFile> {
     const { spec, geometry } = options;
     const directory = join(options.root, mediaKey(spec));
@@ -254,6 +257,7 @@ export class MediaFile extends EventEmitter {
       disk,
       stored?.segmentUsedAtMs ?? {},
       options.fetchImpl ?? fetch,
+      options.idleFetchMs ?? IDLE_FETCH_MS,
     );
     return file;
   }
@@ -626,7 +630,7 @@ export class MediaFile extends EventEmitter {
             const positions = [...this.readers].map((reader) => reader.position);
             const furthest = Math.max(-1, ...positions.filter((position) => position <= reach));
             if (furthest >= 0) idleSince = Date.now();
-            else if (Date.now() - idleSince > IDLE_FETCH_MS) return;
+            else if (Date.now() - idleSince > this.idleFetchMs) return;
             if (furthest >= 0 && fetch.cursor - furthest <= this.lookahead(fetch.target)) break;
             if (furthest < 0 && fetch.cursor - fetch.start <= this.geometry.chunkBytes * 2) break;
             reportStretch();
