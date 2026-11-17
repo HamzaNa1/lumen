@@ -18,6 +18,7 @@ import type { ElectronApplication, Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
 import { openSettings } from "./support/browser";
 import {
+  closeDesktop,
   connectDesktop,
   desktopPlayerPage,
   expect,
@@ -378,7 +379,7 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
     .toBeGreaterThan(otherSize * 0.15);
 
   // The server goes away entirely, and the app starts without it.
-  await desktop.app.close();
+  await closeDesktop(desktop.app);
   await proxy.close();
   const reopened = await launchDesktop(profile, false, {
     LUMEN_E2E_MEDIA_CHUNK_BYTES: String(CHUNK),
@@ -456,7 +457,7 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
       .poll(async () => (await entryFor(offline, other.id))?.status, { timeout: 60_000 })
       .toBe("completed");
   } finally {
-    await reopened.close();
+    await closeDesktop(reopened);
     // The proxy may already be down: it is closed on purpose while the app is offline.
     await proxy.close().catch(() => undefined);
   }
@@ -1122,7 +1123,7 @@ test("an interrupted download resumes after a crash, refetching what was half-wr
       await server.advanceTime(5 * 24 * 3_600_000);
       await page.evaluate(() => window.lumen.library.list());
     }
-    await desktop.app.close();
+    await closeDesktop(desktop.app);
 
     // The crash: a segment shorter than its index records, and a folder no index describes.
     const [held] = await heldFiles(profile);
@@ -1146,7 +1147,7 @@ test("an interrupted download resumes after a crash, refetching what was half-wr
     expect(files[0]?.bytes.equals(await readFile(film.path))).toBe(true);
     expect(await readdir(join(profile, "media", "server")).catch(() => [])).toEqual([]);
   } finally {
-    await reopened?.close();
+    if (reopened) await closeDesktop(reopened);
     await proxy.close();
   }
 });

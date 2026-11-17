@@ -5,6 +5,7 @@ import type {} from "../../../apps/desktop/src/shared/bridge";
 import { test as base, expect, password, repository, type Server } from "./server";
 
 const require = createRequire(join(repository, "apps/desktop/package.json"));
+const exits = new WeakMap<ElectronApplication, Promise<void>>();
 export const test = base.extend<{
   mpvFaults: boolean;
   desktopEnvironment: Record<string, string>;
@@ -42,6 +43,15 @@ export const test = base.extend<{
             body: await page.locator("body").innerText(),
             contentType: "text/plain",
           });
+        // Playwright screenshots Electron windows only while closing them, which closeDesktop skips.
+        if (testInfo.status !== testInfo.expectedStatus)
+          for (const [index, window] of app.windows().entries()) {
+            const path = testInfo.outputPath(`desktop-failed-${index + 1}.png`);
+            await window
+              .screenshot({ path, timeout: 5_000 })
+              .then(() => testInfo.attach("screenshot", { path, contentType: "image/png" }))
+              .catch(() => undefined);
+          }
       }
     } finally {
       const deadline = AbortSignal.timeout(30_000);
@@ -59,7 +69,7 @@ export const test = base.extend<{
             for (const window of BaseWindow.getAllWindows())
               if (!(window instanceof BrowserWindow)) window.destroy();
           });
-        await app.close();
+        await closeDesktop(app);
       } finally {
         deadline.removeEventListener("abort", kill);
       }
@@ -79,7 +89,7 @@ export async function launchDesktop(
       ([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined,
     ),
   ) as Record<string, string>;
-  return _electron.launch({
+  const app = await _electron.launch({
     executablePath: require("electron") as string,
     args: [
       join(repository, "tests/e2e/support/electron-entry.mjs"),
@@ -99,9 +109,23 @@ export async function launchDesktop(
       ...extraEnvironment,
     },
   });
+  exits.set(app, new Promise((resolve) => app.once("close", () => resolve())));
+  return app;
 }
 export async function desktopPlayerPage(app: ElectronApplication): Promise<Page> {
   return app.windows().find((window) => window.url().includes("overlay=1")) ?? mainDesktopPage(app);
+}
+/**
+ * Quits through `app.quit()` as `ElectronApplication.close()` does, without the screenshot of every
+ * window Playwright takes first: on Linux a window that never played has not painted, and each
+ * screenshot waits out its 5 s timeout.
+ */
+export async function closeDesktop(app: ElectronApplication): Promise<void> {
+  const exited = exits.get(app);
+  if (exited === undefined) throw new Error("closeDesktop closes apps from launchDesktop");
+  // Evaluating fails once the app has exited or is exiting; its close event still settles this.
+  await app.evaluate(({ app }) => void setImmediate(() => app.quit())).catch(() => undefined);
+  await exited;
 }
 export async function quitDesktop(app: ElectronApplication): Promise<void> {
   const child = app.process();

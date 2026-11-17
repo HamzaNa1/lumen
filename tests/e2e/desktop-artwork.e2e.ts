@@ -1,7 +1,14 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ElectronApplication } from "@playwright/test";
-import { connectDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
+import {
+  closeDesktop,
+  connectDesktop,
+  expect,
+  launchDesktop,
+  mainDesktopPage,
+  test,
+} from "./support/desktop";
 import { latch, NetworkProxy } from "./support/proxy";
 import { password } from "./support/server";
 
@@ -155,7 +162,7 @@ test("native artwork loads scaled through the app protocol, persists by account 
     const before = reads();
     expect(await loadArtwork(desktop.app, artworkUrl(ref))).toBe(image);
     expect(reads()).toBe(before);
-    await desktop.app.close();
+    await closeDesktop(desktop.app);
     const reopened = await launchDesktop(desktop.profile);
     try {
       const page = await mainDesktopPage(reopened);
@@ -184,7 +191,7 @@ test("native artwork loads scaled through the app protocol, persists by account 
       await page.evaluate((id) => window.lumen.accounts.remove(id), connection);
       expect(await loadArtwork(reopened, artworkUrl(next))).toBeNull();
     } finally {
-      await reopened.close();
+      await closeDesktop(reopened);
     }
   } finally {
     await proxy.close();
