@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { closeSync, openSync, readSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { nativeFiles } from "./native-files";
 
@@ -7,6 +8,17 @@ const run = (command: string, args: string[]): string =>
 
 const libraries = (directory: string): string[] =>
   nativeFiles(directory).filter((path) => path.endsWith(".dylib"));
+
+const isMachOExecutable = (path: string): boolean => {
+  const header = Buffer.alloc(4);
+  const file = openSync(path, "r");
+  try {
+    readSync(file, header, 0, 4, 0);
+  } finally {
+    closeSync(file);
+  }
+  return header.readUInt32LE() === 0xfeedfacf;
+};
 
 const rpaths = (library: string): string[] => {
   // macOS installers target arm64; never merge load commands from different slices.
@@ -28,7 +40,11 @@ export const verifyMacosLibraries = (root: string): void => {
 };
 
 export const prepareMacosLibraries = (root: string): void => {
-  for (const library of libraries(root)) {
+  // dylibbundler rewrites every LC_RPATH it fixes to one prefix, executables' included.
+  const files = nativeFiles(root).filter(
+    (path) => path.endsWith(".dylib") || isMachOExecutable(path),
+  );
+  for (const library of files) {
     const seen = new Set<string>();
     let changed = false;
     const bundledPrefix = "@loader_path/lib/";
