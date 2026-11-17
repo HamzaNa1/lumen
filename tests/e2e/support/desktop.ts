@@ -43,8 +43,8 @@ export const test = base.extend<{
             body: await page.locator("body").innerText(),
             contentType: "text/plain",
           });
-        // Playwright screenshots Electron windows only while closing them, which closeDesktop skips.
-        if (testInfo.status !== testInfo.expectedStatus)
+        // Playwright screenshots Electron windows only while closing them, which closeDesktop skips on Linux.
+        if (process.platform === "linux" && testInfo.status !== testInfo.expectedStatus)
           for (const [index, window] of app.windows().entries()) {
             const path = testInfo.outputPath(`desktop-failed-${index + 1}.png`);
             await window
@@ -116,11 +116,12 @@ export async function desktopPlayerPage(app: ElectronApplication): Promise<Page>
   return app.windows().find((window) => window.url().includes("overlay=1")) ?? mainDesktopPage(app);
 }
 /**
- * Quits through `app.quit()` as `ElectronApplication.close()` does, without the screenshot of every
- * window Playwright takes first: on Linux a window that never played has not painted, and each
- * screenshot waits out its 5 s timeout.
+ * On Linux, quits through `app.quit()` as `ElectronApplication.close()` does, without the screenshot
+ * of every window Playwright takes first: there a window that never played has not painted, and each
+ * screenshot waits out its 5 s timeout. Elsewhere it is `ElectronApplication.close()`.
  */
 export async function closeDesktop(app: ElectronApplication): Promise<void> {
+  if (process.platform !== "linux") return app.close();
   const exited = exits.get(app);
   if (exited === undefined) throw new Error("closeDesktop closes apps from launchDesktop");
   // Evaluating fails once the app has exited or is exiting; its close event still settles this.
