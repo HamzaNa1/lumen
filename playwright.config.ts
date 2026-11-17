@@ -1,7 +1,13 @@
 import { join } from "node:path";
 import { defineConfig, devices } from "@playwright/test";
 import { parseProduct } from "./scripts/lib/products";
-import { selectedSuites, verifyTestOwnership } from "./scripts/lib/verification";
+import {
+  parseChangedProducts,
+  parseShard,
+  selectedSuites,
+  shardSuites,
+  verifyTestOwnership,
+} from "./scripts/lib/verification";
 
 const repository = import.meta.dirname;
 verifyTestOwnership(repository);
@@ -10,12 +16,16 @@ const product =
   selected === undefined || selected === "source" ? undefined : parseProduct(selected);
 const artifacts = process.env.LUMEN_BROWSER_ARTIFACT_ROOT ?? repository;
 const output = join(artifacts, "test-results", product ?? "source");
+const changed = parseChangedProducts(process.env.LUMEN_E2E_CHANGED_PRODUCTS);
+const shard = parseShard(process.env.LUMEN_E2E_SHARD);
+const suites = (project: string, runtime: Parameters<typeof selectedSuites>[0]) =>
+  shardSuites(project, selectedSuites(runtime, product, changed), shard);
 const portable = [
-  { name: "api", testMatch: selectedSuites("api", product) },
-  { name: "tooling", testMatch: selectedSuites("tooling", product) },
+  { name: "api", testMatch: suites("api", "api") },
+  { name: "tooling", testMatch: suites("tooling", "tooling") },
   ...["chromium", "firefox", "webkit"].map((name) => ({
     name,
-    testMatch: selectedSuites("browser", product),
+    testMatch: suites(name, "browser"),
     use: {
       ...devices[
         name === "chromium"
@@ -58,7 +68,7 @@ export default defineConfig({
     ...portable,
     {
       name: "native",
-      testMatch: selectedSuites("native", product),
+      testMatch: suites("native", "native"),
       workers: 1,
       dependencies: portable.map((project) => project.name),
       use: { browserName: "chromium" },

@@ -57,14 +57,20 @@ test("CI change detection follows workspace dependents and fails open for unknow
       result.stdout
         .trim()
         .split("\n")
-        .map((line) => line.split("=")),
+        .map((line) => line.split("=", 2)),
     );
   };
-  const all = { tests: "true", desktop: "true", server: "true" };
+  const all = { tests: "true", desktop: "true", server: "true", products: "server,desktop" };
   for (const [path, expected] of [
-    ["README.md", { tests: "false", desktop: "false", server: "false" }],
-    ["apps/server/src/main.ts", { tests: "true", desktop: "false", server: "true" }],
-    ["apps/desktop/src/main.ts", { tests: "true", desktop: "true", server: "false" }],
+    ["README.md", { tests: "false", desktop: "false", server: "false", products: "" }],
+    [
+      "apps/server/src/main.ts",
+      { tests: "true", desktop: "false", server: "true", products: "server" },
+    ],
+    [
+      "apps/desktop/src/main.ts",
+      { tests: "true", desktop: "true", server: "false", products: "desktop" },
+    ],
     ["packages/contracts/src/ipc.ts", all],
     ["packages/client/src/index.ts", all],
     ["new-workspace/source.ts", all],
@@ -135,7 +141,7 @@ test("the required CI gate rejects failures, cancellations, missing results and 
   expect(run().status).not.toBe(0);
 });
 
-test("Playwright discovery assigns every E2E suite, selects product owners and fails on missing or unowned tests", async ({
+test("Playwright discovery assigns every E2E suite, selects product owners and reached suites, partitions shards and fails on missing or unowned tests", async ({
   workspace,
 }) => {
   cpSync(join(repository, "tests/e2e"), join(workspace.root, "tests/e2e"), { recursive: true });
@@ -146,29 +152,44 @@ test("Playwright discovery assigns every E2E suite, selects product owners and f
   }
   // Discovery must resolve the same packages without starting servers or building either product.
   symlinkSync(join(repository, "node_modules"), join(workspace.root, "node_modules"), "junction");
-  const discoverNative = (shard?: string) => {
+  const discover = (project: string, env: Record<string, string> = {}) => {
     const result = workspace.command(
       "bun",
-      [
-        "run",
-        "playwright",
-        "test",
-        "--list",
-        "--project",
-        "native",
-        "--no-deps",
-        ...(shard ? ["--shard", shard] : []),
-      ],
-      { LUMEN_BROWSER_PRODUCT: "source" },
+      ["run", "playwright", "test", "--list", "--project", project, "--no-deps"],
+      { LUMEN_BROWSER_PRODUCT: "source", ...env },
     );
     expect(result.status, result.stderr).toBe(0);
-    return result.stdout.split("\n").filter((line) => line.includes("[native]"));
+    return result.stdout.split("\n").filter((line) => line.includes(`[${project}]`));
   };
-  const native = discoverNative();
-  const shards = [1, 2, 3].flatMap((shard) => discoverNative(`${shard}/3`));
-  expect(shards.length).toBeGreaterThan(0);
-  expect(new Set(shards).size).toBe(shards.length);
-  expect(shards.sort()).toEqual(native.sort());
+  for (const [project, total] of [
+    ["native", 3],
+    ["api", 3],
+    ["chromium", 2],
+  ] as const) {
+    const all = discover(project);
+    const shards = Array.from({ length: total }, (_, index) =>
+      discover(project, { LUMEN_E2E_SHARD: `${index + 1}/${total}` }),
+    );
+    for (const shard of shards) expect(shard.length).toBeGreaterThan(0);
+    expect(shards.flat().sort()).toEqual(all.sort());
+  }
+  expect(
+    workspace.command("bun", ["run", "playwright", "test", "--list"], {
+      LUMEN_E2E_SHARD: "4/3",
+    }).stderr,
+  ).toContain("Invalid shard");
+  const desktopChange = { LUMEN_E2E_CHANGED_PRODUCTS: "desktop" };
+  const desktopApi = discover("api", desktopChange).join("\n");
+  expect(desktopApi).toContain("client-boundaries.e2e.ts");
+  expect(desktopApi).not.toContain("catalog.e2e.ts");
+  // Native scenarios start a real server, so a server-only change still reaches all of them.
+  expect(discover("native", { LUMEN_E2E_CHANGED_PRODUCTS: "server" })).toEqual(discover("native"));
+  expect(
+    workspace.command("bun", ["run", "playwright", "test", "--list", "--project", "chromium"], {
+      LUMEN_BROWSER_PRODUCT: "source",
+      ...desktopChange,
+    }).status,
+  ).not.toBe(0);
   for (const product of ["source", "server", "desktop"]) {
     const result = workspace.command("bun", ["run", "playwright", "test", "--list"], {
       LUMEN_BROWSER_PRODUCT: product,

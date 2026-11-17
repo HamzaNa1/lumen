@@ -9,7 +9,7 @@ on:
         required: true
         type: string
       shards:
-        description: JSON array of contiguous shard numbers.
+        description: JSON array of contiguous shard numbers, split by recorded suite durations.
         default: '[1]'
         type: string
 permissions:
@@ -36,11 +36,10 @@ jobs:
         shell: bash
         env:
           PROJECT: ${{ inputs.project }}
-          SHARD: ${{ matrix.shard }}
-          SHARD_COUNT: ${{ strategy.job-total }}
+          LUMEN_E2E_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           LUMEN_E2E_WORKERS: ${{ runner.os == 'Linux' && inputs.project != 'native' && '3' || '2' }}
         run: |
-          command=(bun scripts/test-e2e.ts source --project "$PROJECT" --no-deps --shard "$SHARD/$SHARD_COUNT")
+          command=(bun scripts/test-e2e.ts source --project "$PROJECT" --no-deps)
           if [[ "$RUNNER_OS" == Linux ]]; then
             xvfb-run -a bash scripts/with-window-manager.sh "${command[@]}"
           else
