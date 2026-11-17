@@ -144,10 +144,7 @@ export class MediaStore {
         released = true;
         file.users -= 1;
         // What the player was fetching or holding is not wanted once no player reads the file.
-        if (file.users === 0) {
-          file.stopForeground();
-          file.releaseMemory();
-        }
+        if (file.users === 0) file.letGo();
         void this.enforceCache();
       },
     };

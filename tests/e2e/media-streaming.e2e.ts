@@ -13,14 +13,14 @@ import { expect, test } from "./support/server";
 const CHUNK = defaultGeometry.chunkBytes;
 
 /**
- * A server holding one file, answering ranges as Lumen's server does. A request from the start
- * sends `headBytes` and then holds the rest back until released, as a long file is still
- * arriving while the player looks elsewhere in it.
+ * A server holding one file, answering ranges as Lumen's server does. A response that runs past
+ * one of `pauses` sends the bytes before it and holds the rest back until that point is
+ * released, as a long file is still arriving while the player looks elsewhere in it.
  */
-const serveFile = async (media: Buffer, revision: string, headBytes: number) => {
+const serveFile = async (media: Buffer, revision: string, pauses: ReadonlyArray<number>) => {
   const starts: number[] = [];
-  const held: Array<() => void> = [];
-  let holding = true;
+  const held = new Map<number, Array<() => void>>();
+  const released = new Set<number>();
   const server: HttpServer = createServer((request, response) => {
     const match = /bytes=(\d+)-(\d*)/u.exec(request.headers.range ?? "");
     const start = Number(match?.[1] ?? 0);
@@ -31,10 +31,16 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
       "content-range": `bytes ${start}-${end}/${media.length}`,
       etag: revision,
     });
-    if (start === 0 && holding) {
-      response.write(media.subarray(0, Math.min(headBytes, end + 1)));
-      held.push(() => response.end(media.subarray(Math.min(headBytes, end + 1), end + 1)));
-    } else response.end(media.subarray(start, end + 1));
+    const pause = pauses.find((at) => start < at && at <= end && !released.has(at));
+    if (pause === undefined) {
+      response.end(media.subarray(start, end + 1));
+      return;
+    }
+    response.write(media.subarray(start, pause));
+    held.set(pause, [
+      ...(held.get(pause) ?? []),
+      () => response.end(media.subarray(pause, end + 1)),
+    ]);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   const address = server.address();
@@ -42,9 +48,9 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
   return {
     origin: `http://127.0.0.1:${address.port}`,
     starts,
-    release: () => {
-      holding = false;
-      for (const send of held.splice(0)) send();
+    release: (pause: number) => {
+      released.add(pause);
+      for (const send of held.get(pause)?.splice(0) ?? []) send();
     },
     close: () =>
       new Promise<void>((resolve) => {
@@ -58,10 +64,14 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
  * A file streamed with no cache, as every desktop streams by default: what the player has read
  * is kept in memory only while it is near a reader.
  */
-const streamedFile = async (sizeBytes: number, headBytes = sizeBytes, idleFetchMs?: number) => {
+const streamedFile = async (
+  sizeBytes: number,
+  pauses: ReadonlyArray<number> = [],
+  idleFetchMs?: number,
+) => {
   const media = randomBytes(sizeBytes);
   const revision = "revision-1";
-  const upstream = await serveFile(media, revision, headBytes);
+  const upstream = await serveFile(media, revision, pauses);
   const root = await mkdtemp(join(tmpdir(), "lumen-media-file-"));
   const spec = {
     serverId: "server",
@@ -73,14 +83,17 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes, idleFetchM
   // Counts the bytes the file takes from each response, which is what it pulls over the network.
   const requests: { start: number; bytes: number; ended: Promise<void> }[] = [];
   const taken = new EventEmitter();
+  // Where each request the file makes starts, in the order it makes them.
+  const asked: number[] = [];
   const fetchImpl = async (input: URL, init: RequestInit) => {
+    const start = Number(/bytes=(\d+)/u.exec(new Headers(init.headers).get("range") ?? "")?.[1]);
+    asked.push(start);
     const response = await fetch(input, init);
     const upstreamBody = response.body?.getReader();
     if (upstreamBody === undefined) return response;
-    const range = new Headers(init.headers).get("range") ?? "";
     let finish = () => {};
     const request = {
-      start: Number(/bytes=(\d+)/u.exec(range)?.[1]),
+      start,
       bytes: 0,
       ended: new Promise<void>((resolve) => {
         finish = resolve;
@@ -152,6 +165,7 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes, idleFetchM
     spec,
     file,
     upstream,
+    asked,
     read,
     readThenLeave,
     settled,
@@ -166,7 +180,7 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes, idleFetchM
 test("a player that reads a file's index at its end can read the start again", async () => {
   // MPV opens a Matroska file at the start, reads its index from the end, then seeks back to
   // the first cluster. The start must still be readable after the reader at the end has gone by.
-  const stream = await streamedFile(8 * CHUNK, 2.5 * CHUNK);
+  const stream = await streamedFile(8 * CHUNK, [2.5 * CHUNK]);
   try {
     const { media } = stream;
     await stream.readThenLeave(0, 2 * CHUNK);
@@ -199,7 +213,7 @@ test("a request the player left behind by seeking ahead stops fetching", async (
   // Resuming a film: MPV reads the header, then opens a request halfway in. The request from the
   // start must stop instead of racing to the new reader with bytes nobody reads.
   // A fetch no reader is near stops this soon, rather than after the player's ten seconds.
-  const stream = await streamedFile(64 * CHUNK, 64 * CHUNK, 300);
+  const stream = await streamedFile(64 * CHUNK, [], 300);
   const resume = stream.file.read(48 * CHUNK, 64 * CHUNK, new AbortController().signal);
   try {
     await stream.readThenLeave(0, 2 * CHUNK);
@@ -244,7 +258,7 @@ test("the start and end of the next file, preloaded into memory, serve the playe
     // The player only reached the server for what lies after the preloaded start.
     expect(upstream.starts.slice(fetched).every((start) => start >= 8 * CHUNK)).toBe(true);
     // Once no player reads the file, the preloaded bytes are let go.
-    file.releaseMemory();
+    file.letGo();
     expect((await stream.read(0, CHUNK)).equals(media.subarray(0, CHUNK))).toBe(true);
     expect(upstream.starts.slice(fetched)).toContain(0);
   } finally {
@@ -255,8 +269,9 @@ test("the start and end of the next file, preloaded into memory, serve the playe
 
 test("what a player reads before its first frame is fetched at once, to the byte, and kept while it seeks", async () => {
   // The server sends the start of the file and holds the rest back, so the other ranges can
-  // only arrive if nothing waits on the start.
-  const stream = await streamedFile(20 * CHUNK, 64 * 1024);
+  // only arrive if nothing waits on the start. It holds back the last half megabyte too, so a
+  // fetch the seeks started toward the end is still under way when the player leaves.
+  const stream = await streamedFile(20 * CHUNK, [64 * 1024, 19.5 * CHUNK]);
   try {
     const { media, file, upstream } = stream;
     const size = media.length;
@@ -277,15 +292,17 @@ test("what a player reads before its first frame is fetched at once, to the byte
     // Seeking around asks for more places than a player may fetch at once.
     for (const chunk of [3, 6, 9, 16]) await stream.readThenLeave(chunk * CHUNK, 64 * 1024);
     // None of that cost the start its fetch, nor the end and resume point their bytes.
-    upstream.release();
+    upstream.release(64 * 1024);
     await matches(0, CHUNK);
     await matches(size - 7000, size);
     await matches(at - 100 * 1024, at + 300 * 1024);
     for (const [start] of ranges) expect(startsAt(start)).toHaveLength(1);
     // Once no player reads the file, they are let go.
-    file.releaseMemory();
+    const asked = stream.asked.length;
+    file.letGo();
+    upstream.release(19.5 * CHUNK);
     await matches(size - 7000, size);
-    expect(startsAt(19 * CHUNK)).toHaveLength(1);
+    expect(stream.asked.slice(asked)).toEqual([19 * CHUNK]);
   } finally {
     await stream.dispose();
   }
