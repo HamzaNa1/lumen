@@ -252,6 +252,27 @@ test("adaptive conversion cuts every quality and restart at the same source time
   expect((await server.request(`${base}/master.m3u8`, { headers })).status).toBe(404);
 });
 
+test("adaptive conversion serves each restarted encoder's pieces as they are cut", async ({
+  server,
+  admin,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", []);
+  execFileSync("ffmpeg", [
+    ...["-v", "error", "-stream_loop", "-1", "-i", join(repository, "tests/fixtures/playback.mp4")],
+    ...["-t", "21600", "-c", "copy", join(library.path, "Long.mp4")],
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  const item = (await server.items(admin.accessToken, library.id))[0];
+  const playback = await server.play(admin.accessToken, item?.id ?? "");
+  const headers = { authorization: `Bearer ${playback.grantToken}` };
+  // The jump starts a second encoder there, which must answer long before the end of the file.
+  for (const path of ["360p/0.ts", "360p/2000.ts"]) {
+    const response = await server.request(`${playback.streamUrl}/adaptive/0/${path}`, { headers });
+    expect(response.status, path).toBe(200);
+    await response.arrayBuffer();
+  }
+});
+
 test.describe("transcoding disabled", () => {
   test("preserves direct play and rejects conversion", async ({ server, admin }) => {
     const settings = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
