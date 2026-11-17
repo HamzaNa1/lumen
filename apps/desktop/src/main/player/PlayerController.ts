@@ -455,7 +455,11 @@ export class PlayerController extends EventEmitter {
       this.estimatorOf(active).kbps !== null
     )
       await this.switchDelivery(active, "original", positionSeconds);
-    else await this.motion(active, ["seek", positionSeconds, "absolute+exact"]);
+    else {
+      // The bridge stops holding out for a better piece that MPV reads only to seek past.
+      media.adaptive?.setPosition(positionSeconds);
+      await this.motion(active, ["seek", positionSeconds, "absolute+exact"]);
+    }
     this.assertActive(sessionId);
     this.publish();
     return this.requireState();
