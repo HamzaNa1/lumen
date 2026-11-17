@@ -193,6 +193,11 @@ export class MediaFile extends EventEmitter {
     return this.keepsBytes() && Date.now() >= this.diskRefusedUntil;
   }
 
+  /** Lets new bytes go to the disk again, once the store has found room for them. */
+  retryDisk(): void {
+    this.diskRefusedUntil = 0;
+  }
+
   private constructor(
     readonly spec: MediaSpec,
     readonly directory: string,

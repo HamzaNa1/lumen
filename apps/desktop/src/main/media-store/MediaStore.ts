@@ -273,6 +273,11 @@ export class MediaStore {
     );
   }
 
+  /** Lets every file write to the disk again, for when free space has come back. */
+  retryDisk(): void {
+    for (const file of this.files.values()) file.retryDisk();
+  }
+
   async close(): Promise<void> {
     await Promise.all([...this.files.values()].map((file) => file.close()));
   }
