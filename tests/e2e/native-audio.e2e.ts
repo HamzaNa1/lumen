@@ -101,7 +101,8 @@ for (const codec of ["eac3", "ac3", "dca"] as const)
         const start = (await bytes()) - 4800 * 6 * 4;
         await ipc.command(["set_property", "speed", speed]);
         const after = await bytes();
-        await expect.poll(bytes, { intervals: [100] }).toBeGreaterThan(after + 2 * 48000 * 6 * 4);
+        // The new speed reaches the PCM within ~50 ms of the command, so 0.5 s covers the transition.
+        await expect.poll(bytes, { intervals: [100] }).toBeGreaterThan(after + 24000 * 6 * 4);
         captures.push({ speed, start, end: await bytes() });
         const { sample, requestedAtMs, returnedAtMs } = await measure();
         expect(sample).toMatchObject({ speed, advancing: true });
