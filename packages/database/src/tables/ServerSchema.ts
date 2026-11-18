@@ -597,6 +597,7 @@ export const userTrackPreferences = sqliteTable("user_track_preferences", {
     .references(() => users.id, { onDelete: "cascade" }),
   audioLanguage: text("audio_language").notNull().default("en"),
   subtitleLanguage: text("subtitle_language"),
+  quality: text("quality").notNull().default("original"),
 });
 export const mediaTrackOverrides = sqliteTable(
   "media_track_overrides",
@@ -609,6 +610,7 @@ export const mediaTrackOverrides = sqliteTable(
       .references(() => catalogItems.id, { onDelete: "cascade" }),
     audioJson: text("audio_json"),
     subtitleJson: text("subtitle_json"),
+    quality: text("quality"),
   },
   (table) => [primaryKey({ columns: [table.userId, table.itemId] })],
 );

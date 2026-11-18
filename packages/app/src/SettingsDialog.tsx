@@ -1,4 +1,4 @@
-import type { TrackPreferencesPatch } from "@lumen/contracts";
+import { adaptiveRenditionsFor, type TrackPreferencesPatch } from "@lumen/contracts";
 import { Button, Form, Modal, SelectField, TextField } from "@lumen/ui";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -108,6 +108,12 @@ const languageOptions = languageCodes
   .map((value) => ({ value, label: languageNames.of(value) ?? value }))
   .sort((a, b) => a.label.localeCompare(b.label));
 
+const qualityOptions = [
+  { value: "original", label: "Original" },
+  { value: "auto", label: "Auto" },
+  ...adaptiveRenditionsFor(null).map((rendition) => ({ value: rendition.id, label: rendition.id })),
+];
+
 const TrackSettings = ({ connectionId }: { readonly connectionId: string }): React.ReactElement => {
   const runtime = useRuntime();
   const queryClient = useQueryClient();
@@ -162,6 +168,21 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
           }
         />
       </SettingsRow>
+      {preferences.data.quality === undefined ? null : (
+        <SettingsRow
+          label="Quality"
+          description="Used when this show or movie has no saved choice. Original plays the file without converting it."
+        >
+          <SelectField
+            label="Quality"
+            hideLabel
+            value={preferences.data.quality}
+            disabled={update.isPending}
+            options={qualityOptions}
+            onValueChange={(quality) => update.mutate({ quality })}
+          />
+        </SettingsRow>
+      )}
       {update.isError ? (
         <p className="form-error" role="alert">
           {errorMessage(update.error, "Could not save playback settings")}

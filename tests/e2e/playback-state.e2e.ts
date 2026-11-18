@@ -59,25 +59,31 @@ test("progress sequencing and manual watch state survive restart and reject stal
   });
 });
 
-test("track preferences and per-title choices persist across devices and reject foreign streams", async ({
+test("track and quality preferences and per-title choices persist across devices and reject foreign streams", async ({
   server,
   admin,
 }) => {
   const token = admin.accessToken;
   const library = await server.library(token, "movies", ["Film.mp4", "Other.mp4"]);
   const [film, other] = await server.items(token, library.id);
+  expect(
+    (await server.api<{ capabilities: Record<string, boolean> }>("/server")).capabilities,
+  ).toMatchObject({ qualityMemory: true });
   expect(await server.api("/me/track-preferences", { token })).toEqual({
     audioLanguage: "en",
     subtitleLanguage: null,
+    quality: "original",
   });
   await server.api("/me/track-preferences", {
     token,
     method: "PATCH",
     body: { subtitleLanguage: "fr" },
   });
+  await server.api("/me/track-preferences", { token, method: "PATCH", body: { quality: "auto" } });
   expect(await server.api("/me/track-preferences", { token })).toEqual({
     audioLanguage: "en",
     subtitleLanguage: "fr",
+    quality: "auto",
   });
   const playback = await server.play(token, film?.id ?? "");
   const second = await server.play(token, other?.id ?? "");
@@ -87,6 +93,13 @@ test("track preferences and per-title choices persist across devices and reject 
   const choice = `/playback/sessions/${playback.sessionId}/track-choice`;
   await server.api(choice, { token, method: "PUT", body: { kind: "audio", choice: audio?.id } });
   await server.api(choice, { token, method: "PUT", body: { kind: "subtitle", choice: "off" } });
+  await server.api(choice, { token, method: "PUT", body: { kind: "quality", choice: "480p" } });
+  await server.api(choice, {
+    token,
+    method: "PUT",
+    status: 400,
+    body: { kind: "quality", choice: audio?.id },
+  });
   await server.api(choice, {
     token,
     method: "PUT",
@@ -96,9 +109,10 @@ test("track preferences and per-title choices persist across devices and reject 
   const device = await server.login();
   expect(await server.play(device.accessToken, film?.id ?? "")).toMatchObject({
     trackMemory: {
-      preferences: { audioLanguage: "en", subtitleLanguage: "fr" },
+      preferences: { audioLanguage: "en", subtitleLanguage: "fr", quality: "auto" },
       audio: { streamId: audio?.id },
       subtitle: "off",
+      quality: "480p",
     },
   });
   await server.api(choice, {
@@ -110,7 +124,10 @@ test("track preferences and per-title choices persist across devices and reject 
   await server.restart();
   const revisited = await server.play(token, film?.id ?? "");
   expect(revisited).toMatchObject({
-    trackMemory: { audio: { streamId: audio?.id }, subtitle: "off" },
+    trackMemory: { audio: { streamId: audio?.id }, subtitle: "off", quality: "480p" },
+  });
+  expect(await server.play(token, other?.id ?? "")).toMatchObject({
+    trackMemory: { quality: null },
   });
   const reset = `/playback/sessions/${revisited.sessionId}/track-choice`;
   expect(
@@ -118,12 +135,21 @@ test("track preferences and per-title choices persist across devices and reject 
   ).toMatchObject({ audio: null, subtitle: "off" });
   expect(
     await server.api(reset, { token, method: "PUT", body: { kind: "subtitle", choice: null } }),
-  ).toMatchObject({ audio: null, subtitle: null });
+  ).toMatchObject({ audio: null, subtitle: null, quality: "480p" });
+  expect(
+    await server.api(reset, { token, method: "PUT", body: { kind: "quality", choice: null } }),
+  ).toMatchObject({ quality: null });
   await server.api("/me/track-preferences", {
     token,
     method: "PATCH",
     status: 400,
     body: { audioLanguage: "not a language" },
+  });
+  await server.api("/me/track-preferences", {
+    token,
+    method: "PATCH",
+    status: 400,
+    body: { quality: "best" },
   });
 });
 

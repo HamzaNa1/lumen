@@ -3678,6 +3678,12 @@ button.folder-browser-item:hover {
   display: grid;
   gap: 2px;
 }
+.media-player-quality-separator {
+  width: 100%;
+  margin: 4px 0;
+  border: 0;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
 .media-player-quality-header {
   display: flex;
   align-items: center;

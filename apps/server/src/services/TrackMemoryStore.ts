@@ -1,6 +1,7 @@
 import {
   DEFAULT_TRACK_PREFERENCES,
   describeTrack,
+  QualityPreference,
   SavedTrack,
   SubtitleChoice,
   type TrackChoiceInput,
@@ -37,6 +38,7 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
       : {
           audioLanguage: row.audioLanguage,
           subtitleLanguage: row.subtitleLanguage,
+          quality: row.quality,
         };
   });
   const updatePreferences = Effect.fn("TrackMemory.updatePreferences")(function* (
@@ -113,6 +115,7 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
         row?.subtitleJson == null
           ? null
           : Schema.decodeUnknownSync(SubtitleChoice)(JSON.parse(row.subtitleJson)),
+      quality: row?.quality ?? null,
     } satisfies TrackMemory;
   });
   const saveChoice = Effect.fn("TrackMemory.saveChoice")(function* (
@@ -145,7 +148,11 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
       .get();
     if (track === undefined) return yield* notFound("Media source not found");
     let choice: string | null = null;
-    if (input.choice === "off") {
+    if (input.kind === "quality") {
+      if (input.choice !== null && !Schema.is(QualityPreference)(input.choice))
+        return yield* badRequest("Unknown quality");
+      choice = input.choice;
+    } else if (input.choice === "off") {
       if (input.kind !== "subtitle") return yield* badRequest("Only subtitles can be Off");
       choice = JSON.stringify("off");
     } else if (input.choice !== null) {
@@ -170,7 +177,12 @@ export const makeTrackMemoryStore = Effect.gen(function* () {
         }),
       );
     }
-    const field = input.kind === "audio" ? { audioJson: choice } : { subtitleJson: choice };
+    const field =
+      input.kind === "quality"
+        ? { quality: choice }
+        : input.kind === "audio"
+          ? { audioJson: choice }
+          : { subtitleJson: choice };
     yield* database
       .insert(mediaTrackOverrides)
       .values({ userId: principal.user.id, itemId: scope, ...field })
