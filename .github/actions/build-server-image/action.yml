@@ -61,6 +61,10 @@ runs:
         gzip -9 < "$RUNNER_TEMP/linux-package.tar" > "$path"
         echo "path=$path" >> "$GITHUB_OUTPUT"
     - uses: ./.github/actions/setup-dependencies
+    # The installer fetches FFmpeg with apt. Arm runners use ports.ubuntu.com, which these mirrors
+    # do not carry.
+    - uses: ./.github/actions/setup-apt-mirrors
+      if: inputs.arch == 'amd64'
     - name: Install, update and remove the Linux service
       shell: bash
       env:
