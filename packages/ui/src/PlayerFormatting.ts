@@ -173,10 +173,6 @@ export const playbackInfoSections = (info: PlaybackInfo): ReadonlyArray<Playback
 export const qualityOptionLabel = (option: QualityOption): string =>
   option.id === "original" ? "Original" : option.id;
 
-/** What sets the original apart in the quality menu: "2160p · Not converted". */
-export const originalQualityDetail = (option: QualityOption): string =>
-  option.height === null ? "Not converted" : `${option.height}p · Not converted`;
-
 /** What is on screen now: "Original", "720p". */
 export const qualityPlayingLabel = (quality: PlayerQuality): string => {
   const playing = quality.options.find((option) => option.id === quality.playing);

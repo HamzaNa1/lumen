@@ -34,7 +34,6 @@ import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
   formatEndsAt,
   formatPlayerTime,
-  originalQualityDetail,
   qualityBadge,
   qualityLabel,
   qualityOptionLabel,
@@ -190,7 +189,7 @@ const QualityMenu = ({
           {item({
             id: original.id,
             label: "Original",
-            detail: originalQualityDetail(original),
+            detail: original.height === null ? null : `${original.height}p`,
             kbps: original.kbps,
           })}
           <hr className="media-player-quality-separator" />
