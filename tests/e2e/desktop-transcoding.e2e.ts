@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
 import { encode } from "./support/encode";
 import { mpvWire } from "./support/mpv-wire";
-import { NetworkProxy } from "./support/proxy";
+import { latch, NetworkProxy } from "./support/proxy";
 import { repository } from "./support/server";
 
 test.use({ mpvFaults: true });
@@ -356,9 +356,22 @@ test("desktop moves between the original and converted qualities, and between qu
       .poll(async () => (await state())?.bufferedRanges.at(-1)?.endSeconds ?? 0)
       .toBeGreaterThanOrEqual(28);
 
-    // A manual pick is never served a worse piece MPV has not read yet, even one already held, and
-    // neither the pick nor a seek between converted pieces reloads MPV.
+    // A manual pick is never served a worse piece MPV has not read yet, even one already held, so
+    // those pieces stop counting as buffered until 720p arrives. Neither the pick nor a seek
+    // between converted pieces reloads MPV.
+    const pieces720 = latch();
+    proxy.intercept = async (request) => {
+      if (/\/adaptive\/0\/720p\//u.test(request.url ?? "")) await pieces720.promise;
+      return false;
+    };
     await choose("720p");
+    await expect
+      .poll(async () => {
+        const current = await state();
+        return (current?.bufferedRanges.at(-1)?.endSeconds ?? 0) - (current?.positionSeconds ?? 0);
+      })
+      .toBeLessThan(16);
+    pieces720.release();
     await page.evaluate((id) => window.lumen.player.seek(id, 24), sessionId);
     await expect.poll(height).toBe(720);
     await expect.poll(state).toMatchObject({ paused: false, quality: { playing: "720p" } });
