@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, password, type Server } from "./server";
 
-export async function signIn(page: Page, server: Server, username = "admin") {
+export async function signIn(page: Page, server: Pick<Server, "origin">, username = "admin") {
   await page.goto(`${server.origin}web/`);
   await expect(page.getByLabel("Username")).toBeVisible();
   await page.getByLabel("Username").fill(username);
@@ -77,7 +77,7 @@ export async function playing(page: Page) {
 /** Presses Play on each title in turn, from the library down: a show or season opens, the last plays. */
 export async function startPlayback(
   page: Page,
-  server: Server,
+  server: Pick<Server, "origin">,
   libraryId: string,
   titles: readonly string[],
 ) {
@@ -88,7 +88,12 @@ export async function startPlayback(
       .first()
       .click({ force: true });
 }
-export async function openMovie(page: Page, server: Server, libraryId: string, title = "Film") {
+export async function openMovie(
+  page: Page,
+  server: Pick<Server, "origin">,
+  libraryId: string,
+  title = "Film",
+) {
   await startPlayback(page, server, libraryId, [title]);
   await playing(page);
 }

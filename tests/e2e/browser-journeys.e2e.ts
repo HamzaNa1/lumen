@@ -17,6 +17,7 @@ import {
 } from "./support/browser";
 import { openDatabase } from "./support/database";
 import { encode } from "./support/encode";
+import { NetworkProxy } from "./support/proxy";
 import { expect, serverVersion, test } from "./support/server";
 
 /** Conversion as one stream: the path of browsers without MediaSource, and of "Original". */
@@ -182,24 +183,35 @@ test("playback info never shows what was buffered at the position a seek leaves"
     file,
   );
   await server.scan(admin.accessToken, library.id);
-  // The first half of the file arrives; a request for any byte past it waits for the test to end.
+  // The first half of the file arrives; bytes past it wait for the test to end, on a connection
+  // left open, since a browser may take a response that ends early as the whole file.
   const half = Math.round(statSync(file).size / 2);
   const done = Promise.withResolvers<void>();
-  await page.route("**/api/v1/media/**", async (route) => {
-    const range = /^bytes=(\d+)-(\d*)$/u.exec((await route.request().headerValue("range")) ?? "");
-    const start = Number(range?.[1] ?? 0);
-    if (start >= half) {
-      await done.promise;
-      await route.abort().catch(() => {});
-      return;
+  const proxy = await new NetworkProxy(server.origin).start();
+  proxy.intercept = async (request, response) => {
+    if (request.method !== "GET" || !/^\/api\/v1\/media\/[^/?]+(?:\?|$)/u.test(request.url ?? ""))
+      return false;
+    const start = Number(/^bytes=(\d+)-/u.exec(request.headers.range ?? "")?.[1] ?? 0);
+    const upstream = await fetch(new URL(request.url ?? "/", proxy.upstream), {
+      headers: { cookie: request.headers.cookie ?? "", range: request.headers.range ?? "bytes=0-" },
+    });
+    response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
+    let allowance = Math.max(0, half - start);
+    for await (const chunk of upstream.body ?? []) {
+      const part = Buffer.from(chunk).subarray(0, allowance);
+      allowance -= part.length;
+      response.write(part);
+      if (allowance <= 0) {
+        await done.promise;
+        break;
+      }
     }
-    const end = Math.min(half - 1, range?.[2] ? Number(range[2]) : Number.POSITIVE_INFINITY);
-    const response = await route.fetch({ headers: { range: `bytes=${start}-${end}` } });
-    await route.fulfill({ response }).catch(() => {});
-  });
+    response.end();
+    return true;
+  };
   try {
-    await signIn(page, server);
-    await openMovie(page, server, library.id);
+    await signIn(page, proxy);
+    await openMovie(page, proxy, library.id);
     await pause(page);
     const info = await openPlaybackInfo(page);
     const buffered = playbackInfoValue(info, "Buffered ahead");
@@ -232,6 +244,7 @@ test("playback info never shows what was buffered at the position a seek leaves"
     );
   } finally {
     done.resolve();
+    await proxy.close();
   }
 });
 
