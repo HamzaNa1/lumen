@@ -30,8 +30,8 @@ runs:
     - uses: actions/cache@v4
       if: runner.os == 'Windows'
       with:
-        path: ~/.cache/chocolatey
-        key: chocolatey-${{ runner.os }}-${{ runner.arch }}-${{ env.ImageVersion }}-${{ hashFiles('scripts/setup-e2e-runtime.sh') }}
+        path: ~/.cache/ffmpeg
+        key: ffmpeg-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('scripts/setup-e2e-runtime.sh') }}
     - name: Install media and browser runtimes
       shell: bash
       env:

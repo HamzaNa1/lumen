@@ -46,15 +46,24 @@ elif [[ "$RUNNER_OS" == macOS ]]; then
   # Native tests use the MPV that bundle-mpv builds from its pinned release.
   brew install ffmpeg
 elif [[ "$RUNNER_OS" == Windows ]]; then
-  packages=(ffmpeg)
-  # Windows native tests use the renamed MPV executable from bundle-mpv.
-  # The community feed answers 5xx at times, and choco can then exit 0 having installed nothing.
-  for attempt in 1 2 3 4; do
-    choco install "${packages[@]}" -y --no-progress --cache-location "$(cygpath -w "$HOME/.cache/chocolatey")" || true
-    if command -v ffmpeg > /dev/null; then break; fi
-    if (( attempt == 4 )); then echo "Chocolatey did not install ${packages[*]}" >&2; exit 1; fi
-    sleep $(( attempt * 20 ))
-  done
+  # Windows native tests use the renamed MPV executable from bundle-mpv. FFmpeg is the build
+  # Chocolatey would install, taken from its GitHub release: the community feed answers 5xx for
+  # minutes at a time.
+  ffmpeg_build=ffmpeg-9.0.2-essentials_build
+  ffmpeg_dir="$HOME/.cache/ffmpeg/$ffmpeg_build"
+  if [[ ! -x "$ffmpeg_dir/bin/ffmpeg.exe" ]]; then
+    download=$(mktemp -d)
+    curl -fsSL --retry 5 --retry-all-errors -o "$download/ffmpeg.7z" \
+      "https://github.com/GyanD/codexffmpeg/releases/download/9.0.2/$ffmpeg_build.7z"
+    echo "4705843ccaaf54257c16ad90f3e952ece33c17df964ecf7bfdbb0f49c7171077  $download/ffmpeg.7z" \
+      | sha256sum -c --status
+    7z x -y -bd -o"$(cygpath -w "$download")" "$(cygpath -w "$download/ffmpeg.7z")" > /dev/null
+    mkdir -p "$(dirname "$ffmpeg_dir")"
+    mv "$download/$ffmpeg_build" "$ffmpeg_dir"
+    rm -rf "$download"
+  fi
+  export PATH="$ffmpeg_dir/bin:$PATH"
+  cygpath -w "$ffmpeg_dir/bin" >> "$GITHUB_PATH"
 fi
 
 if (( ${#browsers[@]} )); then

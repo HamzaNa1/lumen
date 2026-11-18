@@ -568,6 +568,20 @@ test.describe(() => {
       return seen.count;
     });
     expect(stalls).toBe(0);
+    // A step up keeps the next 8 s already held, so 720p reaches the screen only after that much
+    // playback: wait for the picture itself rather than racing playback against a poll.
+    await video.evaluate(
+      (element: HTMLVideoElement) =>
+        new Promise<void>((resolve) => {
+          const check = () => {
+            if (element.videoHeight !== 720) return;
+            element.removeEventListener("resize", check);
+            resolve();
+          };
+          element.addEventListener("resize", check);
+          check();
+        }),
+    );
     await expect.poll(quality).toBe("Auto (720p)");
     expect(
       await page.evaluate(() => (window as unknown as { stalls: { count: number } }).stalls.count),

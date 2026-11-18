@@ -13,13 +13,18 @@ import { password, repository } from "./support/server";
 const builtPackage = process.env.LUMEN_LINUX_SERVER_PACKAGE;
 const server = "http://127.0.0.1:3210";
 
-// Asynchronous, because the fixture release server answers from this same process.
+// Asynchronous, because the fixture release server answers from this same process. Output is also
+// echoed, so a step that hangs (apt fetching FFmpeg, a service start) shows where in the job log.
 const shell = (script: string) =>
   new Promise<{ status: number | null; output: string }>((resolve) => {
     const child = spawn("sh", ["-c", script]);
     let output = "";
-    child.stdout.on("data", (chunk) => (output += chunk));
-    child.stderr.on("data", (chunk) => (output += chunk));
+    const collect = (chunk: Buffer) => {
+      output += chunk;
+      process.stdout.write(chunk);
+    };
+    child.stdout.on("data", collect);
+    child.stderr.on("data", collect);
     child.on("close", (status) => resolve({ status, output }));
   });
 

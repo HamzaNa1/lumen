@@ -29,5 +29,13 @@ runs:
       with:
         path: ~/.cache/electron
         key: electron-${{ runner.os }}-${{ runner.arch }}-${{ steps.versions.outputs.electron }}
-    - shell: bash
-      run: bun install --frozen-lockfile
+    - name: Install dependencies
+      shell: bash
+      # Packages missing from the cache come from the registry, whose connections drop at times.
+      run: |
+        for attempt in 1 2; do
+          bun install --frozen-lockfile && exit 0
+          echo "::warning::bun install failed (attempt $attempt); trying again"
+          sleep $(( attempt * 10 ))
+        done
+        bun install --frozen-lockfile
