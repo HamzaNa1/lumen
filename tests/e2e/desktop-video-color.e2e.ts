@@ -14,12 +14,13 @@ const expected = [
   [192, 144, 112],
 ];
 
+test.skip(process.platform === "linux", "Linux embeds an MPV window instead of compositing");
+
 test("composited playback preserves SDR gray levels and muted colors", async ({
   server,
   admin,
   desktop,
 }, testInfo) => {
-  test.skip(process.platform === "linux", "Linux embeds an MPV window instead of compositing");
   await server.library(admin.accessToken, "movies", [], { "Colors.mp4": "sdr-colors.mp4" });
   const { page, app } = desktop;
   await connectDesktop(page, server);

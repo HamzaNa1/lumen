@@ -58,7 +58,7 @@ const serveFile = async (media: Buffer, revision: string, headBytes: number) => 
  * A file streamed with no cache, as every desktop streams by default: what the player has read
  * is kept in memory only while it is near a reader.
  */
-const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
+const streamedFile = async (sizeBytes: number, headBytes = sizeBytes, idleFetchMs?: number) => {
   const media = randomBytes(sizeBytes);
   const revision = "revision-1";
   const upstream = await serveFile(media, revision, headBytes);
@@ -120,6 +120,7 @@ const streamedFile = async (sizeBytes: number, headBytes = sizeBytes) => {
     geometry: defaultGeometry,
     allowSegment: async () => true,
     fetchImpl,
+    ...(idleFetchMs === undefined ? {} : { idleFetchMs }),
   });
   file.addSource({ origin: upstream.origin, path: "/media", token: "token", kind: "playback" });
   const read = async (start: number, end: number): Promise<Buffer> => {
@@ -197,7 +198,8 @@ test("seeking back to the start after playing on reads the start again", async (
 test("a request the player left behind by seeking ahead stops fetching", async () => {
   // Resuming a film: MPV reads the header, then opens a request halfway in. The request from the
   // start must stop instead of racing to the new reader with bytes nobody reads.
-  const stream = await streamedFile(64 * CHUNK);
+  // A fetch no reader is near stops this soon, rather than after the player's ten seconds.
+  const stream = await streamedFile(64 * CHUNK, 64 * CHUNK, 300);
   const resume = stream.file.read(48 * CHUNK, 64 * CHUNK, new AbortController().signal);
   try {
     await stream.readThenLeave(0, 2 * CHUNK);

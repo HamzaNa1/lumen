@@ -1,4 +1,5 @@
 import { watchPosition } from "@lumen/contracts";
+import type { ElectronApplication } from "@playwright/test";
 import { type PlaybackDiagnosticEvent, WatchGroupClient } from "../../packages/client/src/index";
 import { connectDesktop, expect, test } from "./support/desktop";
 import { mpvWire, type WireEntry } from "./support/mpv-wire";
@@ -8,6 +9,30 @@ const isSpeed = (entry: WireEntry) =>
   entry.command[0] === "set_property" && entry.command[1] === "speed";
 
 type Timeline = () => Promise<ReadonlyArray<PlaybackDiagnosticEvent>>;
+
+// The watch controller's recovery backoff after each consecutive failure: 1 s, 2 s, then 4 s.
+const backoffMs = (failure: number) => 1000 * 2 ** (failure - 1);
+
+/**
+ * Moves the main process's clock forward as if time had passed, so a backoff deadline is reached
+ * without waiting it out. The controller still decides when that deadline is.
+ */
+const mainClock = async (app: ElectronApplication) => {
+  const original = await app.evaluateHandle(() => Date.now);
+  return {
+    advance: (ms: number) =>
+      app.evaluate((_electron, ms) => {
+        const now = Date.now;
+        Date.now = () => now() + ms;
+      }, ms),
+    restore: async () => {
+      await app.evaluate((_electron, now) => {
+        Date.now = now;
+      }, original);
+      await original.dispose();
+    },
+  };
+};
 
 /** Moves MPV off the group clock until the controller sends the speed correction `reached` finds. */
 const provoke = async (
@@ -384,26 +409,40 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
           .toBeLessThan(10);
         return;
       }
+      const watchError = async () => (await page.evaluate(() => window.lumen.watch.state())).error;
       if (recovery === "runtime") {
         let sessionId = original?.sessionId;
-        for (let failure = 0; failure < 4; failure++) {
-          await wire.crash();
-          if (failure < 3) {
-            await expect
-              .poll(
-                async () => {
-                  const state = await page.evaluate(() => window.lumen.player.state());
-                  return state !== null && state.sessionId !== sessionId && !state.paused;
-                },
-                { timeout: 15000 },
-              )
-              .toBe(true);
-            sessionId = (await page.evaluate(() => window.lumen.player.state()))?.sessionId;
+        const clock = await mainClock(app);
+        try {
+          for (let failure = 0; failure < 4; failure++) {
+            await wire.crash();
+            if (failure < 3) {
+              // The controller records the failure in the same turn as this diagnostic.
+              await expect
+                .poll(async () =>
+                  (await page.evaluate(() => window.lumen.player.timeline())).some(
+                    (event) =>
+                      event.kind === "playback_failure" && event.fields.sessionId === sessionId,
+                  ),
+                )
+                .toBe(true);
+              await clock.advance(backoffMs(failure + 1));
+              await expect
+                .poll(
+                  async () => {
+                    const state = await page.evaluate(() => window.lumen.player.state());
+                    return state !== null && state.sessionId !== sessionId && !state.paused;
+                  },
+                  { timeout: 15000 },
+                )
+                .toBe(true);
+              sessionId = (await page.evaluate(() => window.lumen.player.state()))?.sessionId;
+            }
           }
+          await expect.poll(watchError).toContain("Retry playback");
+        } finally {
+          await clock.restore();
         }
-        await expect
-          .poll(async () => (await page.evaluate(() => window.lumen.watch.state())).error)
-          .toContain("Retry playback");
         await page.evaluate(() => window.lumen.watch.retry());
         await expect
           .poll(() => page.evaluate(() => window.lumen.player.state()))
@@ -424,7 +463,7 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
         attempts++;
         if (recovery === "exhaustion") {
           response.writeHead(503, { "Content-Type": "application/json" });
-          response.end(JSON.stringify({ message: "Injected media outage" }));
+          response.end(JSON.stringify({ message: `Injected media outage ${attempts}` }));
           return true;
         }
         if (recovery === "leave" || recovery === "replace") {
@@ -437,25 +476,22 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
       };
       await wire.command(["stop"]);
       if (recovery === "exhaustion") {
-        await expect
-          .poll(async () => (await page.evaluate(() => window.lumen.watch.state())).error, {
-            timeout: 15000,
-          })
-          .toContain("Retry playback");
-        expect(attempts).toBe(3);
-        // Move past every backoff deadline, then deliver another group status.
-        const clock = await app.evaluateHandle(() => Date.now);
+        const clock = await mainClock(app);
         try {
-          await app.evaluate(() => {
-            const now = Date.now;
-            Date.now = () => now() + 60_000;
-          });
+          // Unloaded media is the first failure; each refused attempt to reload it is the next.
+          await expect.poll(watchError).not.toBeNull();
+          await clock.advance(backoffMs(1));
+          for (const attempt of [1, 2]) {
+            await expect.poll(watchError).toContain(`Injected media outage ${attempt}`);
+            await clock.advance(backoffMs(attempt + 1));
+          }
+          await expect.poll(watchError, { timeout: 15000 }).toContain("Retry playback");
+          expect(attempts).toBe(3);
+          // Move past every backoff deadline, then deliver another group status.
+          await clock.advance(60_000);
           await page.evaluate(() => window.lumen.watch.action({ type: "list" }));
         } finally {
-          await app.evaluate((_electron, now) => {
-            Date.now = now;
-          }, clock);
-          await clock.dispose();
+          await clock.restore();
         }
         expect(attempts).toBe(3);
         proxy.intercept = async () => false;

@@ -1,4 +1,5 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -50,6 +51,23 @@ export class CliWorkspace {
     });
     if (result.error) throw result.error;
     return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+  }
+  async commandAsync(command: string, args: string[], env: NodeJS.ProcessEnv = {}) {
+    const child = spawn(command, args, {
+      cwd: this.root,
+      timeout: 30_000,
+      env: { ...process.env, ...env },
+    });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8").on("data", (chunk: string) => {
+      stdout += chunk;
+    });
+    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+    const [status] = (await once(child, "close")) as [number | null];
+    return { status, stdout, stderr };
   }
   run(command: string, args: string[], env: NodeJS.ProcessEnv = {}) {
     const result = this.command(command, args, env);

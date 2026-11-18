@@ -1,6 +1,15 @@
 import { execFile, execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { copyFile, mkdir, readdir, readFile, rm, utimes, writeFile } from "node:fs/promises";
+import {
+  copyFile,
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +18,7 @@ import type { ElectronApplication, Page } from "@playwright/test";
 import type { DownloadEntry, DownloadState } from "../../packages/contracts/src/downloads";
 import { openSettings } from "./support/browser";
 import {
+  closeDesktop,
   connectDesktop,
   desktopPlayerPage,
   expect,
@@ -67,32 +77,53 @@ const makeFilm = (path: string, seconds = 30, tone = 440) =>
 
 /**
  * Ten minutes of tiny frames: the index at its end is as large as a feature episode's, so the
- * player is still reading it after it has left the start of the file.
+ * player is still reading it after it has left the start of the file. Ten seconds are encoded
+ * and repeated by copy, which writes the same index in a fraction of the time.
  */
-const makeLargeIndexFilm = (path: string) =>
-  ffmpeg([
-    "-v",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    "testsrc=duration=600:size=160x90:rate=60",
-    "-f",
-    "lavfi",
-    "-i",
-    "sine=frequency=440:duration=600",
-    "-c:v",
-    "libx264",
-    "-preset",
-    "ultrafast",
-    "-b:v",
-    "150k",
-    "-c:a",
-    "aac",
-    "-b:a",
-    "32k",
-    path,
-  ]);
+const makeLargeIndexFilm = async (path: string) => {
+  const directory = await mkdtemp(join(tmpdir(), "lumen-e2e-clip-"));
+  const clip = join(directory, "clip.mp4");
+  try {
+    await ffmpeg([
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      "testsrc=duration=10:size=160x90:rate=60",
+      "-f",
+      "lavfi",
+      "-i",
+      "sine=frequency=440:duration=10",
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-b:v",
+      "150k",
+      "-c:a",
+      "aac",
+      "-b:a",
+      "32k",
+      clip,
+    ]);
+    await ffmpeg([
+      "-v",
+      "error",
+      "-stream_loop",
+      "-1",
+      "-i",
+      clip,
+      "-c",
+      "copy",
+      "-t",
+      "600",
+      path,
+    ]);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+};
 
 const movies = async (server: Server, token: string, titles: readonly string[]) => {
   const library = await server.library(token, "movies", []);
@@ -348,7 +379,7 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
     .toBeGreaterThan(otherSize * 0.15);
 
   // The server goes away entirely, and the app starts without it.
-  await desktop.app.close();
+  await closeDesktop(desktop.app);
   await proxy.close();
   const reopened = await launchDesktop(profile, false, {
     LUMEN_E2E_MEDIA_CHUNK_BYTES: String(CHUNK),
@@ -426,7 +457,7 @@ test("a download keeps the exact file, plays with the server gone, and saves tha
       .poll(async () => (await entryFor(offline, other.id))?.status, { timeout: 60_000 })
       .toBe("completed");
   } finally {
-    await reopened.close();
+    await closeDesktop(reopened);
     // The proxy may already be down: it is closed on purpose while the app is offline.
     await proxy.close().catch(() => undefined);
   }
@@ -1092,7 +1123,7 @@ test("an interrupted download resumes after a crash, refetching what was half-wr
       await server.advanceTime(5 * 24 * 3_600_000);
       await page.evaluate(() => window.lumen.library.list());
     }
-    await desktop.app.close();
+    await closeDesktop(desktop.app);
 
     // The crash: a segment shorter than its index records, and a folder no index describes.
     const [held] = await heldFiles(profile);
@@ -1116,7 +1147,7 @@ test("an interrupted download resumes after a crash, refetching what was half-wr
     expect(files[0]?.bytes.equals(await readFile(film.path))).toBe(true);
     expect(await readdir(join(profile, "media", "server")).catch(() => [])).toEqual([]);
   } finally {
-    await reopened?.close();
+    if (reopened) await closeDesktop(reopened);
     await proxy.close();
   }
 });

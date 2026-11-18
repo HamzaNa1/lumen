@@ -1005,6 +1005,8 @@ export class DownloadManager extends EventEmitter {
 
   private resumeAfterSpace(): void {
     this.spaceWaiting = false;
+    // A file that met the full disk would otherwise refuse it for a while yet.
+    this.options.store.retryDisk();
     for (const download of this.downloads)
       if (download.status === "waiting" && download.reason === "Paused: disk almost full") {
         download.status = "queued";

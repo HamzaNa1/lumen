@@ -49,18 +49,21 @@ test("concurrent viewers retain independent media allowances after API exhaustio
 });
 
 for (const trusted of [false, true])
-  test(`request budgets honor forwarded addresses only from trusted peers (${trusted})`, async ({
-    server,
-  }) => {
-    await server.stop();
-    await server.start({
-      LUMEN_MAX_REQUESTS_PER_MINUTE: "2",
-      ...(trusted ? { LUMEN_TRUSTED_PROXIES: "127.0.0.1" } : {}),
+  test.describe(() => {
+    test.use({
+      serverEnvironment: {
+        LUMEN_MAX_REQUESTS_PER_MINUTE: "2",
+        ...(trusted ? { LUMEN_TRUSTED_PROXIES: "127.0.0.1" } : {}),
+      },
     });
-    const request = (address: string) =>
-      server.request("/health/live", { headers: { "x-forwarded-for": address } });
-    expect((await request("203.0.113.1")).status).toBe(200);
-    expect((await request("203.0.113.1")).status).toBe(trusted ? 200 : 429);
-    expect((await request("203.0.113.2")).status).toBe(trusted ? 200 : 429);
-    expect((await request("not-an-ip")).status).toBe(trusted ? 200 : 429);
+    test(`request budgets honor forwarded addresses only from trusted peers (${trusted})`, async ({
+      server,
+    }) => {
+      const request = (address: string) =>
+        server.request("/health/live", { headers: { "x-forwarded-for": address } });
+      expect((await request("203.0.113.1")).status).toBe(200);
+      expect((await request("203.0.113.1")).status).toBe(trusted ? 200 : 429);
+      expect((await request("203.0.113.2")).status).toBe(trusted ? 200 : 429);
+      expect((await request("not-an-ip")).status).toBe(trusted ? 200 : 429);
+    });
   });

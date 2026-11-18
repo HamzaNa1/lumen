@@ -216,9 +216,15 @@ const bootstrap = async (): Promise<void> => {
   });
   broadcastPlayerFullscreen(mainWindow, overlay?.window);
   const rendererUrl = process.env.ELECTRON_RENDERER_URL;
-  if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
-  else await mainWindow.loadFile(rendererPath);
-  await overlay?.load(rendererUrl, rendererPath);
+  try {
+    if (rendererUrl !== undefined) await mainWindow.loadURL(rendererUrl);
+    else await mainWindow.loadFile(rendererPath);
+    await overlay?.load(rendererUrl, rendererPath);
+  } catch (cause) {
+    // Quitting while the windows load cancels those loads, and nothing is left to start.
+    if (quitting !== "no") return;
+    throw cause;
+  }
   const stopUpdates = startNativePlayer(player);
   mainWindow.once("closed", stopUpdates);
   mainWindow.once("closed", updates.start());

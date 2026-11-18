@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { join } from "node:path";
 import {
+  closeDesktop,
   connectDesktop,
   desktopPlayerPage,
   expect,
@@ -56,7 +57,7 @@ test("desktop connects through real IPC, persists its account and window, and ne
     const desktopWindow = await reopened.browserWindow(restored);
     expect(await desktopWindow.evaluate((window) => window.getBounds())).toMatchObject(size);
   } finally {
-    await reopened.close();
+    await closeDesktop(reopened);
   }
 });
 

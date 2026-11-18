@@ -85,40 +85,41 @@ test("login and general request limits are separate; forwarded addresses cannot 
   expect(responses.filter((response) => response.status === 429)).toHaveLength(3);
 });
 
-test("body size and malformed requests fail without leaking credentials, SQL or filesystem paths", async ({
-  server,
-  admin,
-}) => {
-  await server.stop();
-  await server.start({ LUMEN_MAX_REQUEST_BODY_BYTES: "1024" });
-  const headers = {
-    authorization: `Bearer ${admin.accessToken}`,
-    "content-type": "application/json",
-  };
-  const oversized = await server.request("/api/v1/libraries", {
-    method: "POST",
-    headers,
-    body: JSON.stringify({ name: "x".repeat(2000) }),
+test.describe(() => {
+  test.use({ serverEnvironment: { LUMEN_MAX_REQUEST_BODY_BYTES: "1024" } });
+  test("body size and malformed requests fail without leaking credentials, SQL or filesystem paths", async ({
+    server,
+    admin,
+  }) => {
+    const headers = {
+      authorization: `Bearer ${admin.accessToken}`,
+      "content-type": "application/json",
+    };
+    const oversized = await server.request("/api/v1/libraries", {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ name: "x".repeat(2000) }),
+    });
+    expect(oversized.status).toBe(413);
+    const malformed = await server.request("/api/v1/libraries", {
+      method: "POST",
+      headers,
+      body: "{broken",
+    });
+    expect(malformed.status).toBe(400);
+    for (const response of [oversized, malformed]) {
+      const text = await response.text();
+      expect(text).not.toContain(server.root);
+      expect(text).not.toContain("INSERT");
+      expect(response.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
+    }
+    await server.stop();
+    const logs = server.log.join("");
+    expect(logs).not.toContain(password);
+    expect(logs).not.toContain(admin.accessToken);
+    expect(logs).not.toContain("{broken");
+    expect(logs).not.toContain("x".repeat(2000));
   });
-  expect(oversized.status).toBe(413);
-  const malformed = await server.request("/api/v1/libraries", {
-    method: "POST",
-    headers,
-    body: "{broken",
-  });
-  expect(malformed.status).toBe(400);
-  for (const response of [oversized, malformed]) {
-    const text = await response.text();
-    expect(text).not.toContain(server.root);
-    expect(text).not.toContain("INSERT");
-    expect(response.headers.get("x-request-id")).toMatch(/^[0-9a-f-]{36}$/);
-  }
-  await server.stop();
-  const logs = server.log.join("");
-  expect(logs).not.toContain(password);
-  expect(logs).not.toContain(admin.accessToken);
-  expect(logs).not.toContain("{broken");
-  expect(logs).not.toContain("x".repeat(2000));
 });
 
 test("migration CLI creates a usable database and emits bounded text logs on success and failure", async ({
