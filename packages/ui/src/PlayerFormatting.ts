@@ -191,6 +191,12 @@ const subtitleLabel = (info: PlaybackInfo): string => {
     : "Unavailable while converting";
 };
 
+/** The parts that are known, on one line: "H264 · 1920×1080 · 8.00 Mbps". */
+const joined = (parts: ReadonlyArray<string | null | undefined>): string | null => {
+  const known = parts.filter((part): part is string => part != null && part !== "");
+  return known.length === 0 ? null : known.join(" · ");
+};
+
 const formatRate = (value: number | null, unit: string): string | null =>
   value === null ? null : `${Number(value.toFixed(3))} ${unit}`;
 
@@ -270,12 +276,7 @@ export const playbackInfoSections = (
             : `Hardware (${info.decoding.hardware})`,
       ],
       ["Pixel format", info.pixelFormat],
-      [
-        "Colour",
-        info.colourPrimaries === null && info.colourTransfer === null
-          ? null
-          : [info.colourPrimaries, info.colourTransfer].filter((part) => part !== null).join(" · "),
-      ],
+      ["Colour", joined([info.colourPrimaries, info.colourTransfer])],
       ["Dynamic range", dynamicRange(info.colourTransfer)],
       ["Frame rate", formatRate(info.frameRate, "fps")],
       ["Output frame rate", formatRate(info.outputFrameRate, "fps")],
@@ -293,13 +294,23 @@ export const playbackInfoSections = (
           ? null
           : formatBitrate((sizeBytes * 8) / info.durationSeconds),
       ],
-      ["Video codec", media?.video?.codec?.toUpperCase()],
-      ["Video resolution", formatSize(media?.video?.size ?? null)],
-      ["Video bitrate", formatBitrate(media?.video?.bitrate)],
-      ["Audio codec", audio === null ? null : audioCodec(audio.codec)],
-      ["Audio bitrate", formatBitrate(audio?.bitrate)],
-      ["Audio channels", audio?.channels == null ? null : channelLayout(audio.channels)],
-      ["Audio sample rate", audio?.sampleRateHz == null ? null : `${audio.sampleRateHz} Hz`],
+      [
+        "Video",
+        joined([
+          media?.video?.codec?.toUpperCase(),
+          formatSize(media?.video?.size ?? null),
+          formatBitrate(media?.video?.bitrate),
+        ]),
+      ],
+      [
+        "Audio",
+        joined([
+          audio === null ? null : audioCodec(audio.codec),
+          audio?.channels == null ? null : channelLayout(audio.channels),
+          audio?.sampleRateHz == null ? null : `${audio.sampleRateHz / 1_000} kHz`,
+          formatBitrate(audio?.bitrate),
+        ]),
+      ],
     ]),
     ...(sync === null
       ? []

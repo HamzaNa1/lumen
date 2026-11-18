@@ -3099,7 +3099,7 @@ button.folder-browser-item:hover {
   left: 16px;
   /* Above the video and the console, which may both sit beneath it. */
   z-index: 3;
-  width: min(320px, calc(100% - 32px));
+  width: min(440px, calc(100% - 32px));
   max-height: calc(100% - 200px);
   overflow-y: auto;
   display: grid;
