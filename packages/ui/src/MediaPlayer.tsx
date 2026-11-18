@@ -139,7 +139,7 @@ interface MediaPlayerProps {
 const markDefault = (label: string, isDefault: boolean): string =>
   isDefault ? `${label} · Default` : label;
 
-/** The original file stands apart from what the server converts, Auto among it. */
+/** The original file sits above a rule, apart from Auto and the qualities the server converts. */
 const QualityMenu = ({
   quality,
   defaultQuality,
@@ -196,25 +196,22 @@ const QualityMenu = ({
           <hr className="media-player-quality-separator" />
         </>
       )}
-      <fieldset className="media-player-quality-converted">
-        <legend className="media-player-quality-group">Converted by the server</legend>
-        {item({
-          id: "auto",
-          label: "Auto",
-          detail: quality.choice === "auto" ? qualityPlayingLabel(quality) : null,
-          kbps: null,
-        })}
-        {quality.options
-          .filter((option) => option.id !== "original")
-          .map((option) =>
-            item({
-              id: option.id,
-              label: qualityOptionLabel(option),
-              detail: null,
-              kbps: option.kbps,
-            }),
-          )}
-      </fieldset>
+      {item({
+        id: "auto",
+        label: "Auto",
+        detail: quality.choice === "auto" ? qualityPlayingLabel(quality) : null,
+        kbps: null,
+      })}
+      {quality.options
+        .filter((option) => option.id !== "original")
+        .map((option) =>
+          item({
+            id: option.id,
+            label: qualityOptionLabel(option),
+            detail: null,
+            kbps: option.kbps,
+          }),
+        )}
     </div>
   );
 };

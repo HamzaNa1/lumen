@@ -1,5 +1,4 @@
 import {
-  originalFits,
   originalKbps,
   type PlaybackDiagnostics,
   qualityState,
@@ -228,8 +227,6 @@ export class MpvMediaSource {
     if (renditions.length === 0 || this.qualityChoice === "original") return "original";
     const chosen = renditions.find((rendition) => rendition.id === this.qualityChoice);
     if (chosen !== undefined) return chosen;
-    if (this.originalPlays && originalFits(this.options.estimator.kbps, this.originalKbps))
-      return "original";
     return startingRendition(renditions, this.options.estimator.kbps) ?? "original";
   }
 
@@ -275,9 +272,13 @@ export class MpvMediaSource {
     if (choice === "original" && !this.originalPlays)
       throw new Error("This file needs converting to play here");
     this.qualityChoice = choice;
+    // Auto adapts among converted pieces only, so choosing it leaves the original.
+    const target =
+      choice === "auto"
+        ? startingRendition(this.renditions, this.options.estimator.kbps)
+        : rendition;
     if (choice === "original" && !this.playsOriginal) await this.load("original", position);
-    else if (rendition !== undefined && this.adaptive === null)
-      await this.switchTo(rendition, position);
+    else if (target !== undefined && this.adaptive === null) await this.switchTo(target, position);
     else this.adaptive?.choose(choice);
   }
 

@@ -3,16 +3,10 @@ import { release } from "node:os";
 import {
   describePlayback,
   measuredSize,
-  OriginalReturn,
-  originalFits,
-  originalStalled,
   PlaybackDiagnostics,
   PlaybackSessionReporter,
   PlaybackUnavailableError,
   type PlayerBuffer,
-  RETURN_TO_ORIGINAL,
-  shouldLeaveOriginal,
-  startingRendition,
   ThroughputEstimator,
   TrackSelectionController,
   type WatchPlaybackSample,
@@ -88,9 +82,6 @@ interface ActiveSession {
   preloadAsked: boolean;
   /** Removes what this session listens to on an MPV that outlives it. */
   readonly detach: () => void;
-  readonly originalReturn: OriginalReturn;
-  /** Auto is moving between the original and converted pieces. */
-  switching: boolean;
 }
 
 interface PlaybackResources {
@@ -130,8 +121,6 @@ export class PlayerController extends EventEmitter {
   private diagnostics = new PlaybackDiagnostics();
   private diagnosticsItemId: string | null = null;
   private starved = false;
-  /** When MPV ran dry outside a seek; null while it has data. */
-  private starvedSinceMs: number | null = null;
   private intentionalPause = false;
   private lastBufferSampleMs = 0;
   private displaySleepBlocker: number | null = null;
@@ -308,8 +297,6 @@ export class PlayerController extends EventEmitter {
         stopping: null,
         loaded: false,
         preloadAsked: false,
-        originalReturn: new OriginalReturn(),
-        switching: false,
         detach: () => {
           sessionIpc.off("end-file", onEnd);
           sessionIpc.off("log-message", onLog);
@@ -444,17 +431,6 @@ export class PlayerController extends EventEmitter {
     this.state = { ...this.requireState(), positionSeconds, ended: false };
     const { media } = active;
     if (media.transcoded) await this.reloadConverted(active, positionSeconds);
-    // A seek interrupts playback anyway, so it is where Auto returns to the original for free.
-    else if (
-      media.adaptive !== null &&
-      RETURN_TO_ORIGINAL &&
-      media.qualityChoice === "auto" &&
-      media.originalUsable &&
-      media.originalKbps !== null &&
-      originalFits(this.estimatorOf(active).kbps, media.originalKbps) &&
-      this.estimatorOf(active).kbps !== null
-    )
-      await this.switchDelivery(active, "original", positionSeconds);
     else {
       // The bridge stops holding out for a better piece that MPV reads only to seek past.
       media.adaptive?.setPosition(positionSeconds);
@@ -529,7 +505,6 @@ export class PlayerController extends EventEmitter {
   /** "auto", "original", or a rendition id. */
   async selectQuality(sessionId: string, choice: string): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
-    active.originalReturn.reset();
     active.pendingMotion += 1;
     active.motionRevision += 1;
     try {
@@ -549,82 +524,9 @@ export class PlayerController extends EventEmitter {
     return this.requireState();
   }
 
-  private estimatorOf(active: ActiveSession): ThroughputEstimator {
-    const existing = this.estimators.get(active.client.serverOrigin);
-    if (existing !== undefined) return existing;
-    const created = new ThroughputEstimator();
-    this.estimators.set(active.client.serverOrigin, created);
-    return created;
-  }
-
   private qualityOf(active: ActiveSession): Pick<PlayerState, "quality"> {
     const quality = active.media.quality();
     return quality === undefined ? {} : { quality };
-  }
-
-  /** Swaps the original for converted pieces or back: the one switch that reloads MPV. */
-  private async switchDelivery(
-    active: ActiveSession,
-    delivery: Parameters<MpvMediaSource["switchTo"]>[0],
-    position: number,
-  ): Promise<void> {
-    active.pendingMotion += 1;
-    active.motionRevision += 1;
-    active.switching = true;
-    try {
-      await active.media.switchTo(delivery, position);
-      this.assertActive(active.session.sessionId);
-      this.state = {
-        ...this.requireState(),
-        positionSeconds: position,
-        bufferedRanges: [],
-        streams: active.media.streams,
-        selectedAudioStreamId: active.media.audioId,
-        selectedSubtitleStreamId: active.media.subtitleId,
-        ...this.qualityOf(active),
-      };
-      this.publish();
-    } finally {
-      active.switching = false;
-      active.pendingMotion -= 1;
-      active.motionRevision += 1;
-    }
-  }
-
-  /**
-   * Auto's moves between the original and converted pieces, checked as playback goes on: away
-   * from the original when the connection cannot keep it fed, back once it has proven it can.
-   */
-  private watchQuality(active: ActiveSession, state: PlayerState, aheadSeconds: number): void {
-    const { media } = active;
-    if (active.switching || media.loading || media.qualityChoice !== "auto") return;
-    if (media.renditions.length === 0 || !media.originalUsable) return;
-    const estimator = this.estimatorOf(active);
-    const run = (delivery: Parameters<MpvMediaSource["switchTo"]>[0]) =>
-      void this.switchDelivery(active, delivery, state.positionSeconds).catch((cause) => {
-        if (!(cause instanceof MediaLoadCancelled)) this.failActive(active, cause);
-      });
-    if (media.adaptive !== null) {
-      if (active.originalReturn.observe(Date.now(), estimator.kbps, media.originalKbps))
-        run("original");
-      return;
-    }
-    if (!media.playsOriginal || state.paused) return;
-    const stalledSeconds =
-      this.starvedSinceMs === null ? 0 : (Date.now() - this.starvedSinceMs) / 1000;
-    if (
-      shouldLeaveOriginal({
-        stalledSeconds,
-        bufferAheadSeconds: aheadSeconds,
-        estimateKbps: estimator.kbps,
-        originalKbps: media.originalKbps,
-      })
-    ) {
-      if (originalStalled(stalledSeconds) && media.originalKbps !== null)
-        estimator.capAt(media.originalKbps * 0.9);
-      const rendition = startingRendition(media.renditions, estimator.kbps);
-      if (rendition !== undefined) run(rendition);
-    }
   }
 
   async resetTrack(sessionId: string, kind: TrackKind): Promise<PlayerState> {
@@ -944,7 +846,6 @@ export class PlayerController extends EventEmitter {
     this.state = null;
     this.syncDisplaySleepBlocker();
     this.starved = false;
-    this.starvedSinceMs = null;
     this.intentionalPause = false;
     this.startingProcess = active.process;
     active.reporter.retire();
@@ -988,7 +889,6 @@ export class PlayerController extends EventEmitter {
     this.state = null;
     this.syncDisplaySleepBlocker();
     this.starved = false;
-    this.starvedSinceMs = null;
     this.intentionalPause = false;
     active?.reporter.retire();
     active?.media.close();
@@ -1110,14 +1010,11 @@ export class PlayerController extends EventEmitter {
           );
           this.lastBufferSampleMs = now;
         }
-        if (!starved) this.starvedSinceMs = null;
-        else if (!this.starved) this.starvedSinceMs = now;
         this.starved = starved;
       }
       this.state = next;
       this.publish();
       this.preloadNext(active, next);
-      this.watchQuality(active, next, mpvBufferedAhead(cache));
     } catch (cause) {
       // `property unavailable` is expected while no file is loaded (e.g. in
       // the window between spawn and file-loaded); keep the last state and

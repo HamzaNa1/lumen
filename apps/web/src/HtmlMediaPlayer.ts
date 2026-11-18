@@ -1,10 +1,7 @@
 import {
   describePlayback,
   measuredSize,
-  OriginalReturn,
-  originalFits,
   originalKbps,
-  originalStalled,
   PLAYBACK_REPORT_INTERVAL_MS,
   PlaybackDiagnostics,
   type PlaybackSessionApi,
@@ -12,14 +9,12 @@ import {
   PlaybackUnsupportedError,
   type PlayerBuffer,
   qualityState,
-  RETURN_TO_ORIGINAL,
   rememberedQuality,
   rememberedThroughput,
   rememberThroughput,
   resolveQualityChoice,
   ServerHttpError,
   setTranscodingParameters,
-  shouldLeaveOriginal,
   startingRendition,
   ThroughputEstimator,
   TrackSelectionController,
@@ -159,13 +154,8 @@ interface ActiveSession {
   /** "auto", "original", or a rendition id. */
   qualityChoice: string;
   readonly originalKbps: number | null;
-  /** Whether Auto may pick the original: it plays as it is, or with only its audio converted. */
+  /** Whether the original plays as it is, or with only its audio converted. */
   readonly originalUsable: boolean;
-  readonly originalReturn: OriginalReturn;
-  /** Where the buffer ended at the last connection sample while the original played. */
-  lastBufferSample: { readonly atMs: number; readonly endSeconds: number } | null;
-  /** When playback ran dry outside a seek; null while it has data. */
-  starvedSinceMs: number | null;
 }
 
 const LOAD_TIMEOUT_MS = 20_000;
@@ -297,18 +287,6 @@ export class HtmlMediaPlayer {
     const active = this.requireActive(sessionId);
     if (!Number.isFinite(positionSeconds) || positionSeconds < 0)
       throw new Error("Invalid position");
-    // A seek interrupts playback anyway, so it is where Auto returns to the original for free.
-    if (
-      this.adaptive !== null &&
-      RETURN_TO_ORIGINAL &&
-      active.qualityChoice === "auto" &&
-      active.originalUsable &&
-      this.estimator.kbps !== null &&
-      originalFits(this.estimator.kbps, active.originalKbps)
-    ) {
-      await this.replaceStream(active, null, positionSeconds);
-      return this.publishIfActive(active);
-    }
     if (this.conversion !== null) {
       active.replacingSource = true;
       this.unload();
@@ -475,12 +453,16 @@ export class HtmlMediaPlayer {
     if (choice !== "auto" && choice !== "original" && rendition === null)
       throw new Error("Quality is unavailable");
     active.qualityChoice = choice;
-    active.originalReturn.reset();
     const position = this.snapshot(active).positionSeconds;
+    // Auto adapts among converted pieces only, so choosing it leaves the original.
+    const target =
+      choice === "auto"
+        ? (startingRendition(active.renditions, this.estimator.kbps) ?? null)
+        : rendition;
     if (choice === "original" && this.adaptive !== null)
       await this.replaceStream(active, null, position);
-    else if (rendition !== null && this.adaptive === null)
-      await this.replaceStream(active, rendition, position);
+    else if (target !== null && this.adaptive === null)
+      await this.replaceStream(active, target, position);
     else this.adaptive?.choose(choice);
     void active.selection
       ?.rememberQuality(choice, active.renditions, active.originalUsable)
@@ -737,9 +719,6 @@ export class HtmlMediaPlayer {
       qualityChoice: quality.choice,
       originalKbps: quality.originalKbps,
       originalUsable: quality.originalUsable,
-      originalReturn: new OriginalReturn(),
-      lastBufferSample: null,
-      starvedSinceMs: null,
     };
     this.active = active;
     try {
@@ -802,15 +781,11 @@ export class HtmlMediaPlayer {
   private startingQuality(quality: {
     readonly renditions: ReadonlyArray<AdaptiveRendition>;
     readonly choice: string;
-    readonly originalKbps: number | null;
-    readonly originalUsable: boolean;
   }): AdaptiveRendition | null {
     const { renditions, choice } = quality;
     if (renditions.length === 0 || choice === "original") return null;
     const chosen = renditions.find((rendition) => rendition.id === choice);
     if (chosen !== undefined) return chosen;
-    if (quality.originalUsable && originalFits(this.estimator.kbps, quality.originalKbps))
-      return null;
     return startingRendition(renditions, this.estimator.kbps) ?? null;
   }
 
@@ -884,7 +859,6 @@ export class HtmlMediaPlayer {
     positionSeconds: number,
   ): Promise<void> {
     active.replacingSource = true;
-    active.lastBufferSample = null;
     this.unload();
     this.nextAdaptive = rendition;
     if (rendition === null && this.conversion !== null && !active.originalUsable)
@@ -904,72 +878,9 @@ export class HtmlMediaPlayer {
     if (!active.desiredPaused) await this.play(active);
   }
 
-  /**
-   * Auto's moves between the original and converted pieces, checked as playback goes on: away
-   * from the original when the connection cannot keep it fed, back once it has proven it can.
-   */
+  /** Auto re-evaluates as time passes, not only as pieces arrive. */
   private watchQuality(active: ActiveSession): void {
-    if (active.replacingSource || active.qualityChoice !== "auto" || active.renditions.length === 0)
-      return;
-    const nowMs = performance.now();
-    const adaptive = this.adaptive;
-    if (adaptive !== null) {
-      adaptive.decide();
-      if (
-        active.originalUsable &&
-        active.originalReturn.observe(nowMs, this.estimator.kbps, active.originalKbps)
-      )
-        this.switchInBackground(active, null);
-      return;
-    }
-    if (!active.originalUsable) return;
-    // The original's connection is measured by how fast the buffer grows while the browser
-    // fetches: seconds of file gained, at the file's average bitrate.
-    const ahead = this.bufferedAhead();
-    const end = this.element.currentTime + (Number.isFinite(ahead) ? ahead : 0);
-    const last = active.lastBufferSample;
-    if (
-      last !== null &&
-      active.originalKbps !== null &&
-      this.element.networkState === 2 &&
-      Number.isFinite(ahead) &&
-      end > last.endSeconds
-    )
-      this.estimator.sample(
-        ((end - last.endSeconds) * active.originalKbps * 1000) / 8,
-        nowMs - last.atMs,
-        end - last.endSeconds,
-      );
-    active.lastBufferSample = { atMs: nowMs, endSeconds: end };
-    if (
-      Number.isFinite(ahead) &&
-      shouldLeaveOriginal({
-        stalledSeconds:
-          active.starvedSinceMs === null || this.element.paused
-            ? 0
-            : (nowMs - active.starvedSinceMs) / 1000,
-        bufferAheadSeconds: ahead,
-        estimateKbps: this.estimator.kbps,
-        originalKbps: active.originalKbps,
-      })
-    ) {
-      if (
-        active.starvedSinceMs !== null &&
-        originalStalled((nowMs - active.starvedSinceMs) / 1000) &&
-        active.originalKbps !== null
-      )
-        this.estimator.capAt(active.originalKbps * 0.9);
-      const rendition = startingRendition(active.renditions, this.estimator.kbps);
-      if (rendition !== undefined) this.switchInBackground(active, rendition);
-    }
-  }
-
-  /** A switch Auto makes on its own; failing it ends playback as any other loss of media would. */
-  private switchInBackground(active: ActiveSession, rendition: AdaptiveRendition | null): void {
-    const position = this.snapshot(active).positionSeconds;
-    void this.replaceStream(active, rendition, position).catch((cause: unknown) =>
-      this.withoutConversion(active, position, cause),
-    );
+    if (!active.replacingSource && active.qualityChoice === "auto") this.adaptive?.decide();
   }
 
   /**
@@ -1109,8 +1020,6 @@ export class HtmlMediaPlayer {
     };
     const buffering = (waiting: boolean) => (): void => {
       active.buffering = waiting;
-      if (!waiting) active.starvedSinceMs = null;
-      else if (!this.element.seeking) active.starvedSinceMs ??= performance.now();
       update();
     };
     const record = (kind: string): void => {
@@ -1143,7 +1052,6 @@ export class HtmlMediaPlayer {
     };
     const onSeeking = (): void => {
       resumesPastSeconds = this.element.currentTime;
-      active.starvedSinceMs = null;
       update();
     };
     const onPlaying = (): void => {
@@ -1163,10 +1071,7 @@ export class HtmlMediaPlayer {
     const onSeeked = (): void => {
       // WebKit can keep HAVE_CURRENT_DATA after seeking in a fully downloaded file,
       // even while its clock advances. No further canplay/playing event is guaranteed.
-      if (this.bufferedAhead() > 0) {
-        active.buffering = false;
-        active.starvedSinceMs = null;
-      }
+      if (this.bufferedAhead() > 0) active.buffering = false;
       update();
     };
     const onError = (): void => {

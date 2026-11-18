@@ -1,5 +1,4 @@
 import { execFileSync } from "node:child_process";
-import { statSync } from "node:fs";
 import { join } from "node:path";
 import { connectDesktop, desktopPlayerPage, expect, test } from "./support/desktop";
 import { encode } from "./support/encode";
@@ -372,39 +371,22 @@ test("desktop moves between the original and converted qualities, and between qu
   }
 });
 
-test("desktop Auto moves an original that stops arriving onto converted pieces and keeps playing", async ({
+test("desktop Auto starts on converted pieces and a seek keeps it there", async ({
   server,
   admin,
   desktop,
 }) => {
   const info = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
-  test.skip(info.capabilities?.adaptiveStreaming !== true, "The server predates qualities");
+  test.skip(info.capabilities?.qualityMemory !== true, "The server predates saved qualities");
   const library = await server.library(admin.accessToken, "movies", []);
-  const file = join(library.path, "Film.mkv");
-  await encode(film720, file);
+  await encode(film720, join(library.path, "Film.mkv"));
   await server.scan(admin.accessToken, library.id);
+  await server.api("/me/track-preferences", {
+    token: admin.accessToken,
+    method: "PATCH",
+    body: { quality: "auto" },
+  });
   const proxy = await new NetworkProxy(server.origin).start();
-  // The original stops arriving a second or two in, as on a link that cannot carry it.
-  let allowance = Math.round(statSync(file).size * 0.04);
-  proxy.intercept = async (request, response) => {
-    if (request.method !== "GET" || !/^\/api\/v1\/media\/[^/?]+(?:\?|$)/u.test(request.url ?? ""))
-      return false;
-    const upstream = await fetch(new URL(request.url ?? "/", proxy.upstream), {
-      headers: {
-        authorization: request.headers.authorization ?? "",
-        range: request.headers.range ?? "bytes=0-",
-      },
-    });
-    response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
-    for await (const chunk of upstream.body ?? []) {
-      const part = Buffer.from(chunk).subarray(0, Math.max(0, allowance));
-      allowance -= part.length;
-      response.write(part);
-      if (allowance <= 0) return true;
-    }
-    response.end();
-    return true;
-  };
   const { page } = desktop;
   try {
     await connectDesktop(page, proxy);
@@ -414,18 +396,17 @@ test("desktop Auto moves an original that stops arriving onto converted pieces a
       .first()
       .click({ force: true });
     const state = () => page.evaluate(() => window.lumen.player.state());
-    await expect.poll(state).toMatchObject({ quality: { playing: "original" } });
-    await page.evaluate(
-      (sessionId) => window.lumen.player.selectQuality(sessionId, "auto"),
-      (await state())?.sessionId ?? "",
-    );
+    // A local link has room for the original, and Auto still plays converted pieces. Nothing
+    // moves Auto off the original once there, so reaching one proves where it started.
+    await expect.poll(state).toMatchObject({ paused: false, quality: { choice: "auto" } });
     await expect.poll(async () => (await state())?.quality?.playing).toMatch(/^\d+p$/u);
-    const switchedAt = (await state())?.positionSeconds ?? 0;
-    expect((await state())?.quality?.choice).toBe("auto");
-    await expect
-      .poll(async () => (await state())?.positionSeconds ?? 0)
-      .toBeGreaterThan(switchedAt + 2);
-    expect(await state()).toMatchObject({ paused: false });
+    const sessionId = (await state())?.sessionId ?? "";
+    await page.evaluate((id) => window.lumen.player.seek(id, 30), sessionId);
+    await expect.poll(async () => (await state())?.positionSeconds ?? 0).toBeGreaterThanOrEqual(30);
+    expect((await state())?.quality).toMatchObject({
+      choice: "auto",
+      playing: expect.stringMatching(/^\d+p$/u),
+    });
   } finally {
     await proxy.close();
   }

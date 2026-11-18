@@ -3674,26 +3674,15 @@ button.folder-browser-item:hover {
   gap: 6px;
   padding: 8px;
 }
-.media-player-quality-panel :is([role="menu"], .media-player-quality-converted) {
+.media-player-quality-panel [role="menu"] {
   display: grid;
   gap: 2px;
-}
-.media-player-quality-converted {
-  min-width: 0;
-  margin: 0;
-  padding: 0;
-  border: 0;
 }
 .media-player-quality-separator {
   width: 100%;
   margin: 4px 0;
   border: 0;
   border-top: 1px solid rgba(255, 255, 255, 0.08);
-}
-.media-player-quality-group {
-  padding: 4px 12px 2px;
-  color: rgba(255, 255, 255, 0.5);
-  font-size: 11.5px;
 }
 .media-player-quality-header {
   display: flex;
