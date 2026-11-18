@@ -7,6 +7,7 @@ import {
   IpcPlayerSurfaceBounds,
   LibraryAccess,
   MetadataMatchSelection,
+  type PlaybackInfo,
   PlayerAction,
   PlayerDisplay,
   type ServerDiscovery,
@@ -586,8 +587,12 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const input = decode(Schema.Struct({ sessionId: Schema.String, output: AudioOutput }), raw);
     return dependencies.player.setAudioOutput(input.sessionId, input.output);
   });
-  handle("player:info", async (_event, raw) =>
-    dependencies.player.info(decode(Schema.String, raw)),
+  handle(
+    "player:info",
+    async (_event, raw): Promise<PlaybackInfo> => ({
+      ...(await dependencies.player.info(decode(Schema.String, raw))),
+      sync: watch.syncInfo(),
+    }),
   );
   handle("player:state", async () => dependencies.player.getState());
   handle("player:timeline", async () => dependencies.player.playbackTimeline());

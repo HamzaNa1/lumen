@@ -3,6 +3,7 @@ import { PlayerQuality } from "./adaptive.ts";
 import { Sha256Digest, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 import { ServerInfo } from "./server.ts";
 import { TrackMemory, TrackPreferences } from "./track-memory.ts";
+import { WatchSyncInfo } from "./watch-groups.ts";
 
 // Application models shared by every client. They describe what the apps render, independent of
 // how a platform transports them (HTTP for the browser, IPC for the desktop renderer).
@@ -324,20 +325,59 @@ export const PlayerState = Schema.Struct({
 });
 export type PlayerState = Schema.Schema.Type<typeof PlayerState>;
 
+/** What the player is given to play. */
+export const PlaybackDelivery = Schema.Union([
+  /** The file as it is stored, from the server or, `fromDevice`, from this device's download. */
+  Schema.Struct({ kind: Schema.Literal("original"), fromDevice: Schema.Boolean }),
+  /** One stream the server converts as it plays; "copy" passes a track through unchanged. */
+  Schema.Struct({
+    kind: Schema.Literal("converted"),
+    video: Schema.Literals(["copy", "h264", "vp8", "none"]),
+    audio: Schema.Literals(["copy", "aac", "opus"]),
+  }),
+  /** Converted pieces of one quality, such as "720p", which the player may change between. */
+  Schema.Struct({ kind: Schema.Literal("adaptive"), rendition: Schema.String }),
+]);
+export type PlaybackDelivery = Schema.Schema.Type<typeof PlaybackDelivery>;
+
 /** What a player reports about the playback in progress, for the viewer to troubleshoot it. */
 export const PlaybackInfo = Schema.Struct({
+  sessionId: Uuid,
   /** What draws the video, such as "mpv 0.40.0". */
   player: Schema.String,
-  /** How the file reaches the player, such as "https". */
-  protocol: Schema.String,
+  delivery: PlaybackDelivery,
+  /** How the media reaches the player, such as "HLS over https"; null when it is on this device. */
+  protocol: Schema.NullOr(Schema.String),
+  quality: Schema.NullOr(PlayerQuality),
+  /** Null until the player can say; `toEnd` once it holds everything left to play. */
+  buffer: Schema.NullOr(Schema.Struct({ aheadSeconds: Schema.Number, toEnd: Schema.Boolean })),
   playerSize: Schema.NullOr(Dimensions),
   videoSize: Schema.NullOr(Dimensions),
   droppedFrames: Schema.NullOr(Schema.Number),
   corruptedFrames: Schema.NullOr(Schema.Number),
+  /** Null where the player cannot tell; `hardware` names the API, or is null for software. */
+  decoding: Schema.NullOr(Schema.Struct({ hardware: Schema.NullOr(Schema.String) })),
+  /** The decoded frames' pixel format, such as "yuv420p10". */
+  pixelFormat: Schema.NullOr(Schema.String),
+  /** Colour primaries and transfer function as the decoder reads them, such as "bt.2020" and "pq". */
+  colourPrimaries: Schema.NullOr(Schema.String),
+  colourTransfer: Schema.NullOr(Schema.String),
+  /** Frames per second the file declares. */
+  frameRate: Schema.NullOr(Schema.Number),
+  /** Frames per second the player is putting out, as it measures them. */
+  outputFrameRate: Schema.NullOr(Schema.Number),
+  displayRefreshRate: Schema.NullOr(Schema.Number),
+  /** How far audio leads video, in seconds. */
+  avSyncSeconds: Schema.NullOr(Schema.Number),
   durationSeconds: Schema.NullOr(Schema.Number),
   /** Null where the server does not describe the file. */
   media: Schema.NullOr(PlayableMedia),
   audio: Schema.NullOr(PlayableStream),
+  subtitle: Schema.NullOr(PlayableStream),
+  /** The file has subtitles this player cannot show as it plays now, such as while converting. */
+  subtitlesUnavailable: Schema.Boolean,
+  /** Null outside a watch group. */
+  sync: Schema.NullOr(WatchSyncInfo),
 });
 export type PlaybackInfo = Schema.Schema.Type<typeof PlaybackInfo>;
 

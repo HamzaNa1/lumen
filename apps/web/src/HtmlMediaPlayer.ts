@@ -1,4 +1,5 @@
 import {
+  bufferReport,
   describePlayback,
   measuredSize,
   originalKbps,
@@ -8,6 +9,7 @@ import {
   PlaybackSessionReporter,
   PlaybackUnsupportedError,
   type PlayerBuffer,
+  type PlayerPlaybackInfo,
   qualityState,
   rememberedQuality,
   rememberedThroughput,
@@ -23,7 +25,7 @@ import {
 import type {
   AdaptiveRendition,
   PlayableStream,
-  PlaybackInfo,
+  PlayerQuality,
   PlayerSession,
   PlayerState,
   VolumeMemory,
@@ -513,17 +515,44 @@ export class HtmlMediaPlayer {
   }
 
   /** The state of a session that is still the one playing. */
-  info(sessionId: string): PlaybackInfo {
+  info(sessionId: string): PlayerPlaybackInfo {
     const active = this.requireActive(sessionId);
-    const { element } = this;
-    const quality = element.getVideoPlaybackQuality?.();
-    return describePlayback(active.session, this.api.serverOrigin, active.selectedAudioStreamId, {
-      player: "HTML video player",
-      playerSize: measuredSize(element.clientWidth, element.clientHeight),
-      videoSize: measuredSize(element.videoWidth, element.videoHeight),
-      droppedFrames: quality?.droppedVideoFrames ?? null,
-      corruptedFrames: quality?.corruptedVideoFrames ?? null,
-    });
+    const { element, adaptive, conversion } = this;
+    const frames = element.getVideoPlaybackQuality?.();
+    return describePlayback(
+      active.session,
+      this.api.serverOrigin,
+      // A browser shows none of a file's own subtitles.
+      { audio: active.selectedAudioStreamId, subtitle: null },
+      {
+        player: "HTML video player",
+        delivery:
+          adaptive !== null
+            ? {
+                kind: "adaptive",
+                rendition: (adaptive.playingRendition ?? adaptive.loadingRendition).id,
+              }
+            : conversion !== null
+              ? { kind: "converted", video: conversion.video, audio: conversion.audio }
+              : { kind: "original", fromDevice: false },
+        quality: this.quality(active) ?? null,
+        buffer: bufferReport(this.bufferedAhead()),
+        playerSize: measuredSize(element.clientWidth, element.clientHeight),
+        videoSize: measuredSize(element.videoWidth, element.videoHeight),
+        droppedFrames: frames?.droppedVideoFrames ?? null,
+        corruptedFrames: frames?.corruptedVideoFrames ?? null,
+        // A browser does not say how it decodes, nor at what rate it draws.
+        decoding: null,
+        pixelFormat: null,
+        colourPrimaries: null,
+        colourTransfer: null,
+        frameRate: null,
+        outputFrameRate: null,
+        displayRefreshRate: null,
+        avSyncSeconds: null,
+        subtitlesUnavailable: active.session.streams.some((stream) => stream.kind === "subtitle"),
+      },
+    );
   }
 
   getActiveState(sessionId: string): PlayerState {
@@ -1242,24 +1271,26 @@ export class HtmlMediaPlayer {
       audioOutput: "auto-safe",
       buffering: active.buffering && !element.paused,
       awaitingInteraction: active.awaitingInteraction,
-      ...(active.renditions.length === 0
-        ? {}
-        : {
-            quality: qualityState({
-              choice: active.qualityChoice,
-              playing:
-                this.adaptive === null
-                  ? "original"
-                  : (this.adaptive.playingRendition ?? this.adaptive.loadingRendition).id,
-              original: {
-                height: active.session.media?.video?.size?.height ?? null,
-                kbps: active.originalKbps,
-              },
-              renditions: active.renditions,
-              measuredKbps: this.estimator.kbps,
-            }),
-          }),
+      ...(active.renditions.length === 0 ? {} : { quality: this.quality(active) }),
     };
+  }
+
+  /** Left out where the viewer has no quality to choose. */
+  private quality(active: ActiveSession): PlayerQuality | undefined {
+    if (active.renditions.length === 0) return undefined;
+    return qualityState({
+      choice: active.qualityChoice,
+      playing:
+        this.adaptive === null
+          ? "original"
+          : (this.adaptive.playingRendition ?? this.adaptive.loadingRendition).id,
+      original: {
+        height: active.session.media?.video?.size?.height ?? null,
+        kbps: active.originalKbps,
+      },
+      renditions: active.renditions,
+      measuredKbps: this.estimator.kbps,
+    });
   }
 
   private publish(active: ActiveSession): PlayerState {

@@ -4,7 +4,16 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
-import { openMovie, openSettings, pause, playing, settingsValue, signIn } from "./support/browser";
+import {
+  openMovie,
+  openPlaybackInfo,
+  openSettings,
+  pause,
+  playbackInfoValue,
+  playing,
+  settingsValue,
+  signIn,
+} from "./support/browser";
 import { openDatabase } from "./support/database";
 import { expect, serverVersion, test } from "./support/server";
 
@@ -125,12 +134,30 @@ test("real playback supports controls, fullscreen, buffering, diagnostics and te
   await expect.poll(() => video.evaluate((video: HTMLVideoElement) => video.volume)).toBe(0);
   await page.keyboard.press("End");
   await expect.poll(() => video.evaluate((video: HTMLVideoElement) => video.volume)).toBe(1);
-  await page.getByRole("button", { name: "Playback settings", exact: true }).click();
-  await page.getByRole("button", { name: "Playback info", exact: true }).click();
-  await expect(page.getByText("Playback info", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Playback info" })).toContainText(
-    "Video resolution",
-  );
+  const info = await openPlaybackInfo(page);
+  await expect(info).toContainText("Video resolution");
+  await expect(playbackInfoValue(info, "Play method")).toHaveText("Direct play");
+  await expect(playbackInfoValue(info, "Buffered ahead")).toHaveText(/^(\d+\.\d s|To the end)$/);
+  // Outside a watch group there is nothing to keep in step with.
+  await expect(info.getByRole("heading", { name: "Sync" })).toHaveCount(0);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          Reflect.set(window, "copiedPlaybackInfo", text);
+        },
+      },
+    });
+  });
+  await info.getByRole("button", { name: "Copy playback info" }).click();
+  await expect(info.getByRole("button", { name: "Copied playback info" })).toBeVisible();
+  const copied = String(await page.evaluate(() => Reflect.get(window, "copiedPlaybackInfo")));
+  expect(copied).toContain("  Play method: Direct play");
+  expect(copied).toMatch(/ {2}Session ID: [0-9a-f-]{36}/u);
+  // A report a viewer pastes anywhere must not carry what fetches the media.
+  expect(copied).not.toContain("grant");
+  expect(copied).not.toMatch(/https?:\/\//u);
   await page.mouse.move(310, 310);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
@@ -358,6 +385,9 @@ for (const output of ["mp4", "webm"] as const)
     expect(await video.getAttribute("src")).toContain("transcode=1");
     expect(await video.getAttribute("src")).toContain(`format=${output}`);
     await pause(page);
+    const info = await openPlaybackInfo(page);
+    await expect(playbackInfoValue(info, "Play method")).toHaveText(/^Converting /u);
+    await info.getByRole("button", { name: "Close playback info" }).click();
     await page.getByRole("button", { name: "Forward 10 seconds" }).click();
     await expect
       .poll(async () =>
@@ -557,6 +587,12 @@ test.describe(() => {
     };
     await expect.poll(() => pieces.includes("360p")).toBe(true);
     await expect.poll(quality).toBe("Auto (360p)");
+    const info = await openPlaybackInfo(page);
+    await expect(playbackInfoValue(info, "Play method")).toHaveText("Converting (360p)");
+    await expect(playbackInfoValue(info, "Protocol")).toHaveText("HLS over http");
+    await expect(playbackInfoValue(info, "Quality")).toHaveText("Auto (360p)");
+    await expect(playbackInfoValue(info, "Network speed")).toHaveText(/bps$/u);
+    await info.getByRole("button", { name: "Close playback info" }).click();
 
     await throttle(-1);
     const stalls = await video.evaluate((element: HTMLVideoElement) => {

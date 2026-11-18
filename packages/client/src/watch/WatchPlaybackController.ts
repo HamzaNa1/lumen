@@ -5,6 +5,7 @@ import {
   type WatchAction,
   type WatchGroup,
   type WatchStatus,
+  type WatchSyncInfo,
   watchPosition,
 } from "@lumen/contracts";
 import { PlaybackUnavailableError, PlaybackUnsupportedError } from "../errors.ts";
@@ -96,6 +97,10 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
   private readonly correction = new WatchDriftCorrection();
   private correctionSessionId: string | null = null;
   private lastDiagnosticMs = 0;
+  /** The last drift measured, on the performance.now() clock. */
+  private drift: { readonly seconds: number; readonly atMs: number } | null = null;
+  /** Seeks to catch up with the group named, counted from when this viewer joined it. */
+  private catchUp = { groupId: null as string | null, seeks: 0 };
   private generation = 0;
   private pendingStop: Promise<void> | null = null;
   private stoppedPlayback: { groupId: string; revision: number } | null = null;
@@ -207,6 +212,7 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     await client.action(action);
     if (this.client !== client) return;
     if (action.type === "join" || action.type === "create") {
+      this.catchUp = { groupId: null, seeks: 0 };
       this.stoppedPlayback = null;
       this.stoppedAfterFailure = false;
       void this.synchronize();
@@ -333,6 +339,48 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
       void this.resetSpeed().catch(() => undefined);
     }
     if (ready) void this.synchronize();
+  }
+
+  /** How this viewer's player keeps up with the group; null outside one. */
+  syncInfo(): WatchSyncInfo | null {
+    const { group, connection, memberId } = this.status;
+    if (!this.grouped) return null;
+    const playback = group?.playback ?? null;
+    const holding = playback?.waitingFor;
+    const names = new Map(group?.members.map((member) => [member.id, member.displayName]));
+    const timing = this.client?.timing;
+    const drift = this.drift;
+    return {
+      connection,
+      state:
+        playback === null
+          ? "idle"
+          : holding !== undefined
+            ? "holding"
+            : playback.paused
+              ? "paused"
+              : "playing",
+      waitingFor: (holding ?? []).map((id) =>
+        id === memberId ? null : (names.get(id) ?? "Someone"),
+      ),
+      // One correction is decided every half second; an older measurement no longer holds.
+      driftSeconds:
+        drift !== null && performance.now() - drift.atMs <= 2 * SYNCHRONIZE_INTERVAL_MS
+          ? drift.seconds
+          : null,
+      speed: this.speed,
+      catchUpSeeks: group !== null && this.catchUp.groupId === group.id ? this.catchUp.seeks : 0,
+      roundTripMs: timing?.roundTripMs ?? null,
+      bestRoundTripMs: timing?.bestRoundTripMs ?? null,
+      clockOffsetMs: timing?.clockOffsetMs ?? null,
+    };
+  }
+
+  private countCatchUp(groupId: string): void {
+    this.catchUp =
+      this.catchUp.groupId === groupId
+        ? { groupId, seeks: this.catchUp.seeks + 1 }
+        : { groupId, seeks: 1 };
   }
 
   get grouped(): boolean {
@@ -640,6 +688,8 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
           !playback.paused && !sample.advancing
             ? { seek: null, speed: 1 }
             : this.correction.update(position, target, playback.paused, nowMs);
+        this.drift = { seconds: target - position, atMs: nowMs };
+        if (correction.seek !== null) this.countCatchUp(group.id);
         if (
           nowMs - this.lastDiagnosticMs >= 1000 ||
           correction.seek !== null ||

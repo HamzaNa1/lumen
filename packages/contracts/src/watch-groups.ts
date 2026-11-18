@@ -130,6 +130,26 @@ export const WatchMessage = Schema.Union([
   }),
 ]);
 export type WatchMessage = typeof WatchMessage.Type;
+/** How this viewer's player keeps up with their watch group, for the viewer to troubleshoot it. */
+export const WatchSyncInfo = Schema.Struct({
+  connection: Schema.Literals(["offline", "connecting", "connected", "unavailable"]),
+  /** "holding" is a paused group that plays once `waitingFor` have buffered. */
+  state: Schema.Literals(["idle", "playing", "paused", "holding"]),
+  /** Display names; this viewer is null, so a client can name them in its own words. */
+  waitingFor: Schema.Array(Schema.NullOr(Schema.String)),
+  /** The group's position less this player's, at the last measurement; null when not measured lately. */
+  driftSeconds: Schema.NullOr(Schema.Number),
+  /** The playback speed the drift correction last applied; 1 when it is not correcting. */
+  speed: Schema.Number,
+  /** How often this player had drifted too far to ease back and seeked, since joining the group. */
+  catchUpSeeks: Schema.Int,
+  roundTripMs: Schema.NullOr(Schema.Number),
+  bestRoundTripMs: Schema.NullOr(Schema.Number),
+  /** The server's clock less this device's, as measured from the fastest round trip. */
+  clockOffsetMs: Schema.NullOr(Schema.Number),
+});
+export type WatchSyncInfo = typeof WatchSyncInfo.Type;
+
 export interface WatchStatus {
   readonly connection: "offline" | "connecting" | "connected" | "unavailable";
   readonly memberId: string | null;

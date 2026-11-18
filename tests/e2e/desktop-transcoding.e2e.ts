@@ -65,6 +65,9 @@ for (const kind of ["video", "audio", "both"] as const)
       const sessionId = state?.sessionId ?? "";
       expect(await mpvWire(app).command(["get_property", "video-codec"])).toContain("264");
       expect(await mpvWire(app).command(["get_property", "audio-codec-name"])).toBe("aac");
+      expect(
+        await page.evaluate((sessionId) => window.lumen.player.info(sessionId), sessionId),
+      ).toMatchObject({ delivery: { kind: "converted", video: "h264", audio: "aac" } });
       await page.evaluate((sessionId) => window.lumen.player.pause(sessionId, true), sessionId);
       await page.evaluate((sessionId) => window.lumen.player.seek(sessionId, 12), sessionId);
       await expect
@@ -342,6 +345,11 @@ test("desktop moves between the original and converted qualities, and between qu
     await expect.poll(state).toMatchObject({ quality: { choice: "360p", playing: "360p" } });
     await expect.poll(height).toBe(360);
     expect(masters()).toBe(1);
+    expect(await page.evaluate((id) => window.lumen.player.info(id), sessionId)).toMatchObject({
+      delivery: { kind: "adaptive", rendition: "360p" },
+      protocol: "HLS over http",
+      quality: { choice: "360p", playing: "360p" },
+    });
 
     // The bridge holds 360p well ahead of the playhead.
     await expect

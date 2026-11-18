@@ -17,6 +17,7 @@ import { DownloadSettingsSection } from "./Downloads";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
 import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
+import { useClientVersions } from "./versions";
 import { ACCOUNTS_KEY, useWorkspace } from "./Workspace";
 
 const SettingsRow = ({
@@ -217,13 +218,6 @@ const ServerSettings = (): React.ReactElement => {
       ) : null}
     </div>
   );
-};
-
-const CLIENT_VERSIONS_KEY = ["client-versions"] as const;
-
-const useClientVersions = () => {
-  const { versions } = useRuntime();
-  return useQuery({ queryKey: CLIENT_VERSIONS_KEY, queryFn: versions, staleTime: Infinity });
 };
 
 const AboutSettings = (): React.ReactElement => {

@@ -1,4 +1,4 @@
-import { often, playing, signIn } from "./support/browser";
+import { often, openPlaybackInfo, playbackInfoValue, playing, signIn } from "./support/browser";
 import { expect, test } from "./support/watch";
 
 test("two browser players hold for a slow member, recover drift, replace media and stop together", async ({
@@ -46,6 +46,10 @@ test("two browser players hold for a slow member, recover drift, replace media a
     await expect
       .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.paused), often)
       .toBe(true);
+    const held = await openPlaybackInfo(page);
+    await expect(playbackInfoValue(held, "Group")).toHaveText(/^Holding for /u);
+    await expect(playbackInfoValue(held, "Connection")).toHaveText("Connected");
+    await held.getByRole("button", { name: "Close playback info" }).click();
     await owner.action({ type: "pause", itemId: film, paused: true, positionSeconds: 3 });
     release.resolve();
     for (const member of [page, second])
@@ -69,6 +73,14 @@ test("two browser players hold for a slow member, recover drift, replace media a
         return Math.abs((positions[0] ?? 0) - (positions[1] ?? 0));
       }, often)
       .toBeLessThan(1.5);
+    const sync = await openPlaybackInfo(second);
+    await expect(playbackInfoValue(sync, "Group")).toHaveText("Playing");
+    // Three seconds is too far to ease back from, so the player seeked to the group.
+    await expect(playbackInfoValue(sync, "Catch-up seeks")).toHaveText(/^[1-9]\d*$/u);
+    await expect(playbackInfoValue(sync, "Drift")).toHaveText(/^\d+ ms( behind| ahead)?$/u);
+    await expect(playbackInfoValue(sync, "Round trip")).toHaveText(/^\d+ ms \(best \d+ ms\)$/u);
+    await expect(playbackInfoValue(sync, "Clock offset")).toHaveText(/^[+-]?\d+ ms$/u);
+    await sync.getByRole("button", { name: "Close playback info" }).click();
     await owner.action({ type: "play", itemId: other, positionSeconds: 0, replaces: film });
     await Promise.all(
       [page, second].map(async (member) => {

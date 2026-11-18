@@ -1,12 +1,15 @@
 import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import {
+  bufferReport,
   describePlayback,
+  measuredRate,
   measuredSize,
   PlaybackDiagnostics,
   PlaybackSessionReporter,
   PlaybackUnavailableError,
   type PlayerBuffer,
+  type PlayerPlaybackInfo,
   ThroughputEstimator,
   TrackSelectionController,
   type WatchPlaybackSample,
@@ -17,7 +20,6 @@ import {
   DEFAULT_TRACK_PREFERENCES,
   type IpcPlayerSurfaceBounds,
   isWatchCompleted,
-  type PlaybackInfo,
   type PlayerSession,
   type PlayerState,
   type TrackKind,
@@ -697,35 +699,85 @@ export class PlayerController extends EventEmitter {
     );
   }
 
-  async info(sessionId: string): Promise<PlaybackInfo> {
+  async info(sessionId: string): Promise<PlayerPlaybackInfo> {
     const active = this.requireActive(sessionId);
     // MPV has no video to describe until it has decoded some, and asking then is not a failure.
     const property = (name: string): Promise<unknown> =>
       this.command(active, ["get_property", name]).catch(() => null);
-    const [version, osdWidth, osdHeight, width, height, outputDrops, decoderDrops] =
-      await Promise.all(
-        [
-          "mpv-version",
-          "osd-width",
-          "osd-height",
-          "width",
-          "height",
-          "frame-drop-count",
-          "decoder-frame-drop-count",
-        ].map(property),
-      );
+    const [
+      version,
+      osdWidth,
+      osdHeight,
+      width,
+      height,
+      outputDrops,
+      decoderDrops,
+      hwdec,
+      videoParams,
+      frameRate,
+      outputFrameRate,
+      displayRefreshRate,
+      avSync,
+      cache,
+    ] = await Promise.all(
+      [
+        "mpv-version",
+        "osd-width",
+        "osd-height",
+        "width",
+        "height",
+        "frame-drop-count",
+        "decoder-frame-drop-count",
+        "hwdec-current",
+        "video-params",
+        "container-fps",
+        "estimated-vf-fps",
+        "display-fps",
+        "avsync",
+        "demuxer-cache-state",
+      ].map(property),
+    );
     this.assertActive(sessionId);
+    const params = (key: string): string | null => {
+      const value =
+        videoParams !== null && typeof videoParams === "object" && key in videoParams
+          ? (videoParams as Record<string, unknown>)[key]
+          : null;
+      return typeof value === "string" && value !== "" ? value : null;
+    };
+    const { media, session } = active;
     return describePlayback(
-      active.session,
+      session,
       active.client.serverOrigin,
-      this.state?.selectedAudioStreamId ?? null,
+      {
+        audio: this.state?.selectedAudioStreamId ?? null,
+        subtitle: this.state?.selectedSubtitleStreamId ?? null,
+      },
       {
         player: typeof version === "string" ? version : "mpv",
+        delivery: media.delivery,
+        quality: media.quality() ?? null,
+        buffer: media.ready ? bufferReport(mpvBufferedAhead(cache)) : null,
         playerSize: measuredSize(osdWidth, osdHeight),
         videoSize: measuredSize(width, height),
         droppedFrames: sumOfCounts(outputDrops, decoderDrops),
         // MPV drops a frame it cannot decode rather than counting it apart.
         corruptedFrames: null,
+        decoding:
+          typeof hwdec !== "string"
+            ? null
+            : { hardware: hwdec === "" || hwdec === "no" ? null : hwdec },
+        // Frames decoded in hardware name the API as their format, and their content apart.
+        pixelFormat: params("hw-pixelformat") ?? params("pixelformat"),
+        colourPrimaries: params("primaries"),
+        colourTransfer: params("gamma"),
+        frameRate: measuredRate(frameRate),
+        outputFrameRate: measuredRate(outputFrameRate),
+        displayRefreshRate: measuredRate(displayRefreshRate),
+        avSyncSeconds: typeof avSync === "number" && Number.isFinite(avSync) ? avSync : null,
+        // Neither conversion carries the file's subtitles.
+        subtitlesUnavailable:
+          !media.playsOriginal && session.streams.some((stream) => stream.kind === "subtitle"),
       },
     );
   }

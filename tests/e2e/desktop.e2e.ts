@@ -86,12 +86,19 @@ test("native media decodes, seeks, changes volume and audio, survives replacemen
   await expect
     .poll(() => page.evaluate(() => window.lumen.player.state()))
     .toMatchObject({ volume: 35, muted: false });
-  expect(
-    await page.evaluate((sessionId) => window.lumen.player.info(sessionId), sessionId),
-  ).toMatchObject({
+  const info = await page.evaluate((sessionId) => window.lumen.player.info(sessionId), sessionId);
+  expect(info).toMatchObject({
+    sessionId,
     player: expect.stringContaining("mpv"),
+    delivery: { kind: "original", fromDevice: false },
+    protocol: "http",
     videoSize: { width: 640, height: 360 },
+    pixelFormat: expect.any(String),
+    buffer: expect.objectContaining({ aheadSeconds: expect.any(Number) }),
+    sync: null,
   });
+  expect(info.decoding).not.toBeNull();
+  expect(info.frameRate).toBeGreaterThan(0);
   await page.evaluate(
     (sessionId) => window.lumen.player.audioOutput(sessionId, "stereo"),
     sessionId,

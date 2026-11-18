@@ -12,6 +12,7 @@ import {
   ADAPTIVE_PIECE_SECONDS,
   type AdaptiveRendition,
   adaptiveRenditionsFor,
+  type PlaybackDelivery,
   type PlayerQuality,
   type PlayerSession,
   resolveTrackSelection,
@@ -260,6 +261,25 @@ export class MpvMediaSource {
     return this.adaptive === null && !this.transcoded;
   }
 
+  /** What a single conversion turns the file into, whatever MPV could not decode in it. */
+  private get conversion() {
+    return {
+      video: this.options.session.media?.video === null ? ("none" as const) : ("h264" as const),
+      audio: "aac" as const,
+    };
+  }
+
+  /** What MPV is given now. */
+  get delivery(): PlaybackDelivery {
+    if (this.adaptive !== null)
+      return { kind: "adaptive", rendition: this.adaptive.playingRendition.id };
+    if (this.transcoded) return { kind: "converted", ...this.conversion };
+    return {
+      kind: "original",
+      fromDevice: this.options.client.offline === true || this.heldFile?.complete === true,
+    };
+  }
+
   get originalUsable(): boolean {
     return this.originalPlays;
   }
@@ -411,12 +431,7 @@ export class MpvMediaSource {
         if (converted) {
           setTranscodingParameters(
             url,
-            {
-              format: "mp4",
-              video: session.media?.video === null ? "none" : "h264",
-              audio: "aac",
-              audioIndex,
-            },
+            { format: "mp4", ...this.conversion, audioIndex },
             position,
           );
         }

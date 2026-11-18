@@ -32,6 +32,24 @@ export const settingsValue = (settings: Locator, label: string): Locator =>
     .filter({ has: settings.page().getByText(label, { exact: true }) })
     .locator(".settings-row-value");
 
+/** Opens the player's playback info panel from its settings menu. */
+export async function openPlaybackInfo(page: Page): Promise<Locator> {
+  await page.mouse.move(300, 300);
+  const settings = page.getByRole("button", { name: "Playback settings", exact: true });
+  if ((await settings.getAttribute("aria-expanded")) !== "true") await settings.click();
+  await page.getByRole("button", { name: "Playback info", exact: true }).click();
+  const info = page.getByRole("complementary", { name: "Playback info" });
+  await expect(info.locator("dl").first()).toBeVisible();
+  return info;
+}
+
+/** The value a playback info row shows beside its label. */
+export const playbackInfoValue = (info: Locator, label: string): Locator =>
+  info
+    .locator("dl > div")
+    .filter({ has: info.page().getByText(label, { exact: true }) })
+    .locator("dd");
+
 export async function playing(page: Page) {
   const player = page.getByRole("region", { name: "Media player" });
   await expect.poll(() => player.getAttribute("data-status"), often).toMatch(/ready|blocked/);
