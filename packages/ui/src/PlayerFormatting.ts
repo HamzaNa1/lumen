@@ -1,9 +1,12 @@
 import type {
+  BufferedRange,
   Dimensions,
   PlayableStream,
+  PlaybackDelivery,
   PlaybackInfo,
   PlayerQuality,
   QualityOption,
+  WatchSyncInfo,
 } from "@lumen/contracts";
 
 const languageNames = new Intl.DisplayNames(undefined, { type: "language" });
@@ -131,21 +134,170 @@ const section = (
   ),
 });
 
+const subtitleCodecs: Readonly<Record<string, string>> = {
+  subrip: "SRT",
+  srt: "SRT",
+  ass: "ASS",
+  ssa: "SSA",
+  webvtt: "WebVTT",
+  mov_text: "MP4 text",
+  hdmv_pgs_subtitle: "PGS",
+  dvd_subtitle: "VobSub",
+  dvb_subtitle: "DVB",
+};
+
+const codecNames: Readonly<Record<string, string>> = {
+  h264: "H.264",
+  vp8: "VP8",
+  aac: "AAC",
+  opus: "Opus",
+};
+
+const deliveryLabel = (delivery: PlaybackDelivery): string => {
+  if (delivery.kind === "original")
+    return delivery.fromDevice ? "Direct play from this device" : "Direct play";
+  if (delivery.kind === "adaptive") return `Converting (${delivery.rendition})`;
+  const { video, audio } = delivery;
+  if (video === "copy" && audio === "copy") return "Repackaging";
+  if (video === "copy" || video === "none") return `Converting audio to ${codecNames[audio]}`;
+  return `Converting to ${codecNames[video]} and ${audio === "copy" ? "original audio" : codecNames[audio]}`;
+};
+
+const qualityRows = (quality: PlayerQuality | null) => {
+  if (quality === null) return [];
+  const playing = quality.options.find((option) => option.id === quality.playing);
+  return [
+    ["Quality", qualityLabel(quality)],
+    ["Quality bitrate", formatBitrate(playing?.kbps == null ? null : playing.kbps * 1_000)],
+    [
+      "Network speed",
+      quality.measuredKbps === null ? "Measuring…" : formatBitrate(quality.measuredKbps * 1_000),
+    ],
+  ] as const;
+};
+
+const subtitleLabel = (info: PlaybackInfo): string => {
+  const { subtitle } = info;
+  if (subtitle !== null) {
+    const codec =
+      subtitle.codec === null
+        ? null
+        : (subtitleCodecs[subtitle.codec] ?? subtitle.codec.toUpperCase());
+    const [label = "On"] = streamLabels([subtitle]);
+    return codec === null ? label : `${label} · ${codec}`;
+  }
+  if (!info.subtitlesUnavailable) return "Off";
+  return info.delivery.kind === "original"
+    ? "Unavailable in this player"
+    : "Unavailable while converting";
+};
+
+/** The parts that are known, on one line: "H264 · 1920×1080 · 8.00 Mbps". */
+const joined = (parts: ReadonlyArray<string | null | undefined>): string | null => {
+  const known = parts.filter((part): part is string => part != null && part !== "");
+  return known.length === 0 ? null : known.join(" · ");
+};
+
+const formatRate = (value: number | null, unit: string): string | null =>
+  value === null ? null : `${Number(value.toFixed(3))} ${unit}`;
+
+const formatMs = (ms: number): string => `${Math.round(ms)} ms`;
+
+const signedMs = (ms: number): string => {
+  const rounded = Math.round(ms);
+  return `${rounded > 0 ? "+" : ""}${rounded} ms`;
+};
+
+const dynamicRange = (transfer: string | null): string | null =>
+  transfer === null ? null : transfer === "pq" ? "HDR10 (PQ)" : transfer === "hlg" ? "HLG" : "SDR";
+
+const syncState = (sync: WatchSyncInfo): string => {
+  if (sync.state === "idle") return "Nothing playing";
+  if (sync.state === "playing") return "Playing";
+  if (sync.state === "paused") return "Paused";
+  const names = sync.waitingFor.map((name) => name ?? "you");
+  return names.length === 0 ? "Holding" : `Holding for ${names.join(", ")}`;
+};
+
+const driftLabel = (seconds: number | null): string | null => {
+  if (seconds === null) return null;
+  const ms = Math.round(Math.abs(seconds) * 1_000);
+  // Drift is the group's position less this player's: positive means this player is behind.
+  return ms === 0 ? "0 ms" : `${ms} ms ${seconds > 0 ? "behind" : "ahead"}`;
+};
+
+const correctionLabel = (speed: number): string =>
+  speed > 1
+    ? `Catching up (${speed.toFixed(3)}×)`
+    : speed < 1
+      ? `Easing back (${speed.toFixed(3)}×)`
+      : "In sync";
+
+const syncConnection: Readonly<Record<WatchSyncInfo["connection"], string>> = {
+  connected: "Connected",
+  connecting: "Connecting",
+  offline: "Reconnecting",
+  unavailable: "Unavailable",
+};
+
+// A player reads a little past the frame it shows, and what it holds can stop a little short of
+// the duration it reports.
+const bufferToleranceSeconds = 0.5;
+
+/** How much the player holds past `position`, read from the same ranges the timeline draws. */
+export const bufferedAheadLabel = (
+  position: number,
+  duration: number | null,
+  ranges: ReadonlyArray<BufferedRange>,
+): string => {
+  const end =
+    ranges.find(
+      (range) =>
+        range.startSeconds <= position + bufferToleranceSeconds && range.endSeconds > position,
+    )?.endSeconds ?? position;
+  return duration !== null && end >= duration - bufferToleranceSeconds
+    ? "To the end"
+    : `${(end - position).toFixed(1)} s`;
+};
+
 /** What a player reported, grouped and named the way Jellyfin's playback info shows it. */
-export const playbackInfoSections = (info: PlaybackInfo): ReadonlyArray<PlaybackInfoSection> => {
-  const { media, audio } = info;
+export const playbackInfoSections = (
+  info: PlaybackInfo,
+  /** Measured where the viewer sees the player, not when the player last reported. */
+  bufferedAhead: string,
+  /** The app's version, for a viewer to quote alongside what the player reported. */
+  appVersion?: string | null,
+): ReadonlyArray<PlaybackInfoSection> => {
+  const { media, audio, sync } = info;
   const sizeBytes = media?.sizeBytes ?? null;
   return [
     section("Playback info", [
       ["Player", info.player],
-      // Lumen plays the file as it is stored; the server never transcodes it.
-      ["Play method", "Direct playing"],
-      ["Protocol", info.protocol],
+      ["Play method", deliveryLabel(info.delivery)],
+      ["Protocol", info.protocol ?? "Local file"],
       ["Stream type", info.videoSize !== null || media?.video != null ? "Video" : "Audio"],
+      ...qualityRows(info.quality),
+      ["Buffered ahead", bufferedAhead],
+      ["Subtitles", subtitleLabel(info)],
     ]),
     section("Video info", [
       ["Player dimensions", formatSize(info.playerSize)],
       ["Video resolution", formatSize(info.videoSize)],
+      [
+        "Decoder",
+        info.decoding === null
+          ? null
+          : info.decoding.hardware === null
+            ? "Software"
+            : `Hardware (${info.decoding.hardware})`,
+      ],
+      ["Pixel format", info.pixelFormat],
+      ["Colour", joined([info.colourPrimaries, info.colourTransfer])],
+      ["Dynamic range", dynamicRange(info.colourTransfer)],
+      ["Frame rate", formatRate(info.frameRate, "fps")],
+      ["Output frame rate", formatRate(info.outputFrameRate, "fps")],
+      ["Display refresh", formatRate(info.displayRefreshRate, "Hz")],
+      ["A/V sync", info.avSyncSeconds === null ? null : signedMs(info.avSyncSeconds * 1_000)],
       ["Dropped frames", info.droppedFrames],
       ["Corrupted frames", info.corruptedFrames],
     ]),
@@ -158,16 +310,58 @@ export const playbackInfoSections = (info: PlaybackInfo): ReadonlyArray<Playback
           ? null
           : formatBitrate((sizeBytes * 8) / info.durationSeconds),
       ],
-      ["Video codec", media?.video?.codec?.toUpperCase()],
-      ["Video resolution", formatSize(media?.video?.size ?? null)],
-      ["Video bitrate", formatBitrate(media?.video?.bitrate)],
-      ["Audio codec", audio === null ? null : audioCodec(audio.codec)],
-      ["Audio bitrate", formatBitrate(audio?.bitrate)],
-      ["Audio channels", audio?.channels == null ? null : channelLayout(audio.channels)],
-      ["Audio sample rate", audio?.sampleRateHz == null ? null : `${audio.sampleRateHz} Hz`],
+      [
+        "Video",
+        joined([
+          media?.video?.codec?.toUpperCase(),
+          formatSize(media?.video?.size ?? null),
+          formatBitrate(media?.video?.bitrate),
+        ]),
+      ],
+      [
+        "Audio",
+        joined([
+          audio === null ? null : audioCodec(audio.codec),
+          audio?.channels == null ? null : channelLayout(audio.channels),
+          audio?.sampleRateHz == null ? null : `${audio.sampleRateHz / 1_000} kHz`,
+          formatBitrate(audio?.bitrate),
+        ]),
+      ],
+    ]),
+    ...(sync === null
+      ? []
+      : [
+          section("Sync", [
+            ["Connection", syncConnection[sync.connection]],
+            ["Group", syncState(sync)],
+            ["Drift", driftLabel(sync.driftSeconds)],
+            ["Correction", correctionLabel(sync.speed)],
+            ["Catch-up seeks", sync.catchUpSeeks],
+            [
+              "Round trip",
+              sync.roundTripMs === null
+                ? null
+                : sync.bestRoundTripMs === null
+                  ? formatMs(sync.roundTripMs)
+                  : `${formatMs(sync.roundTripMs)} (best ${formatMs(sync.bestRoundTripMs)})`,
+            ],
+            ["Clock offset", sync.clockOffsetMs === null ? null : signedMs(sync.clockOffsetMs)],
+          ]),
+        ]),
+    section("Session", [
+      ["Session ID", info.sessionId],
+      ["App", appVersion],
     ]),
   ].filter((candidate) => candidate.rows.length > 0);
 };
+
+/** The sections as plain text, for a viewer to paste into a bug report. */
+export const playbackInfoText = (sections: ReadonlyArray<PlaybackInfoSection>): string =>
+  sections
+    .map((entry) =>
+      [entry.title, ...entry.rows.map(([label, value]) => `  ${label}: ${value}`)].join("\n"),
+    )
+    .join("\n\n");
 
 /** How a quality option reads in the menu: "Original", "1080p". */
 export const qualityOptionLabel = (option: QualityOption): string =>

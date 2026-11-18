@@ -1,11 +1,23 @@
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { Page } from "@playwright/test";
-import { openMovie, openSettings, pause, playing, settingsValue, signIn } from "./support/browser";
+import {
+  openMovie,
+  openPlaybackInfo,
+  openSettings,
+  pause,
+  playbackInfoValue,
+  playing,
+  settingsValue,
+  signIn,
+} from "./support/browser";
 import { openDatabase } from "./support/database";
+import { encode } from "./support/encode";
+import { NetworkProxy } from "./support/proxy";
 import { expect, serverVersion, test } from "./support/server";
 
 /** Conversion as one stream: the path of browsers without MediaSource, and of "Original". */
@@ -125,16 +137,115 @@ test("real playback supports controls, fullscreen, buffering, diagnostics and te
   await expect.poll(() => video.evaluate((video: HTMLVideoElement) => video.volume)).toBe(0);
   await page.keyboard.press("End");
   await expect.poll(() => video.evaluate((video: HTMLVideoElement) => video.volume)).toBe(1);
-  await page.getByRole("button", { name: "Playback settings", exact: true }).click();
-  await page.getByRole("button", { name: "Playback info", exact: true }).click();
-  await expect(page.getByText("Playback info", { exact: true }).first()).toBeVisible();
-  await expect(page.getByRole("complementary", { name: "Playback info" })).toContainText(
-    "Video resolution",
-  );
+  const info = await openPlaybackInfo(page);
+  await expect(info).toContainText("Video resolution");
+  await expect(playbackInfoValue(info, "Play method")).toHaveText("Direct play");
+  await expect(playbackInfoValue(info, "Buffered ahead")).toHaveText(/^(\d+\.\d s|To the end)$/);
+  // Outside a watch group there is nothing to keep in step with.
+  await expect(info.getByRole("heading", { name: "Sync" })).toHaveCount(0);
+  await page.evaluate(() => {
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text: string) => {
+          Reflect.set(window, "copiedPlaybackInfo", text);
+        },
+      },
+    });
+  });
+  await info.getByRole("button", { name: "Copy playback info" }).click();
+  await expect(info.getByRole("button", { name: "Copied playback info" })).toBeVisible();
+  const copied = String(await page.evaluate(() => Reflect.get(window, "copiedPlaybackInfo")));
+  expect(copied).toContain("  Play method: Direct play");
+  expect(copied).toMatch(/ {2}Session ID: [0-9a-f-]{36}/u);
+  // A report a viewer pastes anywhere must not carry what fetches the media.
+  expect(copied).not.toContain("grant");
+  expect(copied).not.toMatch(/https?:\/\//u);
   await page.mouse.move(310, 310);
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await expect(video).toHaveCount(0);
+});
+
+test("playback info never shows what was buffered at the position a seek leaves", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", []);
+  const file = join(library.path, "Film.mp4");
+  await encode(
+    [
+      ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+      ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart"],
+    ],
+    file,
+  );
+  await server.scan(admin.accessToken, library.id);
+  // The first half of the file arrives; bytes past it wait for the test to end, on a connection
+  // left open, since a browser may take a response that ends early as the whole file.
+  const half = Math.round(statSync(file).size / 2);
+  const done = Promise.withResolvers<void>();
+  const proxy = await new NetworkProxy(server.origin).start();
+  proxy.intercept = async (request, response) => {
+    if (request.method !== "GET" || !/^\/api\/v1\/media\/[^/?]+(?:\?|$)/u.test(request.url ?? ""))
+      return false;
+    const start = Number(/^bytes=(\d+)-/u.exec(request.headers.range ?? "")?.[1] ?? 0);
+    const upstream = await fetch(new URL(request.url ?? "/", proxy.upstream), {
+      headers: { cookie: request.headers.cookie ?? "", range: request.headers.range ?? "bytes=0-" },
+    });
+    response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
+    let allowance = Math.max(0, half - start);
+    for await (const chunk of upstream.body ?? []) {
+      const part = Buffer.from(chunk).subarray(0, allowance);
+      allowance -= part.length;
+      response.write(part);
+      if (allowance <= 0) {
+        await done.promise;
+        break;
+      }
+    }
+    response.end();
+    return true;
+  };
+  try {
+    await signIn(page, proxy);
+    await openMovie(page, proxy, library.id);
+    await pause(page);
+    const info = await openPlaybackInfo(page);
+    const buffered = playbackInfoValue(info, "Buffered ahead");
+    await expect(buffered).toHaveText(/^(1\d|[5-9])\.\d s$/u);
+    // Every position the player shows, beside what the panel says is buffered ahead of it.
+    await page.evaluate(() => {
+      const shown: string[] = [];
+      Reflect.set(window, "shownBuffer", shown);
+      const read = () => {
+        const position = document.querySelector(".media-player-time")?.textContent;
+        const row = [...document.querySelectorAll(".media-player-info dl > div")].find(
+          (row) => row.querySelector("dt")?.textContent === "Buffered ahead",
+        );
+        shown.push(`${position} ${row?.querySelector("dd")?.textContent}`);
+      };
+      new MutationObserver(read).observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+    });
+    await page.mouse.move(300, 300);
+    for (let seek = 0; seek < 3; seek++)
+      await page.getByRole("button", { name: "Forward 10 seconds" }).click();
+    await expect(page.locator(".media-player-time").first()).toHaveText(/^0:3\d$/u);
+    await expect(buffered).toHaveText("0.0 s");
+    const shown = (await page.evaluate(() => Reflect.get(window, "shownBuffer"))) as string[];
+    expect(shown.filter((entry) => /^0:3\d /u.test(entry) && !entry.endsWith(" 0.0 s"))).toEqual(
+      [],
+    );
+  } finally {
+    done.resolve();
+    await proxy.close();
+  }
 });
 
 test("each title remembers volume and episode navigation crosses seasons and skips combined overlaps", async ({
@@ -358,6 +469,9 @@ for (const output of ["mp4", "webm"] as const)
     expect(await video.getAttribute("src")).toContain("transcode=1");
     expect(await video.getAttribute("src")).toContain(`format=${output}`);
     await pause(page);
+    const info = await openPlaybackInfo(page);
+    await expect(playbackInfoValue(info, "Play method")).toHaveText(/^Converting /u);
+    await info.getByRole("button", { name: "Close playback info" }).click();
     await page.getByRole("button", { name: "Forward 10 seconds" }).click();
     await expect
       .poll(async () =>
@@ -557,6 +671,12 @@ test.describe(() => {
     };
     await expect.poll(() => pieces.includes("360p")).toBe(true);
     await expect.poll(quality).toBe("Auto (360p)");
+    const info = await openPlaybackInfo(page);
+    await expect(playbackInfoValue(info, "Play method")).toHaveText("Converting (360p)");
+    await expect(playbackInfoValue(info, "Protocol")).toHaveText("HLS over http");
+    await expect(playbackInfoValue(info, "Quality")).toHaveText("Auto (360p)");
+    await expect(playbackInfoValue(info, "Network speed")).toHaveText(/bps$/u);
+    await info.getByRole("button", { name: "Close playback info" }).click();
 
     await throttle(-1);
     const stalls = await video.evaluate((element: HTMLVideoElement) => {

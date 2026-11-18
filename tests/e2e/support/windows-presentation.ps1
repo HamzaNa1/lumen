@@ -69,23 +69,44 @@ public static class PresentationProbe {
         GetWindowThreadProcessId(GetForegroundWindow(), out foregroundProcess);
         return shellProcess != 0 && foregroundProcess == shellProcess;
     }
-    static void AltTab(Action whileHeld) {
-        Key(0x38, false);
-        try {
-            Key(0x0f, false);
-            Key(0x0f, true);
-            Wait(ShellHasFocus, "Task switcher did not open");
-            if (whileHeld != null) whileHeld();
-            // Commit the selected task explicitly; Alt release alone can leave
-            // the hosted Windows task switcher open after synthetic input.
-            Key(0x1c, false);
-            Key(0x1c, true);
-        } finally { Key(0x38, true); }
+    // The switcher takes focus before it draws and drops keys sent in between,
+    // which leaves it open; commit only once it covers the screen's center.
+    static bool SwitcherDrawn(Bitmap before, Rectangle bounds, string path) {
+        using (var after = Screenshot(bounds)) {
+            int changed = 0, total = 0;
+            for (int y = bounds.Height / 4; y < bounds.Height * 3 / 4; y += 8)
+                for (int x = bounds.Width / 4; x < bounds.Width * 3 / 4; x += 8, total++) {
+                    Color a = before.GetPixel(x, y), b = after.GetPixel(x, y);
+                    if (Math.Abs(a.R - b.R) + Math.Abs(a.G - b.G) + Math.Abs(a.B - b.B) > 48) changed++;
+                }
+            if (changed * 4 < total) return false;
+            if (path != null) after.Save(path, ImageFormat.Png);
+            return true;
+        }
+    }
+    static void AltTab(string capturePath) {
+        var screen = Screen.PrimaryScreen.Bounds;
+        using (var before = Screenshot(screen)) {
+            Key(0x38, false);
+            try {
+                Key(0x0f, false);
+                Key(0x0f, true);
+                Wait(() => ShellHasFocus() && SwitcherDrawn(before, screen, capturePath), "Task switcher did not appear");
+                // Commit the selected task explicitly; Alt release alone can leave
+                // the hosted Windows task switcher open after synthetic input.
+                Key(0x1c, false);
+                Key(0x1c, true);
+            } finally { Key(0x38, true); }
+        }
+    }
+    static Bitmap Screenshot(Rectangle bounds) {
+        var bitmap = new Bitmap(bounds.Width, bounds.Height);
+        using (var graphics = Graphics.FromImage(bitmap))
+            graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+        return bitmap;
     }
     static bool Capture(Rectangle bounds, string path, bool requireVideo) {
-        using (var bitmap = new Bitmap(bounds.Width, bounds.Height)) {
-            using (var graphics = Graphics.FromImage(bitmap))
-                graphics.CopyFromScreen(bounds.Location, Point.Empty, bounds.Size);
+        using (var bitmap = Screenshot(bounds)) {
             int red = 0;
             for (int y = bounds.Height / 4; y < bounds.Height * 3 / 4; y += 4)
                 for (int x = bounds.Width / 4; x < bounds.Width * 3 / 4; x += 4) {
@@ -148,11 +169,7 @@ public static class PresentationProbe {
             Wait(() => GetForegroundWindow() == window, "Cannot prepare Alt+Tab");
             var screenBounds = Screen.FromHandle(window).Bounds;
             Cursor.Position = new Point(screenBounds.Right - 4, screenBounds.Bottom - 4);
-            AltTab(() => {
-                // Sample the OS animation with Alt held for visual inspection.
-                Thread.Sleep(350); DwmFlush();
-                Capture(Screen.FromHandle(window).Bounds, System.IO.Path.Combine(directory, "native-alt-tab.png"), false);
-            });
+            AltTab(System.IO.Path.Combine(directory, "native-alt-tab.png"));
             Wait(() => GetForegroundWindow() != IntPtr.Zero && GetForegroundWindow() != window && !ShellHasFocus(),
                 "Alt+Tab did not switch away from playback");
             AltTab(null);

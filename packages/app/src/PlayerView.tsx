@@ -11,6 +11,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRuntime } from "./Runtime";
 import { ShowDrawer, ShowDrawerButton, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
+import { useClientVersions } from "./versions";
 import { useWatchStatus, WatchGroups, waitingSummary } from "./WatchGroups";
 import { ARTWORK_SIZE, useArtwork } from "./Workspace";
 import "./player.css";
@@ -33,6 +34,7 @@ export const PlayerView = ({
   const { capabilities } = runtime;
   const nativeAudio = runtime.playback.nativeAudio;
   const [watchStatus] = useWatchStatus();
+  const versions = useClientVersions();
   const waiting = waitingSummary(watchStatus.group);
   const [player, setPlayer] = useState<PlayerState | null>(null);
   const [trackActionError, setTrackActionError] = useState<string | null>(null);
@@ -206,6 +208,7 @@ export const PlayerView = ({
               }
         }
         onPlaybackInfo={player === null ? undefined : () => runtime.playback.info(player.sessionId)}
+        appVersion={versions.data?.client}
         buffering={player?.buffering === true || waiting !== undefined}
         {...(waiting === undefined ? {} : { bufferingMessage: waiting })}
         awaitingInteraction={player?.awaitingInteraction === true}

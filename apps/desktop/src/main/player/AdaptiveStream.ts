@@ -115,15 +115,15 @@ export class AdaptiveStream {
     return this.video.held.get(this.indexAt(this.positionSeconds))?.rendition ?? this.loading;
   }
 
-  /** Contiguous seconds held from the playhead on. */
+  /** Contiguous seconds held from the playhead on that MPV would be given if it asked now. */
   get bufferAheadSeconds(): number {
     let index = this.indexAt(this.positionSeconds);
     let end = this.positionSeconds;
-    while (
-      this.video.held.has(index) &&
-      (!this.hasAudio || this.audio.held.has(index)) &&
-      index < this.durations.length
-    ) {
+    while (index < this.durations.length) {
+      const video = this.video.held.get(index);
+      // MPV already holds what it has read, whatever quality was picked since.
+      if (video === undefined || (index > this.readThrough && this.withheld(index, video))) break;
+      if (this.hasAudio && !this.audio.held.has(index)) break;
       end = (this.starts[index] ?? 0) + (this.durations[index] ?? 0);
       index += 1;
     }

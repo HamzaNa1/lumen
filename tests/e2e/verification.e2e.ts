@@ -189,6 +189,10 @@ test("Playwright discovery assigns every E2E suite, selects product owners and r
     return result.stdout.split("\n").filter((line) => line.includes(`[${project}]`));
   };
   const desktopChange = { LUMEN_E2E_CHANGED_PRODUCTS: "desktop" };
+  // Playwright's shared transform cache is not safe to fill concurrently: a listing can read a
+  // source map while another rewrites it and report compiled line numbers. The full source
+  // listing compiles every file the narrower ones load, so they only read the cache after it.
+  await list([], { LUMEN_BROWSER_PRODUCT: "source" });
   await Promise.all([
     ...(
       [

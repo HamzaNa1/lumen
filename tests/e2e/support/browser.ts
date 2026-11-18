@@ -1,7 +1,7 @@
 import type { Locator, Page } from "@playwright/test";
 import { expect, password, type Server } from "./server";
 
-export async function signIn(page: Page, server: Server, username = "admin") {
+export async function signIn(page: Page, server: Pick<Server, "origin">, username = "admin") {
   await page.goto(`${server.origin}web/`);
   await expect(page.getByLabel("Username")).toBeVisible();
   await page.getByLabel("Username").fill(username);
@@ -32,6 +32,24 @@ export const settingsValue = (settings: Locator, label: string): Locator =>
     .filter({ has: settings.page().getByText(label, { exact: true }) })
     .locator(".settings-row-value");
 
+/** Opens the player's playback info panel from its settings menu. */
+export async function openPlaybackInfo(page: Page): Promise<Locator> {
+  await page.mouse.move(300, 300);
+  const settings = page.getByRole("button", { name: "Playback settings", exact: true });
+  if ((await settings.getAttribute("aria-expanded")) !== "true") await settings.click();
+  await page.getByRole("button", { name: "Playback info", exact: true }).click();
+  const info = page.getByRole("complementary", { name: "Playback info" });
+  await expect(info.locator("dl").first()).toBeVisible();
+  return info;
+}
+
+/** The value a playback info row shows beside its label. */
+export const playbackInfoValue = (info: Locator, label: string): Locator =>
+  info
+    .locator("dl > div")
+    .filter({ has: info.page().getByText(label, { exact: true }) })
+    .locator("dd");
+
 export async function playing(page: Page) {
   const player = page.getByRole("region", { name: "Media player" });
   await expect.poll(() => player.getAttribute("data-status"), often).toMatch(/ready|blocked/);
@@ -59,7 +77,7 @@ export async function playing(page: Page) {
 /** Presses Play on each title in turn, from the library down: a show or season opens, the last plays. */
 export async function startPlayback(
   page: Page,
-  server: Server,
+  server: Pick<Server, "origin">,
   libraryId: string,
   titles: readonly string[],
 ) {
@@ -70,7 +88,12 @@ export async function startPlayback(
       .first()
       .click({ force: true });
 }
-export async function openMovie(page: Page, server: Server, libraryId: string, title = "Film") {
+export async function openMovie(
+  page: Page,
+  server: Pick<Server, "origin">,
+  libraryId: string,
+  title = "Film",
+) {
   await startPlayback(page, server, libraryId, [title]);
   await playing(page);
 }

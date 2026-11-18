@@ -32,6 +32,7 @@ import { Button } from "./Button";
 import { SelectField } from "./Controls";
 import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
+  bufferedAheadLabel,
   formatEndsAt,
   formatPlayerTime,
   qualityBadge,
@@ -88,6 +89,8 @@ interface MediaPlayerProps {
   readonly onAudioOutput?: ((output: AudioOutput) => Promise<void>) | undefined;
   /** What the player reports about the playback in progress; omitted while nothing is playing. */
   readonly onPlaybackInfo?: (() => Promise<PlaybackInfo>) | undefined;
+  /** The app's version, shown and copied with the playback info. */
+  readonly appVersion?: string | null | undefined;
   /** False where the player cannot switch tracks at all, whatever the file contains. */
   readonly trackSelection?: boolean;
   readonly subtitleSelection?: boolean;
@@ -268,6 +271,7 @@ export const MediaPlayer = ({
   audioOutput,
   onAudioOutput,
   onPlaybackInfo,
+  appVersion,
   trackSelection = true,
   subtitleSelection = true,
   buffering = false,
@@ -432,7 +436,12 @@ export const MediaPlayer = ({
         </div>
 
         {infoOpen ? (
-          <PlaybackInfoPanel load={onPlaybackInfo} onClose={() => setInfoOpen(false)} />
+          <PlaybackInfoPanel
+            load={onPlaybackInfo}
+            bufferedAhead={bufferedAheadLabel(position, duration, bufferedRanges)}
+            appVersion={appVersion}
+            onClose={() => setInfoOpen(false)}
+          />
         ) : null}
 
         {next === undefined || upNextIn === null || upNextSeconds === null ? null : (

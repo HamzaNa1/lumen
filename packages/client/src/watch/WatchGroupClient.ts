@@ -50,6 +50,7 @@ export class WatchGroupClient {
   >();
   private offsetMs = 0;
   private bestRtt = Infinity;
+  private lastRtt: number | null = null;
   private lastPong = 0;
   private holdsForBuffering = false;
   private takesBuffers = false;
@@ -84,6 +85,21 @@ export class WatchGroupClient {
 
   get serverNow(): number {
     return Date.now() + this.offsetMs;
+  }
+
+  /** The latest and fastest round trip to the server, and the clock offset the fastest gave. */
+  get timing(): {
+    readonly roundTripMs: number | null;
+    readonly bestRoundTripMs: number | null;
+    readonly clockOffsetMs: number | null;
+  } {
+    const measured = Number.isFinite(this.bestRtt);
+    return {
+      roundTripMs: this.lastRtt,
+      bestRoundTripMs: measured ? this.bestRtt : null,
+      // Until a fresh measurement, positions still follow the offset measured before.
+      clockOffsetMs: measured || this.lastRtt !== null ? this.offsetMs : null,
+    };
   }
 
   connect(): void {
@@ -154,6 +170,7 @@ export class WatchGroupClient {
         } else if (message.type === "pong") {
           this.lastPong = Date.now();
           const rtt = Date.now() - message.sentAtMs;
+          if (rtt >= 0) this.lastRtt = rtt;
           if (rtt >= 0 && rtt < this.bestRtt) {
             this.bestRtt = rtt;
             this.offsetMs = message.serverTimeMs - (message.sentAtMs + rtt / 2);
