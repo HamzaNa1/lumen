@@ -251,6 +251,7 @@ export const makeHttpHandler = (
             watchGroups: true,
             browserSessions: true,
             trackMemory: true,
+            qualityMemory: true,
             adjacentEpisodes: true,
             downloads: true,
             preload: true,

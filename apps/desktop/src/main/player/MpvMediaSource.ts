@@ -3,6 +3,8 @@ import {
   originalKbps,
   type PlaybackDiagnostics,
   qualityState,
+  rememberedQuality,
+  resolveQualityChoice,
   setTranscodingParameters,
   startingRendition,
   type ThroughputEstimator,
@@ -95,7 +97,7 @@ export class MpvMediaSource {
   /** Set while converted pieces play. */
   adaptive: AdaptiveStream | null = null;
   /** "auto", "original", or a rendition id. */
-  qualityChoice = "auto";
+  qualityChoice: string;
   offset = 0;
   loading = false;
   interrupted = false;
@@ -143,6 +145,7 @@ export class MpvMediaSource {
     );
     this.audioId = selected.audio?.id ?? null;
     this.subtitleId = selected.subtitle?.id ?? null;
+    this.qualityChoice = rememberedQuality(options.session.trackMemory);
   }
 
   get ready() {
@@ -200,6 +203,11 @@ export class MpvMediaSource {
 
   async start(position: number): Promise<void> {
     await this.held.catch(() => null);
+    this.qualityChoice = resolveQualityChoice(
+      this.qualityChoice,
+      this.renditions,
+      this.originalPlays,
+    );
     const delivery = this.startingDelivery();
     try {
       await this.load(delivery, position).catch((cause: unknown) => {

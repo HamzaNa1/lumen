@@ -34,6 +34,7 @@ import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
   formatEndsAt,
   formatPlayerTime,
+  originalQualityDetail,
   qualityBadge,
   qualityLabel,
   qualityOptionLabel,
@@ -131,10 +132,92 @@ interface MediaPlayerProps {
   readonly quality?: PlayerQuality | undefined;
   /** "auto", "original", or a rendition id. */
   readonly onSelectQuality?: (choice: string) => void;
+  /** The option the viewer's setting plays, which choosing makes the title follow it again. */
+  readonly defaultQuality?: string | undefined;
 }
 
 const markDefault = (label: string, isDefault: boolean): string =>
   isDefault ? `${label} · Default` : label;
+
+/** The original file stands apart from what the server converts, Auto among it. */
+const QualityMenu = ({
+  quality,
+  defaultQuality,
+  onChoose,
+}: {
+  readonly quality: PlayerQuality;
+  readonly defaultQuality: string | undefined;
+  readonly onChoose: (choice: string) => void;
+}): React.ReactElement => {
+  const item = (option: {
+    readonly id: string;
+    readonly label: string;
+    readonly detail: string | null;
+    readonly kbps: number | null;
+  }) => {
+    const detail = [option.detail, option.id === defaultQuality ? "Default" : null]
+      .filter((part) => part !== null)
+      .join(" · ");
+    const checked = quality.choice === option.id;
+    const measured = quality.measuredKbps;
+    return (
+      <button
+        key={option.id}
+        type="button"
+        role="menuitemradio"
+        aria-checked={checked}
+        className="media-player-quality-option"
+        onClick={() => onChoose(option.id)}
+      >
+        <span className="media-player-quality-check">
+          {checked ? <Check aria-hidden="true" size={16} /> : null}
+        </span>
+        <span className="media-player-quality-name">
+          {option.label}
+          {detail === "" ? null : <small>{detail}</small>}
+        </span>
+        {option.kbps !== null && measured !== null && option.kbps > measured * 0.9 ? (
+          <span className="media-player-quality-warning">May buffer</span>
+        ) : null}
+      </button>
+    );
+  };
+  const original = quality.options.find((option) => option.id === "original");
+  return (
+    <div role="menu" aria-label="Quality">
+      {original === undefined ? null : (
+        <>
+          {item({
+            id: original.id,
+            label: "Original",
+            detail: originalQualityDetail(original),
+            kbps: original.kbps,
+          })}
+          <hr className="media-player-quality-separator" />
+        </>
+      )}
+      <fieldset className="media-player-quality-converted">
+        <legend className="media-player-quality-group">Converted by the server</legend>
+        {item({
+          id: "auto",
+          label: "Auto",
+          detail: quality.choice === "auto" ? qualityPlayingLabel(quality) : null,
+          kbps: null,
+        })}
+        {quality.options
+          .filter((option) => option.id !== "original")
+          .map((option) =>
+            item({
+              id: option.id,
+              label: qualityOptionLabel(option),
+              detail: null,
+              kbps: option.kbps,
+            }),
+          )}
+      </fieldset>
+    </div>
+  );
+};
 
 /** Stretches of the timeline drawn on the seek bar, such as what is buffered. */
 const timelineRanges = ({
@@ -211,6 +294,7 @@ export const MediaPlayer = ({
   onSelectSubtitle,
   quality,
   onSelectQuality,
+  defaultQuality,
 }: MediaPlayerProps): React.ReactElement => {
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   // How far along the timeline the pointer rests, from 0 at its start to 1 at its end.
@@ -218,8 +302,6 @@ export const MediaPlayer = ({
   const [volumePreview, setVolumePreview] = useState<number | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsView, setSettingsView] = useState<"main" | "quality">("main");
-  // The viewer's pick shows at once; the player catches up when the new pieces arrive.
-  const [pickedQuality, setPickedQuality] = useState<string | null>(null);
   // Stays open while the controls hide, so it can be read over the video.
   const [infoOpen, setInfoOpen] = useState(false);
   const [audioOutputError, setAudioOutputError] = useState<string | null>(null);
@@ -230,7 +312,6 @@ export const MediaPlayer = ({
   const subtitleLabels = streamLabels(subtitleStreams);
   const trackWarning = trackSelectionWarning(trackSelection, subtitleSelection);
   const qualityChoices = quality !== undefined && quality.options.length > 1 ? quality : null;
-  const shownQualityChoice = pickedQuality ?? qualityChoices?.choice ?? "auto";
   const badge = qualityChoices === null ? null : qualityBadge(qualityChoices);
   const timelineEnd = duration ?? Math.max(position, 1);
   const seekValue = Math.min(seekPreview ?? position, timelineEnd);
@@ -274,7 +355,6 @@ export const MediaPlayer = ({
     if (!settingsOpen) return;
     setSettingsOpen(false);
     setSettingsView("main");
-    setPickedQuality(null);
     setAudioOutputError(null);
     onDismissErrors?.();
   };
@@ -567,48 +647,14 @@ export const MediaPlayer = ({
                       </Button>
                       <strong>Quality</strong>
                     </div>
-                    <div role="menu" aria-label="Quality">
-                      {[
-                        { id: "auto", label: "Auto", kbps: null },
-                        ...qualityChoices.options.map((option) => ({
-                          id: option.id,
-                          label: qualityOptionLabel(option),
-                          kbps: option.kbps,
-                        })),
-                      ].map((option) => {
-                        const measured = qualityChoices.measuredKbps;
-                        const tooMuch =
-                          option.kbps !== null && measured !== null && option.kbps > measured * 0.9;
-                        return (
-                          <button
-                            key={option.id}
-                            type="button"
-                            role="menuitemradio"
-                            aria-checked={shownQualityChoice === option.id}
-                            className="media-player-quality-option"
-                            onClick={() => {
-                              setPickedQuality(option.id);
-                              onSelectQuality?.(option.id);
-                            }}
-                          >
-                            <span className="media-player-quality-check">
-                              {shownQualityChoice === option.id ? (
-                                <Check aria-hidden="true" size={16} />
-                              ) : null}
-                            </span>
-                            <span className="media-player-quality-name">
-                              {option.label}
-                              {option.id === "auto" && qualityChoices.choice === "auto" ? (
-                                <small>{qualityPlayingLabel(qualityChoices)}</small>
-                              ) : null}
-                            </span>
-                            {tooMuch ? (
-                              <span className="media-player-quality-warning">May buffer</span>
-                            ) : null}
-                          </button>
-                        );
-                      })}
-                    </div>
+                    <QualityMenu
+                      quality={qualityChoices}
+                      defaultQuality={defaultQuality}
+                      onChoose={(choice) => {
+                        onSelectQuality?.(choice);
+                        closeSettings();
+                      }}
+                    />
                   </div>
                 ) : settingsOpen ? (
                   <div className="media-player-settings-panel" id="media-player-settings-panel">
@@ -621,7 +667,7 @@ export const MediaPlayer = ({
                         <Gauge aria-hidden="true" size={16} />
                         <span>Quality</span>
                         <span className="media-player-quality-value">
-                          {qualityLabel({ ...qualityChoices, choice: shownQualityChoice })}
+                          {qualityLabel(qualityChoices)}
                         </span>
                         <ChevronRight aria-hidden="true" size={16} />
                       </button>

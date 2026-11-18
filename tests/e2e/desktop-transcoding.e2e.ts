@@ -317,9 +317,10 @@ test("desktop moves between the original and converted qualities, and between qu
       .first()
       .click({ force: true });
     const state = () => page.evaluate(() => window.lumen.player.state());
+    // Without a saved choice the original plays, and nothing moves it on its own.
     await expect.poll(state).toMatchObject({
       paused: false,
-      quality: { choice: "auto", playing: "original" },
+      quality: { choice: "original", playing: "original" },
     });
     const sessionId = (await state())?.sessionId ?? "";
     expect((await state())?.quality?.options.map((option) => option.id)).toEqual([
@@ -413,10 +414,11 @@ test("desktop Auto moves an original that stops arriving onto converted pieces a
       .first()
       .click({ force: true });
     const state = () => page.evaluate(() => window.lumen.player.state());
-    await expect.poll(state).toMatchObject({
-      paused: false,
-      quality: { choice: "auto", playing: "original" },
-    });
+    await expect.poll(state).toMatchObject({ quality: { playing: "original" } });
+    await page.evaluate(
+      (sessionId) => window.lumen.player.selectQuality(sessionId, "auto"),
+      (await state())?.sessionId ?? "",
+    );
     await expect.poll(async () => (await state())?.quality?.playing).toMatch(/^\d+p$/u);
     const switchedAt = (await state())?.positionSeconds ?? 0;
     expect((await state())?.quality?.choice).toBe("auto");

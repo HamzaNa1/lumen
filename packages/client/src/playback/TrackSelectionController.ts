@@ -1,13 +1,17 @@
 import {
+  type AdaptiveRendition,
+  DEFAULT_QUALITY,
   defaultTrackMemory,
   describeTrack,
   type PlayableStream,
+  type RememberedKind,
   resolveTrackSelection,
   type TrackChoiceInput,
   type TrackKind,
   type TrackMemory,
   type TrackPreferences,
 } from "@lumen/contracts";
+import { resolveQualityChoice } from "./adaptive/AdaptiveQuality.ts";
 
 export interface TrackSelectionOptions {
   readonly sourceId: string;
@@ -26,7 +30,7 @@ export interface TrackSelectionOptions {
 export class TrackSelectionController {
   private tail: Promise<void> = Promise.resolve();
   private memory: TrackMemory;
-  private readonly pending = new Map<TrackKind, TrackChoiceInput>();
+  private readonly pending = new Map<RememberedKind, TrackChoiceInput>();
   constructor(private readonly options: TrackSelectionOptions) {
     this.memory = options.memory ?? defaultTrackMemory();
   }
@@ -63,6 +67,24 @@ export class TrackSelectionController {
     });
   }
 
+  /**
+   * Keeps the quality the player switched to for the title. What the viewer's setting plays for
+   * this file inherits, so the title follows the setting again.
+   */
+  rememberQuality(
+    choice: string,
+    renditions: ReadonlyArray<AdaptiveRendition>,
+    originalUsable: boolean,
+  ): Promise<void> {
+    return this.enqueue(async () => {
+      const setting = this.memory.preferences.quality ?? DEFAULT_QUALITY;
+      const remembered =
+        choice === resolveQualityChoice(setting, renditions, originalUsable) ? null : choice;
+      this.memory = { ...this.memory, quality: remembered };
+      await this.persist({ kind: "quality", choice: remembered });
+    });
+  }
+
   retry(): Promise<void> {
     return this.enqueue(async () => {
       for (const input of [...this.pending.values()]) await this.persist(input);
@@ -94,9 +116,7 @@ export class TrackSelectionController {
       memory = await this.options.save(input);
     } catch {
       this.options.assertActive();
-      this.options.onError(
-        "Could not save audio or subtitle settings. Retry to remember your choice.",
-      );
+      this.options.onError("Could not save playback settings. Retry to remember your choice.");
       return;
     }
     this.options.assertActive();
@@ -105,7 +125,7 @@ export class TrackSelectionController {
       this.options.onPreferences(memory.preferences);
     }
     this.pending.delete(input.kind);
-    if (input.choice === null && memory !== null) {
+    if (input.choice === null && memory !== null && input.kind !== "quality") {
       const selected = resolveTrackSelection(
         this.options.streams,
         this.options.sourceId,
@@ -117,7 +137,7 @@ export class TrackSelectionController {
     this.options.onError(
       this.pending.size === 0
         ? null
-        : "Could not save audio or subtitle settings. Retry to remember your choice.",
+        : "Could not save playback settings. Retry to remember your choice.",
     );
   }
 }

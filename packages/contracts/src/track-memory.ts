@@ -5,14 +5,22 @@ export const TrackLanguage = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z]{2,3}(?:-[a-zA-Z]{4})?(?:-(?:[a-zA-Z]{2}|[0-9]{3}))?$/),
   Schema.isMaxLength(35),
 );
+/** "original", "auto", or a converted height such as "720p". */
+export const QualityPreference = Schema.String.check(
+  Schema.isPattern(/^(?:original|auto|[1-9][0-9]{2,3}p)$/),
+);
+export type QualityPreference = Schema.Schema.Type<typeof QualityPreference>;
 export const TrackPreferences = Schema.Struct({
   audioLanguage: TrackLanguage,
   subtitleLanguage: Schema.NullOr(TrackLanguage),
+  /** Older servers leave it out; they remember no quality. */
+  quality: Schema.optional(QualityPreference),
 });
 export type TrackPreferences = Schema.Schema.Type<typeof TrackPreferences>;
 export const TrackPreferencesPatch = Schema.Struct({
   audioLanguage: Schema.optional(TrackLanguage),
   subtitleLanguage: Schema.optional(Schema.NullOr(TrackLanguage)),
+  quality: Schema.optional(QualityPreference),
 });
 export type TrackPreferencesPatch = Schema.Schema.Type<typeof TrackPreferencesPatch>;
 export const TrackKind = Schema.Literals(["audio", "subtitle"]);
@@ -34,17 +42,24 @@ export const TrackMemory = Schema.Struct({
   preferences: TrackPreferences,
   audio: Schema.NullOr(SavedTrack),
   subtitle: Schema.NullOr(SubtitleChoice),
+  /** Null inherits the viewer's setting. Older servers leave it out. */
+  quality: Schema.optional(Schema.NullOr(QualityPreference)),
 });
 export type TrackMemory = Schema.Schema.Type<typeof TrackMemory>;
+/** What a title remembers for a viewer: its tracks and its quality. */
+export const RememberedKind = Schema.Literals(["audio", "subtitle", "quality"]);
+export type RememberedKind = Schema.Schema.Type<typeof RememberedKind>;
 export const TrackChoiceInput = Schema.Struct({
-  kind: TrackKind,
+  kind: RememberedKind,
   // null inherits settings; "off" is an explicit subtitle override.
   choice: Schema.NullOr(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(100))),
 });
 export type TrackChoiceInput = Schema.Schema.Type<typeof TrackChoiceInput>;
+export const DEFAULT_QUALITY: QualityPreference = "original";
 export const DEFAULT_TRACK_PREFERENCES: TrackPreferences = {
   audioLanguage: "en",
   subtitleLanguage: null,
+  quality: DEFAULT_QUALITY,
 };
 export const defaultTrackMemory = (): TrackMemory => ({
   preferences: DEFAULT_TRACK_PREFERENCES,

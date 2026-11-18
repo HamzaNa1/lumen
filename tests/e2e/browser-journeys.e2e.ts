@@ -587,11 +587,17 @@ test.describe(() => {
       await page.evaluate(() => (window as unknown as { stalls: { count: number } }).stalls.count),
     ).toBe(0);
 
-    // A manual choice takes over from Auto and shows in the menu at once. A lower one keeps the
-    // better pieces already held, so it changes what is fetched next rather than what is on screen.
+    // A manual choice takes over from Auto and closes the menu. A lower one keeps the better
+    // pieces already held, so it changes what is fetched next rather than what is on screen.
     await page.locator(".media-player-quality-row").click();
+    const saved = page.waitForResponse((response) => response.url().endsWith("/track-choice"));
     await page.getByRole("menuitemradio", { name: /^480p/u }).click();
-    await page.getByRole("button", { name: "Back to settings" }).click();
+    await expect(page.getByRole("menu", { name: "Quality" })).toBeHidden();
+    await expect.poll(quality).toBe("480p");
+    expect((await saved).ok()).toBe(true);
+
+    // The title remembers it: playing it again starts there instead of at Auto.
+    await openMovie(page, server, library.id);
     await expect.poll(quality).toBe("480p");
   });
 });

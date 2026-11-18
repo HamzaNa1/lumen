@@ -534,6 +534,9 @@ export class PlayerController extends EventEmitter {
     active.motionRevision += 1;
     try {
       await active.media.selectQuality(choice, this.requireState().positionSeconds);
+      void active.selection
+        ?.rememberQuality(choice, active.media.renditions, active.media.originalUsable)
+        .catch(() => undefined);
     } catch (cause) {
       if (!(cause instanceof MediaLoadCancelled)) throw cause;
     } finally {

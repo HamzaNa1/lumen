@@ -13,8 +13,10 @@ import {
   type PlayerBuffer,
   qualityState,
   RETURN_TO_ORIGINAL,
+  rememberedQuality,
   rememberedThroughput,
   rememberThroughput,
+  resolveQualityChoice,
   ServerHttpError,
   setTranscodingParameters,
   shouldLeaveOriginal,
@@ -480,6 +482,9 @@ export class HtmlMediaPlayer {
     else if (rendition !== null && this.adaptive === null)
       await this.replaceStream(active, rendition, position);
     else this.adaptive?.choose(choice);
+    void active.selection
+      ?.rememberQuality(choice, active.renditions, active.originalUsable)
+      .catch(() => undefined);
     return this.publishIfActive(active);
   }
 
@@ -636,7 +641,6 @@ export class HtmlMediaPlayer {
         ? adaptiveRenditionsFor(session.media.video.size?.height ?? null)
         : [];
     this.adaptiveAudioIndex = selectedAudio(session).index;
-    this.openingChoice = previousChoice ?? "auto";
     const quality: {
       renditions: ReadonlyArray<AdaptiveRendition>;
       choice: string;
@@ -644,15 +648,24 @@ export class HtmlMediaPlayer {
       originalUsable: boolean;
     } = {
       renditions,
-      choice: previousChoice ?? "auto",
+      choice: previousChoice ?? rememberedQuality(session.trackMemory),
       originalKbps: originalKbps(session.media?.sizeBytes, session.durationSeconds),
       originalUsable: !this.forceConversion && (plan === null || plan.video === "copy"),
+    };
+    const starting = () => {
+      quality.choice = resolveQualityChoice(
+        quality.choice,
+        quality.renditions,
+        quality.originalUsable,
+      );
+      this.openingChoice = quality.choice;
+      return this.startingQuality(quality);
     };
     try {
       this.conversion = this.forceConversion
         ? fallbackTranscodingPlan(session, (mime) => this.element.canPlayType(mime))
         : plan;
-      this.nextAdaptive = this.startingQuality(quality);
+      this.nextAdaptive = starting();
       this.applyRememberedVolume(session);
       try {
         await this.loadAt(generation, session, startAtSeconds).catch(async (cause: unknown) => {
@@ -683,7 +696,7 @@ export class HtmlMediaPlayer {
         this.conversion = fallbackTranscodingPlan(session, (mime) =>
           this.element.canPlayType(mime),
         );
-        this.nextAdaptive = renditions.length === 0 ? null : this.startingQuality(quality);
+        this.nextAdaptive = renditions.length === 0 ? null : starting();
         this.unload();
         await this.loadAt(generation, session, startAtSeconds);
       }
