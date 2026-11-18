@@ -30,14 +30,14 @@ const errorMessage = (cause: unknown): string => {
   return String(cause);
 };
 
-const waitForNextTick = (signal: AbortSignal): Promise<void> =>
+const waitForNextTick = (signal: AbortSignal, tickMs: number): Promise<void> =>
   new Promise((resolve) => {
     const finish = () => {
       clearTimeout(timeout);
       signal.removeEventListener("abort", finish);
       resolve();
     };
-    const timeout = setTimeout(finish, 1_000);
+    const timeout = setTimeout(finish, tickMs);
     signal.addEventListener("abort", finish, { once: true });
   });
 
@@ -172,7 +172,7 @@ export const makeScheduledJobService = (config?: ServerConfig) =>
       try {
         while (!signal.aborted) {
           await tick();
-          if (!signal.aborted) await waitForNextTick(signal);
+          if (!signal.aborted) await waitForNextTick(signal, config?.schedulerTickMs ?? 1_000);
         }
       } finally {
         logger.info("scheduler_stopped");

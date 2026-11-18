@@ -134,9 +134,13 @@ export class AdaptiveStream {
   setPosition(seconds: number): void {
     if (!Number.isFinite(seconds)) return;
     this.positionSeconds = seconds;
-    const first = this.indexAt(seconds) - BEHIND_PIECES;
+    const playing = this.indexAt(seconds);
     for (const lane of [this.video, this.audio])
-      for (const index of lane.held.keys()) if (index < first) lane.held.delete(index);
+      for (const index of lane.held.keys())
+        if (index < playing - BEHIND_PIECES && !lane.waiting.has(index)) lane.held.delete(index);
+    // A read the playhead has passed, as one MPV began before a seek, takes what is already held.
+    for (const [index, waiters] of this.video.waiting)
+      if (index < playing && this.video.held.has(index)) for (const wake of [...waiters]) wake();
     void this.pump();
   }
 
@@ -216,7 +220,7 @@ export class AdaptiveStream {
       this.positionSeconds = this.starts[index] ?? this.positionSeconds;
     for (let attempt = 0; attempt < FETCH_ATTEMPTS * 2; attempt += 1) {
       const held = lane.held.get(index);
-      if (held !== undefined && !this.belowChoice(held)) return held;
+      if (held !== undefined && !this.withheld(index, held)) return held;
       if (this.closed || response.destroyed) return null;
       await new Promise<void>((resolve) => {
         const waiters = lane.waiting.get(index) ?? new Set();
@@ -242,11 +246,15 @@ export class AdaptiveStream {
     return lane.held.get(index) ?? null;
   }
 
-  /** A held piece worse than the quality the viewer picked, which MPV must not be given. */
-  private belowChoice(piece: Piece): boolean {
+  /**
+   * A held piece worse than the quality the viewer picked, which MPV must not be given unless the
+   * playhead has already passed it and the picture would never show it.
+   */
+  private withheld(index: number, piece: Piece): boolean {
     return (
       this.choice !== "auto" &&
       piece.rendition !== null &&
+      index >= this.indexAt(this.positionSeconds) &&
       this.options.renditions.indexOf(piece.rendition) >
         this.options.renditions.indexOf(this.loading)
     );
@@ -294,7 +302,7 @@ export class AdaptiveStream {
   private next(lane: Lane): number | null {
     for (const index of lane.waiting.keys()) {
       const held = lane.held.get(index);
-      if (held === undefined || this.belowChoice(held)) return index;
+      if (held === undefined || this.withheld(index, held)) return index;
     }
     const first = this.indexAt(this.positionSeconds);
     const last = Math.min(

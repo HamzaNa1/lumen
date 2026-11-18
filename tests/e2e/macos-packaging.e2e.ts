@@ -97,6 +97,35 @@ for (const [location, copies] of [
     expect(readFileSync(library)).toEqual(prepared);
   });
 
+test("macOS packaging repairs duplicate search paths in a bundled executable", ({ native }) => {
+  const { root, run } = native;
+  writeFileSync(join(root, "fixture.c"), "int answer(void) { return 42; }\n");
+  run("clang", ["-dynamiclib", join(root, "fixture.c"), "-o", join(root, "libmpv.dylib")]);
+  writeFileSync(join(root, "main.c"), "int main(void) { return 0; }\n");
+  const executable = join(root, "mpv");
+  run("clang", [
+    join(root, "main.c"),
+    "-o",
+    executable,
+    "-Wl,-headerpad_max_install_names",
+    "-Wl,-rpath,@loader_path/lib/",
+    "-Wl,-rpath,@loader_path/other/",
+  ]);
+  run("install_name_tool", ["-rpath", "@loader_path/other/", "@loader_path/lib/", executable]);
+  run("codesign", ["--force", "--sign", "-", executable]);
+  expect(spawnSync(executable, { encoding: "utf8" }).stderr).toContain("duplicate LC_RPATH");
+  writeFileSync(join(root, "Lumen Video Helper"), "#!/bin/sh\n", { mode: 0o755 });
+  const rejected = spawnSync("bun", [verify, "--write-manifest"], {
+    cwd: dirname(dirname(root)),
+    encoding: "utf8",
+    env: { ...process.env, LUMEN_MPV_VERSION: "fixture" },
+  });
+  expect(rejected.stderr).toMatch(/Duplicate LC_RPATH in .*\/resources\/native\/mpv:/);
+  run("bun", [prepare, root]);
+  expect(run("otool", ["-l", executable]).match(/path @loader_path\/lib\//g)).toHaveLength(1);
+  run(executable, []);
+});
+
 test("macOS packaging resolves bundled libraries relative to each dependent library", ({
   native,
 }) => {

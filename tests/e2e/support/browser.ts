@@ -22,9 +22,12 @@ export async function openSettings(page: Page, category = "Playback") {
   return settings;
 }
 
+/** Polls playback state often: it changes within frames, and the default backoff overshoots. */
+export const often = { intervals: [50] };
+
 export async function playing(page: Page) {
   const player = page.getByRole("region", { name: "Media player" });
-  await expect.poll(() => player.getAttribute("data-status")).toMatch(/ready|blocked/);
+  await expect.poll(() => player.getAttribute("data-status"), often).toMatch(/ready|blocked/);
   if ((await player.getAttribute("data-status")) === "blocked")
     await page.getByRole("button", { name: "Play", exact: true }).click();
   await expect(player).toHaveAttribute("data-status", "ready");
@@ -43,7 +46,7 @@ export async function playing(page: Page) {
         return false;
       }
       return current.position > sample.position + 0.1;
-    })
+    }, often)
     .toBe(true);
 }
 /** Presses Play on each title in turn, from the library down: a show or season opens, the last plays. */
@@ -68,6 +71,6 @@ export async function pause(page: Page) {
   await page.mouse.move(300, 300);
   await page.getByRole("button", { name: "Pause playback" }).last().click();
   await expect
-    .poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.paused))
+    .poll(() => page.locator("video").evaluate((video: HTMLVideoElement) => video.paused), often)
     .toBe(true);
 }

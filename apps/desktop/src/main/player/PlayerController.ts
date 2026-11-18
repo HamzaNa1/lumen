@@ -455,7 +455,11 @@ export class PlayerController extends EventEmitter {
       this.estimatorOf(active).kbps !== null
     )
       await this.switchDelivery(active, "original", positionSeconds);
-    else await this.motion(active, ["seek", positionSeconds, "absolute+exact"]);
+    else {
+      // The bridge stops holding out for a better piece that MPV reads only to seek past.
+      media.adaptive?.setPosition(positionSeconds);
+      await this.motion(active, ["seek", positionSeconds, "absolute+exact"]);
+    }
     this.assertActive(sessionId);
     this.publish();
     return this.requireState();
@@ -1109,6 +1113,7 @@ export class PlayerController extends EventEmitter {
       }
       this.state = next;
       this.publish();
+      this.preloadNext(active, next);
       this.watchQuality(active, next, mpvBufferedAhead(cache));
     } catch (cause) {
       // `property unavailable` is expected while no file is loaded (e.g. in
@@ -1125,7 +1130,6 @@ export class PlayerController extends EventEmitter {
   async tick(): Promise<void> {
     if (this.active === null || this.state === null) return;
     this.onProgress?.({ connectionId: this.active.connectionId, state: this.state });
-    this.preloadNext(this.active, this.state);
     await this.active.reporter.tick(this.state);
   }
 

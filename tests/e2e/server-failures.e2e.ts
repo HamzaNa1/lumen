@@ -54,35 +54,40 @@ test("production startup fails when the web build is missing", async ({
   expect(result.stdout + result.stderr).toContain("Server failed to start");
 });
 
-test("login and general request limits are separate; forwarded addresses cannot evade the peer budget", async ({
-  server,
-  admin,
-}) => {
-  await server.stop();
-  await server.start({ LUMEN_MAX_REQUESTS_PER_MINUTE: "3", LUMEN_LOGIN_ATTEMPTS_PER_MINUTE: "2" });
-  for (let index = 0; index < 4; index++) await server.request("/web/");
-  const login = (address: string) =>
-    server.request("/api/v1/auth/login", {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-forwarded-for": address },
-      body: JSON.stringify({
-        username: "admin",
-        password,
-        deviceId: crypto.randomUUID(),
-        deviceName: "Limit test",
-        platform: "desktop",
-        platformDeviceId: null,
-      }),
-    });
-  expect((await login("192.0.2.1")).status).toBe(200);
-  expect((await login("192.0.2.2")).status).toBe(200);
-  expect((await login("192.0.2.3")).status).toBe(429);
-  const headers = { authorization: `Bearer ${admin.accessToken}` };
-  const responses = await Promise.all(
-    Array.from({ length: 5 }, () => server.request("/api/v1/libraries", { headers })),
-  );
-  expect(responses.filter((response) => response.status === 200)).toHaveLength(2);
-  expect(responses.filter((response) => response.status === 429)).toHaveLength(3);
+test.describe(() => {
+  test.use({
+    serverEnvironment: { LUMEN_MAX_REQUESTS_PER_MINUTE: "3", LUMEN_LOGIN_ATTEMPTS_PER_MINUTE: "2" },
+  });
+  test("login and general request limits are separate; forwarded addresses cannot evade the peer budget", async ({
+    server,
+    admin,
+  }) => {
+    // Open fresh windows after the fixture's readiness check and registration.
+    await server.advanceTime(60_001);
+    for (let index = 0; index < 4; index++) await server.request("/web/");
+    const login = (address: string) =>
+      server.request("/api/v1/auth/login", {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-forwarded-for": address },
+        body: JSON.stringify({
+          username: "admin",
+          password,
+          deviceId: crypto.randomUUID(),
+          deviceName: "Limit test",
+          platform: "desktop",
+          platformDeviceId: null,
+        }),
+      });
+    expect((await login("192.0.2.1")).status).toBe(200);
+    expect((await login("192.0.2.2")).status).toBe(200);
+    expect((await login("192.0.2.3")).status).toBe(429);
+    const headers = { authorization: `Bearer ${admin.accessToken}` };
+    const responses = await Promise.all(
+      Array.from({ length: 5 }, () => server.request("/api/v1/libraries", { headers })),
+    );
+    expect(responses.filter((response) => response.status === 200)).toHaveLength(3);
+    expect(responses.filter((response) => response.status === 429)).toHaveLength(2);
+  });
 });
 
 test.describe(() => {

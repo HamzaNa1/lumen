@@ -1,15 +1,20 @@
-import { execFileSync } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import { createServer, type ServerResponse } from "node:http";
 import { createRequire } from "node:module";
 import { homedir } from "node:os";
 import { join, relative } from "node:path";
+import { promisify } from "node:util";
 import type { AppUpdateStatus } from "@lumen/contracts";
 import { _electron, type ElectronApplication } from "@playwright/test";
 import { openSettings } from "./support/browser";
 import { connectDesktop, test as desktopTest } from "./support/desktop";
 import { expect, repository, test } from "./support/server";
+
+const run = promisify(execFile);
 
 test("real updater waits for the viewer, recovers from failed downloads, reports progress and installs a download on the next launch", async ({
   server,
@@ -17,18 +22,39 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
   const root = join(server.root, "updater");
   mkdirSync(root);
   const marker = join(root, "installer-arguments.json");
-  writeFileSync(
-    join(root, "installer.ts"),
-    `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));`,
-  );
-  execFileSync("bun", [
-    "build",
-    "--compile",
-    join(root, "installer.ts"),
-    "--outfile",
-    join(root, "installer.exe"),
+  const installer = join(root, "installer.exe");
+  const main = join(root, "main.cjs");
+  await Promise.all([
+    // Windows runs only real executables. Elsewhere the updater spawns a script by the same path.
+    process.platform === "win32"
+      ? writeFile(
+          join(root, "installer.ts"),
+          `import { writeFileSync } from 'node:fs'; writeFileSync(${JSON.stringify(marker)}, JSON.stringify(process.argv.slice(2)));`,
+        ).then(() =>
+          run("bun", ["build", "--compile", join(root, "installer.ts"), "--outfile", installer]),
+        )
+      : writeFile(
+          installer,
+          `#!/bin/sh\nlist=\nfor argument in "$@"; do list="\${list:+$list,}\\"$argument\\""; done\nprintf '[%s]' "$list" > '${marker}'\n`,
+        ),
+    run(
+      "bun",
+      [
+        "build",
+        "tests/e2e/support/update-entry.ts",
+        "--target=node",
+        "--format=cjs",
+        // Bundled like the app's main process; only Electron and the updater load from the install.
+        "--external=electron",
+        "--external=electron-updater",
+        "--outfile",
+        main,
+      ],
+      { cwd: repository },
+    ),
   ]);
-  const bytes = readFileSync(join(root, "installer.exe"));
+  const bytes = readFileSync(installer);
+  const sha512 = createHash("sha512").update(bytes).digest("base64");
   let phase = "offline";
   let version = "9999.0.0";
   let checks = 0;
@@ -42,7 +68,7 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
         return;
       }
       res.end(
-        `version: ${version}\nfiles:\n  - url: installer.exe\n    sha512: ${createHash("sha512").update(bytes).digest("base64")}\n    size: ${bytes.length}\npath: installer.exe\nsha512: ${createHash("sha512").update(bytes).digest("base64")}\nreleaseDate: 2026-01-01T00:00:00.000Z\n`,
+        `version: ${version}\nfiles:\n  - url: installer.exe\n    sha512: ${sha512}\n    size: ${bytes.length}\npath: installer.exe\nsha512: ${sha512}\nreleaseDate: 2026-01-01T00:00:00.000Z\n`,
       );
     } else {
       downloads++;
@@ -69,22 +95,6 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
   writeFileSync(
     join(root, "update.yml"),
     `provider: generic\nurl: http://127.0.0.1:${address.port}\nupdaterCacheDirName: ${relative(cacheBase, root).replaceAll("\\", "/")}\n`,
-  );
-  const main = join(root, "main.cjs");
-  execFileSync(
-    "bun",
-    [
-      "build",
-      "tests/e2e/support/update-entry.ts",
-      "--target=node",
-      "--format=cjs",
-      // Bundled like the app's main process; only Electron and the updater load from the install.
-      "--external=electron",
-      "--external=electron-updater",
-      "--outfile",
-      main,
-    ],
-    { cwd: repository },
   );
   symlinkSync(
     join(repository, "apps/desktop/node_modules"),
@@ -227,9 +237,14 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
     await blocked.close();
   }
   rmSync(unsaveable, { recursive: true });
-  const second = await launch();
-  const child = second.process();
+  // This launch installs and quits as it starts, which can be before Playwright attaches to it.
+  const second = spawn(require("electron") as string, [main, "--no-sandbox"], {
+    env,
+    stdio: "ignore",
+  });
   try {
+    const [code] = await once(second, "exit", { signal: AbortSignal.timeout(30_000) });
+    expect(code).toBe(0);
     await expect
       .poll(() => {
         try {
@@ -239,11 +254,10 @@ test("real updater waits for the viewer, recovers from failed downloads, reports
         }
       })
       .toEqual(["--updated", "/S", "--force-run"]);
-    await expect.poll(() => child.exitCode).toBe(0);
     expect(downloads).toBe(fetched);
     expect(settings()).toEqual({ automatic: true, downloaded: "9999.1.0", attempted: "9999.1.0" });
   } finally {
-    await second.close();
+    if (second.exitCode === null && second.signalCode === null) second.kill();
   }
   // The installer ran but this is still the old version: it failed, and is not tried again on its own.
   rmSync(marker);

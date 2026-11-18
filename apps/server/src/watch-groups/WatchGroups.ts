@@ -76,6 +76,17 @@ const BUFFER_SHARE_INTERVAL_MS = 1000;
 const BUFFER_REPORT_LIFETIME_MS = 3 * WATCH_BUFFER_REPORT_INTERVAL_MS;
 const NO_BUFFERS = "[]";
 
+export interface WatchTimers {
+  /** How long a new socket has to authenticate. */
+  readonly authenticationMs: number;
+  /** How often silent sockets, retired clients, and empty groups are checked against the clock. */
+  readonly sweepIntervalMs: number;
+}
+const defaultTimers: WatchTimers = {
+  authenticationMs: 5000,
+  sweepIntervalMs: WATCH_HEARTBEAT_INTERVAL_MS,
+};
+
 type TrustedOrigin = (request: Request, origin: string) => boolean;
 
 class WatchGroupsBusy extends Error {
@@ -92,6 +103,7 @@ export class WatchGroups {
   private readonly clients = new Map<string, ClientConnection>();
   private nextSequence = 0;
   private readonly now: () => number;
+  private readonly timers: WatchTimers;
   private readonly logger: Logger | undefined;
   private readonly groups = new Map<string, Group>();
   private readonly deliveries = new Map<HttpSocket<WatchSocketData>, StateDelivery>();
@@ -109,11 +121,16 @@ export class WatchGroups {
     private readonly services: WatchServices,
     private readonly trustedOrigin: TrustedOrigin = (request, origin) =>
       origin === requestOrigin(request),
-    options: { readonly now?: () => number; readonly logger?: Logger } = {},
+    options: {
+      readonly now?: () => number;
+      readonly logger?: Logger;
+      readonly timers?: WatchTimers | undefined;
+    } = {},
   ) {
     this.now = options.now ?? Date.now;
+    this.timers = options.timers ?? defaultTimers;
     this.logger = options.logger;
-    this.timer = setInterval(() => this.sweep(), WATCH_HEARTBEAT_INTERVAL_MS);
+    this.timer = setInterval(() => this.sweep(), this.timers.sweepIntervalMs);
     this.timer.unref();
     this.bufferTimer = setInterval(() => this.shareBuffers(), BUFFER_SHARE_INTERVAL_MS);
     this.bufferTimer.unref();
@@ -160,7 +177,7 @@ export class WatchGroups {
       this.sockets.add(socket);
       socket.data.authTimer = setTimeout(
         () => this.retire(socket, 1008, "Authentication required"),
-        5000,
+        this.timers.authenticationMs,
       );
     },
     message: (socket, raw) => {

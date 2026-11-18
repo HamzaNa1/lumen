@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { openMovie, pause, playing, signIn, startPlayback } from "./support/browser";
+import { often, openMovie, pause, playing, signIn, startPlayback } from "./support/browser";
 import { expect, test } from "./support/server";
 
 test("video gestures preserve focus, double-click fullscreen never pauses, timeline seeks and controls hide", async ({
@@ -7,8 +7,10 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "movies", ["Film.mp4"]),
+    signIn(page, server),
+  ]);
   await openMovie(page, server, library.id);
   await expect(page.getByRole("button", { name: "Episodes", exact: true })).toHaveCount(0);
   // Use the video region's center, away from controls and the timeline.
@@ -18,11 +20,11 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   const y = bounds.y + bounds.height / 2;
   await page.mouse.click(x, y);
   await expect
-    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.paused))
+    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.paused), often)
     .toBe(true);
   await page.keyboard.press("Space");
   await expect
-    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.paused))
+    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.paused), often)
     .toBe(false);
   expect(await page.evaluate(() => document.activeElement?.tagName)).toBe("BODY");
   await page.locator("video").evaluate((v: HTMLVideoElement) => {
@@ -35,10 +37,10 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
     const position = await page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime);
     await page.mouse.dblclick(x, y);
     await expect
-      .poll(() => page.evaluate(() => Boolean(document.fullscreenElement)))
+      .poll(() => page.evaluate(() => Boolean(document.fullscreenElement)), often)
       .toBe(fullscreen);
     await expect
-      .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime))
+      .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime), often)
       .toBeGreaterThan(position + 0.5);
     await expect(page.locator("video")).toHaveAttribute("data-pauses", "0");
   }
@@ -48,7 +50,7 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowRight");
   await expect
-    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime))
+    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime), often)
     .toBeGreaterThan(0);
   await page.clock.install();
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
@@ -69,14 +71,27 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", [
-    "Serial/Season 1/Serial S01E01-E02 - Together.mp4",
-    "Serial/Season 1/Serial S01E02 - Overlap.mp4",
-    "Serial/Season 2/Serial S02E01 - Return.mp4",
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", [
+      "Serial/Season 1/Serial S01E01-E02 - Together.mp4",
+      "Serial/Season 1/Serial S01E02 - Overlap.mp4",
+      "Serial/Season 2/Serial S02E01 - Return.mp4",
+    ]),
+    signIn(page, server),
   ]);
-  await signIn(page, server);
+  // The player also names the episode after this one, so only its heading says what plays, and
+  // only a new source shows that it is the episode playing and not the end of the one before.
+  const title = page.locator(".media-player-header").getByRole("heading");
+  const source = () => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentSrc);
+  let before = "";
+  const plays = async (episode: string) => {
+    await expect(title).toHaveText(episode);
+    await expect.poll(source, often).not.toBe(before);
+    await playing(page);
+    before = await source();
+  };
   await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
-  await playing(page);
+  await plays("Together");
   await page.getByRole("button", { name: "Episodes", exact: true }).click();
   const drawer = page.getByRole("complementary", { name: "Episodes" });
   await expect(drawer.getByRole("article")).toHaveCount(3);
@@ -88,16 +103,14 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   await expect(drawer.getByRole("article")).toHaveCount(3);
   await drawer.getByRole("button", { name: "Play Return", exact: true }).click();
   await expect(drawer).toBeHidden();
-  await playing(page);
-  await expect(page.getByRole("region", { name: "Media player" })).toContainText("Return");
+  await plays("Return");
   await page.unroute("**/api/v1/items/*/children*");
   await page.getByRole("button", { name: "Previous", exact: true }).click();
-  await playing(page);
+  await plays("Overlap");
   await page.locator("video").evaluate((v: HTMLVideoElement) => {
     v.currentTime = v.duration - 0.2;
   });
-  await expect(page.getByRole("region", { name: "Media player" })).toContainText("Return");
-  await playing(page);
+  await plays("Return");
 });
 
 const twoEpisodes = [
@@ -138,24 +151,28 @@ test("a season plays its next episode, names the one it resumes, and starts over
   page,
 }) => {
   const token = admin.accessToken;
-  const library = await server.library(token, "shows", [
-    ...twoEpisodes,
-    "Serial/Season 2/Serial S02E01 - Return.mp4",
-  ]);
   const children = async (id: string | undefined) =>
     (await server.api<{ items: Array<{ id: string }> }>(`/items/${id}/children`, { token })).items;
-  const [show] = await server.items(token, library.id);
-  const [seasonOne, seasonTwo] = await children(show?.id);
-  const [opening, sequel] = await children(seasonOne?.id);
   const watch = (id: string | undefined, positionSeconds: number, completed: boolean) =>
     server.api(`/items/${id}/watch-state`, {
       token,
       method: "PUT",
       body: { positionSeconds, completed },
     });
-  await watch(opening?.id, 0, true);
-  await watch(sequel?.id, 2, false);
-  await signIn(page, server);
+  const [{ show, seasonOne, seasonTwo, sequel }] = await Promise.all([
+    (async () => {
+      const library = await server.library(token, "shows", [
+        ...twoEpisodes,
+        "Serial/Season 2/Serial S02E01 - Return.mp4",
+      ]);
+      const [show] = await server.items(token, library.id);
+      const [seasonOne, seasonTwo] = await children(show?.id);
+      const [opening, sequel] = await children(seasonOne?.id);
+      await Promise.all([watch(opening?.id, 0, true), watch(sequel?.id, 2, false)]);
+      return { show, seasonOne, seasonTwo, sequel };
+    })(),
+    signIn(page, server),
+  ]);
   const actions = page.locator(".details-actions");
   for (const path of [`show/${show?.id}`, `season/${seasonOne?.id}`, `episode/${sequel?.id}`]) {
     await page.goto(`${server.origin}web/${path}`);
@@ -175,8 +192,10 @@ test("an episode, and the one after it, are described the moment they play", asy
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", twoEpisodes),
+    signIn(page, server),
+  ]);
   await startPlayback(page, server, library.id, ["Serial", "Season 1"]);
   await seasonShown(page);
   const detailsLookups: string[] = [];
@@ -217,11 +236,13 @@ test("an episode's still covers the player until the episode, or the one after i
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", twoEpisodes, {
-    "Serial/Season 1/Serial S01E01 - Opening-thumb.png": "still.png",
-    "Serial/Season 1/Serial S01E02 - Sequel-thumb.png": "still.png",
-  });
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", twoEpisodes, {
+      "Serial/Season 1/Serial S01E01 - Opening-thumb.png": "still.png",
+      "Serial/Season 1/Serial S01E02 - Sequel-thumb.png": "still.png",
+    }),
+    signIn(page, server),
+  ]);
   let held = Promise.withResolvers<void>();
   await page.route("**/api/v1/playback/sessions", async (route) => {
     await held.promise;
@@ -250,8 +271,10 @@ test("an older server's episode is described all at once, once every detail is k
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", twoEpisodes),
+    signIn(page, server),
+  ]);
   await asOlderServer(page);
   const loaded = new Set<string>();
   page.on("requestfinished", (request) => loaded.add(new URL(request.url()).pathname));
@@ -265,7 +288,7 @@ test("an older server's episode is described all at once, once every detail is k
   await startPlayback(page, server, library.id, openingEpisode);
   // The episode's own details are in; only its neighbours are still being looked up.
   const episodeDetails = (await adjacentRequested.promise).replace(/\/adjacent-episodes$/, "");
-  await expect.poll(() => loaded.has(episodeDetails)).toBe(true);
+  await expect.poll(() => loaded.has(episodeDetails), often).toBe(true);
   const header = page.locator(".media-player-header");
   await expect(header.getByRole("button", { name: "Back", exact: true })).toBeVisible();
   await expect(header.getByRole("heading")).toHaveCount(0);
@@ -285,8 +308,10 @@ test("a stalled lookup does not hold back what is known, and what it brings fill
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", twoEpisodes),
+    signIn(page, server),
+  ]);
   await asOlderServer(page);
   await page.clock.install();
   const adjacentRequested = Promise.withResolvers<void>();
@@ -314,16 +339,26 @@ test("an episode whose details cannot be read is described by the item it was st
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", twoEpisodes),
+    signIn(page, server),
+  ]);
   await asOlderServer(page);
+  await page.clock.install();
   await startPlayback(page, server, library.id, ["Serial", "Season 1"]);
   await seasonShown(page);
-  await page.route(itemDetails, (route) => route.abort());
+  const failed = Promise.withResolvers<void>();
+  await page.route(itemDetails, async (route) => {
+    await route.abort();
+    failed.resolve();
+  });
   await page
     .getByRole("button", { name: "Play Opening", exact: true })
     .first()
     .click({ force: true });
+  // Reads are retried once, a second after they fail.
+  await failed.promise;
+  await page.clock.fastForward(1_000);
   const header = page.locator(".media-player-header");
   await expect(header.getByRole("heading", { name: "Opening", exact: true })).toBeVisible();
   await expect(header.locator(".media-player-title p")).toContainText("E01");
@@ -334,8 +369,10 @@ test("a movie is described by the item it was started from, without waiting on a
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "movies", ["Film.mp4"]),
+    signIn(page, server),
+  ]);
   const lookups: string[] = [];
   await page.route(
     (url) => itemDetails(url) || adjacentEpisodes(url),
@@ -356,8 +393,10 @@ test("an older server's episode still offers the episodes of its show", async ({
   admin,
   page,
 }) => {
-  const library = await server.library(admin.accessToken, "shows", twoEpisodes);
-  await signIn(page, server);
+  const [library] = await Promise.all([
+    server.library(admin.accessToken, "shows", twoEpisodes),
+    signIn(page, server),
+  ]);
   await asOlderServer(page);
   await startPlayback(page, server, library.id, openingEpisode);
   await playing(page);

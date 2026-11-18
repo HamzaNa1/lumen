@@ -3,36 +3,44 @@ import { WatchGroupClient } from "../../packages/client/src/index";
 import { expect, test } from "./support/watch";
 import { WatchProxy } from "./support/watch-proxy";
 
-for (const authenticated of [false, true])
-  test(`silent watch sockets expire through application deadlines, authenticated=${authenticated}`, async ({
-    server,
-    admin,
-  }) => {
-    const socket = new WebSocket(
-      new URL("/api/v1/watch-groups", server.origin.replace(/^http/, "ws")),
-    );
-    let closure: CloseEvent | undefined;
-    socket.addEventListener("close", (event) => {
-      closure = event;
-    });
-    try {
-      await once(socket, "open", { signal: AbortSignal.timeout(5000) });
-      if (authenticated) {
-        const ready = once(socket, "message", { signal: AbortSignal.timeout(5000) });
-        socket.send(JSON.stringify({ token: admin.accessToken }));
-        expect(JSON.parse((await ready)[0].data)).toMatchObject({ type: "ready" });
-        await server.advanceTime(30_001);
-      }
-      await expect.poll(() => closure).toBeDefined();
-      expect(closure).toMatchObject(
-        authenticated
-          ? { code: 1001, reason: "Watch client heartbeat expired" }
-          : { code: 1008, reason: "Authentication required" },
-      );
-    } finally {
-      socket.close();
-    }
+test.describe(() => {
+  // The deadlines run on the fake clock; only the real timers that check them run sooner.
+  test.use({
+    serverEnvironment: {
+      LUMEN_E2E_WATCH_TIMERS: JSON.stringify({ authenticationMs: 1000, sweepIntervalMs: 100 }),
+    },
   });
+  for (const authenticated of [false, true])
+    test(`silent watch sockets expire through application deadlines, authenticated=${authenticated}`, async ({
+      server,
+      admin,
+    }) => {
+      const socket = new WebSocket(
+        new URL("/api/v1/watch-groups", server.origin.replace(/^http/, "ws")),
+      );
+      let closure: CloseEvent | undefined;
+      socket.addEventListener("close", (event) => {
+        closure = event;
+      });
+      try {
+        await once(socket, "open", { signal: AbortSignal.timeout(5000) });
+        if (authenticated) {
+          const ready = once(socket, "message", { signal: AbortSignal.timeout(5000) });
+          socket.send(JSON.stringify({ token: admin.accessToken }));
+          expect(JSON.parse((await ready)[0].data)).toMatchObject({ type: "ready" });
+          await server.advanceTime(30_001);
+        }
+        await expect.poll(() => closure, { intervals: [100] }).toBeDefined();
+        expect(closure).toMatchObject(
+          authenticated
+            ? { code: 1001, reason: "Watch client heartbeat expired" }
+            : { code: 1008, reason: "Authentication required" },
+        );
+      } finally {
+        socket.close();
+      }
+    });
+});
 
 for (const interrupted of [false, true])
   test(`watch client catches up after a socket outage and interrupted handshake=${interrupted}`, async ({
@@ -80,11 +88,11 @@ for (const interrupted of [false, true])
       proxy.hold = true;
       await owner.action({ type: "pause", itemId, paused: true, positionSeconds: 8 });
       await owner.action({ type: "seek", itemId, positionSeconds: 9 });
-      await expect.poll(() => proxy.pending.length).toBeGreaterThanOrEqual(2);
+      await expect.poll(() => proxy.pending.filter(({ type }) => type === "state").length).toBe(2);
       proxy.release(true);
-      await expect
-        .poll(() => viewer.status.group?.playback)
-        .toMatchObject({ paused: true, positionSeconds: 9 });
+      // The reply follows the reversed states down the same socket: the stale one has arrived.
+      await viewer.action({ type: "list" });
+      expect(viewer.status.group?.playback).toMatchObject({ paused: true, positionSeconds: 9 });
       proxy.hold = true;
       const leaving = viewer.action({ type: "leave" });
       expect(viewer.status.group).toBeNull();
@@ -109,6 +117,8 @@ test("unanswered watch commands expire, reconnect without replaying mutations, a
   const viewer = new WatchGroupClient(
     { serverOrigin: proxy.origin, watchAuthentication: () => ({ token: admin.accessToken }) },
     () => {},
+    false,
+    1000,
   );
   try {
     await expect(viewer.action({ type: "list" })).rejects.toThrow("not connected");

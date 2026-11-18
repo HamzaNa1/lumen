@@ -6,6 +6,7 @@ import { dirname, join, resolve } from "node:path";
 import { test as base, expect } from "@playwright/test";
 
 import { collectBrowserErrors } from "./browser-errors";
+import { openDatabase } from "./database";
 
 export const repository = resolve(import.meta.dirname, "../../..");
 export const password = "correct horse battery staple";
@@ -86,6 +87,26 @@ export class Server {
       expect((await this.request("/health/ready")).status).toBe(200);
     } finally {
       abort.abort();
+    }
+    // The scheduler queues a library check as it starts. A library added before that check runs
+    // can be picked up by it, and a scan the scenario then asks for is refused as already running.
+    await expect
+      .poll(() => this.libraryCheckSettled(), { timeout: 30_000, intervals: [10] })
+      .toBe(true);
+  }
+  private libraryCheckSettled() {
+    const database = openDatabase(this.databasePath, { readOnly: true });
+    try {
+      const { checks, active } = database
+        .prepare(
+          `select count(*) as checks,
+             coalesce(sum(state in ('pending', 'running')), 0) as active
+           from jobs where kind = 'library-watcher'`,
+        )
+        .get() as { checks: number; active: number };
+      return checks > 0 && active === 0;
+    } finally {
+      database.close();
     }
   }
   async stop() {
@@ -218,7 +239,7 @@ export class Server {
     await expect
       .poll(
         async () => (await this.api<{ status: string }>(`/scans/${run.runId}`, { token })).status,
-        { timeout: 30_000 },
+        { timeout: 30_000, intervals: [25] },
       )
       .toBe("succeeded");
     return this.api<Record<string, unknown>>(`/scans/${run.runId}`, { token });

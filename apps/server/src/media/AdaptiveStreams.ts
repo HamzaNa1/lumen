@@ -39,6 +39,8 @@ interface Encoder {
   audioDone: number;
   exited: boolean;
   failed: boolean;
+  /** Advances videoDone and audioDone over pieces that have appeared on disk. */
+  readonly scan: () => Promise<void>;
   readonly stop: () => void;
 }
 
@@ -76,6 +78,15 @@ const playlistHeaders = {
   "content-type": "application/vnd.apple.mpegurl",
   "cache-control": "no-store",
 };
+
+/** Whether a running encoder will cut this piece soon enough to wait for; null asks for audio. */
+const covers = (encoder: Encoder | null, rendition: AdaptiveRendition | null, index: number) =>
+  encoder !== null &&
+  !encoder.exited &&
+  encoder.first <= index &&
+  (rendition === null
+    ? index < encoder.audioDone + LEAD_PIECES
+    : encoder.rendition === rendition && index < encoder.videoDone + SOON_PIECES);
 
 const exists = (path: string) =>
   stat(path).then(
@@ -276,23 +287,11 @@ export class AdaptiveStreams {
         });
       }
       const encoder = session.encoder;
-      const coming =
-        encoder !== null &&
-        !encoder.exited &&
-        encoder.first <= index &&
-        (rendition === null
-          ? index < encoder.audioDone + LEAD_PIECES
-          : encoder.rendition === rendition && index < encoder.videoDone + SOON_PIECES);
-      if (!coming) {
+      if (!covers(encoder, rendition, index)) {
         if ((restarts > 0 && encoder?.failed === true) || restarts > 2)
           throw unavailable("FFmpeg could not convert this part of the file");
         restarts += 1;
-        await this.restart(
-          session,
-          rendition ?? encoder?.rendition ?? session.lastRendition ?? renditions.at(-1) ?? null,
-          index,
-          hasAudio,
-        );
+        await this.restart(session, rendition, index, hasAudio, renditions);
         continue;
       }
       if (Date.now() > deadline) throw unavailable("Conversion is not keeping up");
@@ -311,21 +310,18 @@ export class AdaptiveStreams {
   /** Serialized per session so concurrent requests cannot start two encoders. */
   private restart(
     session: Session,
-    rendition: AdaptiveRendition | null,
+    wanted: AdaptiveRendition | null,
     index: number,
     hasAudio: boolean,
+    renditions: ReadonlyArray<AdaptiveRendition>,
   ): Promise<void> {
-    if (rendition === null) throw notFound("Stream not found");
     const next = session.restarting.then(async () => {
       const current = session.encoder;
-      if (
-        current !== null &&
-        !current.exited &&
-        current.rendition === rendition &&
-        current.first <= index &&
-        index < current.videoDone + SOON_PIECES
-      )
-        return;
+      // A restart queued ahead of this one may already cover the piece.
+      if (covers(current, wanted, index)) return;
+      // Audio follows the quality last asked for, not one a quality change just stopped.
+      const rendition = wanted ?? session.lastRendition ?? renditions.at(-1);
+      if (rendition === undefined) throw notFound("Stream not found");
       current?.stop();
       if (this.sessions.get(session.sessionId) !== session) return;
       await this.start(session, rendition, index, hasAudio);
@@ -364,29 +360,6 @@ export class AdaptiveStreams {
     const finished = new Promise<void>((resolve) => {
       finish = resolve;
     });
-    const encoder: Encoder = {
-      rendition,
-      first,
-      videoDone: first,
-      audioDone: hasAudio ? first : Number.MAX_SAFE_INTEGER,
-      exited: false,
-      failed: false,
-      stop: () => {
-        if (encoder.exited) return;
-        encoder.exited = true;
-        child.kill("SIGTERM");
-        killTimer = setTimeout(() => child.kill("SIGKILL"), 500);
-        killTimer.unref();
-      },
-    };
-    this.transcoder.track({
-      sessionId: session.sessionId,
-      userId: session.userId,
-      gpu,
-      stop: encoder.stop,
-      finished,
-    });
-    session.encoder = encoder;
     const pieces = adaptivePieceCount(probe.durationSeconds);
     const scan = async () => {
       let changed = false;
@@ -407,6 +380,30 @@ export class AdaptiveStreams {
       }
       if (changed) for (const wake of session.waiters) wake();
     };
+    const encoder: Encoder = {
+      rendition,
+      first,
+      videoDone: first,
+      audioDone: hasAudio ? first : Number.MAX_SAFE_INTEGER,
+      exited: false,
+      failed: false,
+      scan,
+      stop: () => {
+        if (encoder.exited) return;
+        encoder.exited = true;
+        child.kill("SIGTERM");
+        killTimer = setTimeout(() => child.kill("SIGKILL"), 500);
+        killTimer.unref();
+      },
+    };
+    this.transcoder.track({
+      sessionId: session.sessionId,
+      userId: session.userId,
+      gpu,
+      stop: encoder.stop,
+      finished,
+    });
+    session.encoder = encoder;
     const onClose = (code: number | null) => {
       clearTimeout(killTimer);
       const stopped = encoder.exited;
@@ -427,7 +424,7 @@ export class AdaptiveStreams {
         }
         const running = session.encoder;
         if (running === null || running.exited) return;
-        void scan().then(() => {
+        void running.scan().then(() => {
           const lead = Math.min(running.videoDone, running.audioDone) - session.furthest;
           if (lead > LEAD_PIECES) running.stop();
         });

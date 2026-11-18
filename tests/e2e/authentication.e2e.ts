@@ -152,24 +152,25 @@ for (const [setting, secure] of [
   ["always", true],
   ["never", false],
 ] as const)
-  test(`cookie policy ${setting} survives real HTTP login`, async ({ server, admin }) => {
-    expect(admin.accessToken).toBeTruthy();
-    await server.stop();
-    await server.start({ LUMEN_COOKIE_SECURE: setting });
-    const response = await server.request("/api/v1/auth/browser/login", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        origin: new URL(server.origin).origin,
-        "x-lumen-csrf": "1",
-      },
-      body: JSON.stringify({
-        username: "admin",
-        password,
-        deviceId: crypto.randomUUID(),
-        deviceName: "Browser",
-      }),
+  test.describe(() => {
+    test.use({ serverEnvironment: { LUMEN_COOKIE_SECURE: setting } });
+    test(`cookie policy ${setting} survives real HTTP login`, async ({ server, admin }) => {
+      expect(admin.accessToken).toBeTruthy();
+      const response = await server.request("/api/v1/auth/browser/login", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          origin: new URL(server.origin).origin,
+          "x-lumen-csrf": "1",
+        },
+        body: JSON.stringify({
+          username: "admin",
+          password,
+          deviceId: crypto.randomUUID(),
+          deviceName: "Browser",
+        }),
+      });
+      expect(response.status).toBe(200);
+      expect(response.headers.get("set-cookie")?.includes("Secure")).toBe(secure);
     });
-    expect(response.status).toBe(200);
-    expect(response.headers.get("set-cookie")?.includes("Secure")).toBe(secure);
   });

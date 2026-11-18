@@ -69,6 +69,7 @@ export class WatchGroupClient {
      * with a `ready` action. A group does not wait for a client that would never answer.
      */
     private readonly readiness = false,
+    private readonly requestTimeoutMs = 10_000,
   ) {}
 
   /** Whether the server holds a playing group for a member that says it ran out of media. */
@@ -159,7 +160,8 @@ export class WatchGroupClient {
           }
         } else if (message.type === "groups") this.update({ groups: message.groups });
         else if (message.type === "buffers") this.update({ buffers: message.buffers });
-        else this.update({ group: message.group, error: null });
+        else if (!this.supersedes(message.group))
+          this.update({ group: message.group, error: null });
       } catch {
         socket.close(1002, "Invalid server message");
       }
@@ -295,7 +297,7 @@ export class WatchGroupClient {
         this.settle(requestId);
         reject(new Error("Watch group request timed out"));
         socket.close();
-      }, 10_000);
+      }, this.requestTimeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       socket.send(JSON.stringify({ requestId, action }));
       if (prediction !== null) {
@@ -303,6 +305,11 @@ export class WatchGroupClient {
         this.update();
       }
     });
+  }
+
+  /** Whether the group already shown is newer than this account of it, which arrived late. */
+  private supersedes(group: WatchGroup | null): boolean {
+    return group !== null && this.group?.id === group.id && this.group.revision > group.revision;
   }
 
   /** The server answered or gave up on a request: the group is whatever it now says it is. */

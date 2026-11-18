@@ -23,7 +23,10 @@ const test = base.extend<{ provider: HttpServer }>({
   serverEnvironment: async ({ provider }, use) => {
     const address = provider.address();
     if (!address || typeof address === "string") throw new Error("Provider did not listen");
-    await use({ LUMEN_E2E_TMDB_ORIGIN: `http://127.0.0.1:${address.port}` });
+    await use({
+      LUMEN_E2E_TMDB_ORIGIN: `http://127.0.0.1:${address.port}`,
+      LUMEN_E2E_SCHEDULER_TICK_MS: "25",
+    });
   },
 });
 
@@ -260,7 +263,7 @@ test("movie matching searches and deduplicates candidates, downloads real artwor
           (await server.api<{ status: string }[]>("/admin/jobs", { token })).every(
             (job) => !["running", "queued"].includes(job.status),
           ),
-        { timeout: 30000 },
+        { timeout: 30000, intervals: [25] },
       )
       .toBe(true);
   await settled();
@@ -319,6 +322,7 @@ test("movie matching searches and deduplicates candidates, downloads real artwor
   await expect
     .poll(async () => Promise.all(generated.map((directory) => readdir(directory))), {
       timeout: 15000,
+      intervals: [25],
     })
     .toEqual([[], []]);
   expect(await server.api("/search?q=Mine", { token })).toMatchObject({ items: [] });

@@ -719,8 +719,12 @@ export class MediaFile extends EventEmitter {
     return adopted;
   }
 
-  /** Lets go of every chunk held in memory, once no player reads the file. */
-  releaseMemory(): void {
+  /**
+   * Once no player reads the file, stops the fetches players started and lets go of every chunk
+   * held in memory. A download's own fetches carry on.
+   */
+  letGo(): void {
+    for (const fetch of this.fetches) if (!fetch.background) fetch.controller.abort();
     for (let chunk = 0; chunk < this.memory.count; chunk += 1)
       if (this.memory.has(chunk) || this.partial.has(chunk)) this.dropMemory(chunk);
   }
@@ -770,11 +774,6 @@ export class MediaFile extends EventEmitter {
       }
     }
     await this.save();
-  }
-
-  /** Stops fetches a player started; a download's own fetches carry on. */
-  stopForeground(): void {
-    for (const fetch of this.fetches) if (!fetch.background) fetch.controller.abort();
   }
 
   /** Stops fetches that only fill the file in the background. */

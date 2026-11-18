@@ -1,44 +1,48 @@
 import { request } from "node:http";
 import { expect, password, test } from "./support/server";
 
-test("HTTP rate windows reset independently and every authentication mutation spends the login allowance", async ({
-  server,
-  admin: _admin,
-}) => {
-  await server.stop();
-  await server.start({
-    LUMEN_MAX_REQUESTS_PER_MINUTE: "2",
-    LUMEN_LOGIN_ATTEMPTS_PER_MINUTE: "1",
-    LUMEN_TRUSTED_PROXIES: "127.0.0.1",
+test.describe(() => {
+  test.use({
+    serverEnvironment: {
+      LUMEN_MAX_REQUESTS_PER_MINUTE: "2",
+      LUMEN_LOGIN_ATTEMPTS_PER_MINUTE: "1",
+      LUMEN_TRUSTED_PROXIES: "127.0.0.1",
+    },
   });
-  const headers = {
-    "x-forwarded-for": "192.0.2.20",
-    "content-type": "application/json",
-    origin: new URL(server.origin).origin,
-    "x-lumen-csrf": "1",
-  };
-  const read = () => server.request("/health/live", { headers });
-  const auth = (path = "login") =>
-    server.request(`/api/v1/auth/${path}`, { method: "POST", headers, body: "{}" });
-  expect((await read()).status).toBe(200);
-  expect((await read()).status).toBe(200);
-  expect((await read()).status).toBe(429);
-  await server.advanceTime(30_000);
-  expect((await auth()).status).toBe(400);
-  await server.advanceTime(30_001);
-  expect((await read()).status).toBe(200);
-  const limited = await auth();
-  expect(limited.status).toBe(429);
-  expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
-  expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(30);
-  await server.advanceTime(30_001);
-  const paths = ["login", "register", "migrate-session", "browser/login", "browser/register"];
-  for (const first of paths) {
-    await server.advanceTime(60_001);
-    expect((await auth(first)).status).toBe(400);
-    for (const path of paths) expect((await auth(path)).status).toBe(429);
+  // The fixture's readiness check and registration spend the direct peer's budget, not 192.0.2.20's.
+  test("HTTP rate windows reset independently and every authentication mutation spends the login allowance", async ({
+    server,
+    admin: _admin,
+  }) => {
+    const headers = {
+      "x-forwarded-for": "192.0.2.20",
+      "content-type": "application/json",
+      origin: new URL(server.origin).origin,
+      "x-lumen-csrf": "1",
+    };
+    const read = () => server.request("/health/live", { headers });
+    const auth = (path = "login") =>
+      server.request(`/api/v1/auth/${path}`, { method: "POST", headers, body: "{}" });
     expect((await read()).status).toBe(200);
-  }
+    expect((await read()).status).toBe(200);
+    expect((await read()).status).toBe(429);
+    await server.advanceTime(30_000);
+    expect((await auth()).status).toBe(400);
+    await server.advanceTime(30_001);
+    expect((await read()).status).toBe(200);
+    const limited = await auth();
+    expect(limited.status).toBe(429);
+    expect(Number(limited.headers.get("retry-after"))).toBeGreaterThan(0);
+    expect(Number(limited.headers.get("retry-after"))).toBeLessThanOrEqual(30);
+    await server.advanceTime(30_001);
+    const paths = ["login", "register", "migrate-session", "browser/login", "browser/register"];
+    for (const first of paths) {
+      await server.advanceTime(60_001);
+      expect((await auth(first)).status).toBe(400);
+      for (const path of paths) expect((await auth(path)).status).toBe(429);
+      expect((await read()).status).toBe(200);
+    }
+  });
 });
 
 test.describe(() => {

@@ -169,7 +169,9 @@ test("desktop API client manages the catalog, scans, accounts and preferences th
     name: "Movies",
   });
   const scan = await client.startScan(library.id, "full");
-  await expect.poll(async () => (await client.scanStatus(scan.runId)).status).toBe("succeeded");
+  await expect
+    .poll(async () => (await client.scanStatus(scan.runId)).status, { intervals: [25] })
+    .toBe("succeeded");
   const item = (await client.items(library.id)).items[0];
   if (!item) throw new Error("Missing scanned movie");
   expect(await client.search("Film", library.id)).toEqual(

@@ -8,8 +8,16 @@ if [[ "$(uname -m)" != 'arm64' ]]; then
 fi
 mpv_version='0.41.0'
 mpv_sha256='ee21092a5ee427353392360929dc64645c54479aefdb5babc5cfbb5fad626209'
-brew install --quiet meson ninja pkgconf dylibbundler ffmpeg jpeg-turbo libarchive libass \
-  libbluray libplacebo little-cms2 luajit mujs rubberband uchardet vulkan-loader zimg
+formulas=(meson ninja pkgconf dylibbundler ffmpeg jpeg-turbo libarchive libass libbluray libplacebo
+  little-cms2 luajit mujs rubberband uchardet vulkan-loader zimg)
+if [[ "${1:-}" == '--dependency-versions' ]]; then
+  # The bottles Homebrew would install now, which decide the bundle's bytes as much as this script.
+  HOMEBREW_NO_ENV_HINTS=1 brew info --json=v2 --formula "${formulas[@]}" \
+    $(HOMEBREW_NO_ENV_HINTS=1 brew deps --union "${formulas[@]}") |
+    jq -r '.formulae[] | [.full_name, .versions.stable, .revision, .bottle.stable.rebuild] | @tsv'
+  exit 0
+fi
+brew install --quiet "${formulas[@]}"
 native_dir="apps/desktop/resources/native"
 build="$(mktemp -d)"
 trap 'rm -rf "$build"' EXIT
@@ -33,6 +41,11 @@ cp "$mpv_prefix/lib/libmpv.dylib" "$native_dir/libmpv.dylib"
 install_name_tool -id @loader_path/libmpv.dylib "$native_dir/libmpv.dylib"
 dylibbundler -od -b -x "$native_dir/libmpv.dylib" -d "$native_dir/lib" -p '@loader_path/lib/'
 bun apps/desktop/scripts/prepare-macos-libraries.ts "$native_dir"
+if [[ -n "${MPV_PREFIX:-}" ]]; then
+  # Tests run this player from a cached prefix, so it carries its libraries instead of Homebrew's.
+  dylibbundler -od -b -x "$mpv_prefix/bin/mpv" -d "$mpv_prefix/bin/lib" -p '@loader_path/lib/'
+  bun apps/desktop/scripts/prepare-macos-libraries.ts "$mpv_prefix/bin"
+fi
 cmake -S apps/desktop/native -B "$build/helper" -DCMAKE_BUILD_TYPE=Release \
   -DCMAKE_OSX_ARCHITECTURES=arm64 -DMPV_INCLUDE_DIR="$mpv_prefix/include"
 cmake --build "$build/helper" --parallel

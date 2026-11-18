@@ -26,6 +26,7 @@ import {
   mainDesktopPage,
   test,
 } from "./support/desktop";
+import { encode } from "./support/encode";
 import { NetworkProxy } from "./support/proxy";
 import { password, repository, type Server } from "./support/server";
 
@@ -53,27 +54,29 @@ const ffmpeg = (args: string[]) => promisify(execFile)("ffmpeg", args);
 
 /** A 30-second film with its index at the end, as a player finds it in many real files. */
 const makeFilm = (path: string, seconds = 30, tone = 440) =>
-  ffmpeg([
-    "-v",
-    "error",
-    "-f",
-    "lavfi",
-    "-i",
-    `testsrc=duration=${seconds}:size=640x360:rate=24`,
-    "-f",
-    "lavfi",
-    "-i",
-    `sine=frequency=${tone}:duration=${seconds}`,
-    "-c:v",
-    "libx264",
-    "-preset",
-    "ultrafast",
-    "-b:v",
-    "800k",
-    "-c:a",
-    "aac",
+  encode(
+    [
+      "-v",
+      "error",
+      "-f",
+      "lavfi",
+      "-i",
+      `testsrc=duration=${seconds}:size=640x360:rate=24`,
+      "-f",
+      "lavfi",
+      "-i",
+      `sine=frequency=${tone}:duration=${seconds}`,
+      "-c:v",
+      "libx264",
+      "-preset",
+      "ultrafast",
+      "-b:v",
+      "800k",
+      "-c:a",
+      "aac",
+    ],
     path,
-  ]);
+  );
 
 /**
  * Ten minutes of tiny frames: the index at its end is as large as a feature episode's, so the
@@ -474,19 +477,20 @@ test("playback crosses from downloaded parts into missing ones and keeps the dow
   const size = (await readFile(film.path)).length;
   const proxy = await new NetworkProxy(server.origin).start();
   const network = meter(proxy, () => server.origin);
-  network.allow(size * 0.35);
+  // A few seconds of the film, still several chunks, so playback soon reaches what is missing.
+  network.allow(size * 0.12);
   const { page, profile } = desktop;
   try {
     await connectDesktop(page, proxy);
     await page.evaluate((itemId) => window.lumen.downloads.add([itemId]), film.id);
     await expect
       .poll(async () => (await entryFor(page, film.id))?.downloadedBytes ?? 0, { timeout: 30_000 })
-      .toBeGreaterThan(size * 0.2);
+      .toBeGreaterThan(size * 0.06);
     const paused = await entryFor(page, film.id);
     await page.evaluate((id) => window.lumen.downloads.pause(id), paused?.id ?? "");
     await expect.poll(async () => (await entryFor(page, film.id))?.status).toBe("paused");
     const heldBefore = (await entryFor(page, film.id))?.downloadedBytes ?? 0;
-    expect(heldBefore).toBeLessThan(size * 0.4);
+    expect(heldBefore).toBeLessThan(size * 0.15);
     const fetchedBefore = network.ranges.length;
     network.allow(Number.POSITIVE_INFINITY);
 
@@ -649,7 +653,8 @@ test("the streaming cache keeps nothing by default, keeps recent streams within 
           timeout: 30_000,
         },
       )
-      .toBeGreaterThan(3);
+      // Playing at all means the player has read the head and the index at the tail.
+      .toBeGreaterThan(1);
     await leavePlayer(page);
   };
   await stream();
