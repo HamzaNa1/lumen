@@ -1,5 +1,6 @@
 import { type ChildProcess, spawn } from "node:child_process";
 import { once } from "node:events";
+import { readFileSync } from "node:fs";
 import { copyFile, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -10,6 +11,9 @@ import { openDatabase } from "./database";
 
 export const repository = resolve(import.meta.dirname, "../../..");
 export const password = "correct horse battery staple";
+export const serverVersion: string = JSON.parse(
+  readFileSync(join(repository, "apps/server/package.json"), "utf8"),
+).version;
 export interface Account {
   accessToken: string;
   sessionId: string;

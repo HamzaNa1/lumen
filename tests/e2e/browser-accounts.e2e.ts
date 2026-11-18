@@ -151,7 +151,7 @@ test("a late unauthorized response and suspended tab cannot erase a newer browse
     await expect(settings.getByText("Server", { exact: true })).toHaveCount(0);
     await expect(
       settings.getByRole("navigation", { name: "Settings" }).getByRole("button"),
-    ).toHaveText(["Playback"]);
+    ).toHaveText(["Playback", "About"]);
   } finally {
     held.release();
   }

@@ -17,6 +17,7 @@ const subscribe =
   };
 
 const api: DesktopBridge = {
+  versions: () => invoke("app:versions"),
   trackSettings: {
     read: () => invoke("track-settings:read"),
     update: (input) => invoke("track-settings:update", input),

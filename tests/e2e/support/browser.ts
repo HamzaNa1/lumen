@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { Locator, Page } from "@playwright/test";
 import { expect, password, type Server } from "./server";
 
 export async function signIn(page: Page, server: Server, username = "admin") {
@@ -24,6 +24,13 @@ export async function openSettings(page: Page, category = "Playback") {
 
 /** Polls playback state often: it changes within frames, and the default backoff overshoots. */
 export const often = { intervals: [50] };
+
+/** The value a settings row shows beside its label. */
+export const settingsValue = (settings: Locator, label: string): Locator =>
+  settings
+    .locator(".settings-row")
+    .filter({ has: settings.page().getByText(label, { exact: true }) })
+    .locator(".settings-row-value");
 
 export async function playing(page: Page) {
   const player = page.getByRole("region", { name: "Media player" });

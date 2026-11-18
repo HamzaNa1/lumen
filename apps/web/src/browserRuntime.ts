@@ -166,6 +166,8 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       read: () => api.trackPreferences(),
       update: (input) => api.updateTrackPreferences(input),
     },
+    // The web app ships inside the server, so it is always the server's version.
+    versions: async () => ({ client: __LUMEN_SERVER_VERSION__, mpv: null }),
     capabilities: {
       serverSwitching: false,
       nativeAudioOutput: false,

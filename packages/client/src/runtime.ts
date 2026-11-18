@@ -251,9 +251,17 @@ export interface WatchRuntime {
   readonly onState: (callback: (status: WatchStatus) => void) => Unsubscribe;
 }
 
+/** What this client runs, for a viewer to quote when something goes wrong. */
+export interface ClientVersions {
+  readonly client: string;
+  /** Null where playback does not run in MPV. Its version is null when the build did not record it. */
+  readonly mpv: { readonly version: string | null } | null;
+}
+
 /** Everything the shared application needs from the platform it runs on. */
 export interface LumenRuntime {
   readonly capabilities: PlatformCapabilities;
+  readonly versions: () => Promise<ClientVersions>;
   readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: AccountsRuntime;
   readonly catalog: CatalogRuntime;
