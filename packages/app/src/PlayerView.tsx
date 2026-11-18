@@ -1,4 +1,6 @@
+import { resolveQualityChoice } from "@lumen/client";
 import {
+  DEFAULT_QUALITY,
   defaultTracks,
   type PlayerAction,
   type PlayerDisplay,
@@ -152,6 +154,15 @@ export const PlayerView = ({
         quality={player?.quality}
         onSelectQuality={(choice) =>
           trackAction((id) => runtime.playback.selectQuality(id, choice))
+        }
+        defaultQuality={
+          player?.quality === undefined
+            ? undefined
+            : resolveQualityChoice(
+                player.trackPreferences?.quality ?? DEFAULT_QUALITY,
+                player.quality.options.filter((option) => option.id !== "original"),
+                player.quality.options.some((option) => option.id === "original"),
+              )
         }
         subtitleSelection={capabilities.nativeAudioOutput}
         headerActions={

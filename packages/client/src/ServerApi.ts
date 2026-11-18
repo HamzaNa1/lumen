@@ -332,6 +332,10 @@ export class ServerApi {
     return this.serverIdentity?.capabilities?.trackMemory === true;
   }
 
+  get supportsQualityMemory(): boolean {
+    return this.serverIdentity?.capabilities?.qualityMemory === true;
+  }
+
   get supportsAdjacentEpisodes(): boolean {
     return this.serverIdentity?.capabilities?.adjacentEpisodes === true;
   }
@@ -873,7 +877,8 @@ export class ServerApi {
     return this.request("/api/v1/me/track-preferences", jsonBody("PATCH", input), TrackPreferences);
   }
   async saveTrackChoice(sessionId: string, input: TrackChoiceInput): Promise<TrackMemory | null> {
-    if (!this.supportsTrackMemory) return null;
+    if (!this.supportsTrackMemory || (input.kind === "quality" && !this.supportsQualityMemory))
+      return null;
     return this.request(
       `/api/v1/playback/sessions/${encodeURIComponent(sessionId)}/track-choice`,
       jsonBody("PUT", input),

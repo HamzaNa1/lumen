@@ -587,13 +587,56 @@ test.describe(() => {
       await page.evaluate(() => (window as unknown as { stalls: { count: number } }).stalls.count),
     ).toBe(0);
 
-    // A manual choice takes over from Auto and shows in the menu at once. A lower one keeps the
-    // better pieces already held, so it changes what is fetched next rather than what is on screen.
+    // A manual choice takes over from Auto and closes the menu. A lower one keeps the better
+    // pieces already held, so it changes what is fetched next rather than what is on screen.
     await page.locator(".media-player-quality-row").click();
+    const saved = page.waitForResponse((response) => response.url().endsWith("/track-choice"));
     await page.getByRole("menuitemradio", { name: /^480p/u }).click();
-    await page.getByRole("button", { name: "Back to settings" }).click();
+    await expect(page.getByRole("menu", { name: "Quality" })).toBeHidden();
+    await expect.poll(quality).toBe("480p");
+    expect((await saved).ok()).toBe(true);
+
+    // The title remembers it: playing it again starts there instead of at Auto.
+    await openMovie(page, server, library.id);
     await expect.poll(quality).toBe("480p");
   });
+});
+
+test("Auto adapts among converted pieces only, leaving the original and staying off it through a seek", async ({
+  server,
+  admin,
+  page,
+  browserName,
+}) => {
+  test.skip(browserName !== "chromium", "Plays H.264 pieces through MediaSource");
+  const library = await server.library(admin.accessToken, "movies", []);
+  await promisify(execFile)("ffmpeg", [
+    ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+    ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+    ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac"],
+    join(library.path, "Film.mkv"),
+  ]);
+  await server.scan(admin.accessToken, library.id);
+  await signIn(page, server);
+  await openMovie(page, server, library.id);
+  const video = page.locator("video");
+  const source = () => video.getAttribute("src");
+  expect(await source()).not.toMatch(/^blob:/u);
+
+  await page.mouse.move(300, 300);
+  await page.getByRole("button", { name: "Playback settings" }).click();
+  await page.locator(".media-player-quality-row").click();
+  await page.getByRole("menuitemradio", { name: /^Auto/u }).click();
+  await expect.poll(source).toMatch(/^blob:/u);
+  await playing(page);
+
+  // A local link has room for the original, and a seek still lands on converted pieces.
+  await page.keyboard.press("ArrowRight");
+  await expect
+    .poll(() => video.evaluate((element: HTMLVideoElement) => element.currentTime))
+    .toBeGreaterThanOrEqual(10);
+  await playing(page);
+  expect(await source()).toMatch(/^blob:/u);
 });
 
 test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {

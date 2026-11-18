@@ -6,6 +6,9 @@ import { listMigrations, openDatabase } from "./support/database";
 import { expect, password, repository, test } from "./support/server";
 
 const shippedMigrations = () => listMigrations(join(repository, "packages/database/drizzle"));
+/** How many migrations shipped before the one named, so a database can stop just short of it. */
+const migrationsBefore = async (name: string) =>
+  (await shippedMigrations()).findIndex((migration) => migration.endsWith(`_${name}`));
 
 test("manual compaction reclaims deleted pages and preserves the catalog and accounts", async ({
   server,
@@ -158,6 +161,17 @@ test.describe(() => {
               "INSERT INTO item_watch_states(user_id,item_id,position_seconds,completed,updated_at_ms) VALUES(?,?,321,0,1)",
             )
             .run(user, item);
+          // Saved before qualities were remembered: they upgrade to the defaults.
+          if (through >= 9) {
+            before
+              .prepare("INSERT INTO user_track_preferences(user_id,audio_language) VALUES(?,'ja')")
+              .run(user);
+            before
+              .prepare(
+                "INSERT INTO media_track_overrides(user_id,item_id,subtitle_json) VALUES(?,?, '\"off\"')",
+              )
+              .run(user, item);
+          }
         }
       } finally {
         before.close();
@@ -212,9 +226,17 @@ test.describe(() => {
               .prepare("SELECT item_id FROM catalog_item_fts WHERE catalog_item_fts MATCH 'parts'")
               .all(),
           ).toEqual([{ item_id: item }]);
-          db.prepare("INSERT INTO user_track_preferences(user_id) VALUES(?)").run(user);
+          if (through >= 9) {
+            expect(
+              await server.api("/me/track-preferences", { token: account.accessToken }),
+            ).toEqual({ audioLanguage: "ja", subtitleLanguage: null, quality: "original" });
+            expect(
+              db.prepare("SELECT subtitle_json, quality FROM media_track_overrides").all(),
+            ).toEqual([{ subtitle_json: '"off"', quality: null }]);
+          }
+          db.prepare("INSERT OR IGNORE INTO user_track_preferences(user_id) VALUES(?)").run(user);
           db.prepare(
-            "INSERT INTO media_track_overrides(user_id,item_id,subtitle_json) VALUES(?,?, '\"off\"')",
+            "INSERT OR IGNORE INTO media_track_overrides(user_id,item_id,subtitle_json) VALUES(?,?, '\"off\"')",
           ).run(user, item);
           db.prepare("DELETE FROM users WHERE id = ?").run(user);
           expect(db.prepare("SELECT * FROM user_track_preferences").all()).toEqual([]);
@@ -365,7 +387,7 @@ test.describe(() => {
   }) => {
     const before = await openMigratedThrough(
       server.databasePath,
-      (await shippedMigrations()).length - 1,
+      await migrationsBefore("library_reconciliation"),
     );
     try {
       before.exec(`
@@ -410,8 +432,10 @@ test.describe(() => {
   test("reconciliation migration backfills stats, cancels discovery, and removes per-file history", async ({
     server,
   }) => {
-    const migrations = await shippedMigrations();
-    const before = await openMigratedThrough(server.databasePath, migrations.length - 1);
+    const before = await openMigratedThrough(
+      server.databasePath,
+      await migrationsBefore("library_reconciliation"),
+    );
     try {
       before.exec(`
       INSERT INTO libraries(id,name,slug,created_at_ms,updated_at_ms) VALUES('library','Library','library',1,1);

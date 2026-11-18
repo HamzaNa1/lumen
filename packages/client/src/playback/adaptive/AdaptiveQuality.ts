@@ -2,8 +2,10 @@ import {
   ADAPTIVE_AUDIO_KBPS,
   ADAPTIVE_PIECE_SECONDS,
   type AdaptiveRendition,
+  DEFAULT_QUALITY,
   type PlayerQuality,
   type QualityOption,
+  type TrackMemory,
 } from "@lumen/contracts";
 
 /**
@@ -200,6 +202,30 @@ export const qualityState = (options: {
   ],
   measuredKbps: options.measuredKbps === null ? null : Math.round(options.measuredKbps),
 });
+
+/** The quality a title starts in: the viewer's choice for it, else their setting. */
+export const rememberedQuality = (memory: TrackMemory | undefined): string =>
+  memory?.quality ?? memory?.preferences.quality ?? DEFAULT_QUALITY;
+
+/**
+ * What a remembered quality plays for one file. A height the file is not converted to plays the
+ * best one below it, and the original plays Auto where it cannot play.
+ */
+export const resolveQualityChoice = (
+  preference: string,
+  renditions: ReadonlyArray<{ readonly id: string; readonly height: number | null }>,
+  originalUsable: boolean,
+): string => {
+  if (preference === "auto") return "auto";
+  if (preference === "original" || renditions.length === 0)
+    return originalUsable ? "original" : "auto";
+  const height = Number.parseInt(preference, 10);
+  const rendition =
+    renditions.find((candidate) => candidate.id === preference) ??
+    renditions.find((candidate) => candidate.height !== null && candidate.height <= height) ??
+    renditions.at(-1);
+  return rendition?.id ?? "auto";
+};
 
 /** The last measurement per server, so the next playback starts at a sensible quality. */
 const remembered = new Map<string, number>();

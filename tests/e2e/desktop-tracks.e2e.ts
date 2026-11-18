@@ -119,7 +119,10 @@ test("real multitrack media exposes languages and roles and remembers independen
       (sessionId) => window.lumen.player.selectSubtitle(sessionId, null),
       current?.sessionId ?? "",
     );
-    expect(current?.trackPreferences).toEqual({ audioLanguage: "en", subtitleLanguage: null });
+    expect(current?.trackPreferences).toMatchObject({
+      audioLanguage: "en",
+      subtitleLanguage: null,
+    });
     const english = current?.streams.find(
       (stream) => stream.kind === "audio" && stream.language === "eng" && !stream.commentary,
     );
