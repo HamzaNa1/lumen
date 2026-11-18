@@ -1,7 +1,6 @@
 import { EventEmitter } from "node:events";
 import { release } from "node:os";
 import {
-  bufferReport,
   describePlayback,
   measuredRate,
   measuredSize,
@@ -718,7 +717,6 @@ export class PlayerController extends EventEmitter {
       outputFrameRate,
       displayRefreshRate,
       avSync,
-      cache,
     ] = await Promise.all(
       [
         "mpv-version",
@@ -734,7 +732,6 @@ export class PlayerController extends EventEmitter {
         "estimated-vf-fps",
         "display-fps",
         "avsync",
-        "demuxer-cache-state",
       ].map(property),
     );
     this.assertActive(sessionId);
@@ -757,7 +754,6 @@ export class PlayerController extends EventEmitter {
         player: typeof version === "string" ? version : "mpv",
         delivery: media.delivery,
         quality: media.quality() ?? null,
-        buffer: media.ready ? bufferReport(mpvBufferedAhead(cache)) : null,
         playerSize: measuredSize(osdWidth, osdHeight),
         videoSize: measuredSize(width, height),
         droppedFrames: sumOfCounts(outputDrops, decoderDrops),

@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { statSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -15,6 +16,7 @@ import {
   signIn,
 } from "./support/browser";
 import { openDatabase } from "./support/database";
+import { encode } from "./support/encode";
 import { expect, serverVersion, test } from "./support/server";
 
 /** Conversion as one stream: the path of browsers without MediaSource, and of "Original". */
@@ -162,6 +164,75 @@ test("real playback supports controls, fullscreen, buffering, diagnostics and te
   await page.getByRole("button", { name: "Back", exact: true }).click();
   await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
   await expect(video).toHaveCount(0);
+});
+
+test("playback info never shows what was buffered at the position a seek leaves", async ({
+  server,
+  admin,
+  page,
+}) => {
+  const library = await server.library(admin.accessToken, "movies", []);
+  const file = join(library.path, "Film.mp4");
+  await encode(
+    [
+      ...["-v", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24"],
+      ...["-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000", "-t", "40"],
+      ...["-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", "-movflags", "+faststart"],
+    ],
+    file,
+  );
+  await server.scan(admin.accessToken, library.id);
+  // The first half of the file arrives; a request for any byte past it waits for the test to end.
+  const half = Math.round(statSync(file).size / 2);
+  const done = Promise.withResolvers<void>();
+  await page.route("**/api/v1/media/**", async (route) => {
+    const range = /^bytes=(\d+)-(\d*)$/u.exec((await route.request().headerValue("range")) ?? "");
+    const start = Number(range?.[1] ?? 0);
+    if (start >= half) {
+      await done.promise;
+      await route.abort().catch(() => {});
+      return;
+    }
+    const end = Math.min(half - 1, range?.[2] ? Number(range[2]) : Number.POSITIVE_INFINITY);
+    const response = await route.fetch({ headers: { range: `bytes=${start}-${end}` } });
+    await route.fulfill({ response }).catch(() => {});
+  });
+  try {
+    await signIn(page, server);
+    await openMovie(page, server, library.id);
+    await pause(page);
+    const info = await openPlaybackInfo(page);
+    const buffered = playbackInfoValue(info, "Buffered ahead");
+    await expect(buffered).toHaveText(/^(1\d|[5-9])\.\d s$/u);
+    // Every position the player shows, beside what the panel says is buffered ahead of it.
+    await page.evaluate(() => {
+      const shown: string[] = [];
+      Reflect.set(window, "shownBuffer", shown);
+      const read = () => {
+        const position = document.querySelector(".media-player-time")?.textContent;
+        const row = [...document.querySelectorAll(".media-player-info dl > div")].find(
+          (row) => row.querySelector("dt")?.textContent === "Buffered ahead",
+        );
+        shown.push(`${position} ${row?.querySelector("dd")?.textContent}`);
+      };
+      new MutationObserver(read).observe(document.body, {
+        subtree: true,
+        childList: true,
+        characterData: true,
+      });
+    });
+    await page.mouse.move(300, 300);
+    for (let seek = 0; seek < 3; seek++)
+      await page.getByRole("button", { name: "Forward 10 seconds" }).click();
+    await expect(page.locator(".media-player-time").first()).toHaveText(/^0:3\d$/u);
+    await expect(buffered).toHaveText("0.0 s");
+    const shown = (await page.evaluate(() => Reflect.get(window, "shownBuffer"))) as string[];
+    expect(shown.filter((entry) => /^0:3\d /u.test(entry) && !entry.endsWith(" 0.0 s"))).toEqual(
+      [],
+    );
+  } finally {
+    done.resolve();
+  }
 });
 
 test("each title remembers volume and episode navigation crosses seasons and skips combined overlaps", async ({

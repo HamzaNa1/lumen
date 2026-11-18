@@ -48,14 +48,17 @@ const CopyButton = ({ text }: { readonly text: string }): React.ReactElement => 
 
 export const PlaybackInfoView = ({
   content,
+  bufferedAhead,
   appVersion,
   onClose,
 }: {
   readonly content: PlaybackInfoContent;
+  readonly bufferedAhead: string;
   readonly appVersion?: string | null | undefined;
   readonly onClose: () => void;
 }): React.ReactElement => {
-  const sections = content.kind === "ready" ? playbackInfoSections(content.info, appVersion) : null;
+  const sections =
+    content.kind === "ready" ? playbackInfoSections(content.info, bufferedAhead, appVersion) : null;
   return (
     <aside className="media-player-info" aria-label="Playback info">
       <header className="media-player-info-header">
@@ -96,14 +99,17 @@ export const PlaybackInfoView = ({
 
 /**
  * What the player reports about the playback in progress, refreshed while the panel is open.
- * `load` is omitted while nothing is playing.
+ * `load` is omitted while nothing is playing. `bufferedAhead` follows the player's own state, so
+ * a seek changes it in the same frame as the timeline instead of at the next refresh.
  */
 export const PlaybackInfoPanel = ({
   load,
+  bufferedAhead,
   appVersion,
   onClose,
 }: {
   readonly load: (() => Promise<PlaybackInfo>) | undefined;
+  readonly bufferedAhead: string;
   readonly appVersion?: string | null | undefined;
   readonly onClose: () => void;
 }): React.ReactElement => {
@@ -111,5 +117,12 @@ export const PlaybackInfoPanel = ({
   const latestLoad = useRef(load);
   latestLoad.current = load;
   useEffect(() => pollPlaybackInfo(() => latestLoad.current, setContent, refreshIntervalMs), []);
-  return <PlaybackInfoView content={content} appVersion={appVersion} onClose={onClose} />;
+  return (
+    <PlaybackInfoView
+      content={content}
+      bufferedAhead={bufferedAhead}
+      appVersion={appVersion}
+      onClose={onClose}
+    />
+  );
 };

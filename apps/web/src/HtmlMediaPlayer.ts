@@ -1,5 +1,4 @@
 import {
-  bufferReport,
   describePlayback,
   measuredSize,
   originalKbps,
@@ -536,7 +535,6 @@ export class HtmlMediaPlayer {
               ? { kind: "converted", video: conversion.video, audio: conversion.audio }
               : { kind: "original", fromDevice: false },
         quality: this.quality(active) ?? null,
-        buffer: bufferReport(this.bufferedAhead()),
         playerSize: measuredSize(element.clientWidth, element.clientHeight),
         videoSize: measuredSize(element.videoWidth, element.videoHeight),
         droppedFrames: frames?.droppedVideoFrames ?? null,

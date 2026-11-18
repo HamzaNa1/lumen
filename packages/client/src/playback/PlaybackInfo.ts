@@ -19,12 +19,6 @@ export const measuredSize = (width: unknown, height: unknown): Dimensions | null
 export const measuredRate = (value: unknown): number | null =>
   typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
 
-/** How far ahead a player holds media, where infinite means it holds the rest. */
-export const bufferReport = (aheadSeconds: number): PlaybackInfo["buffer"] =>
-  Number.isFinite(aheadSeconds)
-    ? { aheadSeconds: Math.max(0, aheadSeconds), toEnd: false }
-    : { aheadSeconds: 0, toEnd: true };
-
 /** A player's own measurements, alongside what the server said about the file it is playing. */
 export const describePlayback = (
   session: PlayerSession,

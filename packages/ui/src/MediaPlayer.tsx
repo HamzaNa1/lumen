@@ -32,6 +32,7 @@ import { Button } from "./Button";
 import { SelectField } from "./Controls";
 import { PlaybackInfoPanel } from "./PlaybackInfoPanel";
 import {
+  bufferedAheadLabel,
   formatEndsAt,
   formatPlayerTime,
   qualityBadge,
@@ -437,6 +438,7 @@ export const MediaPlayer = ({
         {infoOpen ? (
           <PlaybackInfoPanel
             load={onPlaybackInfo}
+            bufferedAhead={bufferedAheadLabel(position, duration, bufferedRanges)}
             appVersion={appVersion}
             onClose={() => setInfoOpen(false)}
           />

@@ -1,4 +1,5 @@
 import type {
+  BufferedRange,
   Dimensions,
   PlayableStream,
   PlaybackDelivery,
@@ -239,13 +240,35 @@ const syncConnection: Readonly<Record<WatchSyncInfo["connection"], string>> = {
   unavailable: "Unavailable",
 };
 
+// A player reads a little past the frame it shows, and what it holds can stop a little short of
+// the duration it reports.
+const bufferToleranceSeconds = 0.5;
+
+/** How much the player holds past `position`, read from the same ranges the timeline draws. */
+export const bufferedAheadLabel = (
+  position: number,
+  duration: number | null,
+  ranges: ReadonlyArray<BufferedRange>,
+): string => {
+  const end =
+    ranges.find(
+      (range) =>
+        range.startSeconds <= position + bufferToleranceSeconds && range.endSeconds > position,
+    )?.endSeconds ?? position;
+  return duration !== null && end >= duration - bufferToleranceSeconds
+    ? "To the end"
+    : `${(end - position).toFixed(1)} s`;
+};
+
 /** What a player reported, grouped and named the way Jellyfin's playback info shows it. */
 export const playbackInfoSections = (
   info: PlaybackInfo,
+  /** Measured where the viewer sees the player, not when the player last reported. */
+  bufferedAhead: string,
   /** The app's version, for a viewer to quote alongside what the player reported. */
   appVersion?: string | null,
 ): ReadonlyArray<PlaybackInfoSection> => {
-  const { media, audio, buffer, sync } = info;
+  const { media, audio, sync } = info;
   const sizeBytes = media?.sizeBytes ?? null;
   return [
     section("Playback info", [
@@ -254,14 +277,7 @@ export const playbackInfoSections = (
       ["Protocol", info.protocol ?? "Local file"],
       ["Stream type", info.videoSize !== null || media?.video != null ? "Video" : "Audio"],
       ...qualityRows(info.quality),
-      [
-        "Buffered ahead",
-        buffer === null
-          ? null
-          : buffer.toEnd
-            ? "To the end"
-            : `${buffer.aheadSeconds.toFixed(1)} s`,
-      ],
+      ["Buffered ahead", bufferedAhead],
       ["Subtitles", subtitleLabel(info)],
     ]),
     section("Video info", [

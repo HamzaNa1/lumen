@@ -349,8 +349,6 @@ export const PlaybackInfo = Schema.Struct({
   /** How the media reaches the player, such as "HLS over https"; null when it is on this device. */
   protocol: Schema.NullOr(Schema.String),
   quality: Schema.NullOr(PlayerQuality),
-  /** Null until the player can say; `toEnd` once it holds everything left to play. */
-  buffer: Schema.NullOr(Schema.Struct({ aheadSeconds: Schema.Number, toEnd: Schema.Boolean })),
   playerSize: Schema.NullOr(Dimensions),
   videoSize: Schema.NullOr(Dimensions),
   droppedFrames: Schema.NullOr(Schema.Number),
