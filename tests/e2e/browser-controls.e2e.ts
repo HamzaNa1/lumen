@@ -122,6 +122,7 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   const toRemaining = page.getByRole("button", { name: "Show remaining time", exact: true });
   await expect(toRemaining).toHaveText(durationText);
   // Pressing Space while the toggle has focus switches it back without resuming playback.
+  await toRemaining.focus();
   await page.keyboard.press("Space");
   await expect(toDuration).toHaveText(/^-\d+:\d{2}$/u);
   expect(await page.locator("video").evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
