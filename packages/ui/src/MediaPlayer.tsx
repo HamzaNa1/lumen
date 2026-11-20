@@ -42,6 +42,7 @@ import {
   streamLabels,
   trackSelectionWarning,
 } from "./PlayerFormatting";
+import { toggleMute } from "./playerVolume";
 import { useClickGesture } from "./useClickGesture";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
@@ -343,10 +344,13 @@ export const MediaPlayer = ({
     enabled: !inactive,
     position,
     duration,
+    volume,
+    muted,
     fullscreen,
     onFullscreen,
     onPause,
     onSeek,
+    onVolume,
   });
 
   const onVideoClick = useClickGesture(onPause, () => onFullscreen?.(), videoDoubleClickMs);
@@ -587,8 +591,11 @@ export const MediaPlayer = ({
                 <Button
                   variant="icon"
                   disabled={inactive}
-                  onClick={() => onVolume(volume, !muted)}
-                  aria-label={muted ? "Unmute" : "Mute"}
+                  onClick={() => {
+                    const next = toggleMute(volume, muted);
+                    onVolume(next.volume, next.muted);
+                  }}
+                  aria-label={muted || volumeValue === 0 ? "Unmute" : "Mute"}
                 >
                   {muted || volumeValue === 0 ? (
                     <VolumeX aria-hidden="true" size={19} />

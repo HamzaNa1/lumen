@@ -31,6 +31,8 @@ export const PlayerPage = (): React.ReactElement => {
     enabled: !inlineControls && player !== null && !playbackLoading && playbackError === null,
     position: player?.positionSeconds ?? 0,
     duration: player?.durationSeconds ?? null,
+    volume: player?.volume ?? 100,
+    muted: player?.muted ?? false,
     fullscreen,
     onFullscreen: inlineControls ? undefined : toggleFullscreen,
     onPause: () => {
@@ -40,6 +42,10 @@ export const PlayerPage = (): React.ReactElement => {
     onSeek: (positionSeconds) => {
       if (player !== null)
         void runtime.playback.seek(player.sessionId, positionSeconds).catch(() => undefined);
+    },
+    onVolume: (volume, muted) => {
+      if (player !== null)
+        void runtime.playback.volume(player.sessionId, volume, muted).catch(() => undefined);
     },
   });
 
