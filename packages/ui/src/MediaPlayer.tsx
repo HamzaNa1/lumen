@@ -486,6 +486,7 @@ export const MediaPlayer = ({
             <span className="media-player-time">{formatPlayerTime(seekValue)}</span>
             <Slider.Root
               className="media-player-timeline"
+              thumbAlignment="edge"
               min={0}
               max={timelineEnd}
               value={seekValue}

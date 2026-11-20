@@ -2836,8 +2836,8 @@ button.folder-browser-item:hover {
 }
 .media-player-console {
   display: grid;
-  gap: 4px;
-  padding: 40px 16px 12px;
+  gap: 6px;
+  padding: 40px 16px 14px;
   background: linear-gradient(0deg, rgba(0, 0, 0, 0.78), transparent);
 }
 .media-player-progress {
@@ -2845,6 +2845,8 @@ button.folder-browser-item:hover {
   grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
   gap: 12px;
+  /* Align the outer edges of the time labels with the icons in the toolbar below. */
+  padding-inline: 8px;
 }
 .media-player-timeline,
 .volume-slider {
@@ -2934,10 +2936,11 @@ button.folder-browser-item:hover {
   gap: 8px;
 }
 .media-player-time {
-  min-width: 44px;
   color: rgba(255, 255, 255, 0.85);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
 }
 .media-player-remaining {
   padding: 0;
@@ -2951,16 +2954,22 @@ button.folder-browser-item:hover {
   display: flex;
   align-items: center;
 }
-.media-player-transport {
-  gap: 6px;
+.media-player-transport,
+.media-player-actions {
+  gap: 4px;
+}
+.media-player-volume {
+  gap: 2px;
+  margin-right: 8px;
 }
 .media-player-ends-at {
   min-width: 0;
-  margin: 0 auto 0 12px;
+  margin: 0 auto 0 4px;
   overflow: hidden;
   color: rgba(255, 255, 255, 0.85);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -2997,9 +3006,6 @@ button.folder-browser-item:hover {
 }
 .volume-slider {
   width: 84px;
-  /* The actions sit flush, spaced only by the padding a 36px icon button keeps around its 19px
-     glyph; the track keeps the same, so every neighbour is equally far apart. */
-  margin-inline: 8.5px;
 }
 .volume-slider .media-slider-track {
   height: 3px;
