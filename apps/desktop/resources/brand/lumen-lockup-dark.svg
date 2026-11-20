@@ -1,12 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 230 64" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 44" role="img" aria-labelledby="title desc">
   <title id="title">Lumen</title>
   <desc id="desc">Lumen logo for dark backgrounds.</desc>
-  <g aria-hidden="true">
-    <rect x="2" y="2" width="60" height="60" rx="15" fill="#0d1016"/>
-    <g fill="none" stroke-width="6" stroke-linecap="round">
-      <path d="M14 14V50" stroke="#c9f560"/>
-      <path d="M26 50V31M26 38a6.5 6.5 0 0 1 13 0V50M39 38a6.5 6.5 0 0 1 13 0V50" stroke="#f5f7f2"/>
+  <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M4 4V40" stroke="#c9f560"/>
+    <g stroke="#f5f7f2">
+      <path d="M16 21V33a7 7 0 0 0 14 0M30 21V40"/>
+      <path d="M42 40V21M42 28a6.5 6.5 0 0 1 13 0V40M55 28a6.5 6.5 0 0 1 13 0V40"/>
+      <path d="M79.5 30.5H98.5A9.5 10 0 1 0 94.9 38.4"/>
+      <path d="M109.5 40V21M109.5 28.5a7 7 0 0 1 14 0V40"/>
     </g>
   </g>
-  <text x="78" y="43" fill="#f5f7f2" font-family="Inter, 'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="750" letter-spacing="-1.2">Lumen</text>
 </svg>

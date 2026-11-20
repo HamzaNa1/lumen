@@ -15,7 +15,7 @@ import { useAppUpdateChanges } from "./AppUpdates";
 import { ConnectPage } from "./ConnectPage";
 import { useDownloadUpdates } from "./Downloads";
 import { errorMessage } from "./format";
-import { LumenMark } from "./LumenMark";
+import { LumenLogo } from "./LumenLogo";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
 import { usePlayingDescription } from "./usePlayingDescription";
@@ -414,7 +414,7 @@ export const App = (): React.ReactElement => {
       <main className="connect-page" role="status" aria-label="Connecting to server">
         <div className="connect-column">
           <div className="connect-brand">
-            <LumenMark />
+            <LumenLogo />
           </div>
           <section className="connect-card">
             <header className="connect-heading">

@@ -12,7 +12,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { errorMessage, hostOf, passwordRule } from "./format";
-import { LumenMark } from "./LumenMark";
+import { LumenLogo } from "./LumenLogo";
 import { useRuntime } from "./Runtime";
 
 export const ConnectPage = ({
@@ -161,7 +161,7 @@ export const ConnectPage = ({
       )}
       <div className="connect-column">
         <div className="connect-brand">
-          <LumenMark />
+          <LumenLogo />
         </div>
         <section className="connect-card">
           <header className="connect-heading">

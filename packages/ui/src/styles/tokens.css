@@ -200,12 +200,12 @@ body:has(.app-shell) {
   display: flex;
   align-items: center;
   gap: 9px;
-  padding: 4px 8px;
+  padding: 4px 10px;
 }
-.brand-mark {
+.brand-logo {
   flex: none;
-  width: 22px;
-  height: 22px;
+  width: auto;
+  height: 20px;
 }
 .update-button {
   position: relative;
@@ -1415,9 +1415,8 @@ button.nav-item {
   justify-content: center;
   user-select: none;
 }
-.connect-brand .brand-mark {
-  width: 30px;
-  height: 30px;
+.connect-brand .brand-logo {
+  height: 32px;
 }
 .connect-card {
   display: grid;
