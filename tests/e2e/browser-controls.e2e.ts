@@ -110,6 +110,22 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
     .toBeGreaterThan(0);
   await page.keyboard.press("ArrowUp");
   await expect.poll(audioState, often).toEqual({ volume: 15, muted: false });
+  // Clicking the end-of-timeline time toggles between remaining time and total duration.
+  const durationSeconds = await page
+    .locator("video")
+    .evaluate((v: HTMLVideoElement) => Math.floor(v.duration));
+  const durationText = `${Math.floor(durationSeconds / 60)}:${String(durationSeconds % 60).padStart(2, "0")}`;
+  const toDuration = page.getByRole("button", { name: "Show total duration", exact: true });
+  await expect(toDuration).toHaveText(/^-\d+:\d{2}$/u);
+  await expect(toDuration).not.toHaveText(`-${durationText}`);
+  await toDuration.click();
+  const toRemaining = page.getByRole("button", { name: "Show remaining time", exact: true });
+  await expect(toRemaining).toHaveText(durationText);
+  // Pressing Space while the toggle has focus switches it back without resuming playback.
+  await page.keyboard.press("Space");
+  await expect(toDuration).toHaveText(/^-\d+:\d{2}$/u);
+  expect(await page.locator("video").evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+  await toDuration.blur();
   await page.clock.install();
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
   await expect(page.locator(".media-player-settings-panel")).toBeVisible();
@@ -195,6 +211,31 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
     v.currentTime = v.duration - 0.2;
   });
   await plays("Return");
+  // The chosen time display persists across episodes and full page reloads, in either direction.
+  await page.getByRole("button", { name: "Show total duration", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Show remaining time", exact: true })).toHaveText(
+    /^\d+:\d{2}$/u,
+  );
+  await page.getByRole("button", { name: "Previous", exact: true }).click();
+  await plays("Overlap");
+  await expect(page.getByRole("button", { name: "Show remaining time", exact: true })).toHaveText(
+    /^\d+:\d{2}$/u,
+  );
+  await page.reload();
+  await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
+  await plays("Together");
+  const showRemaining = page.getByRole("button", { name: "Show remaining time", exact: true });
+  await expect(showRemaining).toHaveText(/^\d+:\d{2}$/u);
+  await showRemaining.click();
+  await expect(page.getByRole("button", { name: "Show total duration", exact: true })).toHaveText(
+    /^-\d+:\d{2}$/u,
+  );
+  await page.reload();
+  await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
+  await plays("Together");
+  await expect(page.getByRole("button", { name: "Show total duration", exact: true })).toHaveText(
+    /^-\d+:\d{2}$/u,
+  );
 });
 
 const twoEpisodes = [

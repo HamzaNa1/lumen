@@ -2940,7 +2940,20 @@ button.folder-browser-item:hover {
   font-variant-numeric: tabular-nums;
 }
 .media-player-remaining {
+  padding: 3px 6px;
+  margin-inline: -6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
   text-align: right;
+  transition:
+    background-color 120ms ease,
+    color 120ms ease;
+}
+.media-player-remaining:hover:not(:disabled),
+.media-player-remaining:focus-visible {
+  background: rgba(255, 255, 255, 0.16);
+  color: #fff;
 }
 .media-player-transport,
 .media-player-volume,

@@ -6,8 +6,13 @@ import {
   type PlayerDisplay,
   type PlayerState,
 } from "@lumen/contracts";
-import { MediaPlayer } from "@lumen/ui";
+import { MediaPlayer, type PlayerTimeDisplay } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  PLAYER_TIME_DISPLAY_STORAGE_KEY,
+  readPlayerTimeDisplay,
+  writePlayerTimeDisplay,
+} from "./playerTimeDisplay";
 import { useRuntime } from "./Runtime";
 import { ShowDrawer, ShowDrawerButton, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
@@ -55,6 +60,7 @@ export const PlayerView = ({
   currentSession.current = player?.sessionId ?? null;
   const [fullscreen, toggleFullscreen] = useFullscreen();
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [timeDisplay, setTimeDisplay] = useState<PlayerTimeDisplay>(readPlayerTimeDisplay);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const description = display?.description ?? null;
@@ -150,6 +156,15 @@ export const PlayerView = ({
     }
     revealControls();
   }, [display, revealControls]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === null || event.key === PLAYER_TIME_DISPLAY_STORAGE_KEY)
+        setTimeDisplay(readPlayerTimeDisplay());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // The drawer belongs to what was playing when it was opened.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes whenever the item changes
@@ -347,6 +362,12 @@ export const PlayerView = ({
         onSelectSubtitle={(streamId) =>
           trackAction((id) => runtime.playback.selectSubtitle(id, streamId))
         }
+        timeDisplay={timeDisplay}
+        onToggleTimeDisplay={() => {
+          const next: PlayerTimeDisplay = timeDisplay === "remaining" ? "duration" : "remaining";
+          setTimeDisplay(next);
+          writePlayerTimeDisplay(next);
+        }}
       />
       {showDrawerVisible ? (
         <ShowDrawer
