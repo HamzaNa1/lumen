@@ -172,14 +172,15 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   await expect(drawer.getByRole("article")).toHaveCount(3);
   await expect(drawer.locator('[aria-current="true"]')).toContainText("Together");
   await expect(drawer.locator('[aria-current="true"]')).toContainText("E1–2");
-  // Scrolling inside the open episode drawer does not change playback volume.
+  // Scrolling inside the open episode drawer does not change playback volume. Linux WebKit starts
+  // a stream at the volume PulseAudio last saw, which parallel workers share, so compare to it.
+  const volume = () => page.locator("video").evaluate((v: HTMLVideoElement) => v.volume);
+  const startVolume = await volume();
   const drawerBox = await drawer.boundingBox();
   if (!drawerBox) throw new Error("Drawer is not visible");
   await page.mouse.move(drawerBox.x + drawerBox.width / 2, drawerBox.y + drawerBox.height / 2);
   await page.mouse.wheel(0, 100);
-  await expect
-    .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.volume), often)
-    .toBe(1);
+  await expect.poll(volume, often).toBe(startVolume);
   await page.keyboard.press("Escape");
   await page.route("**/api/v1/items/*/children*", (route) => route.abort());
   await page.getByRole("button", { name: "Episodes", exact: true }).click();
