@@ -1251,6 +1251,7 @@ export class HtmlMediaPlayer {
       const endSeconds = element.buffered.end(index) + this.timeOffset;
       if (endSeconds > startSeconds) bufferedRanges.push({ startSeconds, endSeconds });
     }
+    const quality = this.quality(active);
     return {
       sessionId: active.session.sessionId,
       itemId: active.session.itemId,
@@ -1277,13 +1278,15 @@ export class HtmlMediaPlayer {
       audioOutput: "auto-safe",
       buffering: active.buffering && !element.paused,
       awaitingInteraction: active.awaitingInteraction,
-      ...(active.renditions.length === 0 ? {} : { quality: this.quality(active) }),
+      ...(quality === undefined ? {} : { quality }),
     };
   }
 
-  /** Left out where the viewer has no quality to choose. */
+  /** Left out where the viewer has no selectable quality (e.g. audio-only or forced single conversion). */
   private quality(active: ActiveSession): PlayerQuality | undefined {
-    if (active.renditions.length === 0) return undefined;
+    const video = active.session.media?.video;
+    if (video == null) return undefined;
+    if (active.renditions.length === 0 && !active.originalUsable) return undefined;
     return qualityState({
       choice: active.qualityChoice,
       playing:
@@ -1292,7 +1295,7 @@ export class HtmlMediaPlayer {
           : (this.adaptive.playingRendition ?? this.adaptive.loadingRendition).id,
       original: active.originalUsable
         ? {
-            height: active.session.media?.video?.size?.height ?? null,
+            height: video.size?.height ?? null,
             kbps: active.originalKbps,
           }
         : null,

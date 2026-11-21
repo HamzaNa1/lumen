@@ -781,8 +781,12 @@ test("Auto adapts among converted pieces only, leaving the original and staying 
   expect(await source()).not.toMatch(/^blob:/u);
   await page.mouse.move(300, 300);
   await page.getByRole("button", { name: "Playback settings" }).click();
-  await expect(page.locator("#media-player-settings-panel")).toBeVisible();
-  await expect(page.locator(".media-player-quality-row")).toHaveCount(0);
+  await expect(page.locator(".media-player-quality-value")).toHaveText("Original");
+  await page.locator(".media-player-quality-row").click();
+  const options = page.getByRole("menuitemradio");
+  await expect(options).toHaveCount(1);
+  await expect(options.first()).toHaveText(/^Original/u);
+  await expect(options.first()).toHaveAttribute("aria-checked", "true");
 });
 
 test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {

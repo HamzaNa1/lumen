@@ -187,17 +187,17 @@ export class MpvMediaSource {
   private conversionFailed = false;
 
   quality(): PlayerQuality | undefined {
-    const renditions = this.renditions;
+    const video = this.options.session.media?.video;
     // A file MPV cannot decode plays as one conversion, which has no qualities to offer.
-    if (renditions.length === 0 || !this.originalPlays) return undefined;
+    if (video == null || !this.originalPlays) return undefined;
     return qualityState({
       choice: this.qualityChoice,
       playing: this.adaptive?.playingRendition.id ?? "original",
       original: {
-        height: this.options.session.media?.video?.size?.height ?? null,
+        height: video.size?.height ?? null,
         kbps: this.originalKbps,
       },
-      renditions,
+      renditions: this.renditions,
       measuredKbps: this.options.estimator.kbps,
     });
   }

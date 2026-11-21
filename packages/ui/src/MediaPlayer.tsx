@@ -322,7 +322,7 @@ export const MediaPlayer = ({
   const audioLabels = streamLabels(audioStreams);
   const subtitleLabels = streamLabels(subtitleStreams);
   const trackWarning = trackSelectionWarning(trackSelection, subtitleSelection);
-  const qualityChoices = quality !== undefined && quality.options.length > 1 ? quality : null;
+  const qualityChoices = quality !== undefined && quality.options.length > 0 ? quality : null;
   const badge = qualityChoices === null ? null : qualityBadge(qualityChoices);
   const timelineEnd = duration ?? Math.max(position, 1);
   const seekValue = Math.min(seekPreview ?? position, timelineEnd);
