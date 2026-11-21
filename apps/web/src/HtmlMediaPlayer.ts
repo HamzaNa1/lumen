@@ -451,8 +451,13 @@ export class HtmlMediaPlayer {
   async selectQuality(sessionId: string, choice: string): Promise<PlayerState> {
     const active = this.requireActive(sessionId);
     const rendition = active.renditions.find((candidate) => candidate.id === choice) ?? null;
-    if (choice !== "auto" && choice !== "original" && rendition === null)
+    if (
+      (choice !== "auto" && choice !== "original" && rendition === null) ||
+      (choice === "auto" && active.renditions.length === 0)
+    )
       throw new Error("Quality is unavailable");
+    if (choice === "original" && !active.originalUsable)
+      throw new Error("This file needs converting to play here");
     active.qualityChoice = choice;
     const position = this.snapshot(active).positionSeconds;
     // Auto adapts among converted pieces only, so choosing it leaves the original.
@@ -465,9 +470,10 @@ export class HtmlMediaPlayer {
     else if (target !== null && this.adaptive === null)
       await this.replaceStream(active, target, position);
     else this.adaptive?.choose(choice);
-    void active.selection
-      ?.rememberQuality(choice, active.renditions, active.originalUsable)
-      .catch(() => undefined);
+    if (active.renditions.length > 0)
+      void active.selection
+        ?.rememberQuality(choice, active.renditions, active.originalUsable)
+        .catch(() => undefined);
     return this.publishIfActive(active);
   }
 
@@ -642,6 +648,7 @@ export class HtmlMediaPlayer {
     );
     const renditions =
       this.api.supportsAdaptive === true &&
+      session.adaptive !== false &&
       adaptivePlaybackSupported() &&
       this.element.canPlayType('video/mp4; codecs="avc1.4d4028"') !== "" &&
       typeof HTMLMediaElement !== "undefined" &&
@@ -686,6 +693,7 @@ export class HtmlMediaPlayer {
           )
             throw cause;
           quality.renditions = [];
+          quality.choice = "original";
           this.nextAdaptive = null;
           this.unload();
           await this.loadAt(generation, session, startAtSeconds);
@@ -926,7 +934,7 @@ export class HtmlMediaPlayer {
       return;
     }
     active.renditions = [];
-    active.qualityChoice = "auto";
+    active.qualityChoice = "original";
     try {
       await this.replaceStream(active, null, positionSeconds);
       this.publishIfActive(active);
@@ -1282,10 +1290,12 @@ export class HtmlMediaPlayer {
         this.adaptive === null
           ? "original"
           : (this.adaptive.playingRendition ?? this.adaptive.loadingRendition).id,
-      original: {
-        height: active.session.media?.video?.size?.height ?? null,
-        kbps: active.originalKbps,
-      },
+      original: active.originalUsable
+        ? {
+            height: active.session.media?.video?.size?.height ?? null,
+            kbps: active.originalKbps,
+          }
+        : null,
       renditions: active.renditions,
       measuredKbps: this.estimator.kbps,
     });

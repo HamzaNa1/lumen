@@ -266,6 +266,8 @@ export const PlayerSession = Schema.Struct({
   trackMemory: Schema.optional(TrackMemory),
   /** Older servers leave it out. */
   media: Schema.optional(PlayableMedia),
+  /** Whether the server can convert video into adaptive qualities now; older servers leave it out. */
+  adaptive: Schema.optional(Schema.Boolean),
 });
 export type PlayerSession = Schema.Schema.Type<typeof PlayerSession>;
 

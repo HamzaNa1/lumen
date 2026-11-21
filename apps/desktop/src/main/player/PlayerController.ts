@@ -331,23 +331,25 @@ export class PlayerController extends EventEmitter {
       await this.surface.show();
       if (generation !== this.startGeneration) throw new Error("Playback was cancelled");
       diagnostics.record("playback_ready", {});
-      this.state = {
-        sessionId: session.sessionId,
-        itemId: session.itemId,
-        paused: input.paused ?? false,
-        positionSeconds: startAtSeconds,
-        durationSeconds: session.durationSeconds,
-        bufferedRanges: [],
-        volume,
-        muted,
-        ended: false,
-        streams,
-        selectedAudioStreamId: active.media.audioId,
-        selectedSubtitleStreamId: active.media.subtitleId,
-        audioOutput,
-        trackPreferences: session.trackMemory?.preferences ?? DEFAULT_TRACK_PREFERENCES,
-        ...this.qualityOf(active),
-      };
+      this.state = this.withQuality(
+        {
+          sessionId: session.sessionId,
+          itemId: session.itemId,
+          paused: input.paused ?? false,
+          positionSeconds: startAtSeconds,
+          durationSeconds: session.durationSeconds,
+          bufferedRanges: [],
+          volume,
+          muted,
+          ended: false,
+          streams,
+          selectedAudioStreamId: active.media.audioId,
+          selectedSubtitleStreamId: active.media.subtitleId,
+          audioOutput,
+          trackPreferences: session.trackMemory?.preferences ?? DEFAULT_TRACK_PREFERENCES,
+        },
+        active,
+      );
       active.selection = new TrackSelectionController({
         sourceId: session.sourceId,
         ...(session.trackMemory === undefined ? {} : { memory: session.trackMemory }),
@@ -515,9 +517,10 @@ export class PlayerController extends EventEmitter {
     active.motionRevision += 1;
     try {
       await active.media.selectQuality(choice, this.requireState().positionSeconds);
-      void active.selection
-        ?.rememberQuality(choice, active.media.renditions, active.media.originalUsable)
-        .catch(() => undefined);
+      if (active.media.renditions.length > 0)
+        void active.selection
+          ?.rememberQuality(choice, active.media.renditions, active.media.originalUsable)
+          .catch(() => undefined);
     } catch (cause) {
       if (!(cause instanceof MediaLoadCancelled)) throw cause;
     } finally {
@@ -525,14 +528,16 @@ export class PlayerController extends EventEmitter {
       active.motionRevision += 1;
     }
     this.assertActive(sessionId);
-    this.state = { ...this.requireState(), ...this.qualityOf(active) };
+    this.state = this.withQuality(this.requireState(), active);
     this.publish();
     return this.requireState();
   }
 
-  private qualityOf(active: ActiveSession): Pick<PlayerState, "quality"> {
+  private withQuality(state: PlayerState, active: ActiveSession): PlayerState {
     const quality = active.media.quality();
-    return quality === undefined ? {} : { quality };
+    if (quality !== undefined) return { ...state, quality };
+    const { quality: _removed, ...rest } = state;
+    return rest;
   }
 
   async resetTrack(sessionId: string, kind: TrackKind): Promise<PlayerState> {
@@ -1029,7 +1034,7 @@ export class PlayerController extends EventEmitter {
           ],
         };
       }
-      next = { ...next, ...this.qualityOf(active) };
+      next = this.withQuality(next, active);
       if (seeking !== null && pausedForCache !== null) {
         // A seek waits on data just as a drained cache does, so the viewer sees both as buffering.
         next = {

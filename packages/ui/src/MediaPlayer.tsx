@@ -191,6 +191,7 @@ const QualityMenu = ({
     );
   };
   const original = quality.options.find((option) => option.id === "original");
+  const converted = quality.options.filter((option) => option.id !== "original");
   return (
     <div role="menu" aria-label="Quality">
       {original === undefined ? null : (
@@ -201,25 +202,27 @@ const QualityMenu = ({
             detail: original.height === null ? null : `${original.height}p`,
             kbps: original.kbps,
           })}
-          <hr className="media-player-quality-separator" />
+          {converted.length === 0 ? null : <hr className="media-player-quality-separator" />}
         </>
       )}
-      {item({
-        id: "auto",
-        label: "Auto",
-        detail: quality.choice === "auto" ? qualityPlayingLabel(quality) : null,
-        kbps: null,
-      })}
-      {quality.options
-        .filter((option) => option.id !== "original")
-        .map((option) =>
-          item({
-            id: option.id,
-            label: qualityOptionLabel(option),
-            detail: null,
-            kbps: option.kbps,
-          }),
-        )}
+      {converted.length === 0 ? null : (
+        <>
+          {item({
+            id: "auto",
+            label: "Auto",
+            detail: quality.choice === "auto" ? qualityPlayingLabel(quality) : null,
+            kbps: null,
+          })}
+          {converted.map((option) =>
+            item({
+              id: option.id,
+              label: qualityOptionLabel(option),
+              detail: null,
+              kbps: option.kbps,
+            }),
+          )}
+        </>
+      )}
     </div>
   );
 };

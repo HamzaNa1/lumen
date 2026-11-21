@@ -164,6 +164,7 @@ export class MpvMediaSource {
     // Bytes kept on this device play as they are: there is nothing to adapt to.
     if (
       client.supportsAdaptive !== true ||
+      session.adaptive === false ||
       client.offline === true ||
       !session.media?.video ||
       this.conversionFailed
@@ -214,6 +215,7 @@ export class MpvMediaSource {
         if (typeof delivery !== "object" || cause instanceof MediaLoadCancelled) throw cause;
         // Conversion can be off on a server that offers it; the original still plays.
         this.conversionFailed = true;
+        this.qualityChoice = "original";
         return this.load("original", position);
       });
     } catch (cause) {
@@ -252,7 +254,7 @@ export class MpvMediaSource {
       if (delivery === "original" || cause instanceof MediaLoadCancelled || !this.originalPlays)
         throw cause;
       this.conversionFailed = true;
-      this.qualityChoice = "auto";
+      this.qualityChoice = "original";
       return this.load("original", position);
     });
   }
@@ -286,17 +288,19 @@ export class MpvMediaSource {
 
   /** "auto", "original", or a rendition id. */
   async selectQuality(choice: string, position: number): Promise<void> {
-    const rendition = this.renditions.find((candidate) => candidate.id === choice);
-    if (choice !== "auto" && rendition === undefined && choice !== "original")
+    const renditions = this.renditions;
+    const rendition = renditions.find((candidate) => candidate.id === choice);
+    if (
+      (choice !== "auto" && rendition === undefined && choice !== "original") ||
+      (choice === "auto" && renditions.length === 0)
+    )
       throw new Error("Quality is unavailable");
     if (choice === "original" && !this.originalPlays)
       throw new Error("This file needs converting to play here");
     this.qualityChoice = choice;
     // Auto adapts among converted pieces only, so choosing it leaves the original.
     const target =
-      choice === "auto"
-        ? startingRendition(this.renditions, this.options.estimator.kbps)
-        : rendition;
+      choice === "auto" ? startingRendition(renditions, this.options.estimator.kbps) : rendition;
     if (choice === "original" && !this.playsOriginal) await this.load("original", position);
     else if (target !== undefined && this.adaptive === null) await this.switchTo(target, position);
     else this.adaptive?.choose(choice);
