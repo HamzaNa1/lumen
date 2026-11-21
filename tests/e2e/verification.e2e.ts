@@ -424,7 +424,9 @@ test("release builds start after validation and publication remains gated by eve
     needs?: string | string[];
     if?: string;
     uses?: string;
-    steps?: { uses?: string; run?: string }[];
+    with?: Record<string, string>;
+    strategy?: { matrix?: Record<string, unknown> };
+    steps?: { uses?: string; run?: string; with?: Record<string, unknown> }[];
   };
   const workflow = (name: string) =>
     JSON.parse(
@@ -440,12 +442,22 @@ test("release builds start after validation and publication remains gated by eve
     "actions/checkout@v4",
     "oven-sh/setup-bun@v2",
   ]);
+  expect(preflight.jobs.validate?.steps?.[0]?.with?.["fetch-depth"]).toBeUndefined();
   const verify = workflow("release-verify");
-  expect(Object.keys(verify.jobs).sort()).toEqual(["browser", "product"]);
-  for (const job of Object.values(verify.jobs)) {
+  expect(Object.keys(verify.jobs).sort()).toEqual(["api", "browser", "native", "quality"]);
+  for (const [name, job] of Object.entries(verify.jobs)) {
     expect(job.needs).toBeUndefined();
-    expect(job.if).toBeUndefined();
+    expect(job.if ?? "").not.toMatch(/always\(|cancelled\(|failure\(/);
+    if (name === "browser") expect(job.if).toContain("inputs.product == 'server'");
+    else expect(job.if).toBeUndefined();
+    for (const step of job.steps ?? []) {
+      if (step.uses === "actions/checkout@v4") expect(step.with?.["fetch-depth"]).toBeUndefined();
+    }
   }
+  expect(verify.jobs.browser?.uses).toBe("./.github/workflows/client-e2e.yml");
+  expect(verify.jobs.browser?.strategy?.matrix?.project).toEqual(["chromium", "firefox", "webkit"]);
+  expect(verify.jobs.native?.uses).toBe("./.github/workflows/client-e2e.yml");
+  expect(verify.jobs.native?.with?.shards).toContain("[1,2,3]");
   for (const product of ["desktop", "server"]) {
     const { jobs } = workflow(`release-${product}`);
     expect(jobs.verify?.uses).toBe("./.github/workflows/release-verify.yml");
