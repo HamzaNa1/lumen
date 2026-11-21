@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { openDatabase } from "./support/database";
@@ -53,6 +54,24 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
       .toMatchObject({ paused: false });
     // Hide only while settled: AppKit can order the window back in as it finishes leaving fullscreen.
     await expectChildrenAligned();
+    if (process.platform === "linux") {
+      // On X11, MPV must embed inside the video host window rather than falling back to a standalone VO.
+      const hostWid = await app.evaluate(({ BaseWindow, BrowserWindow }, parentId) => {
+        const host = BaseWindow.getAllWindows().find(
+          (window) =>
+            window.getParentWindow()?.id === parentId && !(window instanceof BrowserWindow),
+        );
+        if (!host) return null;
+        const handle = host.getNativeWindowHandle();
+        return handle.byteLength >= 8
+          ? handle.readBigUInt64LE(0).toString()
+          : String(handle.readUInt32LE(0));
+      }, parentId);
+      expect(hostWid).not.toBeNull();
+      await expect
+        .poll(() => execFileSync("xwininfo", ["-tree", "-id", hostWid ?? ""], { encoding: "utf8" }))
+        .toContain('"mpv"');
+    }
     await main.evaluate((window) => window.hide());
     await expect
       .poll(() =>

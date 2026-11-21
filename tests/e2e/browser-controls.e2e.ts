@@ -45,6 +45,62 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
     await expect(page.locator("video")).toHaveAttribute("data-pauses", "0");
   }
   await pause(page);
+  const audioState = () =>
+    page
+      .locator("video")
+      .evaluate((v: HTMLVideoElement) => ({ volume: Math.round(v.volume * 100), muted: v.muted }));
+  // Arrow keys and M adjust volume and mute from the player; rapid repeats never drop steps.
+  await expect.poll(audioState, often).toEqual({ volume: 100, muted: false });
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(audioState, often).toEqual({ volume: 90, muted: false });
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(audioState, often).toEqual({ volume: 95, muted: false });
+  await page.keyboard.press("m");
+  await expect.poll(audioState, often).toEqual({ volume: 95, muted: true });
+  await expect(page.getByRole("button", { name: "Unmute", exact: true })).toBeVisible();
+  await page.keyboard.press("m");
+  await expect.poll(audioState, often).toEqual({ volume: 95, muted: false });
+  await expect(page.getByRole("button", { name: "Mute", exact: true })).toBeVisible();
+  // Raising volume while muted unmutes; lowering to zero mutes and M brings back audible volume.
+  await page.keyboard.press("m");
+  await expect.poll(audioState, often).toEqual({ volume: 95, muted: true });
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(audioState, often).toEqual({ volume: 100, muted: false });
+  const volumeSlider = page.getByRole("slider", { name: "Volume" });
+  await volumeSlider.focus();
+  await page.keyboard.press("Home");
+  await expect.poll(audioState, often).toEqual({ volume: 0, muted: true });
+  // Pressing M even while the volume slider has focus still unmutes to an audible level.
+  await page.keyboard.press("m");
+  await expect.poll(audioState, often).toEqual({ volume: 5, muted: false });
+  await volumeSlider.blur();
+  await page.keyboard.press("ArrowDown");
+  await expect.poll(audioState, often).toEqual({ volume: 0, muted: true });
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(audioState, often).toEqual({ volume: 5, muted: false });
+  await page.mouse.move(x, y);
+  // Wheel up raises and wheel down lowers volume; smooth trackpad ticks throttle, horizontal and
+  // pinch-zoom wheels are ignored.
+  await page.mouse.wheel(0, -100);
+  await page.mouse.wheel(0, -100);
+  await expect.poll(audioState, often).toEqual({ volume: 15, muted: false });
+  await page.mouse.wheel(0, 100);
+  await expect.poll(audioState, often).toEqual({ volume: 10, muted: false });
+  await page.evaluate(() => {
+    for (let i = 0; i < 4; i++)
+      window.dispatchEvent(
+        new WheelEvent("wheel", { deltaY: -10, bubbles: true, cancelable: true }),
+      );
+  });
+  await expect.poll(audioState, often).toEqual({ volume: 15, muted: false });
+  await page.mouse.wheel(120, 0);
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new WheelEvent("wheel", { deltaY: -100, ctrlKey: true, bubbles: true, cancelable: true }),
+    );
+  });
+  await expect.poll(audioState, often).toEqual({ volume: 15, muted: false });
   const timeline = page.getByRole("slider", { name: "Playback position" });
   await timeline.focus();
   await page.keyboard.press("Home");
@@ -52,9 +108,34 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   await expect
     .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime), often)
     .toBeGreaterThan(0);
+  await page.keyboard.press("ArrowUp");
+  await expect.poll(audioState, often).toEqual({ volume: 15, muted: false });
+  // Clicking the end-of-timeline time toggles between remaining time and total duration.
+  const durationSeconds = await page
+    .locator("video")
+    .evaluate((v: HTMLVideoElement) => Math.floor(v.duration));
+  const durationText = `${Math.floor(durationSeconds / 60)}:${String(durationSeconds % 60).padStart(2, "0")}`;
+  const toDuration = page.getByRole("button", { name: "Show total duration", exact: true });
+  await expect(toDuration).toHaveText(/^-\d+:\d{2}$/u);
+  await expect(toDuration).not.toHaveText(`-${durationText}`);
+  await toDuration.click();
+  const toRemaining = page.getByRole("button", { name: "Show remaining time", exact: true });
+  await expect(toRemaining).toHaveText(durationText);
+  // Pressing Space while the toggle has focus switches it back without resuming playback.
+  await toRemaining.focus();
+  await page.keyboard.press("Space");
+  await expect(toDuration).toHaveText(/^-\d+:\d{2}$/u);
+  expect(await page.locator("video").evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
+  await toDuration.blur();
   await page.clock.install();
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
   await expect(page.locator(".media-player-settings-panel")).toBeVisible();
+  // Scrolling over the settings panel does not change volume.
+  const panelBox = await page.locator(".media-player-settings-panel").boundingBox();
+  if (!panelBox) throw new Error("Settings panel is not visible");
+  await page.mouse.move(panelBox.x + panelBox.width / 2, panelBox.y + panelBox.height / 2);
+  await page.mouse.wheel(0, -100);
+  await expect.poll(audioState, often).toEqual({ volume: 15, muted: false });
   await page.mouse.move(x, y);
   await page.getByRole("button", { name: "Resume playback", exact: true }).click();
   await page.mouse.move(x + 5, y);
@@ -62,6 +143,17 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   await expect(page.getByRole("region", { name: "Media player" })).not.toHaveClass(
     /controls-visible/,
   );
+  // Adjusting volume or muting while controls are hidden reveals them again, then hides after idle.
+  await page.mouse.wheel(0, -100);
+  await expect.poll(audioState, often).toEqual({ volume: 20, muted: false });
+  await expect(page.getByRole("region", { name: "Media player" })).toHaveClass(/controls-visible/);
+  await page.clock.runFor(4000);
+  await expect(page.getByRole("region", { name: "Media player" })).not.toHaveClass(
+    /controls-visible/,
+  );
+  await page.keyboard.press("m");
+  await expect.poll(audioState, often).toEqual({ volume: 20, muted: true });
+  await expect(page.getByRole("region", { name: "Media player" })).toHaveClass(/controls-visible/);
   await page.mouse.move(x + 10, y);
   await expect(page.locator(".media-player-settings-panel")).toBeHidden();
 });
@@ -97,6 +189,15 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
   await expect(drawer.getByRole("article")).toHaveCount(3);
   await expect(drawer.locator('[aria-current="true"]')).toContainText("Together");
   await expect(drawer.locator('[aria-current="true"]')).toContainText("E1–2");
+  // Scrolling inside the open episode drawer does not change playback volume. Linux WebKit starts
+  // a stream at the volume PulseAudio last saw, which parallel workers share, so compare to it.
+  const volume = () => page.locator("video").evaluate((v: HTMLVideoElement) => v.volume);
+  const startVolume = await volume();
+  const drawerBox = await drawer.boundingBox();
+  if (!drawerBox) throw new Error("Drawer is not visible");
+  await page.mouse.move(drawerBox.x + drawerBox.width / 2, drawerBox.y + drawerBox.height / 2);
+  await page.mouse.wheel(0, 100);
+  await expect.poll(volume, often).toBe(startVolume);
   await page.keyboard.press("Escape");
   await page.route("**/api/v1/items/*/children*", (route) => route.abort());
   await page.getByRole("button", { name: "Episodes", exact: true }).click();
@@ -111,6 +212,31 @@ test("episode drawer is preloaded across seasons, marks the current range and ad
     v.currentTime = v.duration - 0.2;
   });
   await plays("Return");
+  // The chosen time display persists across episodes and full page reloads, in either direction.
+  await page.getByRole("button", { name: "Show total duration", exact: true }).click();
+  await expect(page.getByRole("button", { name: "Show remaining time", exact: true })).toHaveText(
+    /^\d+:\d{2}$/u,
+  );
+  await page.getByRole("button", { name: "Previous", exact: true }).click();
+  await plays("Overlap");
+  await expect(page.getByRole("button", { name: "Show remaining time", exact: true })).toHaveText(
+    /^\d+:\d{2}$/u,
+  );
+  await page.reload();
+  await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
+  await plays("Together");
+  const showRemaining = page.getByRole("button", { name: "Show remaining time", exact: true });
+  await expect(showRemaining).toHaveText(/^\d+:\d{2}$/u);
+  await showRemaining.click();
+  await expect(page.getByRole("button", { name: "Show total duration", exact: true })).toHaveText(
+    /^-\d+:\d{2}$/u,
+  );
+  await page.reload();
+  await startPlayback(page, server, library.id, ["Serial", "Season 1", "Together"]);
+  await plays("Together");
+  await expect(page.getByRole("button", { name: "Show total duration", exact: true })).toHaveText(
+    /^-\d+:\d{2}$/u,
+  );
 });
 
 const twoEpisodes = [

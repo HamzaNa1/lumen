@@ -10,7 +10,7 @@ export {
   TextField,
 } from "./Controls";
 export { MediaCard, PosterFallback, posterHue } from "./MediaCard";
-export { MediaPlayer } from "./MediaPlayer";
+export { MediaPlayer, type PlayerTimeDisplay } from "./MediaPlayer";
 export {
   DropdownGroup,
   DropdownItem,

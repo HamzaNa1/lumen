@@ -104,6 +104,9 @@ export class MpvProcess {
     const arguments_ = [
       "--no-config",
       "--load-scripts=no",
+      // Built-in CLI UI scripts ignore --load-scripts=no; Lumen draws its own controls and
+      // initializing the OSC runs libass/fontconfig synchronously on MPV's main thread.
+      ...(helper ? [] : ["--osc=no", "--osd-bar=no", "--load-stats-overlay=no"]),
       "--idle=yes",
       // Keep completed media seekable without changing the shared pause state.
       "--keep-open=yes",

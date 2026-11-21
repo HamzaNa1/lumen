@@ -42,6 +42,7 @@ import {
   streamLabels,
   trackSelectionWarning,
 } from "./PlayerFormatting";
+import { toggleMute } from "./playerVolume";
 import { useClickGesture } from "./useClickGesture";
 import { useNow } from "./useNow";
 import { usePlayerShortcuts } from "./usePlayerShortcuts";
@@ -54,6 +55,9 @@ const upNextNoticeSeconds = 30;
 
 /** How long a click on the video waits for the second click that makes it a fullscreen toggle. */
 const videoDoubleClickMs = 250;
+
+/** Whether the right side of the timeline counts down what is left or shows the full length. */
+export type PlayerTimeDisplay = "remaining" | "duration";
 
 interface MediaPlayerProps {
   readonly headerActions?: ReactNode;
@@ -136,6 +140,8 @@ interface MediaPlayerProps {
   readonly onSelectQuality?: (choice: string) => void;
   /** The option the viewer's setting plays, which choosing makes the title follow it again. */
   readonly defaultQuality?: string | undefined;
+  readonly timeDisplay?: PlayerTimeDisplay;
+  readonly onToggleTimeDisplay?: () => void;
 }
 
 const markDefault = (label: string, isDefault: boolean): string =>
@@ -295,6 +301,8 @@ export const MediaPlayer = ({
   quality,
   onSelectQuality,
   defaultQuality,
+  timeDisplay = "remaining",
+  onToggleTimeDisplay,
 }: MediaPlayerProps): React.ReactElement => {
   const [seekPreview, setSeekPreview] = useState<number | null>(null);
   // How far along the timeline the pointer rests, from 0 at its start to 1 at its end.
@@ -343,10 +351,13 @@ export const MediaPlayer = ({
     enabled: !inactive,
     position,
     duration,
+    volume,
+    muted,
     fullscreen,
     onFullscreen,
     onPause,
     onSeek,
+    onVolume,
   });
 
   const onVideoClick = useClickGesture(onPause, () => onFullscreen?.(), videoDoubleClickMs);
@@ -475,6 +486,7 @@ export const MediaPlayer = ({
             <span className="media-player-time">{formatPlayerTime(seekValue)}</span>
             <Slider.Root
               className="media-player-timeline"
+              thumbAlignment="edge"
               min={0}
               max={timelineEnd}
               value={seekValue}
@@ -521,9 +533,21 @@ export const MediaPlayer = ({
                 </Slider.Track>
               </Slider.Control>
             </Slider.Root>
-            <span className="media-player-time media-player-remaining">
-              {remaining === null ? "--:--" : `-${formatPlayerTime(remaining)}`}
-            </span>
+            <button
+              type="button"
+              className="media-player-time media-player-remaining"
+              disabled={duration === null || onToggleTimeDisplay === undefined}
+              onClick={onToggleTimeDisplay}
+              aria-label={
+                timeDisplay === "duration" ? "Show remaining time" : "Show total duration"
+              }
+            >
+              {duration === null || remaining === null
+                ? "--:--"
+                : timeDisplay === "duration"
+                  ? formatPlayerTime(duration)
+                  : `-${formatPlayerTime(remaining)}`}
+            </button>
           </div>
 
           <div className="media-player-toolbar">
@@ -587,8 +611,11 @@ export const MediaPlayer = ({
                 <Button
                   variant="icon"
                   disabled={inactive}
-                  onClick={() => onVolume(volume, !muted)}
-                  aria-label={muted ? "Unmute" : "Mute"}
+                  onClick={() => {
+                    const next = toggleMute(volume, muted);
+                    onVolume(next.volume, next.muted);
+                  }}
+                  aria-label={muted || volumeValue === 0 ? "Unmute" : "Mute"}
                 >
                   {muted || volumeValue === 0 ? (
                     <VolumeX aria-hidden="true" size={19} />

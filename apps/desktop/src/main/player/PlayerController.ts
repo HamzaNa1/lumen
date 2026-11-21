@@ -93,6 +93,7 @@ interface PlaybackResources {
 }
 
 const AUDIO_RESTART_TIMEOUT_MS = 15_000;
+const PLAYER_STARTUP_TIMEOUT_MS = 15_000;
 const CACHE_STATE_TIMEOUT_MS = 100;
 /** A player slower than this to stop is replaced rather than waited on. */
 const HANDOFF_STOP_TIMEOUT_MS = 500;
@@ -223,7 +224,11 @@ export class PlayerController extends EventEmitter {
         connected.on("disconnected", (cause: Error) => {
           if (this.active?.ipc === connected) this.failActive(this.active, cause);
         });
-        await connected.command(["request_log_messages", "error"]);
+        await connected.command(["request_log_messages", "error"], PLAYER_STARTUP_TIMEOUT_MS);
+        // request_log_messages runs on MPV's IPC thread; wait for the main thread (and Linux VO
+        // probing) to finish starting with the same 15 s budget the native video helper gets.
+        if (!spawned.frames)
+          await connected.command(["get_property", "mpv-version"], PLAYER_STARTUP_TIMEOUT_MS);
       }
       diagnostics.record("player_ready", { reused: reused !== null });
       if (this.startingProcess === playerProcess) this.startingProcess = null;

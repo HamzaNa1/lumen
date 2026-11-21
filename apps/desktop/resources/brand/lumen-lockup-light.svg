@@ -1,12 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 230 64" role="img" aria-labelledby="title desc">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 44" role="img" aria-labelledby="title desc">
   <title id="title">Lumen</title>
   <desc id="desc">Lumen logo for light backgrounds.</desc>
   <g aria-hidden="true">
-    <rect x="2" y="2" width="60" height="60" rx="15" fill="#0d1016"/>
-    <g fill="none" stroke-width="6" stroke-linecap="round">
-      <path d="M14 14V50" stroke="#c9f560"/>
-      <path d="M26 50V31M26 38a6.5 6.5 0 0 1 13 0V50M39 38a6.5 6.5 0 0 1 13 0V50" stroke="#f5f7f2"/>
+    <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 4V40" stroke="#5c8700"/>
+      <g stroke="#121708">
+        <path d="M14.5 21V33a7 7 0 0 0 14 0M28.5 21V40"/>
+        <path d="M39 40V21M39 28a6.5 6.5 0 0 1 13 0V40M52 28a6.5 6.5 0 0 1 13 0V40"/>
+        <path d="M101.8 40V21M101.8 28.5a7 7 0 0 1 14 0V40"/>
+      </g>
     </g>
+    <path fill="#121708" fill-rule="evenodd" d="M94.8 30.2C94.8 22.8 90.3 17.8 83.4 17.8C76.5 17.8 72 22.9 72 30.6C72 38.2 76.6 43.3 83.8 43.3C87.7 43.3 90.7 42.1 92.6 40.3C93.7 39.2 93.7 37.5 92.6 36.5C91.6 35.6 90.1 35.6 89 36.5C87.7 37.6 86 38.2 83.9 38.2C80.1 38.2 77.9 36.1 77.8 32.8H92.3C93.7 32.8 94.8 31.7 94.8 30.2ZM77.8 28.3C78.1 24.9 80.2 22.8 83.4 22.8C86.6 22.8 88.7 24.9 89 28.3H77.8Z"/>
   </g>
-  <text x="78" y="43" fill="#121708" font-family="Inter, 'SF Pro Display', 'Segoe UI', sans-serif" font-size="34" font-weight="750" letter-spacing="-1.2">Lumen</text>
 </svg>

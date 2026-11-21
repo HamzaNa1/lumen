@@ -16,7 +16,7 @@ import {
 import { type ReactNode, useState } from "react";
 import { AppUpdateButton } from "./AppUpdates";
 import { DeviceOnly } from "./Downloads";
-import { LumenMark } from "./LumenMark";
+import { LumenLogo } from "./LumenLogo";
 import { useRuntime } from "./Runtime";
 import { SettingsDialog } from "./SettingsDialog";
 import { WatchGroups } from "./WatchGroups";
@@ -65,7 +65,7 @@ export const Sidebar = ({
   return (
     <>
       <div className="sidebar-brand">
-        <LumenMark />
+        <LumenLogo />
         {runtime.appUpdates === null ? null : <AppUpdateButton updates={runtime.appUpdates} />}
       </div>
       <nav className="nav" aria-label="Primary">

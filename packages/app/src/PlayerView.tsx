@@ -6,8 +6,13 @@ import {
   type PlayerDisplay,
   type PlayerState,
 } from "@lumen/contracts";
-import { MediaPlayer } from "@lumen/ui";
+import { MediaPlayer, type PlayerTimeDisplay } from "@lumen/ui";
 import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  PLAYER_TIME_DISPLAY_STORAGE_KEY,
+  readPlayerTimeDisplay,
+  writePlayerTimeDisplay,
+} from "./playerTimeDisplay";
 import { useRuntime } from "./Runtime";
 import { ShowDrawer, ShowDrawerButton, useShowEpisodes } from "./ShowDrawer";
 import { useFullscreen } from "./useFullscreen";
@@ -39,10 +44,23 @@ export const PlayerView = ({
   const [player, setPlayer] = useState<PlayerState | null>(null);
   const [trackActionError, setTrackActionError] = useState<string | null>(null);
   const trackRequest = useRef(0);
+  const volumeRequest = useRef(0);
+  const pendingVolume = useRef<{
+    readonly request: number;
+    readonly sessionId: string;
+    readonly volume: number;
+    readonly muted: boolean;
+  } | null>(null);
+  const lastAudioState = useRef<{
+    readonly sessionId: string;
+    readonly volume: number;
+    readonly muted: boolean;
+  } | null>(null);
   const currentSession = useRef<string | null>(null);
   currentSession.current = player?.sessionId ?? null;
   const [fullscreen, toggleFullscreen] = useFullscreen();
   const [controlsVisible, setControlsVisible] = useState(true);
+  const [timeDisplay, setTimeDisplay] = useState<PlayerTimeDisplay>(readPlayerTimeDisplay);
   const hideTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const surfaceRef = useRef<HTMLDivElement>(null);
   const description = display?.description ?? null;
@@ -88,11 +106,38 @@ export const PlayerView = ({
 
   useEffect(() => {
     const onMove = (): void => revealControls();
+    const applyState = (next: PlayerState | null): void => {
+      if (next === null) {
+        pendingVolume.current = null;
+        lastAudioState.current = null;
+        setPlayer(null);
+        return;
+      }
+      const pending = pendingVolume.current;
+      const merged =
+        pending !== null && pending.sessionId === next.sessionId
+          ? { ...next, volume: pending.volume, muted: pending.muted }
+          : next;
+      if (pending !== null && pending.sessionId !== next.sessionId) pendingVolume.current = null;
+      const previous = lastAudioState.current;
+      if (
+        previous !== null &&
+        previous.sessionId === merged.sessionId &&
+        (previous.volume !== merged.volume || previous.muted !== merged.muted)
+      )
+        revealControls();
+      lastAudioState.current = {
+        sessionId: merged.sessionId,
+        volume: merged.volume,
+        muted: merged.muted,
+      };
+      setPlayer(merged);
+    };
     window.addEventListener("mousemove", onMove);
-    const unsubscribeState = runtime.playback.onState(setPlayer);
+    const unsubscribeState = runtime.playback.onState(applyState);
     void runtime.playback
       .state()
-      .then(setPlayer)
+      .then(applyState)
       .catch(() => undefined);
     return () => {
       window.removeEventListener("mousemove", onMove);
@@ -104,11 +149,22 @@ export const PlayerView = ({
   useEffect(() => {
     if (display === null) return;
     if (display.loading) {
+      pendingVolume.current = null;
+      lastAudioState.current = null;
       setPlayer(null);
       setTrackActionError(null);
     }
     revealControls();
   }, [display, revealControls]);
+
+  useEffect(() => {
+    const onStorage = (event: StorageEvent): void => {
+      if (event.key === null || event.key === PLAYER_TIME_DISPLAY_STORAGE_KEY)
+        setTimeDisplay(readPlayerTimeDisplay());
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
 
   // The drawer belongs to what was playing when it was opened.
   // biome-ignore lint/correctness/useExhaustiveDependencies: closes whenever the item changes
@@ -262,11 +318,43 @@ export const PlayerView = ({
               }
         }
         onVolume={(volume, muted) => {
-          if (player !== null)
-            void runtime.playback
-              .volume(player.sessionId, volume, muted)
-              .then(setPlayer)
-              .catch(() => undefined);
+          if (player === null) return;
+          revealControls();
+          const sessionId = player.sessionId;
+          const request = ++volumeRequest.current;
+          pendingVolume.current = { request, sessionId, volume, muted };
+          lastAudioState.current = { sessionId, volume, muted };
+          setPlayer((current) =>
+            current !== null && current.sessionId === sessionId
+              ? { ...current, volume, muted }
+              : current,
+          );
+          void runtime.playback.volume(sessionId, volume, muted).then(
+            (state) => {
+              if (pendingVolume.current?.request === request) {
+                pendingVolume.current = null;
+                if (currentSession.current === sessionId) setPlayer(state);
+              }
+            },
+            () => {
+              if (pendingVolume.current?.request === request) {
+                pendingVolume.current = null;
+                void runtime.playback
+                  .state()
+                  .then((state) => {
+                    if (state === null) lastAudioState.current = null;
+                    else
+                      lastAudioState.current = {
+                        sessionId: state.sessionId,
+                        volume: state.volume,
+                        muted: state.muted,
+                      };
+                    setPlayer(state);
+                  })
+                  .catch(() => undefined);
+              }
+            },
+          );
         }}
         onSelectAudio={(streamId) =>
           trackAction((id) => runtime.playback.selectAudio(id, streamId))
@@ -274,6 +362,12 @@ export const PlayerView = ({
         onSelectSubtitle={(streamId) =>
           trackAction((id) => runtime.playback.selectSubtitle(id, streamId))
         }
+        timeDisplay={timeDisplay}
+        onToggleTimeDisplay={() => {
+          const next: PlayerTimeDisplay = timeDisplay === "remaining" ? "duration" : "remaining";
+          setTimeDisplay(next);
+          writePlayerTimeDisplay(next);
+        }}
       />
       {showDrawerVisible ? (
         <ShowDrawer
