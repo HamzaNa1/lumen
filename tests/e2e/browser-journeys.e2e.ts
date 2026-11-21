@@ -709,7 +709,9 @@ test.describe(() => {
 
     // A manual choice takes over from Auto and closes the menu. A lower one keeps the better
     // pieces already held, so it changes what is fetched next rather than what is on screen.
+    // Original cannot play in the browser for MPEG-4 video, so it is omitted from the menu.
     await page.locator(".media-player-quality-row").click();
+    await expect(page.getByRole("menuitemradio", { name: /^Original/u })).toHaveCount(0);
     const saved = page.waitForResponse((response) => response.url().endsWith("/track-choice"));
     await page.getByRole("menuitemradio", { name: /^480p/u }).click();
     await expect(page.getByRole("menu", { name: "Quality" })).toBeHidden();
@@ -757,6 +759,34 @@ test("Auto adapts among converted pieces only, leaving the original and staying 
     .toBeGreaterThanOrEqual(10);
   await playing(page);
   expect(await source()).toMatch(/^blob:/u);
+
+  // Switching back to Original clears the Auto override; turning transcoding off then removes the
+  // unselectable converted qualities even when playback starts directly on the original.
+  await page.mouse.move(300, 300);
+  await page.getByRole("button", { name: "Playback settings" }).click();
+  await page.locator(".media-player-quality-row").click();
+  const reset = page.waitForResponse((response) => response.url().endsWith("/track-choice"));
+  await page.getByRole("menuitemradio", { name: /^Original/u }).click();
+  expect((await reset).ok()).toBe(true);
+
+  const transcoding = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+    token: admin.accessToken,
+  });
+  await server.api("/admin/transcoding-settings", {
+    token: admin.accessToken,
+    method: "PUT",
+    body: { ...transcoding, enabled: false },
+  });
+  await openMovie(page, server, library.id);
+  expect(await source()).not.toMatch(/^blob:/u);
+  await page.mouse.move(300, 300);
+  await page.getByRole("button", { name: "Playback settings" }).click();
+  await expect(page.locator(".media-player-quality-value")).toHaveText("Original");
+  await page.locator(".media-player-quality-row").click();
+  const options = page.getByRole("menuitemradio");
+  await expect(options).toHaveCount(1);
+  await expect(options.first()).toHaveText(/^Original/u);
+  await expect(options.first()).toHaveAttribute("aria-checked", "true");
 });
 
 test("a rejected copied video retries with actual encoding", async ({ server, admin, page }) => {

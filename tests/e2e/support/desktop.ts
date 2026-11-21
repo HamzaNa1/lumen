@@ -6,6 +6,7 @@ import { test as base, expect, password, repository, type Server } from "./serve
 
 const require = createRequire(join(repository, "apps/desktop/package.json"));
 const exits = new WeakMap<ElectronApplication, Promise<void>>();
+const stderrLogs = new WeakMap<ElectronApplication, string[]>();
 export const test = base.extend<{
   mpvFaults: boolean;
   desktopEnvironment: Record<string, string>;
@@ -17,8 +18,8 @@ export const test = base.extend<{
     const profile = join(server.root, "desktop-profile");
     const app = await launchDesktop(profile, mpvFaults, desktopEnvironment);
     const child = app.process();
-    const logs: string[] = [];
-    child.stderr?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
+    const logs = stderrLogs.get(app) ?? [];
+    stderrLogs.delete(app);
     try {
       const page = await mainDesktopPage(app);
       await expect(page.getByLabel("Server address")).toBeVisible();
@@ -109,6 +110,9 @@ export async function launchDesktop(
       ...extraEnvironment,
     },
   });
+  const logs: string[] = [];
+  app.process().stderr?.on("data", (chunk: Buffer) => logs.push(chunk.toString()));
+  stderrLogs.set(app, logs);
   exits.set(app, new Promise((resolve) => app.once("close", () => resolve())));
   return app;
 }
@@ -121,12 +125,22 @@ export async function desktopPlayerPage(app: ElectronApplication): Promise<Page>
  * screenshot waits out its 5 s timeout. Elsewhere it is `ElectronApplication.close()`.
  */
 export async function closeDesktop(app: ElectronApplication): Promise<void> {
-  if (process.platform !== "linux") return app.close();
-  const exited = exits.get(app);
-  if (exited === undefined) throw new Error("closeDesktop closes apps from launchDesktop");
-  // Evaluating fails once the app has exited or is exiting; its close event still settles this.
-  await app.evaluate(({ app }) => void setImmediate(() => app.quit())).catch(() => undefined);
-  await exited;
+  const logs = stderrLogs.get(app);
+  stderrLogs.delete(app);
+  try {
+    if (process.platform !== "linux") return await app.close();
+    const exited = exits.get(app);
+    if (exited === undefined) throw new Error("closeDesktop closes apps from launchDesktop");
+    // Evaluating fails once the app has exited or is exiting; its close event still settles this.
+    await app.evaluate(({ app }) => void setImmediate(() => app.quit())).catch(() => undefined);
+    await exited;
+  } finally {
+    if (logs !== undefined && logs.length > 0)
+      await test
+        .info()
+        .attach("electron log (reopened)", { body: logs.join(""), contentType: "text/plain" })
+        .catch(() => undefined);
+  }
 }
 export async function quitDesktop(app: ElectronApplication): Promise<void> {
   const child = app.process();

@@ -68,9 +68,29 @@ test("native windows remain aligned through fullscreen, hiding, focus, Back and 
           : String(handle.readUInt32LE(0));
       }, parentId);
       expect(hostWid).not.toBeNull();
+      let tree = "";
       await expect
-        .poll(() => execFileSync("xwininfo", ["-tree", "-id", hostWid ?? ""], { encoding: "utf8" }))
+        .poll(() => {
+          tree = execFileSync("xwininfo", ["-tree", "-id", hostWid ?? ""], { encoding: "utf8" });
+          return tree;
+        })
         .toContain('"mpv"');
+      // On software displays, skip MPV's vo/gpu probe (whose failed x11egl teardown in MPV 0.37
+      // resets XSetErrorHandler before XCloseDisplay) and launch with --vo=x11 directly.
+      const softwareDisplay = await app.evaluate(({ app }) => {
+        const status = app.getGPUFeatureStatus();
+        return !status.gpu_compositing.startsWith("enabled") && !status.webgl.startsWith("enabled");
+      });
+      if (softwareDisplay) {
+        const childWid = /\b(0x[0-9a-f]+)\b[^\n]*"mpv"/iu.exec(tree)?.[1];
+        expect(childWid).toBeDefined();
+        const pid = /_NET_WM_PID\(CARDINAL\) = (\d+)/u.exec(
+          execFileSync("xprop", ["-id", childWid ?? "", "_NET_WM_PID"], { encoding: "utf8" }),
+        )?.[1];
+        expect(pid).toBeDefined();
+        const cmdline = (await readFile(`/proc/${pid}/cmdline`, "utf8")).split("\0");
+        expect(cmdline).toContain("--vo=x11");
+      }
     }
     await main.evaluate((window) => window.hide());
     await expect

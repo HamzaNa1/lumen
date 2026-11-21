@@ -8,51 +8,65 @@ on:
 permissions:
   contents: read
 jobs:
-  product:
-    name: Product check
+  quality:
+    name: Quality
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           ref: ${{ github.sha }}
-      - uses: ./.github/actions/e2e-runtime
-        with:
-          browsers: ${{ inputs.product == 'server' && 'chromium firefox webkit' || 'chromium' }}
-          native: 'true'
-      - name: Check the selected product
+      - uses: ./.github/actions/fetch-release-tags
+      - uses: ./.github/actions/setup-dependencies
+      - name: Lint
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
-        run: xvfb-run -a bash scripts/with-window-manager.sh bun scripts/check.ts "$RELEASE_PRODUCT"
-      - name: Check compatibility with the released counterpart
+        run: bun scripts/check.ts "$RELEASE_PRODUCT" lint
+      - name: Build and typecheck
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
-        run: xvfb-run -a bash scripts/with-window-manager.sh bun scripts/check-release-compatibility.ts "$RELEASE_PRODUCT"
-
-  browser:
+        run: |
+          bun scripts/check.ts "$RELEASE_PRODUCT" typecheck &
+          types_pid=$!
+          status=0
+          bun scripts/check.ts "$RELEASE_PRODUCT" build || status=$?
+          wait "$types_pid" || status=$?
+          exit "$status"
+  api:
+    name: API & tooling
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
           ref: ${{ github.sha }}
+      - uses: ./.github/actions/fetch-release-tags
       - uses: ./.github/actions/e2e-runtime
-        with:
-          browsers: ${{ inputs.product == 'server' && 'chromium firefox webkit' || 'chromium' }}
-          native: 'true'
-      - name: Verify the product in browsers
+      - name: Run API and tooling scenarios
         env:
           RELEASE_PRODUCT: ${{ inputs.product }}
-          LUMEN_BROWSER_TEST_PORT: '3279'
-        run: xvfb-run -a bash scripts/with-window-manager.sh bun scripts/test-browser.ts "$RELEASE_PRODUCT"
-      - uses: actions/upload-artifact@v4
+        run: bun scripts/test-e2e.ts "$RELEASE_PRODUCT" --project api --project tooling --no-deps
+      - uses: ./.github/actions/e2e-artifacts
         if: ${{ !cancelled() }}
         with:
-          name: release-${{ inputs.product }}-browser-test-results
-          path: |
-            test-results/${{ inputs.product }}/
-            playwright-report/${{ inputs.product }}/
-          retention-days: 14
-          if-no-files-found: error
+          name: release-${{ inputs.product }}-api
+  browser:
+    name: Browser
+    if: ${{ inputs.product == 'server' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [chromium, firefox, webkit]
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: ${{ matrix.project }}
+      runner: ubuntu-24.04
+      product: ${{ inputs.product }}
+  native:
+    name: Native
+    uses: ./.github/workflows/client-e2e.yml
+    with:
+      project: native
+      runner: ubuntu-24.04
+      product: ${{ inputs.product }}
+      shards: ${{ inputs.product == 'desktop' && '[1,2,3]' || '[1]' }}

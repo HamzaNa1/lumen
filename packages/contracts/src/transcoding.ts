@@ -39,3 +39,7 @@ export const DEFAULT_TRANSCODING_SETTINGS: TranscodingSettings = {
   gpus: ["0"],
   encoder: "cpu",
 };
+
+/** Whether these settings allow the server to encode H.264 video, as adaptive qualities need. */
+export const canEncodeAdaptiveVideo = (settings: TranscodingSettings): boolean =>
+  settings.enabled && (settings.softwareVideo || settings.encoder !== "cpu");

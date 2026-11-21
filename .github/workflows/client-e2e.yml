@@ -8,6 +8,10 @@ on:
       runner:
         required: true
         type: string
+      product:
+        description: Product under test ('source', 'server', or 'desktop').
+        default: source
+        type: string
       shards:
         description: JSON array of contiguous shard numbers, split by recorded suite durations.
         default: '[1]'
@@ -25,6 +29,8 @@ jobs:
         shard: ${{ fromJSON(inputs.shards) }}
     steps:
       - uses: actions/checkout@v4
+      - uses: ./.github/actions/fetch-release-tags
+        if: ${{ inputs.product != 'source' }}
       - uses: ./.github/actions/e2e-runtime
         with:
           # Mixed-client native scenarios launch Chromium alongside Electron.
@@ -35,11 +41,12 @@ jobs:
       - name: Run client scenarios
         shell: bash
         env:
+          PRODUCT: ${{ inputs.product }}
           PROJECT: ${{ inputs.project }}
           LUMEN_E2E_SHARD: ${{ matrix.shard }}/${{ strategy.job-total }}
           LUMEN_E2E_WORKERS: ${{ runner.os == 'Linux' && inputs.project != 'native' && '3' || '2' }}
         run: |
-          command=(bun scripts/test-e2e.ts source --project "$PROJECT" --no-deps)
+          command=(bun scripts/test-e2e.ts "$PRODUCT" --project "$PROJECT" --no-deps)
           if [[ "$RUNNER_OS" == Linux ]]; then
             xvfb-run -a bash scripts/with-window-manager.sh "${command[@]}"
           else
@@ -48,4 +55,4 @@ jobs:
       - uses: ./.github/actions/e2e-artifacts
         if: ${{ !cancelled() }}
         with:
-          name: ${{ inputs.project }}-${{ inputs.runner }}-${{ matrix.shard }}
+          name: ${{ inputs.product }}-${{ inputs.project }}-${{ inputs.runner }}-${{ matrix.shard }}

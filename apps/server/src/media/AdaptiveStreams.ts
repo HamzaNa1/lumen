@@ -144,8 +144,10 @@ export class AdaptiveStreams {
   ): Promise<Response> {
     if (request.method !== "GET") throw badRequest("Adaptive streams are read with GET");
     if (target.audioIndex > 1024) throw badRequest("Invalid audio track");
-    if (!(await this.settings()).enabled)
-      throw unavailable("Transcoding is disabled on this server");
+    const settings = await this.settings();
+    if (!settings.enabled) throw unavailable("Transcoding is disabled on this server");
+    if (!settings.softwareVideo && settings.encoder === "cpu")
+      throw unavailable("Software video encoding is disabled on this server");
     await this.ready;
     const session = this.session(media, target.audioIndex);
     session.lastRequestAt = Date.now();

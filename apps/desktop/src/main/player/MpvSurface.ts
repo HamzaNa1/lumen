@@ -1,5 +1,5 @@
 import type { IpcPlayerSurfaceBounds } from "@lumen/contracts";
-import { BaseWindow, type BrowserWindow } from "electron";
+import { app, BaseWindow, type BrowserWindow } from "electron";
 import type { PlayerOverlayWindow } from "./PlayerOverlayWindow";
 import { observePlayerFocus, playerContentBounds } from "./PlayerWindowState";
 
@@ -11,6 +11,15 @@ type VideoHost = Pick<
 const nativeWindowId = (handle: Buffer): string => {
   if (handle.byteLength >= 8) return handle.readBigUInt64LE(0).toString();
   return String(handle.readUInt32LE(0));
+};
+
+const videoOutput = (): string => {
+  const status = app.getGPUFeatureStatus();
+  // On software displays (e.g. Xvfb/llvmpipe), MPV's vo/gpu probe rejects llvmpipe and runs
+  // vo_x11_uninit, which in MPV 0.37 resets XSetErrorHandler before XCloseDisplay flushes.
+  return status.gpu_compositing.startsWith("enabled") || status.webgl.startsWith("enabled")
+    ? "gpu,x11"
+    : "x11";
 };
 
 export class MpvSurface {
@@ -70,8 +79,8 @@ export class MpvSurface {
     this.syncHostBounds();
     host.showInactive();
     // MPV's default probe falls through to vo_sdl on software GL, which ignores --wid and opens
-    // a standalone window. Restrict to embedding-capable VOs so software displays fall back to x11.
-    return ["--vo=gpu,x11", `--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
+    // a standalone window. Restrict to embedding-capable VOs, skipping vo/gpu on software displays.
+    return [`--vo=${videoOutput()}`, `--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
   }
 
   show(): void {

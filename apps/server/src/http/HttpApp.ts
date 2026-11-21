@@ -2,6 +2,7 @@ import { join } from "node:path";
 import {
   API_VERSION,
   BrowserSession,
+  canEncodeAdaptiveVideo,
   DirectoryListing,
   DownloadSyncRequest,
   DownloadSyncResponse,
@@ -1028,6 +1029,7 @@ export const makeHttpHandler = (
     ) {
       const input = decode(S.StartPlaybackBody, await body(request, config.maxRequestBodyBytes));
       const result = await call(services.playback.start(principal, input, Date.now()));
+      const transcoding = await call(services.transcodingSettings.read());
       return unknownJson(
         {
           sessionId: result.session.id,
@@ -1040,6 +1042,7 @@ export const makeHttpHandler = (
           durationSeconds: result.durationSeconds,
           streams: result.streams,
           media: result.media,
+          adaptive: canEncodeAdaptiveVideo(transcoding),
           trackMemory: result.trackMemory,
           grantExpiresInSeconds: result.grantExpiresInSeconds,
           grantToken: result.grantToken,

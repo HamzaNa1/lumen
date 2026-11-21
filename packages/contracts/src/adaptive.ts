@@ -60,7 +60,7 @@ export const PlayerQuality = Schema.Struct({
   choice: QualityChoice,
   /** What is on screen now: "original" or a rendition id. */
   playing: Schema.String,
-  /** Best first. A single option means the viewer has nothing to choose. */
+  /** Best first. */
   options: Schema.Array(QualityOption),
   /** The connection as measured, in kilobits per second; null until measured. */
   measuredKbps: Schema.NullOr(Schema.Number),

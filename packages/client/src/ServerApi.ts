@@ -236,6 +236,7 @@ const playerSessionSchema = Schema.Struct({
   grantToken: Schema.String,
   trackMemory: Schema.optional(TrackMemory),
   media: Schema.optional(PlayableMedia),
+  adaptive: Schema.optional(Schema.Boolean),
 });
 
 const serverNameSchema = Schema.Struct({ displayName: Schema.String.check(Schema.isMinLength(1)) });

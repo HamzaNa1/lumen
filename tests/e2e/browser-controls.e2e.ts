@@ -7,6 +7,8 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   admin,
   page,
 }) => {
+  // Install before playback starts so no native idle-hide timers outlive clearTimeout.
+  await page.clock.install();
   const [library] = await Promise.all([
     server.library(admin.accessToken, "movies", ["Film.mp4"]),
     signIn(page, server),
@@ -127,7 +129,6 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   await expect(toDuration).toHaveText(/^-\d+:\d{2}$/u);
   expect(await page.locator("video").evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
   await toDuration.blur();
-  await page.clock.install();
   await page.getByRole("button", { name: "Playback settings", exact: true }).click();
   await expect(page.locator(".media-player-settings-panel")).toBeVisible();
   // Scrolling over the settings panel does not change volume.
@@ -139,7 +140,8 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
   await page.mouse.move(x, y);
   await page.getByRole("button", { name: "Resume playback", exact: true }).click();
   await page.mouse.move(x + 5, y);
-  await page.clock.runFor(4000);
+  // Advance past the idle-hide timer and pause the clock so slow runs cannot auto-hide before checks.
+  await page.clock.pauseAt((await page.evaluate(() => Date.now())) + 4000);
   await expect(page.getByRole("region", { name: "Media player" })).not.toHaveClass(
     /controls-visible/,
   );

@@ -314,6 +314,7 @@ test.describe("transcoding disabled", () => {
     const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
     const item = (await server.items(admin.accessToken, library.id))[0];
     const playback = await server.play(admin.accessToken, item?.id ?? "");
+    expect(playback.adaptive).toBe(false);
     const headers = { authorization: `Bearer ${playback.grantToken}` };
     expect((await server.request(`${playback.streamUrl}?transcode=1`, { headers })).status).toBe(
       503,
@@ -324,6 +325,29 @@ test.describe("transcoding disabled", () => {
     const direct = await server.request(playback.streamUrl, { headers });
     expect(direct.status).toBe(200);
     await direct.arrayBuffer();
+
+    // CPU encoder without software video encoding also cannot produce adaptive qualities.
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, enabled: true, softwareVideo: false, encoder: "cpu" },
+    });
+    const noSoftVideo = await server.play(admin.accessToken, item?.id ?? "");
+    expect(noSoftVideo.adaptive).toBe(false);
+    expect(
+      (
+        await server.request(`${noSoftVideo.streamUrl}/adaptive/0/master.m3u8`, {
+          headers: { authorization: `Bearer ${noSoftVideo.grantToken}` },
+        })
+      ).status,
+    ).toBe(503);
+
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...settings, enabled: true, softwareVideo: true, encoder: "cpu" },
+    });
+    expect((await server.play(admin.accessToken, item?.id ?? "")).adaptive).toBe(true);
   });
 });
 

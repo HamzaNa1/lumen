@@ -44,6 +44,8 @@ export const bundledMpvVersion = async (
   }
 };
 
+const STDERR_TAIL_LIMIT = 4_096;
+
 export class MpvProcess {
   private readonly child: ChildProcess;
   frames: HelperFrames | undefined;
@@ -53,6 +55,7 @@ export class MpvProcess {
   private exited = false;
   private stopping: Promise<void> | null = null;
   private startupError: Error | null = null;
+  private stderrTail = "";
 
   private constructor(
     child: ChildProcess,
@@ -64,10 +67,17 @@ export class MpvProcess {
     this.textures = textures;
     this.socket = socket;
     this.childExit = new Promise((resolve) => {
-      child.once("exit", (code) => {
+      child.once("exit", (code, signal) => {
         this.frames?.dispose();
         this.textures?.dispose();
+        const unexpected = !this.exited && this.stopping === null;
         this.exited = true;
+        if (unexpected) {
+          const tail = this.stderrTail.trim();
+          console.error(
+            `MPV exited unexpectedly (code=${code ?? "null"}, signal=${signal ?? "null"})${tail === "" ? "" : `:\n${tail}`}`,
+          );
+        }
         resolve();
         onExit(code);
       });
@@ -135,15 +145,18 @@ export class MpvProcess {
       textures?.dispose();
       throw cause;
     }
-    // Drain stderr so buffered mpv errors (e.g. demuxer failures) can never
-    // block the child via backpressure; mpv diagnostics are otherwise lost.
-    child.stderr?.resume();
     const instance = new MpvProcess(
       child,
       textures,
       socketPath,
       options.onExit ?? (() => undefined),
     );
+    // Drain stderr continuously so buffered diagnostics never stall the child, keeping only a
+    // bounded tail to report if MPV exits unexpectedly.
+    child.stderr?.on("data", (chunk: Buffer) => {
+      const next = instance.stderrTail + chunk.toString("utf8");
+      instance.stderrTail = next.length > STDERR_TAIL_LIMIT ? next.slice(-STDERR_TAIL_LIMIT) : next;
+    });
     if (helper)
       instance.frames = new HelperFrames(child, options.onFrame ?? (() => undefined), (error) => {
         instance.startupError = error;

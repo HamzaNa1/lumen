@@ -387,6 +387,22 @@ test("desktop moves between the original and converted qualities, and between qu
       .toMatchObject({ quality: { choice: "original", playing: "original" } });
     await expect.poll(height).toBe(720);
     expect(masters()).toBe(1);
+
+    // Turning transcoding off mid-playback falls back to the original and keeps only Original.
+    const transcoding = await server.api<Record<string, unknown>>("/admin/transcoding-settings", {
+      token: admin.accessToken,
+    });
+    await server.api("/admin/transcoding-settings", {
+      token: admin.accessToken,
+      method: "PUT",
+      body: { ...transcoding, enabled: false },
+    });
+    await choose("480p");
+    await expect
+      .poll(async () => (await state())?.quality?.options.map((option) => option.id))
+      .toEqual(["original"]);
+    expect((await state())?.quality).toMatchObject({ choice: "original", playing: "original" });
+    await expect.poll(height).toBe(720);
   } finally {
     await proxy.close();
   }

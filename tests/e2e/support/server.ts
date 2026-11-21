@@ -33,6 +33,7 @@ export interface Playback {
   grantToken: string;
   streamUrl: string;
   trackId: string;
+  adaptive?: boolean;
   streams: { id: string; kind: string; codec: string }[];
 }
 

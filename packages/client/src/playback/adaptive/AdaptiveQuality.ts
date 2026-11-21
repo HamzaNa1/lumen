@@ -216,9 +216,9 @@ export const resolveQualityChoice = (
   renditions: ReadonlyArray<{ readonly id: string; readonly height: number | null }>,
   originalUsable: boolean,
 ): string => {
+  if (renditions.length === 0) return originalUsable ? "original" : "auto";
   if (preference === "auto") return "auto";
-  if (preference === "original" || renditions.length === 0)
-    return originalUsable ? "original" : "auto";
+  if (preference === "original") return originalUsable ? "original" : "auto";
   const height = Number.parseInt(preference, 10);
   const rendition =
     renditions.find((candidate) => candidate.id === preference) ??
