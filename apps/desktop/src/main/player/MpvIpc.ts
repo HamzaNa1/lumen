@@ -5,6 +5,13 @@ import type { MpvProcess } from "./MpvProcess";
 const CONNECTION_TIMEOUT_MS = 5_000;
 const CONNECTION_RETRY_MS = 50;
 
+const commandLabel = (args: ReadonlyArray<string | number>): string => {
+  const [name, target] = args;
+  return (name === "get_property" || name === "set_property") && target !== undefined
+    ? `${name} ${target}`
+    : String(name ?? "");
+};
+
 export class MpvIpcFailure extends Error {}
 
 export type MpvEvent = { readonly event: string } & Record<string, unknown>;
@@ -38,7 +45,7 @@ export class MpvIpc extends EventEmitter {
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(requestId);
-        reject(new MpvIpcFailure("MPV command timed out"));
+        reject(new MpvIpcFailure(`MPV command timed out (${commandLabel(args)})`));
       }, timeoutMs);
       this.pending.set(requestId, { resolve, reject, timer });
       this.socket?.write(message, "utf8");

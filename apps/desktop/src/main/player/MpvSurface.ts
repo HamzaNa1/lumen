@@ -69,7 +69,9 @@ export class MpvSurface {
     this.playbackVisible = true;
     this.syncHostBounds();
     host.showInactive();
-    return [`--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
+    // MPV's default probe falls through to vo_sdl on software GL, which ignores --wid and opens
+    // a standalone window. Restrict to embedding-capable VOs so software displays fall back to x11.
+    return ["--vo=gpu,x11", `--wid=${nativeWindowId(host.getNativeWindowHandle())}`];
   }
 
   show(): void {
