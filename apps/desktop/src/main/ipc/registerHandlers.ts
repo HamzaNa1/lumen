@@ -218,7 +218,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       throw new Error("Sign-in required");
     let resolved: Awaited<ReturnType<RouteManager["resolveAccountRoute"]>>;
     try {
-      resolved = await routeManager.resolveAccountRoute(account, session);
+      resolved = await routeManager.resolveAccountRoute(account, session, { signal });
     } catch (cause) {
       if (signal.aborted) throw new RequestCancelledError();
       if (cause instanceof ServerHttpError && cause.status === 401)

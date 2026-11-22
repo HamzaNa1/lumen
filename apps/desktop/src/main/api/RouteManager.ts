@@ -191,14 +191,18 @@ export class RouteManager {
   async resolveAccountRoute(
     account: StoredAccount,
     session: AccountSession | null,
-    options: { readonly excludeOrigin?: string; readonly skipUdpDiscovery?: boolean } = {},
+    options: {
+      readonly excludeOrigin?: string;
+      readonly skipUdpDiscovery?: boolean;
+      readonly signal?: AbortSignal;
+    } = {},
   ): Promise<RouteProbeResult> {
     const canVerifyDetected = hasSessionToken(session);
     const manualLocal = hasManualLocalRoute(account);
     const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     let discoveredOrigins: string[] = [];
     if (canVerifyDetected && !options.skipUdpDiscovery && allowPlainHttp) {
-      const discovered = await this.discoverLanImpl().catch(() => []);
+      const discovered = await this.discoverLanImpl(options.signal).catch(() => []);
       discoveredOrigins = discovered
         .filter(
           (candidate) =>
@@ -236,6 +240,7 @@ export class RouteManager {
     const winner = await selectBestRoute({
       routes: candidates,
       activeOrigin: account.origin,
+      ...(options.signal === undefined ? {} : { signal: options.signal }),
       probe: async (route, signal) => {
         const identity = await this.verifyOrigin(
           route.origin,
