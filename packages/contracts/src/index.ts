@@ -10,6 +10,7 @@ export * from "./ipc.ts";
 export * from "./metadata-match.ts";
 export * from "./models.ts";
 export * from "./range.ts";
+export * from "./routes.ts";
 export * from "./schemas/activity.ts";
 export * from "./schemas/auth.ts";
 export * from "./schemas/catalog.ts";

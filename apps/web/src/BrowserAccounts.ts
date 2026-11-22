@@ -1,11 +1,12 @@
-import type { ServerApi, ServerIdentity } from "@lumen/client";
+import { RequestCancelledError, type ServerApi, type ServerIdentity } from "@lumen/client";
 import type { AccountsRuntime } from "@lumen/client/runtime";
-import type {
-  AccountList,
-  AccountSummary,
-  BrowserSession,
-  ConnectionInput,
-  ServerDiscovery,
+import {
+  type AccountList,
+  type AccountSummary,
+  type BrowserSession,
+  type ConnectionInput,
+  makeServerRoute,
+  type ServerDiscovery,
 } from "@lumen/contracts";
 import { deviceIdFor } from "./deviceId";
 import { SessionChannel } from "./SessionChannel";
@@ -78,11 +79,18 @@ export class BrowserAccounts implements AccountsRuntime {
 
   readonly activate = async (): Promise<AccountList> => {
     if (this.authenticationGeneration !== null) return this.snapshot();
-    this.invalidatePending();
+    const generation = this.invalidatePending();
     this.restored = false;
     await this.restore();
+    if (generation !== this.generation) throw new RequestCancelledError();
     if (this.account === null) throw new Error("Sign-in required");
     return this.snapshot();
+  };
+
+  readonly cancelActivate = async (): Promise<void> => {
+    if (this.restoring === null) return;
+    this.invalidatePending();
+    this.api.cancelPending();
   };
 
   readonly remove = (): Promise<AccountList> =>
@@ -182,6 +190,7 @@ export class BrowserAccounts implements AccountsRuntime {
       serverId: identity.serverId,
       serverName: identity.displayName,
       origin: this.api.serverOrigin,
+      routes: [makeServerRoute(this.api.serverOrigin, "manual")],
       username: session.user.username,
       userId: session.user.id,
       role: session.user.role,

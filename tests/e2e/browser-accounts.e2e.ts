@@ -156,3 +156,40 @@ test("a late unauthorized response and suspended tab cannot erase a newer browse
     held.release();
   }
 });
+
+test("cancelling startup reconnection in the browser aborts the stalled check and allows retrying", async ({
+  server,
+  admin: _admin,
+  page,
+}) => {
+  await signIn(page, server);
+  const held = latch();
+  const captured = latch();
+  let calls = 0;
+  await page.route("**/api/v1/auth/browser/session", async (route) => {
+    calls += 1;
+    // The first check runs while loading accounts; the second runs during startup activation.
+    if (calls === 2) {
+      captured.release();
+      await held.promise;
+      await route.continue().catch(() => undefined);
+      return;
+    }
+    await route.continue();
+  });
+  try {
+    await page.reload();
+    await captured.promise;
+    await expect(page.getByRole("heading", { name: "Reconnecting…" })).toBeVisible();
+    await page.getByRole("button", { name: "Cancel", exact: true }).click();
+    await expect(page.getByRole("heading", { name: "Choose a server" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Add server" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Back" })).toHaveCount(0);
+    held.release();
+    await page.unroute("**/api/v1/auth/browser/session");
+    await page.locator(".server-row-open").first().click();
+    await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+  } finally {
+    held.release();
+  }
+});

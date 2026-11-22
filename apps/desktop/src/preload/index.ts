@@ -33,7 +33,14 @@ const api: DesktopBridge = {
     discoverServer: (origin) => invoke("accounts:discover-server", origin),
     connect: (input) => invoke("accounts:connect", input),
     activate: (connectionId) => invoke("accounts:activate", connectionId),
+    cancelActivate: () => invoke("accounts:cancel-activate"),
     remove: (connectionId) => invoke("accounts:remove", connectionId),
+    onChange: subscribe("accounts:changed"),
+  },
+  routes: {
+    add: (connectionId, origin) => invoke("routes:add", { connectionId, origin }),
+    remove: (connectionId, origin) => invoke("routes:remove", { connectionId, origin }),
+    discoverLan: () => invoke("routes:discover-lan"),
   },
   library: {
     home: () => invoke("library:home"),

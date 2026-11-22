@@ -177,6 +177,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
       fullscreen: document.fullscreenEnabled,
     },
     accounts: browserAccounts,
+    routes: null,
     catalog: {
       home: () => api.home(),
       libraries: () => api.libraries(),

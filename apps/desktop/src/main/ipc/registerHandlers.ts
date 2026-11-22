@@ -1,4 +1,9 @@
-import { type FetchLike, viewerPlayback, WatchPlaybackController } from "@lumen/client";
+import {
+  type FetchLike,
+  RequestCancelledError,
+  viewerPlayback,
+  WatchPlaybackController,
+} from "@lumen/client";
 import {
   AudioOutput,
   ConnectionInput,
@@ -7,21 +12,25 @@ import {
   IpcPlayerSurfaceBounds,
   LibraryAccess,
   MetadataMatchSelection,
+  normalizeOrigin,
   type PlaybackInfo,
   PlayerAction,
   PlayerDisplay,
   type ServerDiscovery,
+  sortServerRoutes,
   TrackKind,
   TrackPreferencesPatch,
   TranscodingSettings,
   UserRole,
+  usableServerRoutes,
   WatchAction,
 } from "@lumen/contracts";
 import { Schema } from "effect";
-import { app, type BrowserWindow, type IpcMainInvokeEvent, ipcMain } from "electron";
-import type { AccountRegistry } from "../accounts/AccountRegistry";
+import { app, type BrowserWindow, type IpcMainInvokeEvent, ipcMain, powerMonitor } from "electron";
+import type { AccountRegistry, StoredAccount } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
-import { type AccountSession, ServerClient, ServerHttpError } from "../api/ServerClient";
+import { hasSessionToken, RouteManager } from "../api/RouteManager";
+import { ServerClient, ServerHttpError } from "../api/ServerClient";
 import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { Account, DownloadManager } from "../downloads/DownloadManager";
 import { bundledMpvVersion } from "../player/MpvProcess";
@@ -35,15 +44,10 @@ import type { AppUpdates } from "../updates/AppUpdates";
 const decode = <S extends Schema.Decoder<unknown, never>>(schema: S, value: unknown): S["Type"] =>
   Schema.decodeUnknownSync(schema)(value);
 const requestId = (): string => crypto.randomUUID();
-const hasSessionToken = (session: AccountSession | null): boolean =>
-  typeof session?.accessToken === "string" &&
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[A-Za-z0-9_-]{43}$/u.test(
-    session.accessToken,
-  );
 
-const validateClient = async (client: ServerClient) => {
+const validateClient = async (client: ServerClient, signal?: AbortSignal) => {
   try {
-    return await client.me();
+    return await client.me(signal);
   } catch (cause) {
     if (cause instanceof ServerHttpError && cause.status === 401)
       throw new Error("Sign-in required");
@@ -123,9 +127,40 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     if (!dependencies.window.isDestroyed())
       dependencies.window.webContents.send("downloads:changed");
   };
+  const notifyAccountsChanged = (): void => {
+    if (!dependencies.window.isDestroyed())
+      dependencies.window.webContents.send("accounts:changed");
+  };
+  const routeManager = new RouteManager({
+    registry: dependencies.registry,
+    clients: dependencies.clients,
+    serverTransport: dependencies.serverTransport,
+    onRouteChanged: (connectionId) => {
+      if (dependencies.registry.active()?.connectionId === connectionId) watch.reconnect();
+      notifyAccountsChanged();
+    },
+  });
+  const onResume = (): void => {
+    const active = dependencies.registry.active();
+    if (active !== null)
+      void routeManager.recheckActiveRoute(active.connectionId, { checkCurrent: true });
+  };
+  const onFocus = (): void => {
+    const active = dependencies.registry.active();
+    if (active !== null) routeManager.onWindowFocus(active.connectionId);
+  };
+  const stopRouteMonitoring = routeManager.startMonitoring(
+    () => dependencies.registry.active()?.connectionId ?? null,
+  );
+  powerMonitor.on("resume", onResume);
+  dependencies.window.on("focus", onFocus);
   dependencies.downloads.on("change", onDownloadsChange);
   dependencies.player.on("failure", onPlayerFailure);
   dependencies.window.once("closed", () => {
+    cancelActivation();
+    stopRouteMonitoring();
+    powerMonitor.off("resume", onResume);
+    dependencies.window.off("focus", onFocus);
     dependencies.player.off("failure", onPlayerFailure);
     dependencies.downloads.off("change", onDownloadsChange);
     watch.close();
@@ -143,7 +178,17 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     getActiveState: (sessionId) => dependencies.player.getActiveState(sessionId),
   });
   const discoveredServers = new Map<string, ServerDiscovery>();
-  const restoring = new Map<string, Promise<ServerClient>>();
+  let activeActivation: {
+    readonly connectionId: string;
+    readonly cancel: () => void;
+  } | null = null;
+  const cancelActivation = (connectionId?: string): void => {
+    if (activeActivation === null) return;
+    if (connectionId !== undefined && activeActivation.connectionId !== connectionId) return;
+    const current = activeActivation;
+    activeActivation = null;
+    current.cancel();
+  };
   let playerDisplay: PlayerDisplay | null = null;
   const endAccountActivity = async (
     ...connectionIds: ReadonlyArray<string | undefined>
@@ -154,48 +199,71 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
     await dependencies.player.stop();
   };
-  const restoreClient = (account: {
-    readonly connectionId: string;
-    readonly origin: string;
-    readonly serverId: string;
-    readonly role: UserRole;
-  }): Promise<ServerClient> => {
+  const restoreClient = async (
+    account: StoredAccount,
+    signal: AbortSignal,
+    onClient: (client: ServerClient) => void,
+  ): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
-    if (cached !== undefined) return validateClient(cached).then(() => cached);
-    const pending = restoring.get(account.connectionId);
-    if (pending !== undefined) return pending;
-    const next = (async () => {
-      const client = new ServerClient({
-        origin: account.origin,
-        fetchImpl: dependencies.serverTransport,
-      });
-      const identity = await client.identity();
-      if (identity.serverId !== account.serverId)
-        throw new Error("Server identity changed; remove this connection and enroll it again");
-      await dependencies.registry.updateServerName(identity.serverId, identity.displayName);
-      const session = await dependencies.registry.session(account.connectionId);
-      if (session !== null && hasSessionToken(session)) client.setSession(session);
-      else if (session !== null && typeof session.refreshToken === "string") {
-        const migrated = await client.migrateLegacySession(session.refreshToken).catch((cause) => {
+    if (cached !== undefined) {
+      await routeManager.recheckActiveRoute(account.connectionId);
+      if (signal.aborted) throw new RequestCancelledError();
+      await validateClient(cached, signal);
+      if (signal.aborted) throw new RequestCancelledError();
+      return cached;
+    }
+    const session = await dependencies.registry.session(account.connectionId);
+    if (signal.aborted) throw new RequestCancelledError();
+    if (session === null || (!hasSessionToken(session) && typeof session.refreshToken !== "string"))
+      throw new Error("Sign-in required");
+    let resolved: Awaited<ReturnType<RouteManager["resolveAccountRoute"]>>;
+    try {
+      resolved = await routeManager.resolveAccountRoute(account, session, { signal });
+    } catch (cause) {
+      if (signal.aborted) throw new RequestCancelledError();
+      if (cause instanceof ServerHttpError && cause.status === 401)
+        throw new Error("Sign-in required");
+      throw cause;
+    }
+    if (signal.aborted) throw new RequestCancelledError();
+    const client = new ServerClient({
+      origin: resolved.origin,
+      fetchImpl: dependencies.serverTransport,
+      onUnreachable: (failedOrigin) =>
+        routeManager.failover(account.connectionId, client, failedOrigin),
+    });
+    onClient(client);
+    const identity = await client.identity(signal);
+    if (signal.aborted) throw new RequestCancelledError();
+    if (identity.serverId !== account.serverId)
+      throw new Error("Server identity changed; remove this connection and enroll it again");
+    await dependencies.registry.updateServerName(identity.serverId, identity.displayName);
+    if (signal.aborted) throw new RequestCancelledError();
+    if (hasSessionToken(session)) client.setSession(session);
+    else if (typeof session.refreshToken === "string") {
+      if (resolved.route.source !== "manual")
+        throw new Error("Cannot migrate a legacy session over an auto-detected route");
+      const migrated = await client
+        .migrateLegacySession(session.refreshToken, signal)
+        .catch((cause) => {
           if (cause instanceof ServerHttpError && cause.status === 401)
             throw new Error("Sign-in required");
           throw cause;
         });
-        await dependencies.registry.updateSession(account.connectionId, migrated);
-      } else throw new Error("Sign-in required");
-      const user = await validateClient(client);
-      if (user.role !== account.role) {
-        await dependencies.registry.updateRole(account.connectionId, user.role);
-        const current = client.currentSession;
-        if (current !== null) client.setSession({ ...current, role: user.role });
-      }
-      dependencies.clients.set(account.connectionId, client);
-      return client;
-    })().finally(() => {
-      restoring.delete(account.connectionId);
-    });
-    restoring.set(account.connectionId, next);
-    return next;
+      if (signal.aborted) throw new RequestCancelledError();
+      await dependencies.registry.updateSession(account.connectionId, migrated);
+    } else throw new Error("Sign-in required");
+    const user = await validateClient(client, signal);
+    if (signal.aborted) throw new RequestCancelledError();
+    if (user.role !== account.role) {
+      await dependencies.registry.updateRole(account.connectionId, user.role);
+      const current = client.currentSession;
+      if (current !== null) client.setSession({ ...current, role: user.role });
+    }
+    if (signal.aborted) throw new RequestCancelledError();
+    await dependencies.registry.updateOrigin(account.connectionId, client.serverOrigin);
+    if (signal.aborted) throw new RequestCancelledError();
+    return client;
   };
   const handle = <A>(
     name: string,
@@ -235,9 +303,14 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   handle("accounts:connect", async (_event, raw) => {
     const input = decode(ConnectionInput, raw);
     let connectionId = requestId();
+    let boundConnectionId: string | null = null;
     const client = new ServerClient({
       origin: input.origin,
       fetchImpl: dependencies.serverTransport,
+      onUnreachable: (failedOrigin) =>
+        boundConnectionId === null
+          ? Promise.resolve(null)
+          : routeManager.failover(boundConnectionId, client, failedOrigin),
     });
     const discovery = discoveredServers.get(client.serverOrigin);
     if (discovery === undefined) throw new Error("Connect to the server first");
@@ -259,6 +332,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       (await dependencies.registry.list()).accounts.find(
         (account) => account.serverId === identity.serverId && account.userId === session.userId,
       )?.connectionId ?? connectionId;
+    cancelActivation();
     await endAccountActivity(dependencies.registry.active()?.connectionId, connectionId);
     try {
       await dependencies.registry.save({
@@ -279,9 +353,11 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         { cause },
       );
     }
+    boundConnectionId = connectionId;
     dependencies.clients.set(connectionId, client);
+    await routeManager.syncServerRoutes(connectionId, client, current).catch(() => false);
     watch.connect(client, connectionId);
-    discoveredServers.delete(client.serverOrigin);
+    discoveredServers.delete(normalizeOrigin(input.origin));
     void dependencies.downloads.connectionReady(connectionId);
     return dependencies.registry.list();
   });
@@ -289,17 +365,54 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const connectionId = decode(Schema.String, raw);
     const account = dependencies.registry.find(connectionId);
     if (account === null) throw new Error("Connection not found");
-    const client = await restoreClient(account);
-    if (dependencies.registry.active()?.connectionId !== connectionId) {
-      await endAccountActivity(dependencies.registry.active()?.connectionId);
+    cancelActivation();
+    const controller = new AbortController();
+    let restoringClient: ServerClient | null = null;
+    const attempt = {
+      connectionId,
+      cancel: () => {
+        controller.abort(new RequestCancelledError());
+        restoringClient?.cancelPending();
+      },
+    };
+    activeActivation = attempt;
+    try {
+      const client = await restoreClient(account, controller.signal, (created) => {
+        restoringClient = created;
+      });
+      if (controller.signal.aborted || activeActivation !== attempt)
+        throw new RequestCancelledError();
+      if (dependencies.registry.active()?.connectionId !== connectionId) {
+        await endAccountActivity(dependencies.registry.active()?.connectionId);
+      }
+      if (
+        controller.signal.aborted ||
+        activeActivation !== attempt ||
+        dependencies.registry.find(connectionId) === null
+      )
+        throw new RequestCancelledError();
+      if (dependencies.clients.get(connectionId) !== client) {
+        dependencies.clients.set(connectionId, client);
+        await routeManager
+          .syncServerRoutes(connectionId, client, client.currentSession)
+          .catch(() => false);
+      }
+      if (controller.signal.aborted || activeActivation !== attempt)
+        throw new RequestCancelledError();
+      await dependencies.registry.activate(connectionId);
+      watch.connect(client, connectionId);
+      void dependencies.downloads.connectionReady(connectionId);
+      return dependencies.registry.list();
+    } finally {
+      if (activeActivation === attempt) activeActivation = null;
     }
-    await dependencies.registry.activate(connectionId);
-    watch.connect(client, connectionId);
-    void dependencies.downloads.connectionReady(connectionId);
-    return dependencies.registry.list();
+  });
+  handle("accounts:cancel-activate", async () => {
+    cancelActivation();
   });
   handle("accounts:remove", async (_event, raw) => {
     const connectionId = decode(Schema.String, raw);
+    cancelActivation(connectionId);
     if (dependencies.registry.active()?.connectionId === connectionId)
       await endAccountActivity(connectionId);
     else dependencies.clients.get(connectionId)?.cancelPending();
@@ -315,6 +428,56 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     });
     return dependencies.registry.list();
   });
+  handle("routes:add", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({
+        connectionId: Schema.String.check(Schema.isMinLength(1)),
+        origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
+      }),
+      raw,
+    );
+    const account = dependencies.registry.find(input.connectionId);
+    if (account === null) throw new Error("Connection not found");
+    const normalized = normalizeOrigin(input.origin);
+    const session =
+      dependencies.clients.get(input.connectionId)?.currentSession ??
+      (await dependencies.registry.session(input.connectionId));
+    const probe = await routeManager.probeManualRoute(normalized, account.serverId, session);
+    await dependencies.registry.addRoute(input.connectionId, normalized);
+    const client = dependencies.clients.get(input.connectionId);
+    const updated = dependencies.registry.find(input.connectionId);
+    if (probe.reachable && updated !== null) {
+      const ordered = sortServerRoutes(
+        usableServerRoutes(updated.routes, updated.credentialOrigin),
+        updated.origin,
+      );
+      const preferred = ordered[0]?.origin;
+      if (client !== undefined && preferred === normalized && client.serverOrigin !== normalized) {
+        await routeManager.switchClientOrigin(input.connectionId, client, normalized);
+      } else if (client === undefined && preferred === normalized) {
+        await dependencies.registry.updateOrigin(input.connectionId, normalized);
+        notifyAccountsChanged();
+      } else {
+        notifyAccountsChanged();
+      }
+    } else {
+      notifyAccountsChanged();
+    }
+    return dependencies.registry.list();
+  });
+  handle("routes:remove", async (_event, raw) => {
+    const input = decode(
+      Schema.Struct({
+        connectionId: Schema.String.check(Schema.isMinLength(1)),
+        origin: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(2048)),
+      }),
+      raw,
+    );
+    const switched = await routeManager.removeRoute(input.connectionId, input.origin);
+    if (!switched) notifyAccountsChanged();
+    return dependencies.registry.list();
+  });
+  handle("routes:discover-lan", async () => routeManager.discoverLanCandidates());
   handle("library:list", async () => activeClient(dependencies).libraries());
   handle("library:home", async () => activeClient(dependencies).home());
   handle("library:items", async (_event, raw) => {

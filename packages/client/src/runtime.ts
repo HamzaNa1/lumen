@@ -16,6 +16,7 @@ import type {
   EpisodeOrderSelection,
   HomeContent,
   JobLogEntry,
+  LanServerCandidate,
   LibrarySummary,
   ManagedUser,
   MetadataMatchOptions,
@@ -62,6 +63,8 @@ export interface AccountsRuntime {
   readonly discoverServer: (origin: string) => Promise<ServerDiscovery>;
   readonly connect: (input: ConnectionInput) => Promise<AccountList>;
   readonly activate: (connectionId: string) => Promise<AccountList>;
+  /** Cancels an in-flight activation, aborting its network requests. */
+  readonly cancelActivate: () => Promise<void>;
   /** Signs out and forgets the connection. */
   readonly remove: (connectionId: string) => Promise<AccountList>;
   /** Accounts changed outside this page: the session expired, or another window signed out. */
@@ -258,12 +261,24 @@ export interface ClientVersions {
   readonly mpv: { readonly version: string | null } | null;
 }
 
+/** Multiple routes to a server and local/LAN discovery, where the client can switch origins. */
+export interface ServerRoutesRuntime {
+  /** Adds a route to a saved server connection, returning the updated accounts. */
+  readonly add: (connectionId: string, origin: string) => Promise<AccountList>;
+  /** Removes a route from a saved server connection, returning the updated accounts. */
+  readonly remove: (connectionId: string, origin: string) => Promise<AccountList>;
+  /** Scans the local machine and local network for reachable Lumen servers. */
+  readonly discoverLan: () => Promise<ReadonlyArray<LanServerCandidate>>;
+}
+
 /** Everything the shared application needs from the platform it runs on. */
 export interface LumenRuntime {
   readonly capabilities: PlatformCapabilities;
   readonly versions: () => Promise<ClientVersions>;
   readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: AccountsRuntime;
+  /** Null where the app is fixed to the single server that served it. */
+  readonly routes: ServerRoutesRuntime | null;
   readonly catalog: CatalogRuntime;
   readonly admin: AdminRuntime;
   readonly artwork: ArtworkRuntime;

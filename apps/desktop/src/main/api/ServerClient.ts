@@ -18,6 +18,7 @@ export interface AccountSession extends TokenSession {
 export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: FetchLike;
+  readonly onUnreachable?: (failedOrigin: string) => Promise<string | null>;
 }
 
 const describeDevice = (deviceId: string): DeviceDescription => ({
@@ -63,8 +64,8 @@ export class ServerClient extends ServerApi implements WatchServer {
     return this.adopt(await this.tokenLogin(input, describeDevice(deviceId)));
   }
 
-  async migrateLegacySession(refreshToken: string): Promise<AccountSession> {
-    return this.adopt(await this.migrateLegacyToken(refreshToken));
+  async migrateLegacySession(refreshToken: string, signal?: AbortSignal): Promise<AccountSession> {
+    return this.adopt(await this.migrateLegacyToken(refreshToken, signal));
   }
 
   private adopt(session: AccountSession): AccountSession {

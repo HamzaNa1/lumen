@@ -40,6 +40,8 @@ const Environment = Schema.Struct({
   LUMEN_COOKIE_SECURE: Schema.optional(Schema.Literals(["auto", "always", "never"])),
   LUMEN_TRUSTED_PROXIES: Schema.optional(Schema.String),
   LUMEN_ALLOWED_ORIGINS: Schema.optional(Schema.String),
+  LUMEN_LAN_ORIGINS: Schema.optional(Schema.String),
+  LUMEN_LAN_DISCOVERY: Schema.optional(Schema.Literals(["auto", "off"])),
   NODE_ENV: Schema.optional(Schema.String),
 });
 
@@ -83,6 +85,11 @@ export interface ServerConfig {
   /** Exact socket proxy IP addresses permitted to supply forwarding chains. */
   readonly trustedProxies: ReadonlyArray<string>;
   readonly allowedOrigins: ReadonlyArray<string>;
+  /** Extra local-network origins to advertise, such as a Docker host's LAN address. */
+  readonly lanOrigins: ReadonlyArray<string>;
+  readonly lanDiscovery: "auto" | "off";
+  /** Only tests set this; overrides the UDP discovery port (0 chooses an ephemeral port). */
+  readonly lanDiscoveryPort?: number;
   /** Only the e2e harness sets this; no environment variable reaches it. */
   readonly watchTimers?: WatchTimers;
 }
@@ -252,5 +259,7 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
         return address;
       }),
     allowedOrigins: toOrigins(parsed.LUMEN_ALLOWED_ORIGINS),
+    lanOrigins: toOrigins(parsed.LUMEN_LAN_ORIGINS),
+    lanDiscovery: parsed.LUMEN_LAN_DISCOVERY ?? "auto",
   };
 };

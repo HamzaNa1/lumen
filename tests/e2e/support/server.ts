@@ -39,6 +39,7 @@ export interface Playback {
 
 export class Server {
   origin = "";
+  discoveryPort: number | null = null;
   readonly log: string[] = [];
   private child: ChildProcess | undefined;
   private environment: NodeJS.ProcessEnv = {};
@@ -79,16 +80,22 @@ export class Server {
       signal: abort.signal,
     });
     try {
-      this.origin = await Promise.race([
+      const ready = await Promise.race([
         once(child, "message", { signal: abort.signal }).then(([message]) => {
           if (typeof message?.origin !== "string")
             throw new Error("Server did not report an origin");
-          return message.origin as string;
+          return {
+            origin: message.origin as string,
+            discoveryPort:
+              typeof message?.discoveryPort === "number" ? message.discoveryPort : null,
+          };
         }),
         once(child, "exit", { signal: abort.signal }).then(([code]) => {
           throw new Error(`Server exited (${code}): ${this.log.join("")}`);
         }),
       ]);
+      this.origin = ready.origin;
+      this.discoveryPort = ready.discoveryPort;
       expect((await this.request("/health/ready")).status).toBe(200);
     } finally {
       abort.abort();
