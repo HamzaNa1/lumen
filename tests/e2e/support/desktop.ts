@@ -90,11 +90,13 @@ export async function launchDesktop(
       ([key, value]) => key !== "ELECTRON_RUN_AS_NODE" && value !== undefined,
     ),
   ) as Record<string, string>;
+  const hostResolverRules = extraEnvironment.LUMEN_E2E_HOST_RESOLVER_RULES;
   const app = await _electron.launch({
     executablePath: require("electron") as string,
     args: [
       join(repository, "tests/e2e/support/electron-entry.mjs"),
       "--no-sandbox",
+      ...(hostResolverRules === undefined ? [] : [`--host-resolver-rules=${hostResolverRules}`]),
       // Hosted Windows runners expose Microsoft Basic Render Driver. Exercise D3D11
       // sharing there; this is software-driver coverage, not physical-GPU evidence.
       ...(process.platform === "win32" && process.env.GITHUB_ACTIONS === "true"
@@ -107,6 +109,7 @@ export async function launchDesktop(
       LUMEN_E2E_PROFILE: profile,
       LUMEN_E2E_MPV_WIRE: mpvFaults ? "1" : "",
       LUMEN_E2E_SILENT_AUDIO: "1",
+      LUMEN_E2E_DISCOVERY_PORT: "off",
       ...extraEnvironment,
     },
   });

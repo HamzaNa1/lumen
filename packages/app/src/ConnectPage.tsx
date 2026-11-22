@@ -5,7 +5,7 @@ import {
   type ServerDiscovery,
 } from "@lumen/contracts";
 import { Button, Form, Modal, TextField } from "@lumen/ui";
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
   ArrowLeft,
@@ -13,6 +13,7 @@ import {
   CircleAlert,
   LoaderCircle,
   Plus,
+  Route,
   Server,
   Trash2,
 } from "lucide-react";
@@ -20,6 +21,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, hostOf, passwordRule } from "./format";
 import { LumenLogo } from "./LumenLogo";
 import { useRuntime } from "./Runtime";
+import { ServerRoutesSection } from "./ServerRoutes";
 
 export const ReconnectingView = ({
   account,
@@ -125,14 +127,27 @@ export const ConnectPage = ({
     accounts.length === 0 || initialShowAddServer || initialSignInAccount != null,
   );
   const [removing, setRemoving] = useState<AccountSummary | null>(null);
+  const [managingRoutesId, setManagingRoutesId] = useState<string | null>(null);
   const [openingId, setOpeningId] = useState<string | null>(null);
   const openingAttemptId = useRef(0);
   const [error, setError] = useState<string | null>(initialError ?? null);
   const creatingAccount = server?.setupRequired === true;
   const showingSaved = accounts.length > 0 && !showAddServer;
+  const managingRoutes =
+    managingRoutesId === null
+      ? null
+      : (accounts.find((account) => account.connectionId === managingRoutesId) ?? null);
+  const lanServers = useQuery({
+    queryKey: ["lan-servers"],
+    queryFn: () => runtime.routes?.discoverLan() ?? Promise.resolve([]),
+    enabled: runtime.routes !== null && fixedOrigin === null && !showingSaved && server === null,
+    staleTime: 5_000,
+    retry: false,
+  });
   const discoverServer = useMutation({
-    mutationFn: () => runtime.accounts.discoverServer(origin),
+    mutationFn: (targetOrigin?: string) => runtime.accounts.discoverServer(targetOrigin ?? origin),
     onSuccess: (result) => {
+      setOrigin(result.origin);
       setServer(result);
       setError(null);
     },
@@ -216,7 +231,7 @@ export const ConnectPage = ({
   }, [initialSignInAccount, signInAgain]);
   const discoverFixedServer = discoverServer.mutate;
   useEffect(() => {
-    if (fixedOrigin !== null && !showingSaved && server === null) discoverFixedServer();
+    if (fixedOrigin !== null && !showingSaved && server === null) discoverFixedServer(fixedOrigin);
   }, [fixedOrigin, showingSaved, server, discoverFixedServer]);
 
   const heading = showingSaved
@@ -282,6 +297,9 @@ export const ConnectPage = ({
                           <strong>{account.serverName}</strong>
                           <span>
                             {account.username} · {hostOf(account.origin)}
+                            {account.routes && account.routes.length > 1
+                              ? ` · ${account.routes.length} routes`
+                              : ""}
                           </span>
                         </span>
                         {opening ? (
@@ -305,16 +323,30 @@ export const ConnectPage = ({
                           Cancel
                         </Button>
                       ) : (
-                        <Button
-                          className="server-row-remove"
-                          variant="icon"
-                          size="sm"
-                          aria-label={`Remove ${account.serverName}`}
-                          disabled={openingId !== null}
-                          onClick={() => setRemoving(account)}
-                        >
-                          <Trash2 aria-hidden="true" size={15} />
-                        </Button>
+                        <>
+                          {runtime.routes === null ? null : (
+                            <Button
+                              className="server-row-remove"
+                              variant="icon"
+                              size="sm"
+                              aria-label={`Routes for ${account.serverName}`}
+                              disabled={openingId !== null}
+                              onClick={() => setManagingRoutesId(account.connectionId)}
+                            >
+                              <Route aria-hidden="true" size={15} />
+                            </Button>
+                          )}
+                          <Button
+                            className="server-row-remove"
+                            variant="icon"
+                            size="sm"
+                            aria-label={`Remove ${account.serverName}`}
+                            disabled={openingId !== null}
+                            onClick={() => setRemoving(account)}
+                          >
+                            <Trash2 aria-hidden="true" size={15} />
+                          </Button>
+                        </>
                       )}
                     </div>
                   );
@@ -344,7 +376,7 @@ export const ConnectPage = ({
                   className="button-wide"
                   variant="primary"
                   size="lg"
-                  onClick={() => discoverServer.mutate()}
+                  onClick={() => discoverServer.mutate(fixedOrigin)}
                 >
                   Try again
                 </Button>
@@ -357,7 +389,7 @@ export const ConnectPage = ({
               className="connect-form"
               onSubmit={(event) => {
                 event.preventDefault();
-                discoverServer.mutate();
+                discoverServer.mutate(origin);
               }}
             >
               <TextField
@@ -380,6 +412,35 @@ export const ConnectPage = ({
               >
                 {discoverServer.isPending ? "Connecting…" : "Continue"}
               </Button>
+              {lanServers.data && lanServers.data.length > 0 ? (
+                <div className="lan-discovered">
+                  <p className="lan-discovered-heading">On your network</p>
+                  <div className="server-list">
+                    {lanServers.data.map((candidate) => (
+                      <button
+                        key={candidate.origin}
+                        className="server-row-open"
+                        type="button"
+                        disabled={discoverServer.isPending}
+                        onClick={() => {
+                          setOrigin(candidate.origin);
+                          discoverServer.mutate(candidate.origin);
+                        }}
+                      >
+                        <span className="server-row-icon">
+                          <Server aria-hidden="true" size={16} />
+                        </span>
+                        <span className="server-row-text">
+                          <strong>{candidate.displayName}</strong>
+                          <span>{hostOf(candidate.origin)}</span>
+                        </span>
+                        <span className="status-pill">LAN</span>
+                        <ChevronRight aria-hidden="true" size={16} />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {accounts.length > 0 ? (
                 <Button
                   className="button-wide"
@@ -464,6 +525,16 @@ export const ConnectPage = ({
           )}
         </section>
       </div>
+      <Modal
+        open={managingRoutes !== null}
+        onOpenChange={(open) => {
+          if (!open) setManagingRoutesId(null);
+        }}
+        title={`Routes for ${managingRoutes?.serverName ?? "server"}`}
+        description="Add or check addresses used to reach this server. Local network routes are tried first."
+      >
+        {managingRoutes === null ? null : <ServerRoutesSection account={managingRoutes} />}
+      </Modal>
       <Modal
         open={removing !== null}
         onOpenChange={(open) => {

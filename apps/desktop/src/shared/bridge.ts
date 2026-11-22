@@ -6,6 +6,7 @@ import type {
   CatalogRuntime,
   ClientVersions,
   DownloadsRuntime,
+  ServerRoutesRuntime,
   TrackSettingsRuntime,
   Unsubscribe,
   WatchRuntime,
@@ -31,8 +32,9 @@ export interface DesktopBridge {
   readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: Pick<
     AccountsRuntime,
-    "list" | "discoverServer" | "connect" | "activate" | "cancelActivate" | "remove"
+    "list" | "discoverServer" | "connect" | "activate" | "cancelActivate" | "remove" | "onChange"
   >;
+  readonly routes: ServerRoutesRuntime;
   readonly library: Omit<CatalogRuntime, "libraries"> & {
     readonly list: CatalogRuntime["libraries"];
   };

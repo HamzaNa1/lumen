@@ -1,11 +1,12 @@
 import { RequestCancelledError, type ServerApi, type ServerIdentity } from "@lumen/client";
 import type { AccountsRuntime } from "@lumen/client/runtime";
-import type {
-  AccountList,
-  AccountSummary,
-  BrowserSession,
-  ConnectionInput,
-  ServerDiscovery,
+import {
+  type AccountList,
+  type AccountSummary,
+  type BrowserSession,
+  type ConnectionInput,
+  makeServerRoute,
+  type ServerDiscovery,
 } from "@lumen/contracts";
 import { deviceIdFor } from "./deviceId";
 import { SessionChannel } from "./SessionChannel";
@@ -189,6 +190,7 @@ export class BrowserAccounts implements AccountsRuntime {
       serverId: identity.serverId,
       serverName: identity.displayName,
       origin: this.api.serverOrigin,
+      routes: [makeServerRoute(this.api.serverOrigin, "manual")],
       username: session.user.username,
       userId: session.user.id,
       role: session.user.role,

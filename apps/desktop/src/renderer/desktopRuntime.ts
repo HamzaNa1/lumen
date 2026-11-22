@@ -46,10 +46,9 @@ export const createDesktopRuntime = (bridge: DesktopBridge): LumenRuntime => ({
   },
   accounts: {
     ...bridge.accounts,
-    // Only this window changes the saved accounts, and it refreshes them itself.
-    onChange: () => () => undefined,
     fixedOrigin: null,
   },
+  routes: bridge.routes,
   catalog: {
     home: bridge.library.home,
     libraries: bridge.library.list,

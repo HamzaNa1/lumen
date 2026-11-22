@@ -15,6 +15,8 @@ import {
 import { isTrustedOrigin } from "./http/BrowserSession";
 import { type HttpServices, makeHttpHandler } from "./http/HttpApp";
 import { type HttpServer, serveHttp } from "./http/HttpServer";
+import { startLanDiscovery } from "./http/LanDiscovery";
+import { detectLanRoutes } from "./http/LanRoutes";
 import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
 import { LibraryWatcherLive } from "./jobs/LibraryWatcher";
@@ -159,6 +161,7 @@ const makeServices = Effect.gen(function* () {
 
 export interface RunningServer {
   readonly server: HttpServer;
+  readonly discoveryPort: number | null;
   readonly stop: () => Promise<void>;
 }
 
@@ -239,6 +242,7 @@ const startConfiguredServer = async (
         if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
       }
     }
+    let listeningPort = config.port;
     const httpServices: HttpServices = {
       auth: services.auth,
       access: services.access,
@@ -253,6 +257,12 @@ const startConfiguredServer = async (
       jobs: services.jobs,
       identity: services.identity,
       serverName: services.serverName,
+      lanRoutes: () =>
+        detectLanRoutes({
+          host: config.host,
+          port: listeningPort,
+          extraOrigins: config.lanOrigins,
+        }),
       metadataSettings: services.metadataSettings,
       transcodingSettings: services.transcodingSettings,
       tmdb: services.tmdb,
@@ -291,6 +301,16 @@ const startConfiguredServer = async (
       websocket: watchGroups.websocket,
     });
     server = listeningServer;
+    listeningPort = listeningServer.port;
+    const lanDiscovery = await startLanDiscovery({
+      serverId: services.identity.installationId,
+      displayName: () => Effect.runPromise(services.serverName.name()),
+      httpPort: listeningServer.port,
+      host: config.host,
+      enabled: config.lanDiscovery !== "off",
+      port: config.lanDiscoveryPort,
+      logger,
+    });
     logger.info("server_listening", {
       host: config.host,
       port: listeningServer.port,
@@ -309,6 +329,7 @@ const startConfiguredServer = async (
         watchGroups.close();
         try {
           const outcomes = await Promise.allSettled([
+            lanDiscovery.stop(),
             listeningServer.stop(true),
             worker,
             scheduler,
@@ -338,7 +359,7 @@ const startConfiguredServer = async (
         void stop().catch(() => undefined);
       });
     }
-    return { server: listeningServer, stop };
+    return { server: listeningServer, discoveryPort: lanDiscovery.port, stop };
   } catch (cause) {
     await server?.stop(true);
     await Effect.runPromise(Fiber.interrupt(serviceFiber));

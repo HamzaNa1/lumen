@@ -292,6 +292,11 @@ export class WatchPlaybackController<Server extends WatchServer = WatchServer> {
     void this.synchronize();
   }
 
+  /** Reconnects the watch socket after the server's active route changes. */
+  reconnect(): void {
+    this.client?.reconnect();
+  }
+
   /**
    * The local player stopped working on its own, after the group's playback had been applied.
    * Until this is recorded the failure looks like the viewer choosing to stop, and stopping

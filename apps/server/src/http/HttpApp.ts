@@ -13,7 +13,11 @@ import {
   MetadataMatchOptions,
   MetadataMatchSelection,
   PreloadTicket,
+  type ServerAdvertisedRoute,
+  ServerAdvertisedRoutes,
   ServerInfo,
+  ServerVerifyRequest,
+  ServerVerifyResponse,
   TrackChoiceInput,
   TrackPreferencesPatch,
   TranscodingSettings,
@@ -81,6 +85,7 @@ export interface HttpServices {
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
   readonly serverName: ServerNameShape;
+  readonly lanRoutes?: () => ReadonlyArray<ServerAdvertisedRoute>;
   readonly startedAtMs: number;
 }
 
@@ -259,11 +264,24 @@ export const makeHttpHandler = (
             libraryFolders: true,
             artworkWidths: true,
             adaptiveStreaming: true,
+            serverRoutes: true,
           },
         },
         200,
         { "cache-control": "no-store" },
       );
+    }
+    if (method === "POST" && url.pathname === "/api/v1/server/verify") {
+      const input = decode(ServerVerifyRequest, await body(request, config.maxRequestBodyBytes));
+      const proof = await call(
+        services.auth.verifySessionChallenge(
+          input.sessionId,
+          services.identity.installationId,
+          input.challenge,
+          Date.now(),
+        ),
+      );
+      return json(ServerVerifyResponse, { proof }, 200, { "cache-control": "no-store" });
     }
     if (method === "GET" && (url.pathname === "/health/ready" || url.pathname === "/ready")) {
       const ready = await services.databaseReady();
@@ -385,6 +403,11 @@ export const makeHttpHandler = (
     }
     if (url.pathname.startsWith("/api/v1/media/")) throw notFound("Endpoint not found");
     const principal = await authenticate(request);
+    if (method === "GET" && url.pathname === "/api/v1/server/routes") {
+      return json(ServerAdvertisedRoutes, { routes: services.lanRoutes?.() ?? [] }, 200, {
+        "cache-control": "no-store",
+      });
+    }
     if (method === "GET" && url.pathname === "/api/v1/auth/me") return json(User, principal.user);
     if (
       url.pathname === "/api/v1/admin/transcoding-settings" &&

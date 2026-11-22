@@ -1,3 +1,4 @@
+import { createHmac } from "node:crypto";
 import type { LoginResponse, User } from "@lumen/contracts";
 import {
   authSessions,
@@ -67,6 +68,13 @@ export interface AuthServiceShape {
     token: string,
     nowMs: number,
   ) => Effect.Effect<AuthenticatedSession, unknown>;
+  /** Proves this server holds the active session without the caller presenting the bearer secret. */
+  readonly verifySessionChallenge: (
+    sessionId: string,
+    serverId: string,
+    challenge: string,
+    nowMs: number,
+  ) => Effect.Effect<string, unknown>;
   readonly logout: (
     principal: AuthPrincipal,
     sessionId: string,
@@ -335,6 +343,38 @@ export const makeAuthService = Effect.gen(function* () {
   const authenticate: AuthServiceShape["authenticate"] = (token, nowMs) =>
     authenticateSession(token, nowMs).pipe(Effect.map((session) => session.principal));
 
+  const verifySessionChallenge: AuthServiceShape["verifySessionChallenge"] = Effect.fn(
+    "AuthService.verifySessionChallenge",
+  )(function* (sessionId, serverId, challenge, nowMs) {
+    const row = yield* database
+      .select({
+        secretHash: authSessions.sessionTokenHash,
+        lastVerifiedAtMs: authSessions.lastUsedAtMs,
+        expiresAtMs: authSessions.expiresAtMs,
+        revokedAtMs: authSessions.revokedAtMs,
+        isActive: users.isActive,
+        deviceRevokedAtMs: devices.revokedAtMs,
+      })
+      .from(authSessions)
+      .innerJoin(users, eq(users.id, authSessions.userId))
+      .innerJoin(
+        devices,
+        and(eq(devices.id, authSessions.deviceId), eq(devices.userId, authSessions.userId)),
+      )
+      .where(eq(authSessions.id, sessionId))
+      .get();
+    if (
+      row == null ||
+      row.revokedAtMs !== null ||
+      nowMs - row.lastVerifiedAtMs >= sessionExpiresInMs ||
+      row.expiresAtMs <= nowMs ||
+      !row.isActive ||
+      row.deviceRevokedAtMs !== null
+    )
+      return yield* unauthorized();
+    return createHmac("sha256", row.secretHash).update(`${serverId}:${challenge}`).digest("hex");
+  });
+
   const logout: AuthServiceShape["logout"] = Effect.fn("AuthService.logout")(
     function* (principal, sessionId, nowMs) {
       const row = yield* database
@@ -358,6 +398,7 @@ export const makeAuthService = Effect.gen(function* () {
     migrateLegacySession,
     authenticate,
     authenticateSession,
+    verifySessionChallenge,
     logout,
   };
 });

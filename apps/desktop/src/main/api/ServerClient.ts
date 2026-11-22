@@ -18,6 +18,7 @@ export interface AccountSession extends TokenSession {
 export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: FetchLike;
+  readonly onUnreachable?: (failedOrigin: string) => Promise<string | null>;
 }
 
 const describeDevice = (deviceId: string): DeviceDescription => ({

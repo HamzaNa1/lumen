@@ -16,6 +16,7 @@ import { AppUpdateSettings, useAppUpdateStatus } from "./AppUpdates";
 import { DownloadSettingsSection } from "./Downloads";
 import { errorMessage, hostOf } from "./format";
 import { useRuntime } from "./Runtime";
+import { ServerRoutesSection } from "./ServerRoutes";
 import { TranscodingSettingsPanel } from "./TranscodingSettingsPanel";
 import { useClientVersions } from "./versions";
 import { ACCOUNTS_KEY, useWorkspace } from "./Workspace";
@@ -202,20 +203,23 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
 
 const ServerSettings = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
-  const { capabilities } = useRuntime();
+  const { capabilities, routes } = useRuntime();
   return (
-    <div className="settings-card">
-      <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
-        <RenameServer serverName={account.serverName} />
-      </SettingsRow>
-      {capabilities.serverSwitching ? (
-        <div className="settings-row settings-row-actions">
-          <Button onClick={() => openConnections("saved")}>Switch server…</Button>
-          <Button variant="ghost" onClick={() => openConnections("add")}>
-            Add server…
-          </Button>
-        </div>
-      ) : null}
+    <div className="settings-stack">
+      <div className="settings-card">
+        <SettingsRow label={account.serverName} description={hostOf(account.origin)}>
+          {account.role === "admin" ? <RenameServer serverName={account.serverName} /> : null}
+        </SettingsRow>
+        {capabilities.serverSwitching ? (
+          <div className="settings-row settings-row-actions">
+            <Button onClick={() => openConnections("saved")}>Switch server…</Button>
+            <Button variant="ghost" onClick={() => openConnections("add")}>
+              Add server…
+            </Button>
+          </div>
+        ) : null}
+      </div>
+      {routes === null ? null : <ServerRoutesSection account={account} />}
     </div>
   );
 };
@@ -226,7 +230,7 @@ const AboutSettings = (): React.ReactElement => {
   const client = useClientVersions();
   // Asked fresh each time, since the server may have been upgraded since this client connected.
   const server = useQuery({
-    queryKey: ["server-version", account.connectionId],
+    queryKey: ["server-version", account.connectionId, account.origin],
     queryFn: async () =>
       (await accounts.discoverServer(account.origin)).identity.serverVersion ?? null,
     retry: false,
@@ -259,7 +263,7 @@ const useCategoryGroups = (): ReadonlyArray<{
   readonly categories: ReadonlyArray<Category>;
 }> => {
   const { account } = useWorkspace();
-  const { downloads, appUpdates } = useRuntime();
+  const { capabilities, downloads, appUpdates } = useRuntime();
   const updates = useAppUpdateStatus(appUpdates);
   // Read while Settings opens, so About shows them in the frame it is chosen.
   useClientVersions();
@@ -290,26 +294,29 @@ const useCategoryGroups = (): ReadonlyArray<{
       content: () => <AppUpdateSettings updates={appUpdates} />,
     });
   client.push({ id: "about", label: "About", icon: Info, content: () => <AboutSettings /> });
-  if (account.role !== "admin") return [{ title: "Client", categories: client }];
+  const serverCategories: Category[] = [];
+  if (account.role === "admin" || capabilities.serverSwitching) {
+    serverCategories.push({
+      id: "general",
+      label: "General",
+      icon: Server,
+      content: () => <ServerSettings />,
+    });
+  }
+  if (account.role === "admin") {
+    serverCategories.push({
+      id: "transcoding",
+      label: "Transcoding",
+      icon: Cpu,
+      content: () => (
+        <TranscodingSettingsPanel key={account.connectionId} connectionId={account.connectionId} />
+      ),
+    });
+  }
+  if (serverCategories.length === 0) return [{ title: "Client", categories: client }];
   return [
     { title: "Client", categories: client },
-    {
-      title: "Server",
-      categories: [
-        { id: "general", label: "General", icon: Server, content: () => <ServerSettings /> },
-        {
-          id: "transcoding",
-          label: "Transcoding",
-          icon: Cpu,
-          content: () => (
-            <TranscodingSettingsPanel
-              key={account.connectionId}
-              connectionId={account.connectionId}
-            />
-          ),
-        },
-      ],
-    },
+    { title: "Server", categories: serverCategories },
   ];
 };
 

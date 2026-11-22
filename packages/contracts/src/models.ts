@@ -1,5 +1,6 @@
 import { Schema } from "effect";
 import { PlayerQuality } from "./adaptive.ts";
+import { ServerRoute } from "./routes.ts";
 import { Sha256Digest, UserRole, UtcMillis, Uuid } from "./schemas/common.ts";
 import { ServerInfo } from "./server.ts";
 import { TrackMemory, TrackPreferences } from "./track-memory.ts";
@@ -14,6 +15,8 @@ export const AccountSummary = Schema.Struct({
   /** The name the server gives itself. */
   serverName: Schema.String.check(Schema.isMinLength(1)),
   origin: Schema.String.check(Schema.isMinLength(1)),
+  /** Known routes to this server, ordered by priority (LAN first). */
+  routes: Schema.optional(Schema.Array(ServerRoute)),
   username: Schema.String.check(Schema.isMinLength(1)),
   userId: Schema.String.check(Schema.isMinLength(1)),
   role: UserRole,

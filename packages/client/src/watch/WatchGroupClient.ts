@@ -237,6 +237,21 @@ export class WatchGroupClient {
     }
   }
 
+  /** Reopens the socket on the connection's current origin, preserving any active group. */
+  reconnect(): void {
+    if (this.stopped) return;
+    clearTimeout(this.reconnectTimer);
+    this.attempts = 0;
+    this.bestRtt = Infinity;
+    const socket = this.socket;
+    if (socket !== null) {
+      socket.close();
+      this.disconnected(socket);
+      clearTimeout(this.reconnectTimer);
+    }
+    this.connect();
+  }
+
   get rejoining(): boolean {
     return this.desiredGroup !== null && this.group === null;
   }

@@ -20,14 +20,18 @@ import {
   ManagedUser,
   MetadataMatchOptions,
   type MetadataMatchSelection,
+  normalizeOrigin,
   PlayableMedia,
   PlayableStream,
   type PlayerSession,
   type PlayerState,
   PreloadTicket,
   type ScanRun,
+  type ServerAdvertisedRoute,
+  ServerAdvertisedRoutes,
   type ServerDiscovery,
   ServerInfo,
+  ServerVerifyResponse,
   type TrackChoiceInput,
   TrackMemory,
   TrackPreferences,
@@ -100,6 +104,8 @@ export interface ServerApiOptions {
   readonly fetchImpl?: FetchLike;
   /** Called when the server rejects this client's session. */
   readonly onUnauthorized?: () => void;
+  /** Called when the current route is unreachable; returns the replacement origin if failover succeeded. */
+  readonly onUnreachable?: (failedOrigin: string) => Promise<string | null>;
 }
 
 /** What the sign-in forms collect, wherever they are shown. */
@@ -247,15 +253,7 @@ const ARTWORK_MIME_TYPES = ["image/jpeg", "image/png", "image/webp"] as const;
 const MAX_ARTWORK_BYTES = 20_000_000;
 const JSON_HEADERS = { "content-type": "application/json" };
 
-export const normalizeOrigin = (value: string): string => {
-  const url = new URL(value);
-  if (!["http:", "https:"].includes(url.protocol)) throw new Error("Unsupported server URL");
-  if (url.username !== "" || url.password !== "")
-    throw new Error("URL credentials are not allowed");
-  if (url.pathname !== "/" && url.pathname !== "")
-    throw new Error("Server origin cannot contain a path");
-  return url.origin;
-};
+export { normalizeOrigin };
 
 export const decode = <S extends Schema.Decoder<unknown, never>>(
   schema: S,
@@ -303,18 +301,28 @@ export const parseIdentity = (value: unknown): ServerIdentity => {
  * that failed in transit may already have taken effect.
  */
 export class ServerApi {
-  readonly serverOrigin: string;
+  private origin: string;
   private readonly fetchImpl: FetchLike;
   private readonly credentials: ApiCredentials;
   private readonly onUnauthorized: (() => void) | undefined;
+  private readonly onUnreachable: ((failedOrigin: string) => Promise<string | null>) | undefined;
   private serverIdentity: ServerIdentity | null = null;
   private scope = new AbortController();
 
   constructor(options: ServerApiOptions) {
-    this.serverOrigin = normalizeOrigin(options.origin);
+    this.origin = normalizeOrigin(options.origin);
     this.fetchImpl = options.fetchImpl ?? ((input, init) => fetch(input, init));
     this.credentials = options.credentials;
     this.onUnauthorized = options.onUnauthorized;
+    this.onUnreachable = options.onUnreachable;
+  }
+
+  get serverOrigin(): string {
+    return this.origin;
+  }
+
+  setServerOrigin(origin: string): void {
+    this.origin = normalizeOrigin(origin);
   }
 
   get supportsTranscoding(): boolean {
@@ -357,6 +365,10 @@ export class ServerApi {
     return this.serverIdentity?.capabilities?.artworkWidths === true;
   }
 
+  get supportsServerRoutes(): boolean {
+    return this.serverIdentity?.capabilities?.serverRoutes === true;
+  }
+
   /** The server this client talks to, once it has said who it is. */
   get serverId(): string | null {
     return this.serverIdentity?.serverId ?? null;
@@ -372,7 +384,12 @@ export class ServerApi {
     previous.abort(new RequestCancelledError());
   }
 
-  private async send(path: string, init: RequestInit, auth: RequestAuth): Promise<unknown> {
+  private async send(
+    path: string,
+    init: RequestInit,
+    auth: RequestAuth,
+    allowFailover = true,
+  ): Promise<unknown> {
     const scope = this.scope;
     const headers = new Headers(init.headers);
     const method = (init.method ?? "GET").toUpperCase();
@@ -386,9 +403,10 @@ export class ServerApi {
           ? init.signal.reason
           : (fallback ?? new RequestCancelledError());
     };
+    const attemptedOrigin = this.origin;
     let response: Response;
     try {
-      response = await this.fetchImpl(new URL(path, this.serverOrigin), {
+      response = await this.fetchImpl(new URL(path, attemptedOrigin), {
         ...init,
         headers,
         redirect: "manual",
@@ -399,6 +417,19 @@ export class ServerApi {
       });
     } catch (cause) {
       checkAborted(cause);
+      if (allowFailover && auth === "session" && this.onUnreachable !== undefined) {
+        if (method === "GET" || method === "HEAD") {
+          const nextOrigin = await this.onUnreachable(attemptedOrigin).catch(() => null);
+          checkAborted();
+          if (nextOrigin !== null && nextOrigin !== attemptedOrigin) {
+            this.origin = normalizeOrigin(nextOrigin);
+            return this.send(path, init, auth, false);
+          }
+        } else {
+          // Do not replay a mutation that may have reached the server; still fail over for the next call.
+          void this.onUnreachable(attemptedOrigin).catch(() => undefined);
+        }
+      }
       throw new ServerUnreachableError({ cause });
     }
     checkAborted();
@@ -435,6 +466,31 @@ export class ServerApi {
       ),
     );
     return this.serverIdentity;
+  }
+
+  /** Local-network routes the server reports for itself; empty on older servers. */
+  async advertisedRoutes(): Promise<ReadonlyArray<ServerAdvertisedRoute>> {
+    if (!this.supportsServerRoutes) return [];
+    const response: { readonly routes: ReadonlyArray<ServerAdvertisedRoute> } = await this.request(
+      "/api/v1/server/routes",
+      { cache: "no-store" },
+      ServerAdvertisedRoutes,
+    );
+    return response.routes;
+  }
+
+  /** Asks the server to prove it holds `sessionId` without presenting the bearer secret. */
+  async verifyRoute(sessionId: string, challenge: string, signal?: AbortSignal): Promise<string> {
+    const value = await this.send(
+      "/api/v1/server/verify",
+      {
+        ...jsonBody("POST", { sessionId, challenge }),
+        cache: "no-store",
+        ...(signal === undefined ? {} : { signal }),
+      },
+      "none",
+    );
+    return decode(ServerVerifyResponse, value).proof;
   }
 
   async setupRequired(fallback = false): Promise<boolean> {
@@ -718,20 +774,36 @@ export class ServerApi {
   async artworkResponse(
     artwork: ArtworkRef,
     options: { readonly width?: number; readonly transport?: FetchLike } = {},
+    allowFailover = true,
   ): Promise<{ readonly mimeType: ArtworkImage["mimeType"]; readonly response: Response } | null> {
     const headers = new Headers();
     this.credentials.authorize({ method: "GET", headers });
-    const response = await (options.transport ?? this.fetchImpl)(
-      new URL(this.artworkPath(artwork, options.width), this.serverOrigin),
-      {
-        headers,
-        redirect: "manual",
-        signal: this.scope.signal,
-        ...(this.credentials.cookies === undefined
-          ? {}
-          : { credentials: this.credentials.cookies }),
-      },
-    );
+    const attemptedOrigin = this.origin;
+    let response: Response;
+    try {
+      response = await (options.transport ?? this.fetchImpl)(
+        new URL(this.artworkPath(artwork, options.width), attemptedOrigin),
+        {
+          headers,
+          redirect: "manual",
+          signal: this.scope.signal,
+          ...(this.credentials.cookies === undefined
+            ? {}
+            : { credentials: this.credentials.cookies }),
+        },
+      );
+    } catch (cause) {
+      if (this.scope.signal.aborted) throw new RequestCancelledError();
+      if (allowFailover && this.onUnreachable !== undefined) {
+        const nextOrigin = await this.onUnreachable(attemptedOrigin).catch(() => null);
+        if (this.scope.signal.aborted) throw new RequestCancelledError();
+        if (nextOrigin !== null && nextOrigin !== attemptedOrigin) {
+          this.origin = normalizeOrigin(nextOrigin);
+          return this.artworkResponse(artwork, options, false);
+        }
+      }
+      throw cause;
+    }
     const mimeType = ARTWORK_MIME_TYPES.find(
       (candidate) => candidate === response.headers.get("content-type")?.split(";")[0],
     );
