@@ -379,6 +379,13 @@ export class ServerApi {
     if (auth !== "none") this.credentials.authorize({ method, headers });
     const signal =
       init.signal == null ? scope.signal : AbortSignal.any([scope.signal, init.signal]);
+    const checkAborted = (fallback?: unknown): void => {
+      if (scope.signal.aborted) throw new RequestCancelledError();
+      if (init.signal?.aborted === true)
+        throw init.signal.reason instanceof Error
+          ? init.signal.reason
+          : (fallback ?? new RequestCancelledError());
+    };
     let response: Response;
     try {
       response = await this.fetchImpl(new URL(path, this.serverOrigin), {
@@ -391,17 +398,16 @@ export class ServerApi {
           : { credentials: this.credentials.cookies }),
       });
     } catch (cause) {
-      if (scope.signal.aborted) throw new RequestCancelledError();
-      if (init.signal?.aborted === true) throw cause;
+      checkAborted(cause);
       throw new ServerUnreachableError({ cause });
     }
-    if (scope.signal.aborted) throw new RequestCancelledError();
+    checkAborted();
     try {
       const value = await readJson(response);
-      if (scope.signal.aborted) throw new RequestCancelledError();
+      checkAborted();
       return value;
     } catch (cause) {
-      if (scope.signal.aborted) throw new RequestCancelledError();
+      checkAborted(cause);
       if (auth === "session" && cause instanceof ServerHttpError && cause.status === 401)
         this.onUnauthorized?.();
       throw cause;
@@ -420,9 +426,13 @@ export class ServerApi {
 
   // Discovery
 
-  async identity(): Promise<ServerIdentity> {
+  async identity(signal?: AbortSignal): Promise<ServerIdentity> {
     this.serverIdentity = parseIdentity(
-      await this.send("/api/v1/server", { cache: "no-store" }, "none"),
+      await this.send(
+        "/api/v1/server",
+        signal === undefined ? { cache: "no-store" } : { cache: "no-store", signal },
+        "none",
+      ),
     );
     return this.serverIdentity;
   }
@@ -483,9 +493,16 @@ export class ServerApi {
     );
   }
 
-  async migrateLegacyToken(refreshToken: string): Promise<AccountSession> {
+  async migrateLegacyToken(refreshToken: string, signal?: AbortSignal): Promise<AccountSession> {
     return decodeSession(
-      await this.send("/api/v1/auth/migrate-session", jsonBody("POST", { refreshToken }), "none"),
+      await this.send(
+        "/api/v1/auth/migrate-session",
+        {
+          ...jsonBody("POST", { refreshToken }),
+          ...(signal === undefined ? {} : { signal }),
+        },
+        "none",
+      ),
     );
   }
 
@@ -538,8 +555,8 @@ export class ServerApi {
     await this.request("/api/v1/auth/browser/logout", jsonBody("POST", {}));
   }
 
-  async me(): Promise<User> {
-    return this.request("/api/v1/auth/me", {}, User);
+  async me(signal?: AbortSignal): Promise<User> {
+    return this.request("/api/v1/auth/me", signal === undefined ? {} : { signal }, User);
   }
 
   // Catalog

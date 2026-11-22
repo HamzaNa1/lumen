@@ -1474,7 +1474,17 @@ button.nav-item {
   background: var(--bg-hover);
 }
 .server-row-open:disabled {
-  opacity: 0.6;
+  opacity: 0.55;
+}
+.server-row-open.is-opening {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+}
+.server-row-open.is-opening .server-row-icon {
+  background: rgba(201, 245, 96, 0.1);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(201, 245, 96, 0.16);
 }
 .server-row-open > svg {
   flex: none;
@@ -1515,8 +1525,16 @@ button.nav-item {
   color: var(--text-tertiary);
   font-size: 12px;
 }
+.server-row-open > .server-row-spinner {
+  flex: none;
+  color: var(--accent);
+  opacity: 0.85;
+}
 .server-row-remove.button {
   color: var(--text-tertiary);
+}
+.server-row-cancel.button {
+  flex: none;
 }
 .server-chip {
   display: flex;
@@ -1526,6 +1544,26 @@ button.nav-item {
   border: 1px solid var(--border);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.03);
+}
+.server-chip.is-connecting {
+  min-height: 58px;
+  padding: 12px 14px;
+  border-color: rgba(255, 255, 255, 0.09);
+  background: rgba(255, 255, 255, 0.035);
+}
+.server-chip.is-connecting .server-row-icon {
+  background: rgba(201, 245, 96, 0.1);
+  color: var(--accent);
+  box-shadow: inset 0 0 0 1px rgba(201, 245, 96, 0.16);
+}
+.connect-target-spinner {
+  flex: none;
+  color: var(--accent);
+  opacity: 0.85;
+}
+.connect-actions {
+  display: grid;
+  gap: 8px;
 }
 
 /* Item pages */

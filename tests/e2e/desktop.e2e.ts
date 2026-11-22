@@ -11,6 +11,7 @@ import {
   quitDesktop,
   test,
 } from "./support/desktop";
+import { latch, NetworkProxy } from "./support/proxy";
 
 test("desktop connects through real IPC, persists its account and window, and never exposes tokens to the renderer", async ({
   server,
@@ -58,6 +59,83 @@ test("desktop connects through real IPC, persists its account and window, and ne
     expect(await desktopWindow.evaluate((window) => window.getBounds())).toMatchObject(size);
   } finally {
     await closeDesktop(reopened);
+  }
+});
+
+test("reconnecting to an unresponsive last server can be cancelled and retried cleanly", async ({
+  server,
+  admin,
+  desktop,
+}) => {
+  await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const proxy = await new NetworkProxy(server.origin).start();
+  const { page, app, profile } = desktop;
+  const firstHold = latch();
+  const firstSeen = latch();
+  const secondHold = latch();
+  const secondSeen = latch();
+  let blockedRequests = 0;
+  let abortedRequests = 0;
+  try {
+    await connectDesktop(page, proxy);
+    await quitDesktop(app);
+    proxy.intercept = async (request, response) => {
+      if (request.url !== "/api/v1/server") return false;
+      blockedRequests += 1;
+      const index = blockedRequests;
+      response.on("close", () => {
+        if (!response.writableEnded) abortedRequests += 1;
+      });
+      if (index === 1) {
+        firstSeen.release();
+        await firstHold.promise;
+        return false;
+      }
+      if (index === 2) {
+        secondSeen.release();
+        await secondHold.promise;
+        return false;
+      }
+      return false;
+    };
+    const reopened = await launchDesktop(profile);
+    try {
+      const reconnecting = await mainDesktopPage(reopened);
+      await firstSeen.promise;
+      await expect(reconnecting.getByRole("heading", { name: "Reconnecting…" })).toBeVisible();
+      await expect(reconnecting.getByText(new URL(proxy.origin).host)).toBeVisible();
+      await reconnecting.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(reconnecting.getByRole("heading", { name: "Choose a server" })).toBeVisible();
+      await expect(reconnecting.getByRole("alert")).toHaveCount(0);
+      await expect(reconnecting.getByRole("button", { name: "Back" })).toHaveCount(0);
+      await expect(reconnecting.getByText("Current", { exact: true })).toHaveCount(0);
+      // Cancelling aborts the real in-flight HTTP request and never adopts a late response.
+      await expect.poll(() => abortedRequests).toBe(1);
+      firstHold.release();
+      await expect(reconnecting.evaluate(() => window.lumen.library.list())).rejects.toThrow();
+      await expect(reconnecting.getByRole("heading", { name: "Choose a server" })).toBeVisible();
+
+      // Clicking a saved server that stalls can also be cancelled inline.
+      await reconnecting.locator(".server-row-open").first().click();
+      await secondSeen.promise;
+      await expect(reconnecting.getByRole("button", { name: "Cancel", exact: true })).toBeVisible();
+      await reconnecting.getByRole("button", { name: "Cancel", exact: true }).click();
+      await expect(reconnecting.locator(".server-row-open").first()).toBeEnabled();
+      await expect.poll(() => abortedRequests).toBe(2);
+      secondHold.release();
+
+      // Once the server answers again, reconnecting from the list opens the workspace cleanly.
+      proxy.intercept = async () => false;
+      await reconnecting.locator(".server-row-open").first().click();
+      await expect(reconnecting.getByRole("navigation", { name: "Primary" })).toBeVisible();
+      await expect(reconnecting.getByRole("link", { name: "movies", exact: true })).toBeVisible();
+    } finally {
+      await closeDesktop(reopened);
+    }
+  } finally {
+    firstHold.release();
+    secondHold.release();
+    await proxy.close();
   }
 });
 

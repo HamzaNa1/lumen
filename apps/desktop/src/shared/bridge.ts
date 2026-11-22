@@ -31,7 +31,7 @@ export interface DesktopBridge {
   readonly trackSettings: TrackSettingsRuntime;
   readonly accounts: Pick<
     AccountsRuntime,
-    "list" | "discoverServer" | "connect" | "activate" | "remove"
+    "list" | "discoverServer" | "connect" | "activate" | "cancelActivate" | "remove"
   >;
   readonly library: Omit<CatalogRuntime, "libraries"> & {
     readonly list: CatalogRuntime["libraries"];

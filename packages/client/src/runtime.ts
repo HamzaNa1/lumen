@@ -62,6 +62,8 @@ export interface AccountsRuntime {
   readonly discoverServer: (origin: string) => Promise<ServerDiscovery>;
   readonly connect: (input: ConnectionInput) => Promise<AccountList>;
   readonly activate: (connectionId: string) => Promise<AccountList>;
+  /** Cancels an in-flight activation, aborting its network requests. */
+  readonly cancelActivate: () => Promise<void>;
   /** Signs out and forgets the connection. */
   readonly remove: (connectionId: string) => Promise<AccountList>;
   /** Accounts changed outside this page: the session expired, or another window signed out. */

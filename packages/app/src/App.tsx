@@ -12,10 +12,9 @@ import { Outlet, useMatches, useNavigate, useRouter } from "@tanstack/react-rout
 import { CircleAlert, LoaderCircle, WifiOff, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useAppUpdateChanges } from "./AppUpdates";
-import { ConnectPage } from "./ConnectPage";
+import { ConnectPage, ReconnectingView } from "./ConnectPage";
 import { useDownloadUpdates } from "./Downloads";
 import { errorMessage } from "./format";
-import { LumenLogo } from "./LumenLogo";
 import { useRuntime } from "./Runtime";
 import { Sidebar } from "./Sidebar";
 import { usePlayingDescription } from "./usePlayingDescription";
@@ -50,12 +49,16 @@ export const App = (): React.ReactElement => {
     "starting",
   );
   const [startupError, setStartupError] = useState<string | null>(null);
+  const [connected, setConnected] = useState(false);
   /** The last server could not be reached, but its downloads can still be watched. */
   const [offline, setOffline] = useState(false);
+  const [hasStartupDownloads, setHasStartupDownloads] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   useDownloadUpdates();
   useAppUpdateChanges();
   const startupAttempted = useRef(false);
+  const startupAttemptId = useRef(0);
+  const reconnectAttemptId = useRef(0);
   const [signInAccount, setSignInAccount] = useState<AccountSummary | null>(null);
   const startingItemId = useRef<string | null>(null);
   /** What the viewer was watching when they moved from it to another of its show's episodes. */
@@ -227,19 +230,36 @@ export const App = (): React.ReactElement => {
       setConnectionsView("saved");
       return;
     }
+    const attempt = ++startupAttemptId.current;
+    if (runtime.downloads !== null) {
+      void runtime.downloads
+        .state()
+        .then((state) => {
+          if (startupAttemptId.current !== attempt) return;
+          setHasStartupDownloads(
+            state.entries.some((entry) => entry.connectionId === active.connectionId),
+          );
+        })
+        .catch(() => undefined);
+    }
     void runtime.accounts
       .activate(active.connectionId)
       .then((result) => {
+        if (startupAttemptId.current !== attempt) return;
         queryClient.setQueryData(ACCOUNTS_KEY, result);
+        setConnected(true);
+        setOffline(false);
         setConnectionsView(null);
       })
       .catch(async (cause) => {
+        if (startupAttemptId.current !== attempt) return;
         const message = errorMessage(cause, "Could not open server");
         // A server out of reach still leaves its downloads: open those instead of the sign-in.
         const downloads =
           message.includes("Sign-in required") || runtime.downloads === null
             ? null
             : await runtime.downloads.state().catch(() => null);
+        if (startupAttemptId.current !== attempt) return;
         if (downloads?.entries.some((entry) => entry.connectionId === active.connectionId)) {
           setOffline(true);
           setConnectionsView(null);
@@ -250,19 +270,46 @@ export const App = (): React.ReactElement => {
         setConnectionsView("saved");
       });
   }, [accountsQuery.isSuccess, active, connectionsView, queryClient, router, runtime]);
+  const cancelStartup = useCallback((): void => {
+    startupAttemptId.current += 1;
+    void runtime.accounts.cancelActivate().catch(() => undefined);
+    setStartupError(null);
+    setConnectionsView("saved");
+  }, [runtime]);
+  const openOfflineDownloads = useCallback((): void => {
+    startupAttemptId.current += 1;
+    void runtime.accounts.cancelActivate().catch(() => undefined);
+    setStartupError(null);
+    setOffline(true);
+    setConnectionsView(null);
+    void router.navigate({ to: "/downloads", replace: true });
+  }, [router, runtime]);
   const reconnect = useCallback((): void => {
     if (active === null) return;
+    const attempt = ++reconnectAttemptId.current;
     setReconnecting(true);
     void runtime.accounts
       .activate(active.connectionId)
       .then(async (result) => {
+        if (reconnectAttemptId.current !== attempt) return;
         queryClient.setQueryData(ACCOUNTS_KEY, result);
+        setConnected(true);
         setOffline(false);
         await queryClient.invalidateQueries();
       })
-      .catch((cause) => setPlaybackError(errorMessage(cause, "The server still can’t be reached")))
-      .finally(() => setReconnecting(false));
+      .catch((cause) => {
+        if (reconnectAttemptId.current !== attempt) return;
+        setPlaybackError(errorMessage(cause, "The server still can’t be reached"));
+      })
+      .finally(() => {
+        if (reconnectAttemptId.current === attempt) setReconnecting(false);
+      });
   }, [active, queryClient, runtime]);
+  const cancelReconnect = useCallback((): void => {
+    reconnectAttemptId.current += 1;
+    setReconnecting(false);
+    void runtime.accounts.cancelActivate().catch(() => undefined);
+  }, [runtime]);
   // Everything cached or playing belongs to one account on one server. When that changes, none
   // of it may carry over: stop playback, drop requests still in flight, and forget the data.
   const scope = useMemo(
@@ -275,6 +322,10 @@ export const App = (): React.ReactElement => {
     const previous = previousScope.current;
     previousScope.current = scope;
     if (previous === null || previous.every((value, index) => value === scope?.[index])) return;
+    if (scope === null) {
+      setConnected(false);
+      setOffline(false);
+    }
     void queryClient.cancelQueries({ queryKey: previous });
     queryClient.removeQueries({ queryKey: previous });
     queryClient.getMutationCache().clear();
@@ -409,31 +460,32 @@ export const App = (): React.ReactElement => {
         onChanged={() => void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY })}
       />
     );
-  if (connectionsView === "starting")
+  if (connectionsView === "starting" && active !== null)
     return (
-      <main className="connect-page" role="status" aria-label="Connecting to server">
-        <div className="connect-column">
-          <div className="connect-brand">
-            <LumenLogo />
-          </div>
-          <section className="connect-card">
-            <header className="connect-heading">
-              <h1>Connecting to {active?.serverName ?? "server"}…</h1>
-              <p>Opening your last server.</p>
-            </header>
-            <LoaderCircle className="spinner" aria-hidden="true" size={22} />
-          </section>
-        </div>
-      </main>
+      <ReconnectingView
+        account={active}
+        hasDownloads={hasStartupDownloads}
+        onCancel={cancelStartup}
+        onOpenDownloads={openOfflineDownloads}
+      />
     );
+  const hasSession = connected || offline;
   if (accounts.length === 0 || active === null || scope === null)
     return (
       <ConnectPage
         accounts={accounts}
         initialError={startupError ?? undefined}
-        onChanged={() => {
+        onChanged={(result) => {
+          if (result !== undefined) queryClient.setQueryData(ACCOUNTS_KEY, result);
           setStartupError(null);
+          setConnected(true);
+          setOffline(false);
           setConnectionsView(null);
+          void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
+        }}
+        onRemoved={() => {
+          setConnected(false);
+          setOffline(false);
           void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
         }}
       />
@@ -443,22 +495,32 @@ export const App = (): React.ReactElement => {
     return (
       <ConnectPage
         accounts={accounts}
-        activeConnectionId={startupError === null ? active.connectionId : undefined}
+        activeConnectionId={hasSession ? active.connectionId : undefined}
         initialError={startupError ?? undefined}
         initialShowAddServer={connectionsView === "add"}
         initialSignInAccount={signInAccount}
         onClose={
-          startupError === null
+          hasSession
             ? () => {
                 setSignInAccount(null);
                 setConnectionsView(null);
               }
             : undefined
         }
-        onChanged={() => {
+        onChanged={(result) => {
+          if (result !== undefined) queryClient.setQueryData(ACCOUNTS_KEY, result);
           setStartupError(null);
           setSignInAccount(null);
+          setConnected(true);
+          setOffline(false);
           setConnectionsView(null);
+          void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
+        }}
+        onRemoved={(removedId) => {
+          if (removedId === active.connectionId) {
+            setConnected(false);
+            setOffline(false);
+          }
           void queryClient.invalidateQueries({ queryKey: ACCOUNTS_KEY });
         }}
       />
@@ -500,7 +562,12 @@ export const App = (): React.ReactElement => {
               onActivate={(id) => {
                 void runtime.accounts
                   .activate(id)
-                  .then(() => queryClient.invalidateQueries())
+                  .then((result) => {
+                    queryClient.setQueryData(ACCOUNTS_KEY, result);
+                    setConnected(true);
+                    setOffline(false);
+                    return queryClient.invalidateQueries();
+                  })
                   .catch((cause) => {
                     if (errorMessage(cause, "").includes("Sign-in required")) {
                       setSignInAccount(accounts.find((entry) => entry.connectionId === id) ?? null);
@@ -528,9 +595,15 @@ export const App = (): React.ReactElement => {
                 Can’t reach {active.serverName}. Your downloads still play; progress is saved when
                 the server is back.
               </span>
-              <Button size="sm" disabled={reconnecting} onClick={reconnect}>
-                {reconnecting ? "Connecting…" : "Try again"}
-              </Button>
+              {reconnecting ? (
+                <Button size="sm" onClick={cancelReconnect}>
+                  Cancel
+                </Button>
+              ) : (
+                <Button size="sm" onClick={reconnect}>
+                  Try again
+                </Button>
+              )}
             </div>
           ) : null}
           <Outlet />

@@ -63,8 +63,8 @@ export class ServerClient extends ServerApi implements WatchServer {
     return this.adopt(await this.tokenLogin(input, describeDevice(deviceId)));
   }
 
-  async migrateLegacySession(refreshToken: string): Promise<AccountSession> {
-    return this.adopt(await this.migrateLegacyToken(refreshToken));
+  async migrateLegacySession(refreshToken: string, signal?: AbortSignal): Promise<AccountSession> {
+    return this.adopt(await this.migrateLegacyToken(refreshToken, signal));
   }
 
   private adopt(session: AccountSession): AccountSession {
