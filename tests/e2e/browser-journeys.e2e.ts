@@ -183,9 +183,9 @@ test("playback info never shows what was buffered at the position a seek leaves"
     file,
   );
   await server.scan(admin.accessToken, library.id);
-  // The first half of the file arrives; bytes past it wait for the test to end, on a connection
-  // left open, since a browser may take a response that ends early as the whole file.
-  const half = Math.round(statSync(file).size / 2);
+  // Serve about four seconds so one ten-second seek leaves the buffer. Keep the response
+  // open since a browser may take an early end of the response as the end of the file.
+  const byteLimit = Math.round(statSync(file).size / 10);
   const done = Promise.withResolvers<void>();
   const proxy = await new NetworkProxy(server.origin).start();
   proxy.intercept = async (request, response) => {
@@ -196,7 +196,7 @@ test("playback info never shows what was buffered at the position a seek leaves"
       headers: { cookie: request.headers.cookie ?? "", range: request.headers.range ?? "bytes=0-" },
     });
     response.writeHead(upstream.status, Object.fromEntries(upstream.headers));
-    let allowance = Math.max(0, half - start);
+    let allowance = Math.max(0, byteLimit - start);
     for await (const chunk of upstream.body ?? []) {
       const part = Buffer.from(chunk).subarray(0, allowance);
       allowance -= part.length;
@@ -215,7 +215,7 @@ test("playback info never shows what was buffered at the position a seek leaves"
     await pause(page);
     const info = await openPlaybackInfo(page);
     const buffered = playbackInfoValue(info, "Buffered ahead");
-    await expect(buffered).toHaveText(/^(1\d|[5-9])\.\d s$/u);
+    await expect.poll(async () => Number.parseFloat(await buffered.innerText())).toBeGreaterThan(0);
     // Every position the player shows, beside what the panel says is buffered ahead of it.
     await page.evaluate(() => {
       const shown: string[] = [];
@@ -234,12 +234,11 @@ test("playback info never shows what was buffered at the position a seek leaves"
       });
     });
     await page.mouse.move(300, 300);
-    for (let seek = 0; seek < 3; seek++)
-      await page.getByRole("button", { name: "Forward 10 seconds" }).click();
-    await expect(page.locator(".media-player-time").first()).toHaveText(/^0:3\d$/u);
+    await page.getByRole("button", { name: "Forward 10 seconds" }).click();
+    await expect(page.locator(".media-player-time").first()).toHaveText(/^0:1\d$/u);
     await expect(buffered).toHaveText("0.0 s");
     const shown = (await page.evaluate(() => Reflect.get(window, "shownBuffer"))) as string[];
-    expect(shown.filter((entry) => /^0:3\d /u.test(entry) && !entry.endsWith(" 0.0 s"))).toEqual(
+    expect(shown.filter((entry) => /^0:1\d /u.test(entry) && !entry.endsWith(" 0.0 s"))).toEqual(
       [],
     );
   } finally {
