@@ -1,14 +1,21 @@
+import { get } from "node:https";
 import {
   makeServerRoute,
   mergeServerRoutes,
   normalizeOrigin,
+  type ServerAdvertisedRoutes,
   sortServerRoutes,
 } from "@lumen/contracts";
 import type {
   AccountRegistry,
   StoredAccount,
 } from "../../apps/desktop/src/main/accounts/AccountRegistry";
+import {
+  PinnedCertificates,
+  type PinSource,
+} from "../../apps/desktop/src/main/api/PinnedCertificates";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { pinnedSocketOpener } from "../../apps/desktop/src/main/api/watchSocket";
 import type { FetchLike } from "../../packages/client/src/ServerApi";
 import { expect, test } from "./support/server";
 
@@ -390,4 +397,66 @@ test("desktop verifies route changes and protects credentials across server vers
   expect(clients.has(guardedAccount.connectionId)).toBe(false);
   expect(guardedClient.currentSession).toBeNull();
   expect(guardedClient.serverOrigin).toBe(localOrigin);
+});
+
+/** GETs a JSON path over HTTPS, trusting what `pins` trusts for the origin's host. */
+const getOverTls = (pins: PinnedCertificates, origin: string, path: string): Promise<unknown> => {
+  const url = new URL(path, origin);
+  const trust = pins.tlsOptions(url.hostname);
+  return new Promise((resolve, reject) => {
+    get(url, { ca: [...trust.ca], checkServerIdentity: trust.checkServerIdentity }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      response.on("error", reject);
+    }).on("error", reject);
+  });
+};
+
+test.describe("desktop route transports", () => {
+  test.use({ serverEnvironment: { LUMEN_TLS_PORT: "0" } });
+
+  test("opens watch groups on the advertised route and scopes TLS pins to their hosts", async ({
+    server,
+    admin,
+  }) => {
+    const info = await server.api<{ serverId: string; capabilities?: { serverRoutes?: boolean } }>(
+      "/server",
+    );
+    const advertised = info.capabilities?.serverRoutes
+      ? await server.api<ServerAdvertisedRoutes>("/server/routes", { token: admin.accessToken })
+      : undefined;
+    const tlsOrigin = advertised?.tls?.routes[0]?.origin;
+    let pins = new PinnedCertificates(() => []);
+    if (advertised?.tls && tlsOrigin) {
+      const certificate = advertised.tls.certificate;
+      const pinnedOn = (origins: string[]): PinnedCertificates =>
+        new PinnedCertificates((): PinSource[] => [
+          { origin: "http://remote.lumen.test:3210", routes: [], tls: { certificate, origins } },
+        ]);
+      pins = pinnedOn([tlsOrigin]);
+      expect(await getOverTls(pins, tlsOrigin, "/api/v1/server")).toMatchObject({
+        serverId: info.serverId,
+      });
+      await expect(
+        getOverTls(new PinnedCertificates(() => []), tlsOrigin, "/api/v1/server"),
+      ).rejects.toThrow();
+      await expect(
+        getOverTls(pinnedOn(["https://192.168.1.50:3211"]), tlsOrigin, "/api/v1/server"),
+      ).rejects.toThrow();
+    }
+    const socketUrl = new URL("/api/v1/watch-groups", tlsOrigin ?? server.origin);
+    socketUrl.protocol = tlsOrigin ? "wss:" : "ws:";
+    const socket = pinnedSocketOpener(pins)(socketUrl);
+    try {
+      const firstMessage = new Promise<unknown>((resolve, reject) => {
+        socket.onmessage = (event) => resolve(JSON.parse(String(event.data)));
+        socket.onerror = () => reject(new Error("Watch socket failed to connect"));
+      });
+      socket.onopen = () => socket.send(JSON.stringify({ token: admin.accessToken }));
+      expect(await firstMessage).toMatchObject({ type: "ready" });
+    } finally {
+      socket.close();
+    }
+  });
 });

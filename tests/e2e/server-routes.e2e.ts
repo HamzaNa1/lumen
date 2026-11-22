@@ -1,7 +1,8 @@
-import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createHash, createHmac, randomBytes, X509Certificate } from "node:crypto";
 import { createSocket } from "node:dgram";
-import { get } from "node:https";
+import { once } from "node:events";
 import { createServer as createTcpServer } from "node:net";
+import { connect } from "node:tls";
 import {
   classifyRouteScope,
   type LanDiscoveryRequest,
@@ -14,29 +15,10 @@ import {
   tokenAllowsPlainHttp,
   usableServerRoutes,
 } from "@lumen/contracts";
-import {
-  PinnedCertificates,
-  type PinSource,
-} from "../../apps/desktop/src/main/api/PinnedCertificates";
-import { pinnedSocketOpener } from "../../apps/desktop/src/main/api/watchSocket";
 import { ServerUnreachableError } from "../../packages/client/src/errors";
 import { selectBestRoute } from "../../packages/client/src/RouteSelector";
 import { bearerCredentials, ServerApi } from "../../packages/client/src/ServerApi";
 import { expect, Server, test } from "./support/server";
-
-/** GETs a JSON path over HTTPS, trusting what `pins` trusts for the origin's host. */
-const getOverTls = (pins: PinnedCertificates, origin: string, path: string): Promise<unknown> => {
-  const url = new URL(path, origin);
-  const trust = pins.tlsOptions(url.hostname);
-  return new Promise((resolve, reject) => {
-    get(url, { ca: [...trust.ca], checkServerIdentity: trust.checkServerIdentity }, (response) => {
-      const chunks: Buffer[] = [];
-      response.on("data", (chunk: Buffer) => chunks.push(chunk));
-      response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
-      response.on("error", reject);
-    }).on("error", reject);
-  });
-};
 
 const probeUdpDiscovery = async (
   port: number,
@@ -394,36 +376,21 @@ test("server advertises local, LAN and pinned TLS routes, verifies session chall
       },
     });
     const certificate = advertised.tls?.certificate ?? "";
-    const tlsOrigin = advertised.tls?.routes[0]?.origin ?? "";
 
-    // The TLS listener serves the same server, and only to a client that pinned its certificate
-    // on that host: neither the system's CAs nor a pin from another server's hosts admit it.
-    const pinnedOn = (origins: string[]): PinnedCertificates =>
-      new PinnedCertificates((): PinSource[] => [
-        { origin: "http://remote.lumen.test:3210", routes: [], tls: { certificate, origins } },
-      ]);
-    const pins = pinnedOn([tlsOrigin]);
-    expect(await getOverTls(pins, tlsOrigin, "/api/v1/server")).toMatchObject({
-      serverId: info.serverId,
+    const tlsUrl = new URL(advertised.tls?.routes[0]?.origin ?? "");
+    const tls = connect({
+      host: tlsUrl.hostname,
+      port: Number(tlsUrl.port),
+      ca: certificate,
+      // The advertised certificate identifies the listener independently of its host name.
+      checkServerIdentity: () => undefined,
     });
-    await expect(
-      getOverTls(new PinnedCertificates(() => []), tlsOrigin, "/api/v1/server"),
-    ).rejects.toThrow();
-    await expect(
-      getOverTls(pinnedOn(["https://192.168.1.50:3211"]), tlsOrigin, "/api/v1/server"),
-    ).rejects.toThrow();
-
-    // The desktop's watch-group socket reaches the listener through the same pin.
-    const socketUrl = new URL("/api/v1/watch-groups", tlsOrigin);
-    socketUrl.protocol = "wss:";
-    const socket = pinnedSocketOpener(pins)(socketUrl);
-    const firstMessage = new Promise<unknown>((resolve, reject) => {
-      socket.onmessage = (event) => resolve(JSON.parse(String(event.data)));
-      socket.onerror = () => reject(new Error("Watch socket failed over TLS"));
-    });
-    socket.onopen = () => socket.send(JSON.stringify({ token: admin.accessToken }));
-    expect(await firstMessage).toMatchObject({ type: "ready" });
-    socket.close();
+    try {
+      await once(tls, "secureConnect");
+      expect(tls.getPeerCertificate().raw).toEqual(new X509Certificate(certificate).raw);
+    } finally {
+      tls.destroy();
+    }
 
     // Challenge verification proves server identity without ever sending the bearer secret.
     const [, secretB64 = ""] = admin.accessToken.split(".");
