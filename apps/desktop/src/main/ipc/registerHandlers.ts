@@ -22,6 +22,7 @@ import {
   TrackPreferencesPatch,
   TranscodingSettings,
   UserRole,
+  usableServerRoutes,
   WatchAction,
 } from "@lumen/contracts";
 import { Schema } from "effect";
@@ -440,11 +441,14 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       dependencies.clients.get(input.connectionId)?.currentSession ??
       (await dependencies.registry.session(input.connectionId));
     const probe = await routeManager.probeManualRoute(normalized, account.serverId, session);
-    await dependencies.registry.addRoute(account.serverId, normalized);
+    await dependencies.registry.addRoute(input.connectionId, normalized);
     const client = dependencies.clients.get(input.connectionId);
     const updated = dependencies.registry.find(input.connectionId);
     if (probe.reachable && updated !== null) {
-      const ordered = sortServerRoutes(updated.routes, updated.origin);
+      const ordered = sortServerRoutes(
+        usableServerRoutes(updated.routes, updated.credentialOrigin),
+        updated.origin,
+      );
       const preferred = ordered[0]?.origin;
       if (client !== undefined && preferred === normalized && client.serverOrigin !== normalized) {
         await routeManager.switchClientOrigin(input.connectionId, client, normalized);
@@ -470,7 +474,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const account = dependencies.registry.find(input.connectionId);
     if (account === null) throw new Error("Connection not found");
     const normalized = normalizeOrigin(input.origin);
-    await dependencies.registry.removeRoute(account.serverId, normalized);
+    await dependencies.registry.removeRoute(input.connectionId, normalized);
     const updated = dependencies.registry.find(input.connectionId);
     const client = dependencies.clients.get(input.connectionId);
     if (client !== undefined && updated !== null && client.serverOrigin === normalized) {

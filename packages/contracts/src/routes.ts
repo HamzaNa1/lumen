@@ -140,6 +140,94 @@ export const classifyRouteScope = (origin: string): ServerRouteScope => {
   return LAN_SUFFIXES.some((suffix) => trimmed.endsWith(suffix)) ? "lan" : "remote";
 };
 
+const isPlainHttpOrigin = (origin: string): boolean => {
+  try {
+    return new URL(origin).protocol === "http:";
+  } catch {
+    return false;
+  }
+};
+
+const isSharedAddressSpaceOctets = (a: number, b: number): boolean =>
+  a === 100 && b >= 64 && b <= 127;
+
+const parseIpv6Words = (host: string): readonly number[] | null => {
+  const normalized = host.toLowerCase();
+  if (!normalized.includes(":")) return null;
+  const halves = normalized.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves[1] ? halves[1].split(":") : [];
+  if ([...head, ...tail].some((part) => !/^[\da-f]{1,4}$/u.test(part))) return null;
+  const missing = 8 - head.length - tail.length;
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null;
+  return [...head, ...Array.from({ length: missing }, () => "0"), ...tail].map((part) =>
+    Number.parseInt(part, 16),
+  );
+};
+
+const isTailscaleOrVpnOrigin = (origin: string): boolean => {
+  let host: string;
+  try {
+    host = new URL(origin).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  const stripped = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
+  const trimmed = stripped.endsWith(".") ? stripped.slice(0, -1) : stripped;
+  if (trimmed.endsWith(".ts.net")) return true;
+  const ipv4 = parseIpv4(trimmed);
+  if (ipv4 !== null) return isSharedAddressSpaceOctets(ipv4[0], ipv4[1]);
+  if (trimmed.includes(":")) {
+    const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/u.exec(trimmed);
+    if (mappedDotted?.[1] !== undefined) {
+      const octets = parseIpv4(mappedDotted[1]);
+      return octets !== null && isSharedAddressSpaceOctets(octets[0], octets[1]);
+    }
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(trimmed);
+    if (mappedHex?.[1] !== undefined && mappedHex[2] !== undefined) {
+      const high = Number.parseInt(mappedHex[1], 16);
+      return isSharedAddressSpaceOctets((high >> 8) & 0xff, high & 0xff);
+    }
+    const words = parseIpv6Words(trimmed);
+    // Tailscale IPv6 ULA prefix fd7a:115c:a1e0::/48.
+    return words !== null && words[0] === 0xfd7a && words[1] === 0x115c && words[2] === 0xa1e0;
+  }
+  return false;
+};
+
+/**
+ * A bearer token may be reused on auto-detected plain HTTP routes only when it was itself issued
+ * over plain HTTP outside loopback and Tailscale/VPN tunnels.
+ */
+export const tokenAllowsPlainHttp = (credentialOrigin: string | null | undefined): boolean => {
+  if (credentialOrigin == null) return false;
+  if (!isPlainHttpOrigin(credentialOrigin)) return false;
+  if (classifyRouteScope(credentialOrigin) === "local") return false;
+  if (isTailscaleOrVpnOrigin(credentialOrigin)) return false;
+  return true;
+};
+
+/**
+ * Whether connecting over `route` would send a bearer token over plain HTTP that it was not
+ * issued for. Manual routes were explicitly configured by the viewer; auto-detected plain HTTP
+ * routes are refused unless the token was issued over plain HTTP.
+ */
+export const sendsTokenInClear = (
+  route: ServerRoute,
+  credentialOrigin: string | null | undefined,
+): boolean => {
+  if (route.source === "manual") return false;
+  if (!isPlainHttpOrigin(route.origin)) return false;
+  return !tokenAllowsPlainHttp(credentialOrigin);
+};
+
+/** Routes an account may connect over without downgrading its bearer token to plain HTTP. */
+export const usableServerRoutes = (
+  routes: ReadonlyArray<ServerRoute>,
+  credentialOrigin: string | null | undefined,
+): ServerRoute[] => routes.filter((route) => !sendsTokenInClear(route, credentialOrigin));
+
 export const makeServerRoute = (origin: string, source: ServerRouteSource): ServerRoute => {
   const normalized = normalizeOrigin(origin);
   return { origin: normalized, source, scope: classifyRouteScope(normalized) };
@@ -175,6 +263,8 @@ export const mergeServerRoutes = (options: {
   readonly manualOrigins?: ReadonlyArray<string>;
   readonly detectedOrigins?: ReadonlyArray<string>;
   readonly dismissedOrigins?: ReadonlyArray<string>;
+  /** When set, auto-detected routes that would send this token over plain HTTP are dropped. */
+  readonly credentialOrigin?: string | null;
   /** When true, existing auto-detected routes not in `detectedOrigins` are pruned. */
   readonly replaceDetected?: boolean;
 }): ServerRoute[] => {
@@ -190,9 +280,15 @@ export const mergeServerRoutes = (options: {
       const normalized = normalizeOrigin(route.origin);
       if (route.source === "detected" && (options.replaceDetected || dismissed.has(normalized)))
         continue;
+      const nextRoute = makeServerRoute(normalized, route.source);
+      if (
+        options.credentialOrigin !== undefined &&
+        sendsTokenInClear(nextRoute, options.credentialOrigin)
+      )
+        continue;
       const current = byOrigin.get(normalized);
       if (current === undefined || (current.source === "detected" && route.source === "manual"))
-        byOrigin.set(normalized, makeServerRoute(normalized, route.source));
+        byOrigin.set(normalized, nextRoute);
     } catch {}
   }
   for (const origin of options.manualOrigins ?? []) {
@@ -205,7 +301,13 @@ export const mergeServerRoutes = (options: {
     try {
       const normalized = normalizeOrigin(origin);
       if (dismissed.has(normalized) || byOrigin.has(normalized)) continue;
-      byOrigin.set(normalized, makeServerRoute(normalized, "detected"));
+      const nextRoute = makeServerRoute(normalized, "detected");
+      if (
+        options.credentialOrigin !== undefined &&
+        sendsTokenInClear(nextRoute, options.credentialOrigin)
+      )
+        continue;
+      byOrigin.set(normalized, nextRoute);
     } catch {}
   }
   return sortServerRoutes([...byOrigin.values()]);

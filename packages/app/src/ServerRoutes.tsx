@@ -71,8 +71,9 @@ export const ServerRoutesSection = ({
         <div className="settings-row-text">
           <span>Routes</span>
           <p>
-            Local and LAN routes are detected automatically and tried first. Lumen switches routes
-            automatically if one stops responding.
+            Local and LAN routes are tried first, and Lumen switches automatically if a route stops
+            responding. Connections signed in over HTTPS won&apos;t automatically switch to plain
+            HTTP.
           </p>
         </div>
       </div>

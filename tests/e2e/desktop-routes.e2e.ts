@@ -150,15 +150,17 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
       })
       .toBe(remoteOrigin);
 
-    // Persisted connections.json keeps routes and dismissed origins across restarts.
+    // Persisted connections.json keeps routes, credentialOrigin, and dismissed origins across restarts.
     const saved = JSON.parse(await readFile(join(profile, "connections.json"), "utf8")) as {
       accounts: Array<{
         origin: string;
+        credentialOrigin?: string;
         routes: Array<{ origin: string }>;
         dismissedRoutes: string[];
       }>;
     };
     expect(saved.accounts[0]?.origin).toBe(remoteOrigin);
+    expect(saved.accounts[0]?.credentialOrigin).toBe(remoteOrigin);
     expect(saved.accounts[0]?.routes.map((route) => route.origin)).toEqual([
       manualLanOrigin,
       remoteOrigin,
@@ -181,8 +183,9 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
         ?.origin,
     ).toBe(remoteOrigin);
 
-    // Legacy connections.json (written by older desktop without `routes` or `dismissedRoutes`)
-    // opens cleanly and auto-detects the server's local route via /api/v1/server/routes without UDP.
+    // Legacy connections.json (written by older desktop without `routes`, `dismissedRoutes`, or
+    // `credentialOrigin`) opens cleanly and auto-detects the server's local route via
+    // /api/v1/server/routes without UDP.
     await closeDesktop(app);
     const legacy = JSON.parse(await readFile(join(profile, "connections.json"), "utf8")) as {
       activeConnectionId: string;
@@ -191,6 +194,7 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     for (const account of legacy.accounts) {
       delete account.routes;
       delete account.dismissedRoutes;
+      delete account.credentialOrigin;
     }
     await writeFile(join(profile, "connections.json"), JSON.stringify(legacy), "utf8");
     app = await launchDesktop(profile, false, {
@@ -215,6 +219,44 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
           ]
         : [{ origin: remoteOrigin, source: "manual", scope: "remote" }],
     );
+
+    // An HTTPS connection whose connections.json carries a stale auto-detected plain HTTP route
+    // (saved before the bearer-token transport rule) drops that plain HTTP route on load and does
+    // not connect over plain HTTP even though the local server is reachable.
+    await closeDesktop(app);
+    const staleHttps = JSON.parse(await readFile(join(profile, "connections.json"), "utf8")) as {
+      activeConnectionId: string;
+      accounts: Array<Record<string, unknown>>;
+    };
+    const httpsRemoteOrigin = "https://remote.lumen.test";
+    for (const account of staleHttps.accounts) {
+      account.origin = serverLocalOrigin;
+      delete account.credentialOrigin;
+      account.routes = [
+        { origin: serverLocalOrigin, source: "detected", scope: "local" },
+        { origin: httpsRemoteOrigin, source: "manual", scope: "remote" },
+      ];
+      account.dismissedRoutes = [];
+    }
+    await writeFile(join(profile, "connections.json"), JSON.stringify(staleHttps), "utf8");
+    app = await launchDesktop(profile, false, {
+      LUMEN_E2E_HOST_RESOLVER_RULES: hostRules,
+      LUMEN_E2E_DISCOVERY_PORT: "off",
+      LUMEN_E2E_LOCAL_ORIGINS: serverLocalOrigin,
+    });
+    page = await mainDesktopPage(app);
+    await expect
+      .poll(async () => {
+        const list = await page.evaluate(() => window.lumen.accounts.list());
+        const entry = list.accounts.find((item) => item.connectionId === list.activeConnectionId);
+        return entry === undefined
+          ? null
+          : { origin: entry.origin, routes: entry.routes?.map((route) => route.origin) };
+      })
+      .toEqual({
+        origin: httpsRemoteOrigin,
+        routes: [httpsRemoteOrigin],
+      });
   } finally {
     await closeDesktop(app).catch(() => undefined);
     await lanProxy.close().catch(() => undefined);

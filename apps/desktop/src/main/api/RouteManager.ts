@@ -14,6 +14,9 @@ import {
   mergeServerRoutes,
   normalizeOrigin,
   type ServerRoute,
+  sendsTokenInClear,
+  tokenAllowsPlainHttp,
+  usableServerRoutes,
 } from "@lumen/contracts";
 import type { AccountRegistry, StoredAccount } from "../accounts/AccountRegistry";
 import { configuredDiscoveryConfig, discoverLanServers } from "./LanDiscoveryClient";
@@ -111,6 +114,14 @@ const scopePriority = (origin: string): number => {
 const hasManualLocalRoute = (account: StoredAccount): boolean =>
   account.routes.some((route) => route.source === "manual" && route.scope === "local");
 
+const allowsDetectedOrigin = (account: StoredAccount, origin: string): boolean => {
+  try {
+    return !sendsTokenInClear(makeServerRoute(origin, "detected"), account.credentialOrigin);
+  } catch {
+    return false;
+  }
+};
+
 export interface RouteManagerOptions {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
@@ -183,13 +194,15 @@ export class RouteManager {
     options: { readonly excludeOrigin?: string; readonly skipUdpDiscovery?: boolean } = {},
   ): Promise<RouteProbeResult> {
     const manualLocal = hasManualLocalRoute(account);
+    const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     let discoveredOrigins: string[] = [];
-    if (!options.skipUdpDiscovery) {
+    if (!options.skipUdpDiscovery && allowPlainHttp) {
       const discovered = await this.discoverLanImpl().catch(() => []);
       discoveredOrigins = discovered
         .filter(
           (candidate) =>
             candidate.serverId === account.serverId &&
+            allowsDetectedOrigin(account, candidate.origin) &&
             (!manualLocal || classifyRouteScope(candidate.origin) !== "local"),
         )
         .map((candidate) => candidate.origin);
@@ -198,13 +211,19 @@ export class RouteManager {
     const dismissed = new Set(account.dismissedRoutes);
     const localCandidates = manualLocal
       ? []
-      : localDiscoveryOrigins().filter((origin) => !dismissed.has(origin));
+      : localDiscoveryOrigins().filter(
+          (origin) => !dismissed.has(origin) && allowsDetectedOrigin(account, origin),
+        );
 
-    const candidates = mergeServerRoutes({
-      existing: account.routes,
-      detectedOrigins: [...discoveredOrigins, ...localCandidates],
-      dismissedOrigins: account.dismissedRoutes,
-    }).filter((route) =>
+    const candidates = usableServerRoutes(
+      mergeServerRoutes({
+        existing: account.routes,
+        detectedOrigins: [...discoveredOrigins, ...localCandidates],
+        dismissedOrigins: account.dismissedRoutes,
+        credentialOrigin: account.credentialOrigin,
+      }),
+      account.credentialOrigin,
+    ).filter((route) =>
       options.excludeOrigin === undefined ? true : route.origin !== options.excludeOrigin,
     );
 
@@ -231,7 +250,9 @@ export class RouteManager {
     if (winner.route.source === "detected" && !toStore.includes(winner.origin))
       toStore.push(winner.origin);
     if (toStore.length > 0) {
-      await this.options.registry.mergeDetectedRoutes(account.serverId, toStore).catch(() => false);
+      await this.options.registry
+        .mergeDetectedRoutes(account.connectionId, toStore)
+        .catch(() => false);
     }
     return winner;
   }
@@ -248,9 +269,10 @@ export class RouteManager {
   ): Promise<boolean> {
     const account = this.options.registry.find(connectionId);
     if (account === null) return false;
+    const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     const [advertised, udp] = await Promise.all([
       client.supportsServerRoutes ? client.advertisedRoutes().catch(() => []) : Promise.resolve([]),
-      this.discoverLanImpl().catch(() => []),
+      allowPlainHttp ? this.discoverLanImpl().catch(() => []) : Promise.resolve([]),
     ]);
 
     const manualLocal = hasManualLocalRoute(account);
@@ -259,7 +281,7 @@ export class RouteManager {
     const localCandidates = new Set<string>();
 
     for (const route of advertised) {
-      if (dismissed.has(route.origin)) continue;
+      if (dismissed.has(route.origin) || !allowsDetectedOrigin(account, route.origin)) continue;
       if (route.scope === "local") {
         if (!manualLocal) localCandidates.add(route.origin);
       } else if (route.scope === "lan") {
@@ -267,7 +289,12 @@ export class RouteManager {
       }
     }
     for (const candidate of udp) {
-      if (candidate.serverId !== account.serverId || dismissed.has(candidate.origin)) continue;
+      if (
+        candidate.serverId !== account.serverId ||
+        dismissed.has(candidate.origin) ||
+        !allowsDetectedOrigin(account, candidate.origin)
+      )
+        continue;
       if (classifyRouteScope(candidate.origin) === "local") {
         if (!manualLocal) localCandidates.add(candidate.origin);
       } else {
@@ -276,7 +303,8 @@ export class RouteManager {
     }
     if (!manualLocal) {
       for (const origin of localDiscoveryOrigins()) {
-        if (!dismissed.has(origin)) localCandidates.add(origin);
+        if (!dismissed.has(origin) && allowsDetectedOrigin(account, origin))
+          localCandidates.add(origin);
       }
     }
 
@@ -307,7 +335,7 @@ export class RouteManager {
 
     const detectedOrigins = [...verifiedLocalOrigins, ...lanOrigins];
     const changed = await this.options.registry.mergeDetectedRoutes(
-      account.serverId,
+      account.connectionId,
       detectedOrigins,
       { replaceDetected: client.supportsServerRoutes },
     );
@@ -315,7 +343,7 @@ export class RouteManager {
     const updated = this.options.registry.find(connectionId);
     if (updated !== null) {
       const currentPriority = scopePriority(client.serverOrigin);
-      const betterRoutes = updated.routes.filter(
+      const betterRoutes = usableServerRoutes(updated.routes, updated.credentialOrigin).filter(
         (route) => scopePriority(route.origin) < currentPriority,
       );
       if (betterRoutes.length > 0) {
@@ -405,9 +433,14 @@ export class RouteManager {
       if (currentPriority === 0) return;
 
       const manualLocal = hasManualLocalRoute(account);
-      const udp = await this.discoverLanImpl().catch(() => []);
+      const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
+      const udp = allowPlainHttp ? await this.discoverLanImpl().catch(() => []) : [];
       const udpOrigins = udp
-        .filter((candidate) => candidate.serverId === account.serverId)
+        .filter(
+          (candidate) =>
+            candidate.serverId === account.serverId &&
+            allowsDetectedOrigin(account, candidate.origin),
+        )
         .map((candidate) => candidate.origin);
       const dismissed = new Set(account.dismissedRoutes);
       const candidateOrigins = [
@@ -415,27 +448,35 @@ export class RouteManager {
           (origin) =>
             !dismissed.has(origin) && (!manualLocal || classifyRouteScope(origin) !== "local"),
         ),
-        ...(manualLocal ? [] : localDiscoveryOrigins().filter((origin) => !dismissed.has(origin))),
+        ...(manualLocal
+          ? []
+          : localDiscoveryOrigins().filter(
+              (origin) => !dismissed.has(origin) && allowsDetectedOrigin(account, origin),
+            )),
       ];
       const lanUdpOrigins = udpOrigins.filter(
         (origin) => !dismissed.has(origin) && classifyRouteScope(origin) === "lan",
       );
       if (lanUdpOrigins.length > 0)
-        await this.options.registry.mergeDetectedRoutes(account.serverId, lanUdpOrigins);
+        await this.options.registry.mergeDetectedRoutes(account.connectionId, lanUdpOrigins);
 
       const latest = this.options.registry.find(connectionId);
       if (latest === null) return;
-      const higherCandidates = mergeServerRoutes({
-        existing: latest.routes,
-        detectedOrigins: candidateOrigins,
-        dismissedOrigins: latest.dismissedRoutes,
-      }).filter((route) => scopePriority(route.origin) < currentPriority);
+      const higherCandidates = usableServerRoutes(
+        mergeServerRoutes({
+          existing: latest.routes,
+          detectedOrigins: candidateOrigins,
+          dismissedOrigins: latest.dismissedRoutes,
+          credentialOrigin: latest.credentialOrigin,
+        }),
+        latest.credentialOrigin,
+      ).filter((route) => scopePriority(route.origin) < currentPriority);
       if (higherCandidates.length === 0) return;
 
       const winner = await this.probeCandidateRoutes(latest, higherCandidates, session);
       if (winner !== null && winner.origin !== client.serverOrigin) {
         if (winner.route.source === "detected")
-          await this.options.registry.mergeDetectedRoutes(latest.serverId, [winner.origin]);
+          await this.options.registry.mergeDetectedRoutes(latest.connectionId, [winner.origin]);
         await this.switchClientOrigin(connectionId, client, winner.origin);
       }
     })().finally(() => {
@@ -562,9 +603,11 @@ export class RouteManager {
     routes: ReadonlyArray<ServerRoute>,
     session: AccountSession | null,
   ): Promise<RouteProbeResult | null> {
+    const usable = usableServerRoutes(routes, account.credentialOrigin);
+    if (usable.length === 0) return null;
     try {
       return await selectBestRoute({
-        routes,
+        routes: usable,
         activeOrigin: account.origin,
         probe: async (route, signal) => {
           const requireProof =

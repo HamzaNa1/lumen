@@ -535,7 +535,7 @@ export const ConnectPage = ({
           if (!open) setManagingRoutesId(null);
         }}
         title={`Routes for ${managingRoutes?.serverName ?? "server"}`}
-        description="Local and LAN routes are detected automatically and tried first."
+        description="Local and LAN routes are tried first."
       >
         {managingRoutes === null ? null : <ServerRoutesSection account={managingRoutes} />}
       </Modal>
