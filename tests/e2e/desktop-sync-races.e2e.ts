@@ -199,7 +199,7 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
               timeout: 3000,
               intervals: [25, 50, 100],
             })
-            .toMatchObject({ itemId: other, paused: false });
+            .toMatchObject({ itemId: other });
           const replacement = await page.evaluate(() => window.lumen.player.state());
           const beforeRelease = (await wire.snapshot()).commands.at(-1)?.id ?? 0;
           await wire.release();
@@ -214,11 +214,10 @@ for (const scenario of ["hold-speed", "fail-speed", "hold-sample", "disconnect"]
               ),
             )
             .toBe(true);
-          expect(await page.evaluate(() => window.lumen.player.state())).toMatchObject({
-            itemId: other,
-            sessionId: replacement?.sessionId,
-            paused: false,
-          });
+          // The group can still be waiting for the replacement to buffer when the old reply arrives.
+          await expect
+            .poll(() => page.evaluate(() => window.lumen.player.state()))
+            .toMatchObject({ itemId: other, sessionId: replacement?.sessionId, paused: false });
           expect(await wire.command(["get_property", "speed"])).toBe(1);
           const commands = (await wire.snapshot()).commands;
           expect(commands.find((entry) => entry.id === captured?.id)?.outcome).toBe("released");
