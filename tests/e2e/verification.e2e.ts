@@ -1,6 +1,7 @@
 import { cpSync, readFileSync, rmSync, symlinkSync } from "node:fs";
 import { availableParallelism } from "node:os";
 import { join } from "node:path";
+import { suites } from "../../scripts/lib/verification";
 import { expect, test } from "./support/cli";
 import { repository } from "./support/server";
 
@@ -146,6 +147,18 @@ test("Playwright discovery assigns every E2E suite, selects product owners and r
   workspace,
 }) => {
   cpSync(join(repository, "tests/e2e"), join(workspace.root, "tests/e2e"), { recursive: true });
+  // Release verification pairs candidate tests with a released counterpart app; stub suites the
+  // active product does not own so listing other products cannot fail on unreleased imports.
+  const activeProduct = process.env.LUMEN_BROWSER_PRODUCT;
+  if (activeProduct === "server" || activeProduct === "desktop") {
+    for (const [file, suite] of Object.entries(suites)) {
+      if (!suite.products.includes(activeProduct))
+        workspace.write(
+          `tests/e2e/${file}`,
+          'import { test } from "@playwright/test";\ntest("counterpart suite", () => {});\n',
+        );
+    }
+  }
   cpSync(join(repository, "playwright.config.ts"), join(workspace.root, "playwright.config.ts"));
   for (const path of ["apps", "packages"]) {
     rmSync(join(workspace.root, path), { recursive: true });
