@@ -13,11 +13,13 @@ import {
   ServerIdentityService,
 } from "./database/Identity";
 import { isTrustedOrigin } from "./http/BrowserSession";
+import type { RequestContext } from "./http/ClientIdentity";
 import { type HttpServices, makeHttpHandler } from "./http/HttpApp";
-import { type HttpServer, serveHttp } from "./http/HttpServer";
+import { type HttpServer, type HttpUpgrade, serveHttp } from "./http/HttpServer";
 import { startLanDiscovery } from "./http/LanDiscovery";
 import { detectLanRoutes } from "./http/LanRoutes";
 import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
+import { loadTlsCertificate } from "./http/TlsCertificate";
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
 import { LibraryWatcherLive } from "./jobs/LibraryWatcher";
 import {
@@ -217,6 +219,7 @@ const startConfiguredServer = async (
   });
   let startupTimeout: ReturnType<typeof setTimeout> | undefined;
   let server: HttpServer | undefined;
+  let tlsListener: { readonly server: HttpServer; readonly certificate: string } | null = null;
   try {
     const services = await Promise.race([
       servicesPromise,
@@ -257,12 +260,25 @@ const startConfiguredServer = async (
       jobs: services.jobs,
       identity: services.identity,
       serverName: services.serverName,
-      lanRoutes: () =>
-        detectLanRoutes({
+      lanRoutes: () => ({
+        routes: detectLanRoutes({
           host: config.host,
           port: listeningPort,
           extraOrigins: config.lanOrigins,
         }),
+        ...(tlsListener === null
+          ? {}
+          : {
+              tls: {
+                certificate: tlsListener.certificate,
+                routes: detectLanRoutes({
+                  host: config.host,
+                  port: tlsListener.server.port,
+                  protocol: "https",
+                }),
+              },
+            }),
+      }),
       metadataSettings: services.metadataSettings,
       transcodingSettings: services.transcodingSettings,
       tmdb: services.tmdb,
@@ -288,10 +304,9 @@ const startConfiguredServer = async (
         timers: config.watchTimers,
       },
     );
-    const listeningServer = await serveHttp<WatchSocketData>({
+    const routing = {
       hostname: config.host,
-      port: config.port,
-      fetch: (request, context) => {
+      fetch: (request: Request, context: RequestContext & HttpUpgrade<WatchSocketData>) => {
         const { pathname } = new URL(request.url);
         if (pathname === "/api/v1/watch-groups") return watchGroups.upgrade(request, context);
         // The app's files are matched by prefix before the API sees the request, and the API
@@ -299,9 +314,26 @@ const startConfiguredServer = async (
         return isWebPath(pathname) ? web(request, context) : handler(request, context);
       },
       websocket: watchGroups.websocket,
-    });
+    };
+    const listeningServer = await serveHttp<WatchSocketData>({ ...routing, port: config.port });
     server = listeningServer;
     listeningPort = listeningServer.port;
+    if (config.tlsPort !== null) {
+      try {
+        const certificate = await loadTlsCertificate(config.dataDir);
+        const secure = await serveHttp<WatchSocketData>({
+          ...routing,
+          port: config.tlsPort,
+          tls: certificate,
+        });
+        tlsListener = { server: secure, certificate: certificate.cert };
+      } catch (cause) {
+        // Clients keep the plain HTTP routes, so a taken port or unwritable data directory only
+        // costs the encrypted LAN routes.
+        logger.warn("tls_listener_unavailable", { port: config.tlsPort }, cause);
+      }
+    }
+    const secureListener = tlsListener;
     const lanDiscovery = await startLanDiscovery({
       serverId: services.identity.installationId,
       displayName: () => Effect.runPromise(services.serverName.name()),
@@ -314,6 +346,7 @@ const startConfiguredServer = async (
     logger.info("server_listening", {
       host: config.host,
       port: listeningServer.port,
+      tlsPort: secureListener?.server.port ?? null,
       durationMs: Math.round(performance.now() - startedAt),
     });
     const abort = new AbortController();
@@ -331,6 +364,7 @@ const startConfiguredServer = async (
           const outcomes = await Promise.allSettled([
             lanDiscovery.stop(),
             listeningServer.stop(true),
+            secureListener?.server.stop(true),
             worker,
             scheduler,
           ]);
@@ -362,6 +396,7 @@ const startConfiguredServer = async (
     return { server: listeningServer, discoveryPort: lanDiscovery.port, stop };
   } catch (cause) {
     await server?.stop(true);
+    await tlsListener?.server.stop(true);
     await Effect.runPromise(Fiber.interrupt(serviceFiber));
     throw cause;
   } finally {

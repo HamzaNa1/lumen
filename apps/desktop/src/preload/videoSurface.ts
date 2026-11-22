@@ -22,14 +22,17 @@ if (composesVideo(process.platform)) {
       gl.clear(gl.COLOR_BUFFER_BIT);
     }
   });
-  sharedTexture.setSharedTextureReceiver(
-    async ({ importedSharedTexture }, frameGeneration: number) => {
+  ipcRenderer.on(
+    "video:frame",
+    (_event, id: number, frameGeneration: number, transfer: Electron.SharedTextureTransfer) => {
+      let imported: Electron.SharedTextureImportedSubtle | undefined;
       let frame: VideoFrame | undefined;
       try {
         if (frameGeneration !== generation) return;
         if (!canvas?.isConnected || !gl || gl.isContextLost())
           throw new Error("The GPU video surface is unavailable");
-        frame = importedSharedTexture.getVideoFrame();
+        imported = sharedTexture.subtle.finishTransferSharedTexture(transfer);
+        frame = imported.getVideoFrame();
         if (canvas.width !== frame.displayWidth || canvas.height !== frame.displayHeight) {
           canvas.width = frame.displayWidth;
           canvas.height = frame.displayHeight;
@@ -44,7 +47,11 @@ if (composesVideo(process.platform)) {
         fail(cause);
       } finally {
         frame?.close();
-        importedSharedTexture.release();
+        if (imported !== undefined)
+          imported.release(() => {
+            ipcRenderer.send("video:release", id);
+          });
+        else ipcRenderer.send("video:release", id);
       }
     },
   );

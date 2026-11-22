@@ -14,6 +14,7 @@ import {
   usableServerRoutes,
 } from "@lumen/contracts";
 import { app } from "electron";
+import { certificateFingerprint, type PinnedTls } from "../api/PinnedCertificates";
 import type { AccountSession } from "../api/ServerClient";
 import { createTokenVault, type VaultValue, writePrivateJson } from "./TokenVault";
 
@@ -26,6 +27,8 @@ export interface StoredAccount {
   readonly credentialOrigin: string;
   readonly routes: ReadonlyArray<ServerRoute>;
   readonly dismissedRoutes: ReadonlyArray<string>;
+  /** The server's LAN certificate, trusted on this account's routes; absent until it advertises one. */
+  readonly tls?: PinnedTls;
   readonly username: string;
   readonly userId: string;
   readonly role: UserRole;
@@ -74,11 +77,26 @@ const inferCredentialOrigin = (
   return protectedOrigin ?? manualOrigins[0] ?? origin;
 };
 
+const pinnedTls = (value: unknown): PinnedTls | undefined => {
+  if (typeof value !== "object" || value === null) return undefined;
+  const { certificate, origins } = value as { certificate?: unknown; origins?: unknown };
+  if (typeof certificate !== "string" || certificateFingerprint(certificate) === null)
+    return undefined;
+  return {
+    certificate,
+    origins: Array.isArray(origins)
+      ? origins.filter((origin): origin is string => typeof origin === "string")
+      : [],
+  };
+};
+
 /** Earlier versions stored a single origin and a device-local label where server routes and name now live. */
 const storedAccount = ({
   serverLabel,
+  tls: rawTls,
   ...account
-}: Omit<StoredAccount, "credentialOrigin" | "routes" | "dismissedRoutes"> & {
+}: Omit<StoredAccount, "credentialOrigin" | "routes" | "dismissedRoutes" | "tls"> & {
+  readonly tls?: unknown;
   readonly serverLabel?: string;
   readonly credentialOrigin?: string;
   readonly routes?: ReadonlyArray<ServerRoute>;
@@ -101,8 +119,10 @@ const storedAccount = ({
   const activeOrigin = safeRoutes.some((route) => route.origin === origin)
     ? origin
     : (safeRoutes[0]?.origin ?? credentialOrigin);
+  const tls = pinnedTls(rawTls);
   return {
     ...account,
+    ...(tls === undefined ? {} : { tls }),
     origin: activeOrigin,
     credentialOrigin,
     routes: safeRoutes,
@@ -155,6 +175,9 @@ export class AccountRegistry {
             usableServerRoutes(account.routes, account.credentialOrigin),
             account.origin,
           ),
+          routesNeedingSignIn: sortServerRoutes(
+            account.routes.filter((route) => sendsTokenInClear(route, account.credentialOrigin)),
+          ),
           username: account.username,
           userId: account.userId,
           role: account.role,
@@ -164,6 +187,10 @@ export class AccountRegistry {
       ),
     );
     return { activeConnectionId: this.data.activeConnectionId, accounts };
+  }
+
+  all(): ReadonlyArray<StoredAccount> {
+    return this.data.accounts;
   }
 
   active(): StoredAccount | null {
@@ -210,6 +237,7 @@ export class AccountRegistry {
       credentialOrigin: origin,
       routes,
       dismissedRoutes,
+      ...(existing?.tls === undefined ? {} : { tls: existing.tls }),
       username: input.username,
       userId: input.userId,
       role: input.role,
@@ -327,8 +355,9 @@ export class AccountRegistry {
     const target = existingRoutes.find((route) => route.origin === normalized);
     if (target === undefined) return;
     const remaining = existingRoutes.filter((route) => route.origin !== normalized);
-    const fallback = sortServerRoutes(remaining)[0];
-    if (fallback === undefined) throw new Error("A server must keep at least one route");
+    const fallback = sortServerRoutes(usableServerRoutes(remaining, current.credentialOrigin))[0];
+    if (fallback === undefined)
+      throw new Error("A server must keep at least one route this connection can use");
     const fallbackOrigin = fallback.origin;
     const dismissedRoutes = [
       ...new Set([
@@ -387,6 +416,28 @@ export class AccountRegistry {
           ? { ...account, origin: nextOrigin, routes }
           : account,
       ),
+    };
+    await writePrivateJson(this.path, this.data);
+    return true;
+  }
+
+  /** Records the LAN certificate the server advertised over this account's route; null clears it. */
+  async updateTls(connectionId: string, tls: PinnedTls | null): Promise<boolean> {
+    const current = this.find(connectionId);
+    if (current === null) return false;
+    const next = tls === null ? undefined : pinnedTls(tls);
+    if (
+      current.tls?.certificate === next?.certificate &&
+      (current.tls?.origins ?? []).join(" ") === (next?.origins ?? []).join(" ")
+    )
+      return false;
+    this.data = {
+      ...this.data,
+      accounts: this.data.accounts.map((account) => {
+        if (account.connectionId !== connectionId) return account;
+        const { tls: _previous, ...rest } = account;
+        return next === undefined ? rest : { ...rest, tls: next };
+      }),
     };
     await writePrivateJson(this.path, this.data);
     return true;

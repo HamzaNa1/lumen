@@ -97,6 +97,7 @@ test("real desktop and browser render shared routes, forms and menus with matchi
   await expect(categories(desktopSettings)).toHaveText([
     "Playback",
     "Downloads",
+    "Routes",
     "About",
     "General",
     "Transcoding",

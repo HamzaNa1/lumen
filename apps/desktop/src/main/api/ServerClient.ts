@@ -19,6 +19,8 @@ export interface ServerClientOptions {
   readonly origin: string;
   readonly fetchImpl?: FetchLike;
   readonly onUnreachable?: (failedOrigin: string) => Promise<string | null>;
+  /** Opens the watch-group socket; Node's own WebSocket cannot trust a pinned certificate. */
+  readonly openSocket?: (url: URL) => WebSocket;
 }
 
 const describeDevice = (deviceId: string): DeviceDescription => ({
@@ -30,11 +32,13 @@ const describeDevice = (deviceId: string): DeviceDescription => ({
 /** The server API as the desktop uses it: one saved bearer-token session per connection. */
 export class ServerClient extends ServerApi implements WatchServer {
   private readonly held: { session: AccountSession | null };
+  readonly openSocket: ((url: URL) => WebSocket) | undefined;
 
   constructor(options: ServerClientOptions) {
     const held: { session: AccountSession | null } = { session: null };
     super({ ...options, credentials: bearerCredentials(() => held.session?.accessToken ?? null) });
     this.held = held;
+    this.openSocket = options.openSocket;
   }
 
   get accessToken(): string | null {

@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import type { ServerAdvertisedRoutes } from "@lumen/contracts";
 import { openSettings } from "./support/browser";
 import { closeDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
 import { NetworkProxy } from "./support/proxy";
@@ -73,8 +74,8 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
         : [[remoteOrigin, "remote", "manual"]],
     );
 
-    // Open Settings -> General: routes are checked automatically (no manual "Check routes" button).
-    const settings = await openSettings(page, "General");
+    // Open Settings -> Routes: routes are checked automatically (no manual "Check routes" button).
+    const settings = await openSettings(page, "Routes");
     await expect(settings.getByRole("button", { name: "Check routes" })).toHaveCount(0);
     await expect(settings.getByText(remoteOrigin, { exact: true })).toBeVisible();
     await expect(settings.getByText("Active", { exact: true })).toBeVisible();
@@ -262,6 +263,106 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     await lanProxy.close().catch(() => undefined);
     await remoteProxy.close().catch(() => undefined);
     await otherServer.stop().catch(() => undefined);
+    await server.stop().catch(() => undefined);
+  }
+});
+
+test("desktop moves to the server's pinned LAN certificate and keeps an HTTPS sign-in off plain HTTP routes", async () => {
+  const testInfo = test.info();
+  const root = testInfo.outputPath("tls-route-server");
+  const profile = join(root, "desktop-profile");
+  const server = new Server(root);
+  await server.start({ LUMEN_TLS_PORT: "0" });
+  const remoteProxy = await new NetworkProxy(server.origin).start();
+  const remoteOrigin = `http://remote.lumen.test:${new URL(remoteProxy.origin).port}`;
+  const admin = await server.register("admin");
+  await server.library(admin.accessToken, "movies", ["Film.mp4"]);
+  const advertised = await server.api<ServerAdvertisedRoutes>("/server/routes", {
+    token: admin.accessToken,
+  });
+  // Released servers advertise no TLS listener; the desktop then keeps to the routes it had.
+  const tlsOrigin = advertised.tls?.routes[0]?.origin ?? null;
+  const env = {
+    LUMEN_E2E_HOST_RESOLVER_RULES: "MAP remote.lumen.test 127.0.0.1",
+    LUMEN_E2E_LOCAL_ORIGINS: "off",
+  };
+  const activeOrigin = async (page: Awaited<ReturnType<typeof mainDesktopPage>>) => {
+    const list = await page.evaluate(() => window.lumen.accounts.list());
+    return list.accounts.find((entry) => entry.connectionId === list.activeConnectionId)?.origin;
+  };
+
+  let app = await launchDesktop(profile, false, env);
+  try {
+    // A token issued over plain HTTP may use the plain local route, but the encrypted one ranks
+    // first, and every transport the desktop has (API, media, watch socket) trusts its certificate.
+    let page = await mainDesktopPage(app);
+    await page.getByLabel("Server address").fill(remoteOrigin);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+    await expect.poll(() => activeOrigin(page)).toBe(tlsOrigin ?? new URL(server.origin).origin);
+    expect(await page.evaluate(() => window.lumen.library.list())).toHaveLength(1);
+    await expect
+      .poll(() => page.evaluate(async () => (await window.lumen.watch.state()).connection))
+      .toBe("connected");
+    await page.getByRole("link", { name: "movies", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Play Film", exact: true })
+      .first()
+      .click({ force: true });
+    await expect
+      .poll(() => page.evaluate(() => window.lumen.player.state()))
+      .toMatchObject({ paused: false });
+    await page.evaluate(() => window.lumen.player.stop());
+    await expect.poll(() => page.evaluate(() => window.lumen.player.state())).toBeNull();
+
+    // The same connection as if its token had been issued over HTTPS, with a manual plain HTTP
+    // route beside the encrypted one: the plain route is kept for the viewer but never contacted.
+    await closeDesktop(app);
+    const saved = JSON.parse(await readFile(join(profile, "connections.json"), "utf8")) as {
+      accounts: Array<Record<string, unknown>>;
+    };
+    for (const account of saved.accounts) {
+      account.credentialOrigin = "https://remote.lumen.test";
+      account.origin = remoteOrigin;
+      account.routes = [
+        { origin: remoteOrigin, source: "manual", scope: "remote" },
+        ...(tlsOrigin === null ? [] : [{ origin: tlsOrigin, source: "detected", scope: "local" }]),
+      ];
+    }
+    await writeFile(join(profile, "connections.json"), JSON.stringify(saved), "utf8");
+    remoteProxy.requests.length = 0;
+    app = await launchDesktop(profile, false, env);
+    page = await mainDesktopPage(app);
+    await expect
+      .poll(async () => {
+        const list = await page.evaluate(() => window.lumen.accounts.list());
+        return list.accounts[0]?.routesNeedingSignIn?.map((route) => route.origin);
+      })
+      .toEqual([remoteOrigin]);
+    if (tlsOrigin !== null) {
+      await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+      await expect.poll(() => activeOrigin(page)).toBe(tlsOrigin);
+      const settings = await openSettings(page, "Routes");
+      await expect(settings.getByText(remoteOrigin, { exact: true })).toBeVisible();
+      await expect(settings.getByText("Sign-in required", { exact: true })).toBeVisible();
+      await testInfo.attach("settings-route-needs-sign-in", {
+        body: await page.screenshot(),
+        contentType: "image/png",
+      });
+      // The encrypted route is the only one this connection can use, so only the plain one can go.
+      await expect(settings.getByRole("button", { name: `Remove route ${tlsOrigin}` })).toHaveCount(
+        0,
+      );
+      await settings.getByRole("button", { name: `Remove route ${remoteOrigin}` }).click();
+      await expect(settings.getByText(remoteOrigin, { exact: true })).toHaveCount(0);
+    }
+    expect(remoteProxy.requests).toEqual([]);
+  } finally {
+    await closeDesktop(app).catch(() => undefined);
+    await remoteProxy.close().catch(() => undefined);
     await server.stop().catch(() => undefined);
   }
 });

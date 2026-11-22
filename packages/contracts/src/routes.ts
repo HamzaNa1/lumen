@@ -23,8 +23,17 @@ export const ServerAdvertisedRoute = Schema.Struct({
 });
 export type ServerAdvertisedRoute = Schema.Schema.Type<typeof ServerAdvertisedRoute>;
 
+export const ServerTlsRoutes = Schema.Struct({
+  /** The self-signed PEM certificate these routes present; clients trust exactly this certificate. */
+  certificate: Schema.String.check(Schema.isMinLength(1)),
+  routes: Schema.Array(ServerAdvertisedRoute),
+});
+export type ServerTlsRoutes = Schema.Schema.Type<typeof ServerTlsRoutes>;
+
 export const ServerAdvertisedRoutes = Schema.Struct({
   routes: Schema.Array(ServerAdvertisedRoute),
+  /** Absent when the server runs no LAN TLS listener, as on every release before it existed. */
+  tls: Schema.optional(ServerTlsRoutes),
 });
 export type ServerAdvertisedRoutes = Schema.Schema.Type<typeof ServerAdvertisedRoutes>;
 
@@ -208,17 +217,25 @@ export const tokenAllowsPlainHttp = (credentialOrigin: string | null | undefined
   return true;
 };
 
+const sameOrigin = (left: string, right: string): boolean => {
+  try {
+    return normalizeOrigin(left) === normalizeOrigin(right);
+  } catch {
+    return false;
+  }
+};
+
 /**
  * Whether connecting over `route` would send a bearer token over plain HTTP that it was not
- * issued for. Manual routes were explicitly configured by the viewer; auto-detected plain HTTP
- * routes are refused unless the token was issued over plain HTTP.
+ * issued for. A token may always return to the origin it was issued over; any other plain HTTP
+ * route, manual or auto-detected, needs a token that was itself issued over plain HTTP.
  */
 export const sendsTokenInClear = (
-  route: ServerRoute,
+  route: Pick<ServerRoute, "origin">,
   credentialOrigin: string | null | undefined,
 ): boolean => {
-  if (route.source === "manual") return false;
   if (!isPlainHttpOrigin(route.origin)) return false;
+  if (credentialOrigin != null && sameOrigin(route.origin, credentialOrigin)) return false;
   return !tokenAllowsPlainHttp(credentialOrigin);
 };
 
@@ -236,10 +253,17 @@ export const makeServerRoute = (origin: string, source: ServerRouteSource): Serv
 const scopeRank = (scope: ServerRouteScope): number =>
   scope === "local" ? 0 : scope === "lan" ? 1 : 2;
 
-const routeTier = (route: ServerRoute): number =>
-  scopeRank(route.scope) * 2 + (route.source === "manual" ? 0 : 1);
+/** Lower is better: local before LAN before remote, and encrypted before plain HTTP within a scope. */
+export const routePriority = (route: Pick<ServerRoute, "origin" | "scope">): number =>
+  scopeRank(route.scope) * 2 + (isPlainHttpOrigin(route.origin) ? 1 : 0);
 
-/** Orders routes by priority: local before LAN before remote, manual before auto-detected, active first within a tier. */
+const routeTier = (route: ServerRoute): number =>
+  routePriority(route) * 2 + (route.source === "manual" ? 0 : 1);
+
+/**
+ * Orders routes by priority: local before LAN before remote, encrypted before plain HTTP, manual
+ * before auto-detected, active first within a tier.
+ */
 export const sortServerRoutes = (
   routes: ReadonlyArray<ServerRoute>,
   activeOrigin?: string | null,
@@ -263,7 +287,10 @@ export const mergeServerRoutes = (options: {
   readonly manualOrigins?: ReadonlyArray<string>;
   readonly detectedOrigins?: ReadonlyArray<string>;
   readonly dismissedOrigins?: ReadonlyArray<string>;
-  /** When set, auto-detected routes that would send this token over plain HTTP are dropped. */
+  /**
+   * When set, auto-detected routes that would send this token over plain HTTP are dropped. Manual
+   * ones are kept: the viewer added them, and they become usable by signing in over them.
+   */
   readonly credentialOrigin?: string | null;
   /** When true, existing auto-detected routes not in `detectedOrigins` are pruned. */
   readonly replaceDetected?: boolean;
@@ -282,6 +309,7 @@ export const mergeServerRoutes = (options: {
         continue;
       const nextRoute = makeServerRoute(normalized, route.source);
       if (
+        route.source === "detected" &&
         options.credentialOrigin !== undefined &&
         sendsTokenInClear(nextRoute, options.credentialOrigin)
       )

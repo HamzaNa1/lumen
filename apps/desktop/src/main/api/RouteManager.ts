@@ -13,6 +13,7 @@ import {
   makeServerRoute,
   mergeServerRoutes,
   normalizeOrigin,
+  routePriority,
   type ServerRoute,
   sendsTokenInClear,
   tokenAllowsPlainHttp,
@@ -102,10 +103,8 @@ const localDiscoveryOrigins = (): ReadonlyArray<string> => {
   return DEFAULT_LOCAL_ORIGINS;
 };
 
-const scopePriority = (origin: string): number => {
-  const scope = classifyRouteScope(origin);
-  return scope === "local" ? 0 : scope === "lan" ? 1 : 2;
-};
+const originPriority = (origin: string): number =>
+  routePriority({ origin, scope: classifyRouteScope(origin) });
 
 /**
  * When a viewer explicitly configured a local loopback route (for example a local reverse proxy
@@ -127,6 +126,8 @@ export interface RouteManagerOptions {
   readonly clients: Map<string, ServerClient>;
   readonly serverTransport: FetchLike;
   readonly onRouteChanged: (connectionId: string, origin: string) => void;
+  /** Called when a server's pinned LAN certificate is learned, replaced, or dropped. */
+  readonly onPinsChanged?: () => void;
   readonly discoverLan?: (signal?: AbortSignal) => Promise<ReadonlyArray<LanServerCandidate>>;
 }
 
@@ -267,7 +268,9 @@ export class RouteManager {
   /**
    * Fetches local and LAN routes advertised by the server (plus UDP discovery), verifies any
    * candidate local loopback routes before saving them, and promotes the live client immediately
-   * when a higher-priority route (local > LAN > remote) is reachable.
+   * when a higher-priority route (local > LAN > remote, encrypted > plain) is reachable. The
+   * server's LAN certificate is pinned from the same answer, which arrived over the route this
+   * account's token already travels, so the pin is exactly as trustworthy as that route.
    */
   async syncServerRoutes(
     connectionId: string,
@@ -284,12 +287,27 @@ export class RouteManager {
       allowPlainHttp ? this.discoverLanImpl().catch(() => []) : Promise.resolve([]),
     ]);
 
+    if (advertised !== null) {
+      const pinned = await this.options.registry
+        .updateTls(
+          connectionId,
+          advertised.tls === undefined
+            ? null
+            : {
+                certificate: advertised.tls.certificate,
+                origins: advertised.tls.routes.map((route) => route.origin),
+              },
+        )
+        .catch(() => false);
+      if (pinned) this.options.onPinsChanged?.();
+    }
+
     const manualLocal = hasManualLocalRoute(account);
     const dismissed = new Set(account.dismissedRoutes);
     const lanOrigins = new Set<string>();
     const localCandidates = new Set<string>();
 
-    for (const route of advertised ?? []) {
+    for (const route of [...(advertised?.routes ?? []), ...(advertised?.tls?.routes ?? [])]) {
       if (dismissed.has(route.origin) || !allowsDetectedOrigin(account, route.origin)) continue;
       if (route.scope === "local") {
         if (!manualLocal) localCandidates.add(route.origin);
@@ -350,9 +368,9 @@ export class RouteManager {
 
     const updated = this.options.registry.find(connectionId);
     if (updated !== null) {
-      const currentPriority = scopePriority(client.serverOrigin);
+      const currentPriority = originPriority(client.serverOrigin);
       const betterRoutes = usableServerRoutes(updated.routes, updated.credentialOrigin).filter(
-        (route) => scopePriority(route.origin) < currentPriority,
+        (route) => originPriority(route.origin) < currentPriority,
       );
       if (betterRoutes.length > 0) {
         const promoted = await this.probeCandidateRoutes(updated, betterRoutes, session);
@@ -380,8 +398,12 @@ export class RouteManager {
       credentialOrigin: account.credentialOrigin,
     });
     if (!existingRoutes.some((route) => route.origin === normalized)) return false;
-    const remaining = existingRoutes.filter((route) => route.origin !== normalized);
-    if (remaining.length === 0) throw new Error("A server must keep at least one route");
+    const remaining = usableServerRoutes(
+      existingRoutes.filter((route) => route.origin !== normalized),
+      account.credentialOrigin,
+    );
+    if (remaining.length === 0)
+      throw new Error("A server must keep at least one route this connection can use");
 
     const client = this.options.clients.get(connectionId);
     if (client !== undefined && client.serverOrigin === normalized) {
@@ -480,7 +502,7 @@ export class RouteManager {
       const account = this.options.registry.find(connectionId);
       if (client === undefined || account === null) return;
       const session = client.currentSession ?? (await this.options.registry.session(connectionId));
-      const currentPriority = scopePriority(client.serverOrigin);
+      const currentPriority = originPriority(client.serverOrigin);
 
       if (options.checkCurrent) {
         try {
@@ -535,7 +557,7 @@ export class RouteManager {
           credentialOrigin: latest.credentialOrigin,
         }),
         latest.credentialOrigin,
-      ).filter((route) => scopePriority(route.origin) < currentPriority);
+      ).filter((route) => originPriority(route.origin) < currentPriority);
       if (higherCandidates.length === 0) return;
 
       const winner = await this.probeCandidateRoutes(latest, higherCandidates, session);
@@ -578,7 +600,7 @@ export class RouteManager {
       const connectionId = activeConnectionId();
       if (connectionId === null) return;
       const client = this.options.clients.get(connectionId);
-      if (client === undefined || scopePriority(client.serverOrigin) === 0) return;
+      if (client === undefined || originPriority(client.serverOrigin) === 0) return;
       void this.recheckActiveRoute(connectionId);
     }, REMOTE_RECHECK_INTERVAL_MS);
     promotionTimer.unref?.();
@@ -654,12 +676,12 @@ export class RouteManager {
     for (const entry of verified) {
       if (entry === null) continue;
       const existing = byServer.get(entry.serverId);
-      if (existing === undefined || scopePriority(entry.origin) < scopePriority(existing.origin))
+      if (existing === undefined || originPriority(entry.origin) < originPriority(existing.origin))
         byServer.set(entry.serverId, entry);
     }
     return [...byServer.values()].sort(
       (a, b) =>
-        scopePriority(a.origin) - scopePriority(b.origin) || a.origin.localeCompare(b.origin),
+        originPriority(a.origin) - originPriority(b.origin) || a.origin.localeCompare(b.origin),
     );
   }
 

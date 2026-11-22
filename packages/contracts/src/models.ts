@@ -17,6 +17,8 @@ export const AccountSummary = Schema.Struct({
   origin: Schema.String.check(Schema.isMinLength(1)),
   /** Known routes to this server, ordered by priority (LAN first). */
   routes: Schema.optional(Schema.Array(ServerRoute)),
+  /** Saved plain HTTP routes this connection's token was not issued for; signing in over one enables it. */
+  routesNeedingSignIn: Schema.optional(Schema.Array(ServerRoute)),
   username: Schema.String.check(Schema.isMinLength(1)),
   userId: Schema.String.check(Schema.isMinLength(1)),
   role: UserRole,

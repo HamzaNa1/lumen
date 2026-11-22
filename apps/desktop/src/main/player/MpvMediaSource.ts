@@ -1,4 +1,5 @@
 import {
+  type FetchLike,
   originalKbps,
   type PlaybackDiagnostics,
   qualityState,
@@ -125,6 +126,8 @@ export class MpvMediaSource {
       held?: Promise<HeldMedia | null>;
       /** Measures the connection across playbacks from the same server. */
       estimator: ThroughputEstimator;
+      /** Reaches the server as the media store does, through Chromium and its pinned certificates. */
+      fetchImpl?: FetchLike;
     },
   ) {
     this.held = options.held ?? Promise.resolve(null);
@@ -409,6 +412,7 @@ export class MpvMediaSource {
             serverOrigin: client.serverOrigin,
             basePath: `${url.pathname}/adaptive/${audioIndex}`,
             bearer: session.grantToken,
+            ...(this.options.fetchImpl === undefined ? {} : { fetchImpl: this.options.fetchImpl }),
             renditions: this.renditions,
             start: adaptiveRendition,
             choice: this.qualityChoice,

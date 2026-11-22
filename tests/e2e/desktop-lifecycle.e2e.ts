@@ -318,6 +318,34 @@ test.describe(() => {
         return red;
       });
     await expect.poll(capture).toBeGreaterThan(100);
+    // A renderer stall past Electron's 1 s managed-transfer timeout must not abort playback or wedge slots.
+    await page.evaluate(() => {
+      const deadline = performance.now() + 1200;
+      while (performance.now() < deadline);
+    });
+    await expect(page.getByRole("button", { name: "Try again", exact: true })).toBeHidden();
+    await expect
+      .poll(() => page.evaluate(() => window.lumen.player.state()))
+      .toMatchObject({ paused: false });
+    await app.evaluate(
+      ({ ipcMain }) =>
+        new Promise<void>((resolve) => {
+          let remaining = 4;
+          const onStatus = (
+            _event: Electron.IpcMainEvent,
+            _generation: unknown,
+            error: unknown,
+          ) => {
+            if (error !== null) return;
+            remaining -= 1;
+            if (remaining === 0) {
+              ipcMain.off("video:status", onStatus);
+              resolve();
+            }
+          };
+          ipcMain.on("video:status", onStatus);
+        }),
+    );
     await main.evaluate((window) => window.setContentSize(960, 640));
     await expect.poll(capture).toBeGreaterThan(100);
     await page.evaluate(async () => {

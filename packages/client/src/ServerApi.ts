@@ -27,7 +27,6 @@ import {
   type PlayerState,
   PreloadTicket,
   type ScanRun,
-  type ServerAdvertisedRoute,
   ServerAdvertisedRoutes,
   type ServerDiscovery,
   ServerInfo,
@@ -469,14 +468,9 @@ export class ServerApi {
   }
 
   /** Local-network routes the server reports for itself; empty on older servers. */
-  async advertisedRoutes(): Promise<ReadonlyArray<ServerAdvertisedRoute>> {
-    if (!this.supportsServerRoutes) return [];
-    const response: { readonly routes: ReadonlyArray<ServerAdvertisedRoute> } = await this.request(
-      "/api/v1/server/routes",
-      { cache: "no-store" },
-      ServerAdvertisedRoutes,
-    );
-    return response.routes;
+  async advertisedRoutes(): Promise<ServerAdvertisedRoutes> {
+    if (!this.supportsServerRoutes) return { routes: [] };
+    return this.request("/api/v1/server/routes", { cache: "no-store" }, ServerAdvertisedRoutes);
   }
 
   /** Asks the server to prove it holds `sessionId` without presenting the bearer secret. */

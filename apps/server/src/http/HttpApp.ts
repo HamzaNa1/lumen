@@ -13,7 +13,6 @@ import {
   MetadataMatchOptions,
   MetadataMatchSelection,
   PreloadTicket,
-  type ServerAdvertisedRoute,
   ServerAdvertisedRoutes,
   ServerInfo,
   ServerVerifyRequest,
@@ -85,7 +84,7 @@ export interface HttpServices {
   readonly databaseReady: () => Promise<boolean>;
   readonly identity: ServerIdentity;
   readonly serverName: ServerNameShape;
-  readonly lanRoutes?: () => ReadonlyArray<ServerAdvertisedRoute>;
+  readonly lanRoutes?: () => ServerAdvertisedRoutes;
   readonly startedAtMs: number;
 }
 
@@ -404,7 +403,7 @@ export const makeHttpHandler = (
     if (url.pathname.startsWith("/api/v1/media/")) throw notFound("Endpoint not found");
     const principal = await authenticate(request);
     if (method === "GET" && url.pathname === "/api/v1/server/routes") {
-      return json(ServerAdvertisedRoutes, { routes: services.lanRoutes?.() ?? [] }, 200, {
+      return json(ServerAdvertisedRoutes, services.lanRoutes?.() ?? { routes: [] }, 200, {
         "cache-control": "no-store",
       });
     }

@@ -3,11 +3,20 @@ import { app, type BrowserWindow, ipcMain, screen, sharedTexture } from "electro
 import { type HelperFrame, validateTextureSize } from "./HelperFrames";
 import type { MpvProcess } from "./MpvProcess";
 
+interface InFlightFrame {
+  readonly imported: Electron.SharedTextureImportedSubtle;
+  readonly player: MpvProcess;
+  readonly generation: number;
+  readonly sequence: number;
+}
+
 export class CompositorSurface {
   readonly kind = "compositor" as const;
   private readonly contents: Electron.WebContents;
   private bounds: IpcPlayerSurfaceBounds | null = null;
   private generation = 0;
+  private frameId = 0;
+  private readonly inFlight = new Map<number, InFlightFrame>();
   private player: MpvProcess | null = null;
   private failure: ((error: Error) => void) | null = null;
   private presented: (() => void) | null = null;
@@ -18,6 +27,7 @@ export class CompositorSurface {
   constructor(private readonly window: BrowserWindow) {
     this.contents = window.webContents;
     ipcMain.on("video:status", this.status);
+    ipcMain.on("video:release", this.release);
     this.contents.on("render-process-gone", this.lost);
     this.contents.on("did-start-loading", this.lost);
     this.contents.on("destroyed", this.lost);
@@ -33,6 +43,7 @@ export class CompositorSurface {
     error: unknown,
   ): void => {
     if (
+      this.contents.isDestroyed() ||
       event.sender !== this.contents ||
       event.senderFrame !== this.contents.mainFrame ||
       generation !== this.generation
@@ -45,12 +56,32 @@ export class CompositorSurface {
       this.presented = null;
     }
   };
+  private readonly release = (event: Electron.IpcMainEvent, id: unknown): void => {
+    if (
+      this.contents.isDestroyed() ||
+      event.sender !== this.contents ||
+      event.senderFrame !== this.contents.mainFrame ||
+      typeof id !== "number"
+    )
+      return;
+    const entry = this.inFlight.get(id);
+    if (entry === undefined) return;
+    this.inFlight.delete(id);
+    entry.imported.release(() => {
+      if (this.player === entry.player && this.generation === entry.generation)
+        entry.player.frames?.release(entry.sequence);
+    });
+  };
   private readonly lost = (): void => {
     this.bounds = null;
     this.fail(new Error("The video renderer was closed or reloaded"));
+    this.releaseInFlight();
   };
   private readonly childGone = (_event: Electron.Event, details: Electron.Details): void => {
-    if (details.type === "GPU") this.fail(new Error("The video GPU process exited"));
+    if (details.type === "GPU") {
+      this.fail(new Error("The video GPU process exited"));
+      this.releaseInFlight();
+    }
   };
 
   setBounds(bounds: IpcPlayerSurfaceBounds | null): void {
@@ -107,39 +138,33 @@ export class CompositorSurface {
     this.failure = failure;
   }
 
-  async frame(frame: HelperFrame): Promise<void> {
+  frame(frame: HelperFrame): void {
     const player = this.player;
     const generation = this.generation;
     const textures = player?.textures;
-    if (!player?.process.pid || !textures) return;
-    let imported: Electron.SharedTextureImported | undefined;
+    if (!player?.process.pid || !textures || this.contents.isDestroyed()) return;
+    let imported: Electron.SharedTextureImportedSubtle | undefined;
+    let id: number | undefined;
     try {
       imported = textures.import(player.process.pid, frame, (handle) =>
-        sharedTexture.importSharedTexture({
-          textureInfo: {
-            pixelFormat: textures.pixelFormat,
-            codedSize: { width: frame.width, height: frame.height },
-            colorSpace: { primaries: "bt709", transfer: "srgb", matrix: "rgb", range: "full" },
-            handle,
-          },
-          allReferencesReleased: () => {
-            if (this.player === player && this.generation === generation)
-              player.frames?.release(frame.sequence);
-          },
+        sharedTexture.subtle.importSharedTexture({
+          pixelFormat: textures.pixelFormat,
+          codedSize: { width: frame.width, height: frame.height },
+          colorSpace: { primaries: "bt709", transfer: "srgb", matrix: "rgb", range: "full" },
+          handle,
         }),
       );
-      await sharedTexture.sendSharedTexture(
-        {
-          frame: this.contents.mainFrame,
-          importedSharedTexture: imported,
-        },
-        generation,
-      );
+      const transfer = imported.startTransferSharedTexture();
+      id = ++this.frameId;
+      this.inFlight.set(id, { imported, player, generation, sequence: frame.sequence });
+      // Electron's managed sendSharedTexture aborts on a hardcoded 1 s IPC timeout; HelperFrames'
+      // 10 s lease timer bounds genuinely wedged frames without failing on transient renderer stalls.
+      this.contents.send("video:frame", id, generation, transfer);
     } catch (cause) {
+      if (id !== undefined) this.inFlight.delete(id);
+      imported?.release();
       if (this.player === player)
         this.fail(cause instanceof Error ? cause : new Error(String(cause)));
-    } finally {
-      imported?.release();
     }
   }
 
@@ -156,7 +181,14 @@ export class CompositorSurface {
     this.player = null;
     this.failure = null;
     this.generation++;
-    if (!this.contents.isDestroyed()) this.contents.send("video:generation", this.generation);
+    if (this.contents.isDestroyed()) this.releaseInFlight();
+    else this.contents.send("video:generation", this.generation);
+  }
+
+  private releaseInFlight(): void {
+    const entries = [...this.inFlight.values()];
+    this.inFlight.clear();
+    for (const entry of entries) entry.imported.release();
   }
 
   private fail(error: Error): void {
@@ -171,6 +203,7 @@ export class CompositorSurface {
   dispose(): void {
     this.lost();
     ipcMain.off("video:status", this.status);
+    ipcMain.off("video:release", this.release);
     app.off("child-process-gone", this.childGone);
     this.window.off("move", this.resize);
     this.contents.off("zoom-changed", this.resize);

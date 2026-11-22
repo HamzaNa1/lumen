@@ -17,6 +17,7 @@ import {
   PlayerAction,
   PlayerDisplay,
   type ServerDiscovery,
+  sendsTokenInClear,
   sortServerRoutes,
   TrackKind,
   TrackPreferencesPatch,
@@ -71,6 +72,8 @@ export interface IpcDependencies {
   readonly clients: Map<string, ServerClient>;
   readonly artwork: ArtworkCache;
   readonly serverTransport: FetchLike;
+  readonly openWatchSocket: (url: URL) => WebSocket;
+  readonly onPinsChanged: () => void;
   readonly player: PlayerController;
   readonly downloads: DownloadManager;
   readonly bridge: PlaybackBridge;
@@ -135,6 +138,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     registry: dependencies.registry,
     clients: dependencies.clients,
     serverTransport: dependencies.serverTransport,
+    onPinsChanged: dependencies.onPinsChanged,
     onRouteChanged: (connectionId) => {
       if (dependencies.registry.active()?.connectionId === connectionId) watch.reconnect();
       notifyAccountsChanged();
@@ -229,6 +233,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const client = new ServerClient({
       origin: resolved.origin,
       fetchImpl: dependencies.serverTransport,
+      openSocket: dependencies.openWatchSocket,
       onUnreachable: (failedOrigin) =>
         routeManager.failover(account.connectionId, client, failedOrigin),
     });
@@ -307,6 +312,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const client = new ServerClient({
       origin: input.origin,
       fetchImpl: dependencies.serverTransport,
+      openSocket: dependencies.openWatchSocket,
       onUnreachable: (failedOrigin) =>
         boundConnectionId === null
           ? Promise.resolve(null)
@@ -442,7 +448,13 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     const session =
       dependencies.clients.get(input.connectionId)?.currentSession ??
       (await dependencies.registry.session(input.connectionId));
-    const probe = await routeManager.probeManualRoute(normalized, account.serverId, session);
+    // A route this token was not issued for is saved, but nothing of the session goes to it.
+    const needsSignIn = sendsTokenInClear({ origin: normalized }, account.credentialOrigin);
+    const probe = await routeManager.probeManualRoute(
+      normalized,
+      account.serverId,
+      needsSignIn ? null : session,
+    );
     await dependencies.registry.addRoute(input.connectionId, normalized);
     const client = dependencies.clients.get(input.connectionId);
     const updated = dependencies.registry.find(input.connectionId);

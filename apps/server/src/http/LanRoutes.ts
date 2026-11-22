@@ -35,10 +35,10 @@ const isUlaIpv6 = (address: string): boolean => {
   return (Number.parseInt(first, 16) & 0xfe00) === 0xfc00;
 };
 
-const formatOrigin = (host: string, port: number): string => {
+const formatOrigin = (host: string, port: number, protocol: "http" | "https"): string => {
   const stripped = host.replace(/^\[|\]$/gu, "").split("%")[0] ?? host;
   const authority = stripped.includes(":") ? `[${stripped}]` : stripped;
-  return normalizeOrigin(`http://${authority}:${port}`);
+  return normalizeOrigin(`${protocol}://${authority}:${port}`);
 };
 
 export interface DetectLanRoutesOptions {
@@ -46,6 +46,7 @@ export interface DetectLanRoutesOptions {
   readonly port: number;
   readonly interfaces?: NodeJS.Dict<NetworkInterfaceInfo[]>;
   readonly extraOrigins?: ReadonlyArray<string>;
+  readonly protocol?: "http" | "https";
 }
 
 /** Local (loopback) and LAN origins by which clients can reach this server directly. */
@@ -54,6 +55,7 @@ export const detectLanRoutes = (
 ): ReadonlyArray<ServerAdvertisedRoute> => {
   const seen = new Set<string>();
   const routes: ServerAdvertisedRoute[] = [];
+  const protocol = options.protocol ?? "http";
   const push = (origin: string): void => {
     try {
       const normalized = normalizeOrigin(origin);
@@ -71,8 +73,8 @@ export const detectLanRoutes = (
 
   if (isWildcardIpv4 || isWildcardAny) {
     // Clients on the same machine can always reach a wildcard-bound server over loopback.
-    push(formatOrigin("127.0.0.1", options.port));
-    if (isWildcardAny) push(formatOrigin("::1", options.port));
+    push(formatOrigin("127.0.0.1", options.port, protocol));
+    if (isWildcardAny) push(formatOrigin("::1", options.port, protocol));
 
     const candidates: Array<{ readonly origin: string; readonly rank: number }> = [];
     const table = options.interfaces ?? networkInterfaces();
@@ -82,9 +84,9 @@ export const detectLanRoutes = (
         if (info.family === "IPv4") {
           const rank = privateIpv4Rank(info.address);
           if (rank !== null)
-            candidates.push({ origin: formatOrigin(info.address, options.port), rank });
+            candidates.push({ origin: formatOrigin(info.address, options.port, protocol), rank });
         } else if (isWildcardAny && info.family === "IPv6" && isUlaIpv6(info.address)) {
-          candidates.push({ origin: formatOrigin(info.address, options.port), rank: 3 });
+          candidates.push({ origin: formatOrigin(info.address, options.port, protocol), rank: 3 });
         }
       }
     }
@@ -92,9 +94,11 @@ export const detectLanRoutes = (
     for (const candidate of candidates) push(candidate.origin);
   } else if (isLoopbackHost(host)) {
     const normalized = host.toLowerCase().replace(/^\[|\]$/gu, "");
-    push(formatOrigin(normalized === "localhost" ? "127.0.0.1" : normalized, options.port));
+    push(
+      formatOrigin(normalized === "localhost" ? "127.0.0.1" : normalized, options.port, protocol),
+    );
   } else {
-    const origin = formatOrigin(host, options.port);
+    const origin = formatOrigin(host, options.port, protocol);
     if (classifyRouteScope(origin) !== "remote") push(origin);
   }
 
