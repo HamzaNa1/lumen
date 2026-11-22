@@ -15,7 +15,10 @@ import type {
   AccountRegistry,
   StoredAccount,
 } from "../../apps/desktop/src/main/accounts/AccountRegistry";
-import { RouteManager } from "../../apps/desktop/src/main/api/RouteManager";
+import {
+  RouteIdentityMismatchError,
+  RouteManager,
+} from "../../apps/desktop/src/main/api/RouteManager";
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { detectLanRoutes } from "../../apps/server/src/http/LanRoutes";
 import { ServerUnreachableError } from "../../packages/client/src/errors";
@@ -404,8 +407,11 @@ test("server advertises local and LAN routes, verifies session challenges withou
     const httpsOrigin = "https://media.example.com";
     const localOrigin = new URL(server.origin).origin;
     const accounts = new Map<string, StoredAccount>();
+    let activeConnectionId: string | null = null;
     const makeRegistry = (): AccountRegistry =>
       ({
+        active: () =>
+          activeConnectionId === null ? null : (accounts.get(activeConnectionId) ?? null),
         find: (connectionId: string) => accounts.get(connectionId) ?? null,
         session: async () => ({
           userId: admin.userId,
@@ -419,6 +425,19 @@ test("server advertises local and LAN routes, verifies session challenges withou
           if (current === undefined) return false;
           accounts.set(connectionId, { ...current, origin: normalizeOrigin(origin) });
           return true;
+        },
+        removeRoute: async (connectionId: string, origin: string) => {
+          const current = accounts.get(connectionId);
+          if (current === undefined) throw new Error("Connection not found");
+          const normalized = normalizeOrigin(origin);
+          const remaining = current.routes.filter((route) => route.origin !== normalized);
+          const fallback = sortServerRoutes(remaining)[0];
+          if (fallback === undefined) throw new Error("A server must keep at least one route");
+          accounts.set(connectionId, {
+            ...current,
+            origin: current.origin === normalized ? fallback.origin : current.origin,
+            routes: remaining,
+          });
         },
         mergeDetectedRoutes: async (
           connectionId: string,
@@ -555,6 +574,187 @@ test("server advertises local and LAN routes, verifies session challenges withou
       "http://192.168.1.50:3210",
       "https://lumen.home.arpa",
     ]);
+
+    // A failed /api/v1/server/routes refresh must preserve cached detected fallback routes,
+    // while a successful empty response still prunes stale detected entries.
+    let routesRefreshMode: "fail" | "empty" | "pass" = "fail";
+    const flakyTransport: FetchLike = (input, init) => {
+      const url = typeof input === "string" ? new URL(input) : input;
+      if (url.pathname === "/api/v1/server/routes") {
+        if (routesRefreshMode === "fail")
+          return Promise.resolve(new Response("unavailable", { status: 503 }));
+        if (routesRefreshMode === "empty")
+          return Promise.resolve(
+            new Response(JSON.stringify({ routes: [] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+      }
+      const raw = url.toString();
+      return fetch(raw.startsWith(httpsOrigin) ? raw.replace(httpsOrigin, localOrigin) : raw, init);
+    };
+    const flakyClient = new ServerClient({ origin: httpsOrigin, fetchImpl: flakyTransport });
+    flakyClient.setSession(adminSession);
+    await flakyClient.identity();
+    const flakyManager = new RouteManager({
+      registry: makeRegistry(),
+      clients,
+      serverTransport: flakyTransport,
+      onRouteChanged: () => undefined,
+      discoverLan: async () => [],
+    });
+    await flakyManager.syncServerRoutes(
+      httpsAccount.connectionId,
+      flakyClient,
+      flakyClient.currentSession,
+    );
+    expect(accounts.get(httpsAccount.connectionId)?.routes.map((route) => route.origin)).toEqual([
+      "https://lumen.home.arpa",
+      httpsOrigin,
+    ]);
+    routesRefreshMode = "empty";
+    await flakyManager.syncServerRoutes(
+      httpsAccount.connectionId,
+      flakyClient,
+      flakyClient.currentSession,
+    );
+    expect(accounts.get(httpsAccount.connectionId)?.routes.map((route) => route.origin)).toEqual([
+      httpsOrigin,
+    ]);
+
+    // Legacy refresh-token sessions cannot prove route identity cryptographically, so route
+    // resolution ignores detected and UDP-discovered routes even when they claim the same serverId.
+    const legacyRemoteOrigin = "http://remote.lumen.test:3210";
+    const spoofDetectedOrigin = "http://192.168.1.99:3210";
+    const spoofUdpOrigin = "http://192.168.1.88:3210";
+    const legacyAccount: StoredAccount = {
+      ...httpsAccount,
+      connectionId: "conn-legacy",
+      origin: legacyRemoteOrigin,
+      credentialOrigin: legacyRemoteOrigin,
+      routes: [
+        makeServerRoute(spoofDetectedOrigin, "detected"),
+        makeServerRoute(legacyRemoteOrigin, "manual"),
+      ],
+    };
+    accounts.set(legacyAccount.connectionId, legacyAccount);
+    const probedOrigins: string[] = [];
+    let legacyUdpDiscoveries = 0;
+    const legacyTransport: FetchLike = (input, init) => {
+      const url = typeof input === "string" ? new URL(input) : input;
+      probedOrigins.push(url.origin);
+      if (url.origin === spoofDetectedOrigin || url.origin === spoofUdpOrigin) {
+        return Promise.resolve(
+          new Response(JSON.stringify(info), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        );
+      }
+      const raw = url.toString();
+      return fetch(
+        raw.startsWith(legacyRemoteOrigin) ? raw.replace(legacyRemoteOrigin, localOrigin) : raw,
+        init,
+      );
+    };
+    const legacyManager = new RouteManager({
+      registry: makeRegistry(),
+      clients,
+      serverTransport: legacyTransport,
+      onRouteChanged: () => undefined,
+      discoverLan: async () => {
+        legacyUdpDiscoveries += 1;
+        return [{ serverId: info.serverId, displayName: info.displayName, origin: spoofUdpOrigin }];
+      },
+    });
+    const legacySession = {
+      userId: admin.userId,
+      role: "admin" as const,
+      sessionId: admin.sessionId,
+      accessToken: "legacy-token",
+      accessExpiresAtMs: Date.now() + 60_000,
+      refreshToken: "legacy-refresh-token",
+    };
+    const legacyResolved = await legacyManager.resolveAccountRoute(legacyAccount, legacySession);
+    expect(legacyResolved.origin).toBe(legacyRemoteOrigin);
+    expect(legacyResolved.route.source).toBe("manual");
+    expect(legacyUdpDiscoveries).toBe(0);
+    expect(probedOrigins).not.toContain(spoofDetectedOrigin);
+    expect(probedOrigins).not.toContain(spoofUdpOrigin);
+    await expect(
+      legacyManager.verifyOrigin(
+        spoofDetectedOrigin,
+        info.serverId,
+        legacySession,
+        undefined,
+        true,
+      ),
+    ).rejects.toThrow("Server cannot verify this auto-detected route");
+
+    // Removing the active route must never point a signed-in client at a fallback that failed
+    // identity verification: keep the active route intact for the active connection, and detach
+    // any cached inactive client instead of redirecting it.
+    const imposterOrigin = "http://192.168.1.77:3210";
+    const guardedAccount: StoredAccount = {
+      ...httpsAccount,
+      connectionId: "conn-guarded",
+      origin: localOrigin,
+      credentialOrigin: localOrigin,
+      routes: [makeServerRoute(localOrigin, "manual"), makeServerRoute(imposterOrigin, "manual")],
+    };
+    accounts.set(guardedAccount.connectionId, guardedAccount);
+    const imposterTransport: FetchLike = (input, init) => {
+      const url = typeof input === "string" ? new URL(input) : input;
+      if (url.origin === imposterOrigin) {
+        if (url.pathname === "/api/v1/server") {
+          return Promise.resolve(
+            new Response(JSON.stringify(info), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }
+        if (url.pathname === "/api/v1/server/verify") {
+          return Promise.resolve(
+            new Response(JSON.stringify({ proof: "0".repeat(64) }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            }),
+          );
+        }
+      }
+      return fetch(url.toString(), init);
+    };
+    const guardedClient = new ServerClient({ origin: localOrigin, fetchImpl: imposterTransport });
+    guardedClient.setSession(adminSession);
+    clients.set(guardedAccount.connectionId, guardedClient);
+    activeConnectionId = guardedAccount.connectionId;
+    const guardedManager = new RouteManager({
+      registry: makeRegistry(),
+      clients,
+      serverTransport: imposterTransport,
+      onRouteChanged: () => undefined,
+      discoverLan: async () => [],
+    });
+    await expect(
+      guardedManager.removeRoute(guardedAccount.connectionId, localOrigin),
+    ).rejects.toThrow(RouteIdentityMismatchError);
+    expect(guardedClient.serverOrigin).toBe(localOrigin);
+    expect(clients.get(guardedAccount.connectionId)).toBe(guardedClient);
+    expect(accounts.get(guardedAccount.connectionId)?.origin).toBe(localOrigin);
+    expect(accounts.get(guardedAccount.connectionId)?.routes.map((route) => route.origin)).toEqual([
+      localOrigin,
+      imposterOrigin,
+    ]);
+
+    // When the connection is not active, removing the route detaches the cached signed-in client
+    // instead of leaving it pointed at the unverified fallback.
+    activeConnectionId = null;
+    expect(await guardedManager.removeRoute(guardedAccount.connectionId, localOrigin)).toBe(false);
+    expect(clients.has(guardedAccount.connectionId)).toBe(false);
+    expect(guardedClient.currentSession).toBeNull();
+    expect(guardedClient.serverOrigin).toBe(localOrigin);
   } finally {
     await server.stop();
   }

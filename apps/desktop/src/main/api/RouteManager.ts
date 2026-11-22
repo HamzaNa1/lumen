@@ -193,10 +193,11 @@ export class RouteManager {
     session: AccountSession | null,
     options: { readonly excludeOrigin?: string; readonly skipUdpDiscovery?: boolean } = {},
   ): Promise<RouteProbeResult> {
+    const canVerifyDetected = hasSessionToken(session);
     const manualLocal = hasManualLocalRoute(account);
     const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     let discoveredOrigins: string[] = [];
-    if (!options.skipUdpDiscovery && allowPlainHttp) {
+    if (canVerifyDetected && !options.skipUdpDiscovery && allowPlainHttp) {
       const discovered = await this.discoverLanImpl().catch(() => []);
       discoveredOrigins = discovered
         .filter(
@@ -209,11 +210,12 @@ export class RouteManager {
     }
 
     const dismissed = new Set(account.dismissedRoutes);
-    const localCandidates = manualLocal
-      ? []
-      : localDiscoveryOrigins().filter(
-          (origin) => !dismissed.has(origin) && allowsDetectedOrigin(account, origin),
-        );
+    const localCandidates =
+      !canVerifyDetected || manualLocal
+        ? []
+        : localDiscoveryOrigins().filter(
+            (origin) => !dismissed.has(origin) && allowsDetectedOrigin(account, origin),
+          );
 
     const candidates = usableServerRoutes(
       mergeServerRoutes({
@@ -223,8 +225,10 @@ export class RouteManager {
         credentialOrigin: account.credentialOrigin,
       }),
       account.credentialOrigin,
-    ).filter((route) =>
-      options.excludeOrigin === undefined ? true : route.origin !== options.excludeOrigin,
+    ).filter(
+      (route) =>
+        (canVerifyDetected || route.source === "manual") &&
+        (options.excludeOrigin === undefined ? true : route.origin !== options.excludeOrigin),
     );
 
     if (candidates.length === 0) throw new ServerUnreachableError();
@@ -233,14 +237,12 @@ export class RouteManager {
       routes: candidates,
       activeOrigin: account.origin,
       probe: async (route, signal) => {
-        const requireProof =
-          route.source === "detected" && session !== null && hasSessionToken(session);
         const identity = await this.verifyOrigin(
           route.origin,
           account.serverId,
           session,
           signal,
-          requireProof,
+          route.source === "detected",
         );
         return { route, origin: route.origin, identity };
       },
@@ -271,7 +273,9 @@ export class RouteManager {
     if (account === null) return false;
     const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     const [advertised, udp] = await Promise.all([
-      client.supportsServerRoutes ? client.advertisedRoutes().catch(() => []) : Promise.resolve([]),
+      client.supportsServerRoutes
+        ? client.advertisedRoutes().catch(() => null)
+        : Promise.resolve(null),
       allowPlainHttp ? this.discoverLanImpl().catch(() => []) : Promise.resolve([]),
     ]);
 
@@ -280,7 +284,7 @@ export class RouteManager {
     const lanOrigins = new Set<string>();
     const localCandidates = new Set<string>();
 
-    for (const route of advertised) {
+    for (const route of advertised ?? []) {
       if (dismissed.has(route.origin) || !allowsDetectedOrigin(account, route.origin)) continue;
       if (route.scope === "local") {
         if (!manualLocal) localCandidates.add(route.origin);
@@ -315,14 +319,13 @@ export class RouteManager {
       const checks = await Promise.all(
         [...localCandidates].map(async (origin) => {
           if (origin === client.serverOrigin) return origin;
-          const requireProof = session !== null && hasSessionToken(session);
           try {
             await this.verifyOrigin(
               origin,
               account.serverId,
               session,
               AbortSignal.timeout(1_000),
-              requireProof,
+              true,
             );
             return origin;
           } catch {
@@ -337,7 +340,7 @@ export class RouteManager {
     const changed = await this.options.registry.mergeDetectedRoutes(
       account.connectionId,
       detectedOrigins,
-      { replaceDetected: client.supportsServerRoutes },
+      { replaceDetected: advertised !== null },
     );
 
     const updated = this.options.registry.find(connectionId);
@@ -356,6 +359,62 @@ export class RouteManager {
     }
     if (changed) this.options.onRouteChanged(connectionId, client.serverOrigin);
     return changed;
+  }
+
+  /**
+   * Removes `origin` from `connectionId`. When a live signed-in client is using that route,
+   * verifies a remaining route before switching so credentials are never sent to an unverified
+   * or mismatched fallback. Returns true when a live client switched routes.
+   */
+  async removeRoute(connectionId: string, origin: string): Promise<boolean> {
+    const account = this.options.registry.find(connectionId);
+    if (account === null) throw new Error("Connection not found");
+    const normalized = normalizeOrigin(origin);
+    const existingRoutes = mergeServerRoutes({
+      existing: account.routes,
+      credentialOrigin: account.credentialOrigin,
+    });
+    if (!existingRoutes.some((route) => route.origin === normalized)) return false;
+    const remaining = existingRoutes.filter((route) => route.origin !== normalized);
+    if (remaining.length === 0) throw new Error("A server must keep at least one route");
+
+    const client = this.options.clients.get(connectionId);
+    if (client !== undefined && client.serverOrigin === normalized) {
+      const session = client.currentSession ?? (await this.options.registry.session(connectionId));
+      const candidates = hasSessionToken(session)
+        ? remaining
+        : remaining.filter((route) => route.source === "manual");
+      try {
+        const winner = await selectBestRoute({
+          routes: candidates,
+          activeOrigin: account.origin,
+          probe: async (route, signal) => {
+            const identity = await this.verifyOrigin(
+              route.origin,
+              account.serverId,
+              session,
+              signal,
+              route.source === "detected",
+            );
+            return { route, origin: route.origin, identity };
+          },
+        });
+        await this.options.registry.removeRoute(connectionId, normalized);
+        if (this.options.clients.get(connectionId) === client) {
+          await this.switchClientOrigin(connectionId, client, winner.origin);
+          return true;
+        }
+        return false;
+      } catch (cause) {
+        if (this.options.registry.active()?.connectionId === connectionId) throw cause;
+        client.cancelPending();
+        client.setSession(null);
+        this.options.clients.delete(connectionId);
+      }
+    }
+
+    await this.options.registry.removeRoute(connectionId, normalized);
+    return false;
   }
 
   /** Switches a live client to `newOrigin`, persists it, and informs listeners. */
@@ -432,8 +491,9 @@ export class RouteManager {
 
       if (currentPriority === 0) return;
 
+      const canVerifyDetected = hasSessionToken(session);
       const manualLocal = hasManualLocalRoute(account);
-      const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
+      const allowPlainHttp = canVerifyDetected && tokenAllowsPlainHttp(account.credentialOrigin);
       const udp = allowPlainHttp ? await this.discoverLanImpl().catch(() => []) : [];
       const udpOrigins = udp
         .filter(
@@ -448,7 +508,7 @@ export class RouteManager {
           (origin) =>
             !dismissed.has(origin) && (!manualLocal || classifyRouteScope(origin) !== "local"),
         ),
-        ...(manualLocal
+        ...(!canVerifyDetected || manualLocal
           ? []
           : localDiscoveryOrigins().filter(
               (origin) => !dismissed.has(origin) && allowsDetectedOrigin(account, origin),
@@ -610,14 +670,12 @@ export class RouteManager {
         routes: usable,
         activeOrigin: account.origin,
         probe: async (route, signal) => {
-          const requireProof =
-            route.source === "detected" && session !== null && hasSessionToken(session);
           const identity = await this.verifyOrigin(
             route.origin,
             account.serverId,
             session,
             signal,
-            requireProof,
+            route.source === "detected",
           );
           return { route, origin: route.origin, identity };
         },

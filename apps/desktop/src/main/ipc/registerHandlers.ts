@@ -241,6 +241,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     if (signal.aborted) throw new RequestCancelledError();
     if (hasSessionToken(session)) client.setSession(session);
     else if (typeof session.refreshToken === "string") {
+      if (resolved.route.source !== "manual")
+        throw new Error("Cannot migrate a legacy session over an auto-detected route");
       const migrated = await client
         .migrateLegacySession(session.refreshToken, signal)
         .catch((cause) => {
@@ -471,29 +473,8 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       }),
       raw,
     );
-    const account = dependencies.registry.find(input.connectionId);
-    if (account === null) throw new Error("Connection not found");
-    const normalized = normalizeOrigin(input.origin);
-    await dependencies.registry.removeRoute(input.connectionId, normalized);
-    const updated = dependencies.registry.find(input.connectionId);
-    const client = dependencies.clients.get(input.connectionId);
-    if (client !== undefined && updated !== null && client.serverOrigin === normalized) {
-      const session =
-        client.currentSession ?? (await dependencies.registry.session(input.connectionId));
-      try {
-        const winner = await routeManager.resolveAccountRoute(updated, session, {
-          skipUdpDiscovery: true,
-        });
-        await routeManager.switchClientOrigin(input.connectionId, client, winner.origin);
-      } catch {
-        // No remaining route is reachable right now; keep the highest-priority saved fallback.
-        const fallback = updated.origin;
-        client.setServerOrigin(fallback);
-        notifyAccountsChanged();
-      }
-    } else {
-      notifyAccountsChanged();
-    }
+    const switched = await routeManager.removeRoute(input.connectionId, input.origin);
+    if (!switched) notifyAccountsChanged();
     return dependencies.registry.list();
   });
   handle("routes:discover-lan", async () => routeManager.discoverLanCandidates());
