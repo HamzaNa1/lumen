@@ -84,6 +84,13 @@ test("desktop verifies route changes and protects credentials across server vers
         accounts.set(connectionId, { ...current, routes });
         return true;
       },
+      updateTls: async (connectionId: string, tls: NonNullable<StoredAccount["tls"]> | null) => {
+        const current = accounts.get(connectionId);
+        if (current === undefined) return false;
+        const { tls: _previous, ...rest } = current;
+        accounts.set(connectionId, tls === null ? rest : { ...rest, tls });
+        return true;
+      },
     }) as unknown as AccountRegistry;
   const httpsAccount: StoredAccount = {
     connectionId: "conn-https",
@@ -194,7 +201,8 @@ test("desktop verifies route changes and protects credentials across server vers
   expect(lanClient.serverOrigin).toBe(supportsRoutes ? localOrigin : lanOrigin);
   expect(accounts.get(lanAccount.connectionId)?.routes.map((route) => route.origin)).toEqual(
     supportsRoutes
-      ? [localOrigin, lanOrigin, "http://192.168.1.50:3210", "https://lumen.home.arpa"]
+      ? // Within LAN, the encrypted route ranks ahead of the plain ones.
+        [localOrigin, "https://lumen.home.arpa", lanOrigin, "http://192.168.1.50:3210"]
       : [lanOrigin],
   );
 
@@ -316,7 +324,8 @@ test("desktop verifies route changes and protects credentials across server vers
     ...httpsAccount,
     connectionId: "conn-guarded",
     origin: localOrigin,
-    credentialOrigin: localOrigin,
+    // Issued over plain HTTP on the LAN, so the token may also use the plain imposter address.
+    credentialOrigin: "http://192.168.1.20:3210",
     routes: [makeServerRoute(localOrigin, "manual"), makeServerRoute(imposterOrigin, "manual")],
   };
   accounts.set(guardedAccount.connectionId, guardedAccount);
@@ -356,6 +365,13 @@ test("desktop verifies route changes and protects credentials across server vers
     onRouteChanged: () => undefined,
     discoverLan: async () => [],
   });
+  // A token issued over loopback may not go to the plain LAN address, so that address cannot be
+  // the only route left.
+  accounts.set(guardedAccount.connectionId, { ...guardedAccount, credentialOrigin: localOrigin });
+  await expect(
+    guardedManager.removeRoute(guardedAccount.connectionId, localOrigin),
+  ).rejects.toThrow("A server must keep at least one route this connection can use");
+  accounts.set(guardedAccount.connectionId, guardedAccount);
   await expect(
     guardedManager.removeRoute(guardedAccount.connectionId, localOrigin),
   ).rejects.toThrow(RouteIdentityMismatchError);
