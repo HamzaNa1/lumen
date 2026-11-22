@@ -68,16 +68,6 @@ export const ServerRoutesSection = ({
 
   return (
     <div className="settings-card">
-      <div className="settings-row">
-        <div className="settings-row-text">
-          <span>Routes</span>
-          <p>
-            Local and LAN routes are tried first, encrypted before plain HTTP, and Lumen switches
-            automatically if a route stops responding. A connection signed in over HTTPS uses a
-            plain HTTP address only after you sign in at that address.
-          </p>
-        </div>
-      </div>
       {[...routes, ...needingSignIn].map((route) => {
         const active = route.origin === account.origin;
         const signInRequired = needingSignIn.includes(route);
@@ -88,7 +78,7 @@ export const ServerRoutesSection = ({
               <span className="route-origin">{route.origin}</span>
               <p>
                 {signInRequired
-                  ? "Plain HTTP. Sign in at this address to use it."
+                  ? "Sign in at this address to use it."
                   : route.source === "detected"
                     ? "Auto-detected"
                     : "Added manually"}

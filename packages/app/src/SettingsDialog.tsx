@@ -9,6 +9,7 @@ import {
   Info,
   type LucideIcon,
   Play,
+  Route,
   Server,
 } from "lucide-react";
 import { type ReactNode, useState } from "react";
@@ -203,7 +204,7 @@ const TrackSettings = ({ connectionId }: { readonly connectionId: string }): Rea
 
 const ServerSettings = (): React.ReactElement => {
   const { account, openConnections } = useWorkspace();
-  const { capabilities, routes } = useRuntime();
+  const { capabilities } = useRuntime();
   return (
     <div className="settings-stack">
       <div className="settings-card">
@@ -219,7 +220,6 @@ const ServerSettings = (): React.ReactElement => {
           </div>
         ) : null}
       </div>
-      {routes === null ? null : <ServerRoutesSection account={account} />}
     </div>
   );
 };
@@ -263,7 +263,7 @@ const useCategoryGroups = (): ReadonlyArray<{
   readonly categories: ReadonlyArray<Category>;
 }> => {
   const { account } = useWorkspace();
-  const { capabilities, downloads, appUpdates } = useRuntime();
+  const { capabilities, downloads, appUpdates, routes } = useRuntime();
   const updates = useAppUpdateStatus(appUpdates);
   // Read while Settings opens, so About shows them in the frame it is chosen.
   useClientVersions();
@@ -285,6 +285,13 @@ const useCategoryGroups = (): ReadonlyArray<{
       label: "Downloads",
       icon: HardDrive,
       content: () => <DownloadSettingsSection />,
+    });
+  if (routes !== null)
+    client.push({
+      id: "routes",
+      label: "Routes",
+      icon: Route,
+      content: () => <ServerRoutesSection account={account} />,
     });
   if (appUpdates !== null && updates.data?.automatic != null)
     client.push({

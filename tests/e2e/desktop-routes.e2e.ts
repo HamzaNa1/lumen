@@ -74,8 +74,8 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
         : [[remoteOrigin, "remote", "manual"]],
     );
 
-    // Open Settings -> General: routes are checked automatically (no manual "Check routes" button).
-    const settings = await openSettings(page, "General");
+    // Open Settings -> Routes: routes are checked automatically (no manual "Check routes" button).
+    const settings = await openSettings(page, "Routes");
     await expect(settings.getByRole("button", { name: "Check routes" })).toHaveCount(0);
     await expect(settings.getByText(remoteOrigin, { exact: true })).toBeVisible();
     await expect(settings.getByText("Active", { exact: true })).toBeVisible();
@@ -345,7 +345,7 @@ test("desktop moves to the server's pinned LAN certificate and keeps an HTTPS si
     if (tlsOrigin !== null) {
       await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
       await expect.poll(() => activeOrigin(page)).toBe(tlsOrigin);
-      const settings = await openSettings(page, "General");
+      const settings = await openSettings(page, "Routes");
       await expect(settings.getByText(remoteOrigin, { exact: true })).toBeVisible();
       await expect(settings.getByText("Sign-in required", { exact: true })).toBeVisible();
       await testInfo.attach("settings-route-needs-sign-in", {
