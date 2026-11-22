@@ -104,6 +104,13 @@ const scopePriority = (origin: string): number => {
   return scope === "local" ? 0 : scope === "lan" ? 1 : 2;
 };
 
+/**
+ * When a viewer explicitly configured a local loopback route (for example a local reverse proxy
+ * or port forward), avoid auto-adding competing loopback ports that would bypass it.
+ */
+const hasManualLocalRoute = (account: StoredAccount): boolean =>
+  account.routes.some((route) => route.source === "manual" && route.scope === "local");
+
 export interface RouteManagerOptions {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
@@ -175,16 +182,23 @@ export class RouteManager {
     session: AccountSession | null,
     options: { readonly excludeOrigin?: string; readonly skipUdpDiscovery?: boolean } = {},
   ): Promise<RouteProbeResult> {
+    const manualLocal = hasManualLocalRoute(account);
     let discoveredOrigins: string[] = [];
     if (!options.skipUdpDiscovery) {
       const discovered = await this.discoverLanImpl().catch(() => []);
       discoveredOrigins = discovered
-        .filter((candidate) => candidate.serverId === account.serverId)
+        .filter(
+          (candidate) =>
+            candidate.serverId === account.serverId &&
+            (!manualLocal || classifyRouteScope(candidate.origin) !== "local"),
+        )
         .map((candidate) => candidate.origin);
     }
 
     const dismissed = new Set(account.dismissedRoutes);
-    const localCandidates = localDiscoveryOrigins().filter((origin) => !dismissed.has(origin));
+    const localCandidates = manualLocal
+      ? []
+      : localDiscoveryOrigins().filter((origin) => !dismissed.has(origin));
 
     const candidates = mergeServerRoutes({
       existing: account.routes,
@@ -239,22 +253,31 @@ export class RouteManager {
       this.discoverLanImpl().catch(() => []),
     ]);
 
+    const manualLocal = hasManualLocalRoute(account);
     const dismissed = new Set(account.dismissedRoutes);
     const lanOrigins = new Set<string>();
     const localCandidates = new Set<string>();
 
     for (const route of advertised) {
       if (dismissed.has(route.origin)) continue;
-      if (route.scope === "local") localCandidates.add(route.origin);
-      else if (route.scope === "lan") lanOrigins.add(route.origin);
+      if (route.scope === "local") {
+        if (!manualLocal) localCandidates.add(route.origin);
+      } else if (route.scope === "lan") {
+        lanOrigins.add(route.origin);
+      }
     }
     for (const candidate of udp) {
       if (candidate.serverId !== account.serverId || dismissed.has(candidate.origin)) continue;
-      if (classifyRouteScope(candidate.origin) === "local") localCandidates.add(candidate.origin);
-      else lanOrigins.add(candidate.origin);
+      if (classifyRouteScope(candidate.origin) === "local") {
+        if (!manualLocal) localCandidates.add(candidate.origin);
+      } else {
+        lanOrigins.add(candidate.origin);
+      }
     }
-    for (const origin of localDiscoveryOrigins()) {
-      if (!dismissed.has(origin)) localCandidates.add(origin);
+    if (!manualLocal) {
+      for (const origin of localDiscoveryOrigins()) {
+        if (!dismissed.has(origin)) localCandidates.add(origin);
+      }
     }
 
     // Only keep auto-detected loopback routes that actually verify on this machine so remote
@@ -381,14 +404,18 @@ export class RouteManager {
 
       if (currentPriority === 0) return;
 
+      const manualLocal = hasManualLocalRoute(account);
       const udp = await this.discoverLanImpl().catch(() => []);
       const udpOrigins = udp
         .filter((candidate) => candidate.serverId === account.serverId)
         .map((candidate) => candidate.origin);
       const dismissed = new Set(account.dismissedRoutes);
       const candidateOrigins = [
-        ...udpOrigins.filter((origin) => !dismissed.has(origin)),
-        ...localDiscoveryOrigins().filter((origin) => !dismissed.has(origin)),
+        ...udpOrigins.filter(
+          (origin) =>
+            !dismissed.has(origin) && (!manualLocal || classifyRouteScope(origin) !== "local"),
+        ),
+        ...(manualLocal ? [] : localDiscoveryOrigins().filter((origin) => !dismissed.has(origin))),
       ];
       const lanUdpOrigins = udpOrigins.filter(
         (origin) => !dismissed.has(origin) && classifyRouteScope(origin) === "lan",

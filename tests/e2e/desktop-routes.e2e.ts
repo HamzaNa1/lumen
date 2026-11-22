@@ -20,15 +20,17 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
   const manualLanOrigin = `http://nas.local:${new URL(lanProxy.origin).port}`;
   const remoteOrigin = `http://remote.lumen.test:${new URL(remoteProxy.origin).port}`;
 
+  const serverInfo = await server.api<{ capabilities?: Record<string, boolean> }>("/server");
+  const supportsServerRoutes = serverInfo.capabilities?.serverRoutes === true;
   const discoveryPort = server.discoveryPort;
-  expect(discoveryPort).not.toBeNull();
+  if (supportsServerRoutes) expect(discoveryPort).not.toBeNull();
   const admin = await server.register("admin");
   await server.library(admin.accessToken, "movies", ["Film.mp4"]);
 
   const hostRules = "MAP remote.lumen.test 127.0.0.1, MAP nas.local 127.0.0.1";
   const env = {
     LUMEN_E2E_HOST_RESOLVER_RULES: hostRules,
-    LUMEN_E2E_DISCOVERY_PORT: String(discoveryPort),
+    LUMEN_E2E_DISCOVERY_PORT: discoveryPort === null ? "off" : String(discoveryPort),
     LUMEN_E2E_LOCAL_ORIGINS: serverLocalOrigin,
   };
 
@@ -46,7 +48,9 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
       contentType: "image/png",
     });
 
-    // Sign in through the remote route; desktop auto-detects the local route and prioritizes it immediately.
+    // Sign in through the remote route. Servers that advertise routes auto-detect and promote the
+    // local route immediately; older released servers stay on the signed-in route without trusting
+    // unverified auto-detected origins.
     await page.getByLabel("Server address").fill(remoteOrigin);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByLabel("Username").fill("admin");
@@ -59,19 +63,25 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
       (account) => account.connectionId === afterSignIn.activeConnectionId,
     );
     expect(active).toBeDefined();
-    expect(active?.origin).toBe(serverLocalOrigin);
-    expect(active?.routes?.map((route) => [route.origin, route.scope, route.source])).toEqual([
-      [serverLocalOrigin, "local", "detected"],
-      [remoteOrigin, "remote", "manual"],
-    ]);
+    expect(active?.origin).toBe(supportsServerRoutes ? serverLocalOrigin : remoteOrigin);
+    expect(active?.routes?.map((route) => [route.origin, route.scope, route.source])).toEqual(
+      supportsServerRoutes
+        ? [
+            [serverLocalOrigin, "local", "detected"],
+            [remoteOrigin, "remote", "manual"],
+          ]
+        : [[remoteOrigin, "remote", "manual"]],
+    );
 
     // Open Settings -> General: routes are checked automatically (no manual "Check routes" button).
     const settings = await openSettings(page, "General");
     await expect(settings.getByRole("button", { name: "Check routes" })).toHaveCount(0);
-    await expect(settings.getByText(serverLocalOrigin, { exact: true })).toBeVisible();
     await expect(settings.getByText(remoteOrigin, { exact: true })).toBeVisible();
     await expect(settings.getByText("Active", { exact: true })).toBeVisible();
-    await expect(settings.getByText("Local", { exact: true })).toBeVisible();
+    if (supportsServerRoutes) {
+      await expect(settings.getByText(serverLocalOrigin, { exact: true })).toBeVisible();
+      await expect(settings.getByText("Local", { exact: true })).toBeVisible();
+    }
 
     // Adding an address that belongs to a different server is rejected.
     await settings.getByLabel("Route address").fill(new URL(otherServer.origin).origin);
@@ -80,7 +90,7 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
       settings.getByText("That address belongs to a different Lumen server."),
     ).toBeVisible();
 
-    // Adding a manual LAN route keeps Local prioritized ahead of LAN and Remote.
+    // Adding a manual LAN route keeps Local ahead of LAN when detected, or promotes LAN over Remote.
     await settings.getByLabel("Route address").fill(manualLanOrigin);
     await settings.getByRole("button", { name: "Add route", exact: true }).click();
     await expect(settings.getByText(manualLanOrigin, { exact: true })).toBeVisible();
@@ -90,16 +100,23 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
       contentType: "image/png",
     });
 
-    const withAllThree = await page.evaluate(() => window.lumen.accounts.list());
-    const activeAllThree = withAllThree.accounts.find(
-      (entry) => entry.connectionId === withAllThree.activeConnectionId,
+    const withAllRoutes = await page.evaluate(() => window.lumen.accounts.list());
+    const activeAfterLan = withAllRoutes.accounts.find(
+      (entry) => entry.connectionId === withAllRoutes.activeConnectionId,
     );
-    expect(activeAllThree?.origin).toBe(serverLocalOrigin);
-    expect(activeAllThree?.routes?.map((route) => [route.origin, route.scope])).toEqual([
-      [serverLocalOrigin, "local"],
-      [manualLanOrigin, "lan"],
-      [remoteOrigin, "remote"],
-    ]);
+    expect(activeAfterLan?.origin).toBe(supportsServerRoutes ? serverLocalOrigin : manualLanOrigin);
+    expect(activeAfterLan?.routes?.map((route) => [route.origin, route.scope])).toEqual(
+      supportsServerRoutes
+        ? [
+            [serverLocalOrigin, "local"],
+            [manualLanOrigin, "lan"],
+            [remoteOrigin, "remote"],
+          ]
+        : [
+            [manualLanOrigin, "lan"],
+            [remoteOrigin, "remote"],
+          ],
+    );
 
     // Adding an unreachable manual remote backup route is allowed (for away-from-home / non-hairpin setup).
     await settings.getByLabel("Route address").fill("https://backup.lumen.test");
@@ -108,16 +125,18 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     await settings.getByRole("button", { name: "Remove route https://backup.lumen.test" }).click();
     await expect(settings.getByText("https://backup.lumen.test", { exact: true })).toHaveCount(0);
 
-    // Dismissing the auto-detected local route switches cleanly to the manual LAN route.
-    await settings.getByRole("button", { name: `Remove route ${serverLocalOrigin}` }).click();
-    await expect(settings.getByText(serverLocalOrigin, { exact: true })).toHaveCount(0);
-    await expect
-      .poll(async () => {
-        const list = await page.evaluate(() => window.lumen.accounts.list());
-        return list.accounts.find((entry) => entry.connectionId === list.activeConnectionId)
-          ?.origin;
-      })
-      .toBe(manualLanOrigin);
+    if (supportsServerRoutes) {
+      // Dismissing the auto-detected local route switches cleanly to the manual LAN route.
+      await settings.getByRole("button", { name: `Remove route ${serverLocalOrigin}` }).click();
+      await expect(settings.getByText(serverLocalOrigin, { exact: true })).toHaveCount(0);
+      await expect
+        .poll(async () => {
+          const list = await page.evaluate(() => window.lumen.accounts.list());
+          return list.accounts.find((entry) => entry.connectionId === list.activeConnectionId)
+            ?.origin;
+        })
+        .toBe(manualLanOrigin);
+    }
 
     // Take the LAN proxy down -> API calls seamlessly fail over to the remote route.
     await lanProxy.close();
@@ -144,7 +163,9 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
       manualLanOrigin,
       remoteOrigin,
     ]);
-    expect(saved.accounts[0]?.dismissedRoutes).toEqual([serverLocalOrigin]);
+    expect(saved.accounts[0]?.dismissedRoutes).toEqual(
+      supportsServerRoutes ? [serverLocalOrigin] : [],
+    );
 
     // Restart desktop while LAN is down and local was dismissed: starts cleanly on the remote route.
     await closeDesktop(app);
@@ -184,12 +205,16 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
         return list.accounts.find((entry) => entry.connectionId === list.activeConnectionId)
           ?.origin;
       })
-      .toBe(serverLocalOrigin);
+      .toBe(supportsServerRoutes ? serverLocalOrigin : remoteOrigin);
     const migrated = await page.evaluate(() => window.lumen.accounts.list());
-    expect(migrated.accounts[0]?.routes).toEqual([
-      { origin: serverLocalOrigin, source: "detected", scope: "local" },
-      { origin: remoteOrigin, source: "manual", scope: "remote" },
-    ]);
+    expect(migrated.accounts[0]?.routes).toEqual(
+      supportsServerRoutes
+        ? [
+            { origin: serverLocalOrigin, source: "detected", scope: "local" },
+            { origin: remoteOrigin, source: "manual", scope: "remote" },
+          ]
+        : [{ origin: remoteOrigin, source: "manual", scope: "remote" }],
+    );
   } finally {
     await closeDesktop(app).catch(() => undefined);
     await lanProxy.close().catch(() => undefined);

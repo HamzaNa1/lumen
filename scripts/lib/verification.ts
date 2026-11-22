@@ -9,7 +9,7 @@ export const suites: Record<string, Suite> = {
   "administration.e2e.ts": { runtime: "api", products: ["server"] },
   "transport-timeouts.e2e.ts": { runtime: "api", products: ["server"] },
   "transport.e2e.ts": { runtime: "api", products: ["server", "desktop"] },
-  "server-routes.e2e.ts": { runtime: "api", products: ["server", "desktop"] },
+  "server-routes.e2e.ts": { runtime: "api", products: ["server"] },
   "client-boundaries.e2e.ts": { runtime: "api", products: ["server", "desktop"] },
   "authentication.e2e.ts": { runtime: "api", products: ["server"] },
   "home-music.e2e.ts": { runtime: "api", products: ["server"] },

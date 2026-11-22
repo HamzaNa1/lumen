@@ -776,6 +776,7 @@ export class ServerApi {
     options: { readonly width?: number; readonly transport?: FetchLike } = {},
     allowFailover = true,
   ): Promise<{ readonly mimeType: ArtworkImage["mimeType"]; readonly response: Response } | null> {
+    const scope = this.scope;
     const headers = new Headers();
     this.credentials.authorize({ method: "GET", headers });
     const attemptedOrigin = this.origin;
@@ -786,23 +787,27 @@ export class ServerApi {
         {
           headers,
           redirect: "manual",
-          signal: this.scope.signal,
+          signal: scope.signal,
           ...(this.credentials.cookies === undefined
             ? {}
             : { credentials: this.credentials.cookies }),
         },
       );
     } catch (cause) {
-      if (this.scope.signal.aborted) throw new RequestCancelledError();
+      if (scope.signal.aborted) throw new RequestCancelledError();
       if (allowFailover && this.onUnreachable !== undefined) {
         const nextOrigin = await this.onUnreachable(attemptedOrigin).catch(() => null);
-        if (this.scope.signal.aborted) throw new RequestCancelledError();
+        if (scope.signal.aborted) throw new RequestCancelledError();
         if (nextOrigin !== null && nextOrigin !== attemptedOrigin) {
           this.origin = normalizeOrigin(nextOrigin);
           return this.artworkResponse(artwork, options, false);
         }
       }
       throw cause;
+    }
+    if (scope.signal.aborted) {
+      await response.body?.cancel();
+      throw new RequestCancelledError();
     }
     const mimeType = ARTWORK_MIME_TYPES.find(
       (candidate) => candidate === response.headers.get("content-type")?.split(";")[0],

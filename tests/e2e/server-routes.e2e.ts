@@ -1,16 +1,68 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
+import { createSocket } from "node:dgram";
 import {
   classifyRouteScope,
+  type LanDiscoveryRequest,
   makeServerRoute,
   mergeServerRoutes,
+  normalizeOrigin,
   sortServerRoutes,
 } from "@lumen/contracts";
-import { discoverLanServers } from "../../apps/desktop/src/main/api/LanDiscoveryClient";
 import { detectLanRoutes } from "../../apps/server/src/http/LanRoutes";
 import { ServerUnreachableError } from "../../packages/client/src/errors";
 import { selectBestRoute } from "../../packages/client/src/RouteSelector";
 import { bearerCredentials, ServerApi } from "../../packages/client/src/ServerApi";
 import { expect, Server, test } from "./support/server";
+
+const probeUdpDiscovery = async (
+  port: number,
+): Promise<
+  Array<{ readonly serverId: string; readonly displayName: string; readonly origin: string }>
+> => {
+  const socket = createSocket({ type: "udp4", reuseAddr: true });
+  const payload = Buffer.from(
+    JSON.stringify({ type: "lumen.discover", version: 1 } satisfies LanDiscoveryRequest),
+    "utf8",
+  );
+  const found: Array<{
+    readonly serverId: string;
+    readonly displayName: string;
+    readonly origin: string;
+  }> = [];
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const deadline = AbortSignal.timeout(1_500);
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      deadline.removeEventListener("abort", onTimeout);
+      socket.close();
+      if (error !== undefined) reject(error);
+      else resolve(found);
+    };
+    const onTimeout = () => finish();
+    deadline.addEventListener("abort", onTimeout, { once: true });
+    socket.on("error", finish);
+    socket.on("message", (buffer, rinfo) => {
+      const reply = JSON.parse(buffer.toString("utf8")) as {
+        serverId: string;
+        displayName: string;
+        port: number;
+      };
+      found.push({
+        serverId: reply.serverId,
+        displayName: reply.displayName,
+        origin: normalizeOrigin(`http://${rinfo.address}:${reply.port}`),
+      });
+      finish();
+    });
+    socket.bind(0, () => {
+      socket.send(payload, port, "127.0.0.1", (error) => {
+        if (error !== null) finish(error);
+      });
+    });
+  });
+};
 
 test("classifies, sorts, merges routes and detects server local and LAN interfaces", () => {
   expect(classifyRouteScope("http://127.0.0.1:3210")).toBe("local");
@@ -265,11 +317,7 @@ test("server advertises local and LAN routes, verifies session challenges withou
     expect(unknownVerify.status).toBe(401);
 
     // UDP LAN discovery returns the server's reachable origin and identity.
-    const discovered = await discoverLanServers({
-      port: discoveryPort ?? 0,
-      targets: ["127.0.0.1"],
-      timeoutMs: 300,
-    });
+    const discovered = await probeUdpDiscovery(discoveryPort ?? 0);
     expect(discovered).toHaveLength(1);
     expect(discovered[0]).toEqual({
       serverId: info.serverId,
