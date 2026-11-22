@@ -200,7 +200,7 @@ export class PlayerController extends EventEmitter {
           resourcesPath: process.resourcesPath,
           videoOutputArguments: this.surface.prepare(),
           onFrame: (frame) => {
-            if (this.surface.kind === "compositor") void this.surface.frame(frame);
+            if (this.surface.kind === "compositor") this.surface.frame(frame);
           },
           onFailure: (error) => {
             if (this.active?.process === spawned) this.failActive(this.active, error);
