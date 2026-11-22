@@ -12,6 +12,11 @@ export default defineConfig({
   main: {
     resolve: { alias: workspaceAlias },
     ssr: { noExternal: [...workspacePackages, "effect"] },
+    // The bundle holds ws without its optional native addons; this keeps it on its own JavaScript.
+    define: {
+      "process.env.WS_NO_BUFFER_UTIL": JSON.stringify("1"),
+      "process.env.WS_NO_UTF_8_VALIDATE": JSON.stringify("1"),
+    },
     build: {
       rollupOptions: { external: ["electron", "drizzle-orm", "koffi"] },
     },

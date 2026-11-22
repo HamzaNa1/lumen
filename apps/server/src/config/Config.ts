@@ -2,6 +2,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Schema } from "effect";
 import { normalizeAddress } from "../http/ClientIdentity";
+import { isLoopbackHost } from "../http/LanRoutes";
 import type { WatchTimers } from "../watch-groups/WatchGroups";
 
 const workspaceRoot = fileURLToPath(new URL("../../../../", import.meta.url));
@@ -42,6 +43,7 @@ const Environment = Schema.Struct({
   LUMEN_ALLOWED_ORIGINS: Schema.optional(Schema.String),
   LUMEN_LAN_ORIGINS: Schema.optional(Schema.String),
   LUMEN_LAN_DISCOVERY: Schema.optional(Schema.Literals(["auto", "off"])),
+  LUMEN_TLS_PORT: Schema.optional(Schema.Union([Port, Schema.Literal("off")])),
   NODE_ENV: Schema.optional(Schema.String),
 });
 
@@ -88,6 +90,11 @@ export interface ServerConfig {
   /** Extra local-network origins to advertise, such as a Docker host's LAN address. */
   readonly lanOrigins: ReadonlyArray<string>;
   readonly lanDiscovery: "auto" | "off";
+  /**
+   * Where the LAN TLS listener runs, with a self-signed certificate clients pin, or null for none.
+   * 0 chooses a free port.
+   */
+  readonly tlsPort: number | null;
   /** Only tests set this; overrides the UDP discovery port (0 chooses an ephemeral port). */
   readonly lanDiscoveryPort?: number;
   /** Only the e2e harness sets this; no environment variable reaches it. */
@@ -128,13 +135,19 @@ const toBoundedInteger = (
 const resolveWorkspacePath = (value: string): string =>
   isAbsolute(value) ? value : resolve(workspaceRoot, value);
 
+// Only clients on other machines need the LAN listener, so a loopback-only server runs none.
+const defaultTlsPort = (host: string, port: number): number | null =>
+  isLoopbackHost(host) || port >= 65_535 ? null : port + 1;
+
 export const decodeConfig = (environment: Record<string, string | undefined>): ServerConfig => {
   const parsed = Schema.decodeUnknownSync(Environment)(environment);
+  const host = parsed.LUMEN_HOST ?? "127.0.0.1";
+  const port = toBoundedInteger("LUMEN_PORT", parsed.LUMEN_PORT, 3210, 1, 65_535);
   const databasePath = resolveWorkspacePath(parsed.LUMEN_DATABASE_PATH ?? "./data/lumen.sqlite");
   const dataDir = resolveWorkspacePath(parsed.LUMEN_DATA_DIR ?? "./data");
   return {
-    host: parsed.LUMEN_HOST ?? "127.0.0.1",
-    port: toBoundedInteger("LUMEN_PORT", parsed.LUMEN_PORT, 3210, 1, 65_535),
+    host,
+    port,
     databasePath,
     dataDir,
     logLevel: parsed.LUMEN_LOG_LEVEL ?? "info",
@@ -261,5 +274,11 @@ export const decodeConfig = (environment: Record<string, string | undefined>): S
     allowedOrigins: toOrigins(parsed.LUMEN_ALLOWED_ORIGINS),
     lanOrigins: toOrigins(parsed.LUMEN_LAN_ORIGINS),
     lanDiscovery: parsed.LUMEN_LAN_DISCOVERY ?? "auto",
+    tlsPort:
+      parsed.LUMEN_TLS_PORT === "off"
+        ? null
+        : parsed.LUMEN_TLS_PORT === undefined
+          ? defaultTlsPort(host, port)
+          : toBoundedInteger("LUMEN_TLS_PORT", parsed.LUMEN_TLS_PORT, 0, 0, 65_535),
   };
 };

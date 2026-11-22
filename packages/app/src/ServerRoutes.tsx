@@ -63,6 +63,7 @@ export const ServerRoutesSection = ({
     account.routes && account.routes.length > 0
       ? account.routes
       : [makeServerRoute(account.origin, "manual")];
+  const needingSignIn = account.routesNeedingSignIn ?? [];
   const busy = add.isPending || remove.isPending;
 
   return (
@@ -71,24 +72,33 @@ export const ServerRoutesSection = ({
         <div className="settings-row-text">
           <span>Routes</span>
           <p>
-            Local and LAN routes are tried first, and Lumen switches automatically if a route stops
-            responding. Connections signed in over HTTPS won&apos;t automatically switch to plain
-            HTTP.
+            Local and LAN routes are tried first, encrypted before plain HTTP, and Lumen switches
+            automatically if a route stops responding. A connection signed in over HTTPS uses a
+            plain HTTP address only after you sign in at that address.
           </p>
         </div>
       </div>
-      {routes.map((route) => {
+      {[...routes, ...needingSignIn].map((route) => {
         const active = route.origin === account.origin;
+        const signInRequired = needingSignIn.includes(route);
+        const removable = signInRequired || routes.length > 1;
         return (
           <div className="settings-row" key={route.origin}>
             <div className="settings-row-text">
               <span className="route-origin">{route.origin}</span>
-              <p>{route.source === "detected" ? "Auto-detected" : "Added manually"}</p>
+              <p>
+                {signInRequired
+                  ? "Plain HTTP. Sign in at this address to use it."
+                  : route.source === "detected"
+                    ? "Auto-detected"
+                    : "Added manually"}
+              </p>
             </div>
             <div className="settings-row-value">
               {active ? <span className="status-pill is-positive">Active</span> : null}
+              {signInRequired ? <span className="status-pill">Sign-in required</span> : null}
               <span className="status-pill">{scopeLabel(route.scope)}</span>
-              {routes.length > 1 ? (
+              {removable ? (
                 <Button
                   variant="icon"
                   size="sm"

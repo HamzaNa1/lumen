@@ -61,6 +61,6 @@ RUN groupadd --system --gid 10001 lumen \
 COPY --chown=10001:10001 --from=app / /app/
 USER lumen
 VOLUME ["/data", "/media"]
-EXPOSE 3210
+EXPOSE 3210 3211
 HEALTHCHECK --interval=30s --timeout=5s CMD bun -e 'fetch("http://127.0.0.1:3210/health/ready").then(r => { if (!r.ok) process.exit(1) })'
 CMD ["bun", "apps/server/src/main.ts"]

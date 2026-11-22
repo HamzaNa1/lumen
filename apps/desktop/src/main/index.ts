@@ -5,6 +5,7 @@ import {
   nativeTheme,
   powerSaveBlocker,
   protocol,
+  type Session,
   screen,
   session,
   shell,
@@ -14,8 +15,10 @@ import { composesVideo } from "../shared/videoCompositor";
 import { AccountRegistry } from "./accounts/AccountRegistry";
 import { getOrCreateInstallationId } from "./accounts/InstallationId";
 import { createTokenVault } from "./accounts/TokenVault";
+import { PinnedCertificates } from "./api/PinnedCertificates";
 import type { ServerClient } from "./api/ServerClient";
 import { serverTransport } from "./api/serverTransport";
+import { pinnedSocketOpener } from "./api/watchSocket";
 import { ArtworkCache } from "./artwork/ArtworkCache";
 import { DownloadManager } from "./downloads/DownloadManager";
 import { registerIpcHandlers, unregisterIpcHandlers } from "./ipc/registerHandlers";
@@ -107,10 +110,24 @@ const bootstrap = async (): Promise<void> => {
   const windowState = await openMainWindowState(
     join(app.getPath("userData"), "main-window-state.json"),
   );
+  const pins = new PinnedCertificates(() => registry.all());
+  const pinnedSessions = new Set<Session>();
+  // Anything Chromium already trusts still passes; a pinned certificate passes on its server's hosts.
+  const installPins = (each: Session): void =>
+    each.setCertificateVerifyProc((request, callback) =>
+      callback(pins.trusts(request.hostname, request.certificate.data) ? 0 : -3),
+    );
+  const trustPinned = (each: Session): Session => {
+    if (!pinnedSessions.has(each)) {
+      pinnedSessions.add(each);
+      installPins(each);
+    }
+    return each;
+  };
   // Media has a connection pool of its own, so streaming bodies never hold a click in a queue.
   const [apiSession, mediaSession] = [
-    session.fromPartition("lumen-api"),
-    session.fromPartition("lumen-media"),
+    trustPinned(session.fromPartition("lumen-api")),
+    trustPinned(session.fromPartition("lumen-media")),
   ];
   // Servers are reached as Node's fetch reached them, without the system proxy.
   await Promise.all([apiSession, mediaSession].map((each) => each.setProxy({ mode: "direct" })));
@@ -119,7 +136,7 @@ const bootstrap = async (): Promise<void> => {
   await bridge.listen();
   const store = await openMediaStore(join(app.getPath("userData"), "media"), mediaTransport);
   const clients = new Map<string, ServerClient>();
-  const artwork = new ArtworkCache((partition) => session.fromPartition(partition));
+  const artwork = new ArtworkCache((partition) => trustPinned(session.fromPartition(partition)));
   protocol.handle(ARTWORK_SCHEME, (request) => {
     const connectionId = registry.active()?.connectionId;
     const client = connectionId === undefined ? undefined : clients.get(connectionId);
@@ -206,6 +223,11 @@ const bootstrap = async (): Promise<void> => {
     clients,
     artwork,
     serverTransport: serverTransport(apiSession),
+    openWatchSocket: pinnedSocketOpener(pins),
+    // Installing the procedure again drops what Chromium remembers of earlier verifications.
+    onPinsChanged: () => {
+      for (const each of pinnedSessions) installPins(each);
+    },
     player,
     downloads,
     bridge,

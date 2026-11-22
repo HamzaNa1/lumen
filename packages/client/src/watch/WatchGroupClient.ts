@@ -21,6 +21,8 @@ export interface WatchConnection {
   /** The server's HTTP origin; the socket opens beside it. */
   readonly serverOrigin: string;
   readonly watchAuthentication: () => WatchAuthentication;
+  /** Opens the socket where the platform's own WebSocket cannot trust the server's certificate. */
+  readonly openSocket?: ((url: URL) => WebSocket) | undefined;
 }
 
 // A connection that has been silent this long is treated as lost.
@@ -107,7 +109,7 @@ export class WatchGroupClient {
     this.update({ connection: "connecting", error: null });
     const url = new URL("/api/v1/watch-groups", this.connection.serverOrigin);
     url.protocol = url.protocol === "https:" ? "wss:" : "ws:";
-    const socket = new WebSocket(url);
+    const socket = this.connection.openSocket?.(url) ?? new WebSocket(url);
     this.socket = socket;
     const timeout = setTimeout(() => socket.close(), 7000);
     let resumeGroupId: string | undefined;

@@ -1,20 +1,42 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import { createSocket } from "node:dgram";
+import { get } from "node:https";
+import { createServer as createTcpServer } from "node:net";
 import {
   classifyRouteScope,
   type LanDiscoveryRequest,
   makeServerRoute,
   mergeServerRoutes,
   normalizeOrigin,
+  type ServerAdvertisedRoutes,
   sendsTokenInClear,
   sortServerRoutes,
   tokenAllowsPlainHttp,
   usableServerRoutes,
 } from "@lumen/contracts";
+import {
+  PinnedCertificates,
+  type PinSource,
+} from "../../apps/desktop/src/main/api/PinnedCertificates";
+import { pinnedSocketOpener } from "../../apps/desktop/src/main/api/watchSocket";
 import { ServerUnreachableError } from "../../packages/client/src/errors";
 import { selectBestRoute } from "../../packages/client/src/RouteSelector";
 import { bearerCredentials, ServerApi } from "../../packages/client/src/ServerApi";
 import { expect, Server, test } from "./support/server";
+
+/** GETs a JSON path over HTTPS, trusting what `pins` trusts for the origin's host. */
+const getOverTls = (pins: PinnedCertificates, origin: string, path: string): Promise<unknown> => {
+  const url = new URL(path, origin);
+  const trust = pins.tlsOptions(url.hostname);
+  return new Promise((resolve, reject) => {
+    get(url, { ca: [...trust.ca], checkServerIdentity: trust.checkServerIdentity }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on("data", (chunk: Buffer) => chunks.push(chunk));
+      response.on("end", () => resolve(JSON.parse(Buffer.concat(chunks).toString("utf8"))));
+      response.on("error", reject);
+    }).on("error", reject);
+  });
+};
 
 const probeUdpDiscovery = async (
   port: number,
@@ -94,11 +116,14 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
       makeServerRoute("http://nas.local:3210", "manual"),
       makeServerRoute("http://10.0.0.5:3210", "detected"),
       makeServerRoute("http://127.0.0.1:3210", "detected"),
+      makeServerRoute("https://192.168.1.50:3211", "detected"),
     ],
     "http://10.0.0.5:3210",
   );
   expect(sorted.map((route) => route.origin)).toEqual([
     "http://127.0.0.1:3210",
+    // Within a scope an encrypted route goes first, even ahead of a manual plain HTTP one.
+    "https://192.168.1.50:3211",
     "http://nas.local:3210",
     "http://10.0.0.5:3210",
     "http://192.168.1.50:3210",
@@ -151,7 +176,11 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
   expect(sendsTokenInClear(detectedLan, "https://media.example.com")).toBe(true);
   expect(sendsTokenInClear(detectedLocal, "https://media.example.com")).toBe(true);
   expect(sendsTokenInClear(detectedHttpsLan, "https://media.example.com")).toBe(false);
-  expect(sendsTokenInClear(manualLan, "https://media.example.com")).toBe(false);
+  // A manual plain HTTP route waits for a sign-in over it, unless the token was issued there.
+  expect(sendsTokenInClear(manualLan, "https://media.example.com")).toBe(true);
+  expect(sendsTokenInClear(manualLan, "http://192.168.1.20:3210/")).toBe(false);
+  expect(sendsTokenInClear(detectedLocal, "http://127.0.0.1:3210")).toBe(false);
+  expect(sendsTokenInClear(manualLan, "http://127.0.0.1:3210")).toBe(true);
   expect(sendsTokenInClear(detectedLan, "http://127.0.0.1:3210")).toBe(true);
   expect(sendsTokenInClear(detectedLan, "http://100.101.102.103:3210")).toBe(true);
   expect(sendsTokenInClear(detectedLan, "http://192.168.1.10:3210")).toBe(false);
@@ -159,14 +188,15 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
 
   expect(
     usableServerRoutes(
-      [detectedLocal, detectedLan, detectedHttpsLan, manualHttps],
+      [detectedLocal, detectedLan, detectedHttpsLan, manualLan, manualHttps],
       "https://media.example.com",
     ),
   ).toEqual([detectedHttpsLan, manualHttps]);
 
+  // Auto-detected plain HTTP routes are dropped; the viewer's own stay for a sign-in or removal.
   expect(
     mergeServerRoutes({
-      existing: [detectedLocal, detectedLan, manualHttps],
+      existing: [detectedLocal, detectedLan, manualLan, manualHttps],
       detectedOrigins: [
         "http://192.168.1.50:3210",
         "http://127.0.0.1:3210",
@@ -174,73 +204,74 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
       ],
       credentialOrigin: "https://media.example.com",
     }),
-  ).toEqual([detectedHttpsLan, manualHttps]);
+  ).toEqual([detectedHttpsLan, manualLan, manualHttps]);
 
   const { detectLanRoutes } = await import("../../apps/server/src/http/LanRoutes");
+  const detectedInterfaces: NonNullable<Parameters<typeof detectLanRoutes>[0]["interfaces"]> = {
+    lo: [
+      {
+        address: "127.0.0.1",
+        netmask: "255.0.0.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: true,
+        cidr: "127.0.0.1/8",
+      },
+    ],
+    docker0: [
+      {
+        address: "172.17.0.1",
+        netmask: "255.255.0.0",
+        family: "IPv4",
+        mac: "02:42:ac:11:00:01",
+        internal: false,
+        cidr: "172.17.0.1/16",
+      },
+    ],
+    en0: [
+      {
+        address: "192.168.1.50",
+        netmask: "255.255.255.0",
+        family: "IPv4",
+        mac: "aa:bb:cc:dd:ee:ff",
+        internal: false,
+        cidr: "192.168.1.50/24",
+      },
+      {
+        address: "fe80::1",
+        netmask: "ffff:ffff:ffff:ffff::",
+        family: "IPv6",
+        mac: "aa:bb:cc:dd:ee:ff",
+        internal: false,
+        scopeid: 4,
+        cidr: "fe80::1/64",
+      },
+      {
+        address: "fd00::50",
+        netmask: "ffff:ffff:ffff:ffff::",
+        family: "IPv6",
+        mac: "aa:bb:cc:dd:ee:ff",
+        internal: false,
+        scopeid: 0,
+        cidr: "fd00::50/64",
+      },
+    ],
+    utun: [
+      {
+        address: "100.64.0.5",
+        netmask: "255.192.0.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "100.64.0.5/10",
+      },
+    ],
+  };
   const detected = detectLanRoutes({
     host: "::",
     port: 3210,
     extraOrigins: ["https://lumen.home.arpa"],
-    interfaces: {
-      lo: [
-        {
-          address: "127.0.0.1",
-          netmask: "255.0.0.0",
-          family: "IPv4",
-          mac: "00:00:00:00:00:00",
-          internal: true,
-          cidr: "127.0.0.1/8",
-        },
-      ],
-      docker0: [
-        {
-          address: "172.17.0.1",
-          netmask: "255.255.0.0",
-          family: "IPv4",
-          mac: "02:42:ac:11:00:01",
-          internal: false,
-          cidr: "172.17.0.1/16",
-        },
-      ],
-      en0: [
-        {
-          address: "192.168.1.50",
-          netmask: "255.255.255.0",
-          family: "IPv4",
-          mac: "aa:bb:cc:dd:ee:ff",
-          internal: false,
-          cidr: "192.168.1.50/24",
-        },
-        {
-          address: "fe80::1",
-          netmask: "ffff:ffff:ffff:ffff::",
-          family: "IPv6",
-          mac: "aa:bb:cc:dd:ee:ff",
-          internal: false,
-          scopeid: 4,
-          cidr: "fe80::1/64",
-        },
-        {
-          address: "fd00::50",
-          netmask: "ffff:ffff:ffff:ffff::",
-          family: "IPv6",
-          mac: "aa:bb:cc:dd:ee:ff",
-          internal: false,
-          scopeid: 0,
-          cidr: "fd00::50/64",
-        },
-      ],
-      utun: [
-        {
-          address: "100.64.0.5",
-          netmask: "255.192.0.0",
-          family: "IPv4",
-          mac: "00:00:00:00:00:00",
-          internal: false,
-          cidr: "100.64.0.5/10",
-        },
-      ],
-    },
+    interfaces: detectedInterfaces,
   });
   expect(detected).toEqual([
     { origin: "https://lumen.home.arpa", scope: "lan" },
@@ -252,6 +283,17 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
   ]);
   expect(detectLanRoutes({ host: "127.0.0.1", port: 3210 })).toEqual([
     { origin: "http://127.0.0.1:3210", scope: "local" },
+  ]);
+  expect(
+    detectLanRoutes({
+      host: "0.0.0.0",
+      port: 3211,
+      protocol: "https",
+      interfaces: { en0: detectedInterfaces.en0 ?? [] },
+    }),
+  ).toEqual([
+    { origin: "https://127.0.0.1:3211", scope: "local" },
+    { origin: "https://192.168.1.50:3211", scope: "lan" },
   ]);
 });
 
@@ -314,13 +356,15 @@ test("selectBestRoute prioritizes local and LAN over remote and falls back when 
   expect(lanAborted).toBe(true);
 });
 
-test("server advertises local and LAN routes, verifies session challenges without secrets, and answers UDP LAN discovery", async () => {
+test("server advertises local, LAN and pinned TLS routes, verifies session challenges without secrets, and answers UDP LAN discovery", async () => {
   const root = test.info().outputPath("routes-server");
   const server = new Server(root);
-  await server.start({
+  const environment = {
     LUMEN_LAN_ORIGINS: "http://192.168.1.50:3210,https://lumen.home.arpa",
     LUMEN_E2E_DISCOVERY_PORT: "0",
-  });
+    LUMEN_TLS_PORT: "0",
+  };
+  await server.start(environment);
   try {
     const discoveryPort = server.discoveryPort;
     expect(discoveryPort).not.toBeNull();
@@ -335,13 +379,51 @@ test("server advertises local and LAN routes, verifies session challenges withou
       headers: { authorization: `Bearer ${admin.accessToken}` },
     });
     expect(routesRes.status).toBe(200);
-    expect(await routesRes.json()).toEqual({
+    const advertised = (await routesRes.json()) as ServerAdvertisedRoutes;
+    expect(advertised).toEqual({
       routes: [
         { origin: "http://192.168.1.50:3210", scope: "lan" },
         { origin: "https://lumen.home.arpa", scope: "lan" },
         { origin: new URL(server.origin).origin, scope: "local" },
       ],
+      tls: {
+        certificate: expect.stringContaining("-----BEGIN CERTIFICATE-----"),
+        routes: [
+          { origin: expect.stringMatching(/^https:\/\/127\.0\.0\.1:\d+$/u), scope: "local" },
+        ],
+      },
     });
+    const certificate = advertised.tls?.certificate ?? "";
+    const tlsOrigin = advertised.tls?.routes[0]?.origin ?? "";
+
+    // The TLS listener serves the same server, and only to a client that pinned its certificate
+    // on that host: neither the system's CAs nor a pin from another server's hosts admit it.
+    const pinnedOn = (origins: string[]): PinnedCertificates =>
+      new PinnedCertificates((): PinSource[] => [
+        { origin: "http://remote.lumen.test:3210", routes: [], tls: { certificate, origins } },
+      ]);
+    const pins = pinnedOn([tlsOrigin]);
+    expect(await getOverTls(pins, tlsOrigin, "/api/v1/server")).toMatchObject({
+      serverId: info.serverId,
+    });
+    await expect(
+      getOverTls(new PinnedCertificates(() => []), tlsOrigin, "/api/v1/server"),
+    ).rejects.toThrow();
+    await expect(
+      getOverTls(pinnedOn(["https://192.168.1.50:3211"]), tlsOrigin, "/api/v1/server"),
+    ).rejects.toThrow();
+
+    // The desktop's watch-group socket reaches the listener through the same pin.
+    const socketUrl = new URL("/api/v1/watch-groups", tlsOrigin);
+    socketUrl.protocol = "wss:";
+    const socket = pinnedSocketOpener(pins)(socketUrl);
+    const firstMessage = new Promise<unknown>((resolve, reject) => {
+      socket.onmessage = (event) => resolve(JSON.parse(String(event.data)));
+      socket.onerror = () => reject(new Error("Watch socket failed over TLS"));
+    });
+    socket.onopen = () => socket.send(JSON.stringify({ token: admin.accessToken }));
+    expect(await firstMessage).toMatchObject({ type: "ready" });
+    socket.close();
 
     // Challenge verification proves server identity without ever sending the bearer secret.
     const [, secretB64 = ""] = admin.accessToken.split(".");
@@ -392,6 +474,35 @@ test("server advertises local and LAN routes, verifies session challenges withou
     expect(me.username).toBe("admin");
     expect(failoverCalls).toBe(1);
     expect(api.serverOrigin).toBe(new URL(server.origin).origin);
+
+    // The certificate lives in the data directory, so a restart keeps every client's pin valid.
+    await server.restart();
+    const restarted = await server.api<ServerAdvertisedRoutes>("/server/routes", {
+      token: admin.accessToken,
+    });
+    expect(restarted.tls?.certificate).toBe(certificate);
+
+    // A TLS port that is taken costs only the encrypted routes; the server still starts.
+    const blocker = createTcpServer();
+    await new Promise<void>((resolve) => blocker.listen(0, "127.0.0.1", resolve));
+    const address = blocker.address();
+    try {
+      await server.stop();
+      await server.start({
+        ...environment,
+        LUMEN_TLS_PORT: String(typeof address === "object" && address !== null ? address.port : 0),
+      });
+      const withoutTls = await server.api<ServerAdvertisedRoutes>("/server/routes", {
+        token: admin.accessToken,
+      });
+      expect(withoutTls.tls).toBeUndefined();
+      expect(withoutTls.routes).toContainEqual({
+        origin: new URL(server.origin).origin,
+        scope: "local",
+      });
+    } finally {
+      blocker.close();
+    }
   } finally {
     await server.stop();
   }

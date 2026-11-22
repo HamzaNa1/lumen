@@ -64,11 +64,14 @@ For example, after substituting your image name and media path:
 
 ```sh
 docker run -d --name lumen-server --restart unless-stopped \
-  -p 3210:3210 \
+  -p 3210:3210 -p 3211:3211 \
+  -e LUMEN_LAN_ORIGINS=http://192.168.1.10:3210,https://192.168.1.10:3211 \
   -v lumen-data:/data \
   -v /path/to/media:/media:ro \
   ghcr.io/<owner>/<repository>-server
 ```
+
+A server that listens beyond loopback also serves HTTPS on the next port (`LUMEN_TLS_PORT`, `off` to disable) with a self-signed certificate kept in the data directory. Desktops learn that certificate from the server's route list, over a route they already use, and trust exactly it, so they can switch to the LAN without sending their sign-in over plain HTTP. A container cannot see the host's addresses, so list them in `LUMEN_LAN_ORIGINS` as above.
 
 ### Linux service
 

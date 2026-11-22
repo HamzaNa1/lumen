@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer as createSecureServer } from "node:https";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { type WebSocket, WebSocketServer } from "ws";
@@ -38,6 +39,8 @@ interface HttpServerOptions<Data> {
   ) => Response | undefined | Promise<Response | undefined>;
   readonly websocket?: HttpSocketHandler<Data>;
   readonly timeouts?: HttpTimeouts;
+  /** Serves HTTPS with this PEM key and certificate instead of plain HTTP. */
+  readonly tls?: { readonly key: string; readonly cert: string };
 }
 
 export interface HttpTimeouts {
@@ -56,7 +59,10 @@ const webRequest = (incoming: IncomingMessage, origin: URL, signal: AbortSignal)
     const value = incoming.rawHeaders[index + 1];
     if (name !== undefined && value !== undefined) headers.append(name, value);
   }
-  const url = new URL(incoming.url ?? "/", `http://${headers.get("host") ?? origin.host}`);
+  const url = new URL(
+    incoming.url ?? "/",
+    `${origin.protocol}//${headers.get("host") ?? origin.host}`,
+  );
   const method = incoming.method ?? "GET";
   return new Request(url.toString(), {
     method,
@@ -89,7 +95,7 @@ const writeResponse = async (response: Response, outgoing: ServerResponse): Prom
 /** Keeps explicit response lengths and per-request timeouts while streaming under backpressure. */
 export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise<HttpServer> => {
   let origin = new URL(
-    `http://${options.hostname.includes(":") ? `[${options.hostname}]` : options.hostname}`,
+    `${options.tls === undefined ? "http" : "https"}://${options.hostname.includes(":") ? `[${options.hostname}]` : options.hostname}`,
   );
   const handler = options.websocket;
   const timeouts = options.timeouts ?? defaultTimeouts;
@@ -97,7 +103,7 @@ export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise
     noServer: true,
     maxPayload: handler?.maxPayloadLength ?? 4096,
   });
-  const server = createServer((incoming, outgoing) => {
+  const respond = (incoming: IncomingMessage, outgoing: ServerResponse): void => {
     // The socket timer covers both waits. Bun's own keep-alive timer is off: the next request's
     // first bytes clear it and nothing re-arms one, so a request stalled there stayed open.
     incoming.socket.setTimeout(timeouts.activeMs);
@@ -123,7 +129,11 @@ export const serveHttp = async <Data>(options: HttpServerOptions<Data>): Promise
         outgoing.end();
       }
     });
-  });
+  };
+  const server =
+    options.tls === undefined
+      ? createServer(respond)
+      : createSecureServer({ key: options.tls.key, cert: options.tls.cert }, respond);
   server.keepAliveTimeout = 0;
   server.setTimeout(timeouts.activeMs, (socket) => socket.destroy());
   server.on("upgrade", (incoming, socket, head) => {

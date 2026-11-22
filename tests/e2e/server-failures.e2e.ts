@@ -11,6 +11,7 @@ for (const [key, values] of [
   ["LUMEN_SCAN_LEASE_MS", ["999", "86400001"]],
   ["LUMEN_ALLOWED_ORIGINS", ["https://example.test/path", "null"]],
   ["LUMEN_LOG_FORMAT", ["xml"]],
+  ["LUMEN_TLS_PORT", ["on", "65536"]],
 ] as const)
   for (const value of values)
     test(`server CLI rejects ${key}=${JSON.stringify(value)} before listening`, async ({

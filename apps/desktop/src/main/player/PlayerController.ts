@@ -245,6 +245,7 @@ export class PlayerController extends EventEmitter {
         diagnostics,
         active: () => this.active?.session === session,
         ...(held === null ? {} : { held }),
+        ...(this.store === undefined ? {} : { fetchImpl: this.store.fetchImpl }),
       });
       const sessionIpc = ipc;
       const onMediaFailure = (cause: Error) => {
