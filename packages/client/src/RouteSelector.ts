@@ -129,10 +129,10 @@ export const selectBestRoute = async (options: SelectRouteOptions): Promise<Rout
         return;
       }
 
-      const waitingOnLanFromRemote =
+      const waitingOnLocalOrLanFromRemote =
         ordered[best.index]?.scope === "remote" &&
-        higherPending.some((route) => route.scope === "lan");
-      const deadlineMs = waitingOnLanFromRemote ? lanGraceMs : sameScopeGraceMs;
+        higherPending.some((route) => route.scope === "local" || route.scope === "lan");
+      const deadlineMs = waitingOnLocalOrLanFromRemote ? lanGraceMs : sameScopeGraceMs;
       const remaining = Math.max(0, deadlineMs - (Date.now() - startedAt));
       if (remaining === 0) {
         finish({ ok: true, value: best.result });
@@ -146,7 +146,7 @@ export const selectBestRoute = async (options: SelectRouteOptions): Promise<Rout
     };
 
     ordered.forEach((route, index) => {
-      const timeoutMs = route.scope === "lan" ? lanTimeoutMs : remoteTimeoutMs;
+      const timeoutMs = route.scope === "remote" ? remoteTimeoutMs : lanTimeoutMs;
       const signal = AbortSignal.any([master.signal, AbortSignal.timeout(timeoutMs)]);
       void options
         .probe(route, signal)

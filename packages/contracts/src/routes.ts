@@ -4,7 +4,7 @@ import { Uuid } from "./schemas/common.ts";
 export const LAN_DISCOVERY_PORT = 32_101;
 export const LAN_DISCOVERY_MULTICAST = "239.255.77.77";
 
-export const ServerRouteScope = Schema.Literals(["lan", "remote"]);
+export const ServerRouteScope = Schema.Literals(["local", "lan", "remote"]);
 export type ServerRouteScope = Schema.Schema.Type<typeof ServerRouteScope>;
 
 export const ServerRouteSource = Schema.Literals(["manual", "detected"]);
@@ -73,12 +73,17 @@ export const normalizeOrigin = (value: string): string => {
   return url.origin;
 };
 
-const isLanIpv4Octets = (a: number, b: number): boolean =>
-  a === 10 ||
-  a === 127 ||
-  (a === 172 && b >= 16 && b <= 31) ||
-  (a === 192 && b === 168) ||
-  (a === 169 && b === 254);
+const classifyIpv4Octets = (a: number, b: number): ServerRouteScope => {
+  if (a === 127) return "local";
+  if (
+    a === 10 ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 169 && b === 254)
+  )
+    return "lan";
+  return "remote";
+};
 
 const parseIpv4 = (host: string): readonly [number, number, number, number] | null => {
   const parts = host.split(".");
@@ -96,35 +101,27 @@ const parseIpv4 = (host: string): readonly [number, number, number, number] | nu
     : [a, b, c, d];
 };
 
-const isLanIpv6 = (host: string): boolean => {
+const classifyIpv6 = (host: string): ServerRouteScope => {
   const normalized = host.toLowerCase();
-  if (normalized === "::1") return true;
+  if (normalized === "::1") return "local";
   const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/u.exec(normalized);
   if (mappedDotted?.[1] !== undefined) {
     const octets = parseIpv4(mappedDotted[1]);
-    return octets !== null && isLanIpv4Octets(octets[0], octets[1]);
+    return octets === null ? "remote" : classifyIpv4Octets(octets[0], octets[1]);
   }
   const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(normalized);
   if (mappedHex?.[1] !== undefined && mappedHex[2] !== undefined) {
     const high = Number.parseInt(mappedHex[1], 16);
-    return isLanIpv4Octets((high >> 8) & 0xff, high & 0xff);
+    return classifyIpv4Octets((high >> 8) & 0xff, high & 0xff);
   }
   const firstGroup = /^([0-9a-f]{1,4}):/u.exec(normalized)?.[1];
-  if (firstGroup === undefined) return false;
+  if (firstGroup === undefined) return "remote";
   const value = Number.parseInt(firstGroup, 16);
   // Unique local (fc00::/7) and link-local (fe80::/10).
-  return (value & 0xfe00) === 0xfc00 || (value & 0xffc0) === 0xfe80;
+  return (value & 0xfe00) === 0xfc00 || (value & 0xffc0) === 0xfe80 ? "lan" : "remote";
 };
 
-const LAN_SUFFIXES = [
-  ".localhost",
-  ".local",
-  ".home.arpa",
-  ".lan",
-  ".home",
-  ".localdomain",
-  ".internal",
-];
+const LAN_SUFFIXES = [".local", ".home.arpa", ".lan", ".home", ".localdomain", ".internal"];
 
 export const classifyRouteScope = (origin: string): ServerRouteScope => {
   let host: string;
@@ -133,13 +130,13 @@ export const classifyRouteScope = (origin: string): ServerRouteScope => {
   } catch {
     return "remote";
   }
-  if (host.startsWith("[") && host.endsWith("]"))
-    return isLanIpv6(host.slice(1, -1)) ? "lan" : "remote";
-  if (host.includes(":")) return isLanIpv6(host) ? "lan" : "remote";
+  if (host.startsWith("[") && host.endsWith("]")) return classifyIpv6(host.slice(1, -1));
+  if (host.includes(":")) return classifyIpv6(host);
   const ipv4 = parseIpv4(host);
-  if (ipv4 !== null) return isLanIpv4Octets(ipv4[0], ipv4[1]) ? "lan" : "remote";
+  if (ipv4 !== null) return classifyIpv4Octets(ipv4[0], ipv4[1]);
   const trimmed = host.endsWith(".") ? host.slice(0, -1) : host;
-  if (trimmed === "localhost" || !trimmed.includes(".")) return "lan";
+  if (trimmed === "localhost" || trimmed.endsWith(".localhost")) return "local";
+  if (!trimmed.includes(".")) return "lan";
   return LAN_SUFFIXES.some((suffix) => trimmed.endsWith(suffix)) ? "lan" : "remote";
 };
 
@@ -148,10 +145,13 @@ export const makeServerRoute = (origin: string, source: ServerRouteSource): Serv
   return { origin: normalized, source, scope: classifyRouteScope(normalized) };
 };
 
-const routeTier = (route: ServerRoute): number =>
-  (route.scope === "lan" ? 0 : 2) + (route.source === "manual" ? 0 : 1);
+const scopeRank = (scope: ServerRouteScope): number =>
+  scope === "local" ? 0 : scope === "lan" ? 1 : 2;
 
-/** Orders routes by priority: LAN before remote, manual before auto-detected, active first within a tier. */
+const routeTier = (route: ServerRoute): number =>
+  scopeRank(route.scope) * 2 + (route.source === "manual" ? 0 : 1);
+
+/** Orders routes by priority: local before LAN before remote, manual before auto-detected, active first within a tier. */
 export const sortServerRoutes = (
   routes: ReadonlyArray<ServerRoute>,
   activeOrigin?: string | null,

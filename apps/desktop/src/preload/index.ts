@@ -40,7 +40,6 @@ const api: DesktopBridge = {
   routes: {
     add: (connectionId, origin) => invoke("routes:add", { connectionId, origin }),
     remove: (connectionId, origin) => invoke("routes:remove", { connectionId, origin }),
-    refresh: (connectionId) => invoke("routes:refresh", connectionId),
     discoverLan: () => invoke("routes:discover-lan"),
   },
   library: {

@@ -141,14 +141,25 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   });
   const onResume = (): void => {
     const active = dependencies.registry.active();
-    if (active !== null) void routeManager.promoteToLanIfAvailable(active.connectionId);
+    if (active !== null)
+      void routeManager.recheckActiveRoute(active.connectionId, { checkCurrent: true });
   };
+  const onFocus = (): void => {
+    const active = dependencies.registry.active();
+    if (active !== null) routeManager.onWindowFocus(active.connectionId);
+  };
+  const stopRouteMonitoring = routeManager.startMonitoring(
+    () => dependencies.registry.active()?.connectionId ?? null,
+  );
   powerMonitor.on("resume", onResume);
+  dependencies.window.on("focus", onFocus);
   dependencies.downloads.on("change", onDownloadsChange);
   dependencies.player.on("failure", onPlayerFailure);
   dependencies.window.once("closed", () => {
     cancelActivation();
+    stopRouteMonitoring();
     powerMonitor.off("resume", onResume);
+    dependencies.window.off("focus", onFocus);
     dependencies.player.off("failure", onPlayerFailure);
     dependencies.downloads.off("change", onDownloadsChange);
     watch.close();
@@ -194,7 +205,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   ): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) {
-      await routeManager.promoteToLanIfAvailable(account.connectionId);
+      await routeManager.recheckActiveRoute(account.connectionId);
       if (signal.aborted) throw new RequestCancelledError();
       await validateClient(cached, signal);
       if (signal.aborted) throw new RequestCancelledError();
@@ -250,12 +261,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     await dependencies.registry.updateOrigin(account.connectionId, client.serverOrigin);
     if (signal.aborted) throw new RequestCancelledError();
     return client;
-  };
-  const adoptClient = async (connectionId: string, client: ServerClient): Promise<void> => {
-    dependencies.clients.set(connectionId, client);
-    await routeManager
-      .syncServerRoutes(connectionId, client, client.currentSession)
-      .catch(() => false);
   };
   const handle = <A>(
     name: string,
@@ -383,8 +388,12 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         dependencies.registry.find(connectionId) === null
       )
         throw new RequestCancelledError();
-      if (dependencies.clients.get(connectionId) !== client)
-        await adoptClient(connectionId, client);
+      if (dependencies.clients.get(connectionId) !== client) {
+        dependencies.clients.set(connectionId, client);
+        await routeManager
+          .syncServerRoutes(connectionId, client, client.currentSession)
+          .catch(() => false);
+      }
       if (controller.signal.aborted || activeActivation !== attempt)
         throw new RequestCancelledError();
       await dependencies.registry.activate(connectionId);
@@ -480,29 +489,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       }
     } else {
       notifyAccountsChanged();
-    }
-    return dependencies.registry.list();
-  });
-  handle("routes:refresh", async (_event, raw) => {
-    const connectionId = decode(Schema.String.check(Schema.isMinLength(1)), raw);
-    const account = dependencies.registry.find(connectionId);
-    if (account === null) throw new Error("Connection not found");
-    const existingClient = dependencies.clients.get(connectionId);
-    if (existingClient === undefined) {
-      const client = await restoreClient(account, new AbortController().signal, () => undefined);
-      await adoptClient(connectionId, client);
-      notifyAccountsChanged();
-      return dependencies.registry.list();
-    }
-    const session =
-      existingClient.currentSession ?? (await dependencies.registry.session(connectionId));
-    await routeManager.syncServerRoutes(connectionId, existingClient, session).catch(() => false);
-    const latest = dependencies.registry.find(connectionId);
-    if (latest !== null) {
-      const winner = await routeManager.resolveAccountRoute(latest, session);
-      if (winner.origin !== existingClient.serverOrigin)
-        await routeManager.switchClientOrigin(connectionId, existingClient, winner.origin);
-      else notifyAccountsChanged();
     }
     return dependencies.registry.list();
   });

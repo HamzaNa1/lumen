@@ -1,7 +1,8 @@
 import { type NetworkInterfaceInfo, networkInterfaces } from "node:os";
 import { classifyRouteScope, normalizeOrigin, type ServerAdvertisedRoute } from "@lumen/contracts";
 
-const WILDCARD_HOSTS = new Set(["", "0.0.0.0", "::", "[::]"]);
+const WILDCARD_IPV4_HOSTS = new Set(["0.0.0.0"]);
+const WILDCARD_ANY_HOSTS = new Set(["", "::", "[::]"]);
 
 export const isLoopbackHost = (host: string): boolean => {
   const normalized = host
@@ -47,7 +48,7 @@ export interface DetectLanRoutesOptions {
   readonly extraOrigins?: ReadonlyArray<string>;
 }
 
-/** Origins by which devices on the same local network can reach this server. */
+/** Local (loopback) and LAN origins by which clients can reach this server directly. */
 export const detectLanRoutes = (
   options: DetectLanRoutesOptions,
 ): ReadonlyArray<ServerAdvertisedRoute> => {
@@ -65,7 +66,14 @@ export const detectLanRoutes = (
   for (const extra of options.extraOrigins ?? []) push(extra);
 
   const host = options.host.trim();
-  if (WILDCARD_HOSTS.has(host)) {
+  const isWildcardIpv4 = WILDCARD_IPV4_HOSTS.has(host);
+  const isWildcardAny = WILDCARD_ANY_HOSTS.has(host);
+
+  if (isWildcardIpv4 || isWildcardAny) {
+    // Clients on the same machine can always reach a wildcard-bound server over loopback.
+    push(formatOrigin("127.0.0.1", options.port));
+    if (isWildcardAny) push(formatOrigin("::1", options.port));
+
     const candidates: Array<{ readonly origin: string; readonly rank: number }> = [];
     const table = options.interfaces ?? networkInterfaces();
     for (const entries of Object.values(table)) {
@@ -75,16 +83,19 @@ export const detectLanRoutes = (
           const rank = privateIpv4Rank(info.address);
           if (rank !== null)
             candidates.push({ origin: formatOrigin(info.address, options.port), rank });
-        } else if (info.family === "IPv6" && isUlaIpv6(info.address)) {
+        } else if (isWildcardAny && info.family === "IPv6" && isUlaIpv6(info.address)) {
           candidates.push({ origin: formatOrigin(info.address, options.port), rank: 3 });
         }
       }
     }
     candidates.sort((a, b) => a.rank - b.rank || a.origin.localeCompare(b.origin));
     for (const candidate of candidates) push(candidate.origin);
-  } else if (!isLoopbackHost(host)) {
+  } else if (isLoopbackHost(host)) {
+    const normalized = host.toLowerCase().replace(/^\[|\]$/gu, "");
+    push(formatOrigin(normalized === "localhost" ? "127.0.0.1" : normalized, options.port));
+  } else {
     const origin = formatOrigin(host, options.port);
-    if (classifyRouteScope(origin) === "lan") push(origin);
+    if (classifyRouteScope(origin) !== "remote") push(origin);
   }
 
   return routes;

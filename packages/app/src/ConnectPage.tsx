@@ -1,9 +1,11 @@
 import {
   type AccountList,
   type AccountSummary,
+  classifyRouteScope,
   MIN_PASSWORD_LENGTH,
   type ServerDiscovery,
 } from "@lumen/contracts";
+
 import { Button, Form, Modal, TextField } from "@lumen/ui";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import {
@@ -434,7 +436,9 @@ export const ConnectPage = ({
                           <strong>{candidate.displayName}</strong>
                           <span>{hostOf(candidate.origin)}</span>
                         </span>
-                        <span className="status-pill">LAN</span>
+                        <span className="status-pill">
+                          {classifyRouteScope(candidate.origin) === "local" ? "Local" : "LAN"}
+                        </span>
                         <ChevronRight aria-hidden="true" size={16} />
                       </button>
                     ))}
@@ -531,7 +535,7 @@ export const ConnectPage = ({
           if (!open) setManagingRoutesId(null);
         }}
         title={`Routes for ${managingRoutes?.serverName ?? "server"}`}
-        description="Add or check addresses used to reach this server. Local network routes are tried first."
+        description="Local and LAN routes are detected automatically and tried first."
       >
         {managingRoutes === null ? null : <ServerRoutesSection account={managingRoutes} />}
       </Modal>

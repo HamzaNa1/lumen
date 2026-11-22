@@ -261,15 +261,13 @@ export interface ClientVersions {
   readonly mpv: { readonly version: string | null } | null;
 }
 
-/** Multiple routes to a server and local-network discovery, where the client can switch origins. */
+/** Multiple routes to a server and local/LAN discovery, where the client can switch origins. */
 export interface ServerRoutesRuntime {
   /** Adds a route to a saved server connection, returning the updated accounts. */
   readonly add: (connectionId: string, origin: string) => Promise<AccountList>;
   /** Removes a route from a saved server connection, returning the updated accounts. */
   readonly remove: (connectionId: string, origin: string) => Promise<AccountList>;
-  /** Probes all routes and LAN discovery, switching to the highest-priority reachable route. */
-  readonly refresh: (connectionId: string) => Promise<AccountList>;
-  /** Scans the local network for reachable Lumen servers. */
+  /** Scans the local machine and local network for reachable Lumen servers. */
   readonly discoverLan: () => Promise<ReadonlyArray<LanServerCandidate>>;
 }
 

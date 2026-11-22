@@ -1,4 +1,5 @@
 import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { networkInterfaces } from "node:os";
 import {
   type FetchLike,
   type RouteProbeResult,
@@ -15,8 +16,13 @@ import {
   type ServerRoute,
 } from "@lumen/contracts";
 import type { AccountRegistry, StoredAccount } from "../accounts/AccountRegistry";
-import { discoverLanServers } from "./LanDiscoveryClient";
+import { configuredDiscoveryConfig, discoverLanServers } from "./LanDiscoveryClient";
 import { type AccountSession, ServerClient } from "./ServerClient";
+
+const DEFAULT_LOCAL_ORIGINS = ["http://127.0.0.1:3210"];
+const INTERFACE_POLL_INTERVAL_MS = 5_000;
+const REMOTE_RECHECK_INTERVAL_MS = 30_000;
+const FOCUS_RECHECK_COOLDOWN_MS = 10_000;
 
 export class RouteIdentityMismatchError extends Error {
   constructor(message = "Server identity changed; remove this connection and enroll it again") {
@@ -60,6 +66,44 @@ const verifyProof = (
   return actualBuf.length === expectedBuf.length && timingSafeEqual(actualBuf, expectedBuf);
 };
 
+const networkFingerprint = (): string => {
+  const entries: string[] = [];
+  for (const [name, infos] of Object.entries(networkInterfaces())) {
+    for (const info of infos ?? []) {
+      if (info.internal) continue;
+      entries.push(`${name}:${info.family}:${info.address}`);
+    }
+  }
+  entries.sort();
+  return entries.join("|");
+};
+
+const localDiscoveryOrigins = (): ReadonlyArray<string> => {
+  const override = process.env.LUMEN_E2E_LOCAL_ORIGINS?.trim();
+  if (override !== undefined) {
+    if (override === "" || override.toLowerCase() === "off") return [];
+    return override
+      .split(",")
+      .map((value) => value.trim())
+      .filter(Boolean)
+      .flatMap((value) => {
+        try {
+          return [normalizeOrigin(value)];
+        } catch {
+          return [];
+        }
+      });
+  }
+  // When e2e tests turn off LAN discovery, skip probing the host's default port 3210 too.
+  if (!configuredDiscoveryConfig().enabled) return [];
+  return DEFAULT_LOCAL_ORIGINS;
+};
+
+const scopePriority = (origin: string): number => {
+  const scope = classifyRouteScope(origin);
+  return scope === "local" ? 0 : scope === "lan" ? 1 : 2;
+};
+
 export interface RouteManagerOptions {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
@@ -69,15 +113,16 @@ export interface RouteManagerOptions {
 }
 
 /**
- * Coordinates multi-route selection, LAN auto-detection, cryptographic route verification before
- * presenting bearer tokens on candidate LAN routes, and automatic failover / LAN promotion.
+ * Coordinates multi-route selection, local and LAN auto-detection, cryptographic route verification
+ * before presenting bearer tokens on candidate routes, and automatic failover / promotion.
  */
 export class RouteManager {
   private readonly failovers = new Map<string, Promise<string | null>>();
-  private readonly lanChecks = new Map<string, Promise<void>>();
+  private readonly promotionChecks = new Map<string, Promise<void>>();
   private readonly discoverLanImpl: (
     signal?: AbortSignal,
   ) => Promise<ReadonlyArray<LanServerCandidate>>;
+  private lastFocusCheckAtMs = 0;
 
   constructor(private readonly options: RouteManagerOptions) {
     this.discoverLanImpl =
@@ -122,39 +167,36 @@ export class RouteManager {
   }
 
   /**
-   * Probes all saved routes (plus any UDP-discovered LAN route for this server) and returns the
-   * highest-priority reachable route, always prioritizing LAN over remote.
+   * Probes all saved routes (plus UDP-discovered and default local routes for this server) and
+   * returns the highest-priority reachable route: local before LAN before remote.
    */
   async resolveAccountRoute(
     account: StoredAccount,
     session: AccountSession | null,
     options: { readonly excludeOrigin?: string; readonly skipUdpDiscovery?: boolean } = {},
   ): Promise<RouteProbeResult> {
-    let udpOrigins: string[] = [];
+    let discoveredOrigins: string[] = [];
     if (!options.skipUdpDiscovery) {
       const discovered = await this.discoverLanImpl().catch(() => []);
-      udpOrigins = discovered
+      discoveredOrigins = discovered
         .filter((candidate) => candidate.serverId === account.serverId)
         .map((candidate) => candidate.origin);
     }
 
+    const dismissed = new Set(account.dismissedRoutes);
+    const localCandidates = localDiscoveryOrigins().filter((origin) => !dismissed.has(origin));
+
     const candidates = mergeServerRoutes({
       existing: account.routes,
-      detectedOrigins: udpOrigins,
+      detectedOrigins: [...discoveredOrigins, ...localCandidates],
       dismissedOrigins: account.dismissedRoutes,
     }).filter((route) =>
       options.excludeOrigin === undefined ? true : route.origin !== options.excludeOrigin,
     );
 
-    if (udpOrigins.length > 0) {
-      await this.options.registry
-        .mergeDetectedRoutes(account.serverId, udpOrigins)
-        .catch(() => false);
-    }
-
     if (candidates.length === 0) throw new ServerUnreachableError();
 
-    return selectBestRoute({
+    const winner = await selectBestRoute({
       routes: candidates,
       activeOrigin: account.origin,
       probe: async (route, signal) => {
@@ -170,12 +212,20 @@ export class RouteManager {
         return { route, origin: route.origin, identity };
       },
     });
+
+    const toStore = [...discoveredOrigins];
+    if (winner.route.source === "detected" && !toStore.includes(winner.origin))
+      toStore.push(winner.origin);
+    if (toStore.length > 0) {
+      await this.options.registry.mergeDetectedRoutes(account.serverId, toStore).catch(() => false);
+    }
+    return winner;
   }
 
   /**
-   * Fetches LAN routes advertised by the server (plus UDP LAN discovery), stores them as detected
-   * routes, and promotes the live client immediately if it is currently on a remote route and a
-   * LAN route is reachable.
+   * Fetches local and LAN routes advertised by the server (plus UDP discovery), verifies any
+   * candidate local loopback routes before saving them, and promotes the live client immediately
+   * when a higher-priority route (local > LAN > remote) is reachable.
    */
   async syncServerRoutes(
     connectionId: string,
@@ -188,29 +238,72 @@ export class RouteManager {
       client.supportsServerRoutes ? client.advertisedRoutes().catch(() => []) : Promise.resolve([]),
       this.discoverLanImpl().catch(() => []),
     ]);
-    const detectedOrigins = [
-      ...advertised.filter((route) => route.scope === "lan").map((route) => route.origin),
-      ...udp
-        .filter((candidate) => candidate.serverId === account.serverId)
-        .map((candidate) => candidate.origin),
-    ];
-    let changed = await this.options.registry.mergeDetectedRoutes(
+
+    const dismissed = new Set(account.dismissedRoutes);
+    const lanOrigins = new Set<string>();
+    const localCandidates = new Set<string>();
+
+    for (const route of advertised) {
+      if (dismissed.has(route.origin)) continue;
+      if (route.scope === "local") localCandidates.add(route.origin);
+      else if (route.scope === "lan") lanOrigins.add(route.origin);
+    }
+    for (const candidate of udp) {
+      if (candidate.serverId !== account.serverId || dismissed.has(candidate.origin)) continue;
+      if (classifyRouteScope(candidate.origin) === "local") localCandidates.add(candidate.origin);
+      else lanOrigins.add(candidate.origin);
+    }
+    for (const origin of localDiscoveryOrigins()) {
+      if (!dismissed.has(origin)) localCandidates.add(origin);
+    }
+
+    // Only keep auto-detected loopback routes that actually verify on this machine so remote
+    // devices never clutter their routes list with an unreachable 127.0.0.1 address.
+    const verifiedLocalOrigins: string[] = [];
+    if (localCandidates.size > 0) {
+      const checks = await Promise.all(
+        [...localCandidates].map(async (origin) => {
+          if (origin === client.serverOrigin) return origin;
+          const requireProof = session !== null && hasSessionToken(session);
+          try {
+            await this.verifyOrigin(
+              origin,
+              account.serverId,
+              session,
+              AbortSignal.timeout(1_000),
+              requireProof,
+            );
+            return origin;
+          } catch {
+            return null;
+          }
+        }),
+      );
+      for (const origin of checks) if (origin !== null) verifiedLocalOrigins.push(origin);
+    }
+
+    const detectedOrigins = [...verifiedLocalOrigins, ...lanOrigins];
+    const changed = await this.options.registry.mergeDetectedRoutes(
       account.serverId,
       detectedOrigins,
       { replaceDetected: client.supportsServerRoutes },
     );
 
     const updated = this.options.registry.find(connectionId);
-    if (updated !== null && classifyRouteScope(client.serverOrigin) === "remote") {
-      const lanRoutes = updated.routes.filter((route) => route.scope === "lan");
-      if (lanRoutes.length > 0) {
-        const promoted = await this.probeLanRoutes(updated, lanRoutes, session);
+    if (updated !== null) {
+      const currentPriority = scopePriority(client.serverOrigin);
+      const betterRoutes = updated.routes.filter(
+        (route) => scopePriority(route.origin) < currentPriority,
+      );
+      if (betterRoutes.length > 0) {
+        const promoted = await this.probeCandidateRoutes(updated, betterRoutes, session);
         if (promoted !== null && promoted.origin !== client.serverOrigin) {
           await this.switchClientOrigin(connectionId, client, promoted.origin);
-          changed = true;
+          return true;
         }
       }
     }
+    if (changed) this.options.onRouteChanged(connectionId, client.serverOrigin);
     return changed;
   }
 
@@ -257,36 +350,110 @@ export class RouteManager {
   }
 
   /**
-   * Re-checks LAN routes when a connection is currently on a remote route (e.g. after waking from
-   * sleep on a new network) and promotes to LAN if verified reachable.
+   * Automatically re-checks higher-priority routes (local and LAN) for a live connection and
+   * promotes it when a better route becomes reachable. When `checkCurrent` is true (e.g. after a
+   * network change or system resume), also verifies the active route and fails over if needed.
    */
-  promoteToLanIfAvailable(connectionId: string): Promise<void> {
-    const existing = this.lanChecks.get(connectionId);
+  recheckActiveRoute(
+    connectionId: string,
+    options: { readonly checkCurrent?: boolean } = {},
+  ): Promise<void> {
+    const existing = this.promotionChecks.get(connectionId);
     if (existing !== undefined) return existing;
     const task = (async () => {
       const client = this.options.clients.get(connectionId);
       const account = this.options.registry.find(connectionId);
       if (client === undefined || account === null) return;
-      if (classifyRouteScope(client.serverOrigin) === "lan") return;
       const session = client.currentSession ?? (await this.options.registry.session(connectionId));
+      const currentPriority = scopePriority(client.serverOrigin);
+
+      if (options.checkCurrent) {
+        try {
+          const winner = await this.resolveAccountRoute(account, session);
+          if (winner.origin !== client.serverOrigin)
+            await this.switchClientOrigin(connectionId, client, winner.origin);
+          await this.syncServerRoutes(connectionId, client, session).catch(() => false);
+          return;
+        } catch {
+          return;
+        }
+      }
+
+      if (currentPriority === 0) return;
+
       const udp = await this.discoverLanImpl().catch(() => []);
       const udpOrigins = udp
         .filter((candidate) => candidate.serverId === account.serverId)
         .map((candidate) => candidate.origin);
-      if (udpOrigins.length > 0)
-        await this.options.registry.mergeDetectedRoutes(account.serverId, udpOrigins);
+      const dismissed = new Set(account.dismissedRoutes);
+      const candidateOrigins = [
+        ...udpOrigins.filter((origin) => !dismissed.has(origin)),
+        ...localDiscoveryOrigins().filter((origin) => !dismissed.has(origin)),
+      ];
+      const lanUdpOrigins = udpOrigins.filter(
+        (origin) => !dismissed.has(origin) && classifyRouteScope(origin) === "lan",
+      );
+      if (lanUdpOrigins.length > 0)
+        await this.options.registry.mergeDetectedRoutes(account.serverId, lanUdpOrigins);
+
       const latest = this.options.registry.find(connectionId);
       if (latest === null) return;
-      const lanRoutes = latest.routes.filter((route) => route.scope === "lan");
-      if (lanRoutes.length === 0) return;
-      const winner = await this.probeLanRoutes(latest, lanRoutes, session);
-      if (winner !== null && winner.origin !== client.serverOrigin)
+      const higherCandidates = mergeServerRoutes({
+        existing: latest.routes,
+        detectedOrigins: candidateOrigins,
+        dismissedOrigins: latest.dismissedRoutes,
+      }).filter((route) => scopePriority(route.origin) < currentPriority);
+      if (higherCandidates.length === 0) return;
+
+      const winner = await this.probeCandidateRoutes(latest, higherCandidates, session);
+      if (winner !== null && winner.origin !== client.serverOrigin) {
+        if (winner.route.source === "detected")
+          await this.options.registry.mergeDetectedRoutes(latest.serverId, [winner.origin]);
         await this.switchClientOrigin(connectionId, client, winner.origin);
+      }
     })().finally(() => {
-      this.lanChecks.delete(connectionId);
+      this.promotionChecks.delete(connectionId);
     });
-    this.lanChecks.set(connectionId, task);
+    this.promotionChecks.set(connectionId, task);
     return task;
+  }
+
+  /** Triggers a throttled automatic route re-check when the app window regains focus. */
+  onWindowFocus(connectionId: string): void {
+    const now = Date.now();
+    if (now - this.lastFocusCheckAtMs < FOCUS_RECHECK_COOLDOWN_MS) return;
+    this.lastFocusCheckAtMs = now;
+    void this.recheckActiveRoute(connectionId);
+  }
+
+  /**
+   * Starts lightweight background monitoring for network interface changes and periodic local/LAN
+   * promotion while connected over a remote route. Returns a cleanup function.
+   */
+  startMonitoring(activeConnectionId: () => string | null): () => void {
+    let lastFingerprint = networkFingerprint();
+    const interfaceTimer = setInterval(() => {
+      const next = networkFingerprint();
+      if (next === lastFingerprint) return;
+      lastFingerprint = next;
+      const connectionId = activeConnectionId();
+      if (connectionId !== null) void this.recheckActiveRoute(connectionId, { checkCurrent: true });
+    }, INTERFACE_POLL_INTERVAL_MS);
+    interfaceTimer.unref?.();
+
+    const promotionTimer = setInterval(() => {
+      const connectionId = activeConnectionId();
+      if (connectionId === null) return;
+      const client = this.options.clients.get(connectionId);
+      if (client === undefined || scopePriority(client.serverOrigin) === 0) return;
+      void this.recheckActiveRoute(connectionId);
+    }, REMOTE_RECHECK_INTERVAL_MS);
+    promotionTimer.unref?.();
+
+    return () => {
+      clearInterval(interfaceTimer);
+      clearInterval(promotionTimer);
+    };
   }
 
   /**
@@ -325,21 +492,25 @@ export class RouteManager {
     }
   }
 
-  /** Scans the local network for reachable Lumen servers and confirms each via HTTP identity. */
+  /** Scans this machine (loopback) and the local network (UDP) for reachable Lumen servers. */
   async discoverLanCandidates(): Promise<ReadonlyArray<LanServerCandidate>> {
-    const raw = await discoverLanServers({ timeoutMs: 550 }).catch(() => []);
-    if (raw.length === 0) return [];
+    const [udpRaw, localOrigins] = await Promise.all([
+      discoverLanServers({ timeoutMs: 550 }).catch(() => []),
+      Promise.resolve(localDiscoveryOrigins()),
+    ]);
+    const origins = [...new Set([...localOrigins, ...udpRaw.map((entry) => entry.origin)])];
+    if (origins.length === 0) return [];
     const verified = await Promise.all(
-      raw.map(async (candidate): Promise<LanServerCandidate | null> => {
+      origins.map(async (origin): Promise<LanServerCandidate | null> => {
         try {
           const identity = await new ServerClient({
-            origin: candidate.origin,
+            origin,
             fetchImpl: this.options.serverTransport,
           }).identity(AbortSignal.timeout(1_200));
           return {
             serverId: identity.serverId,
             displayName: identity.displayName,
-            origin: candidate.origin,
+            origin,
           };
         } catch {
           return null;
@@ -348,19 +519,25 @@ export class RouteManager {
     );
     const byServer = new Map<string, LanServerCandidate>();
     for (const entry of verified) {
-      if (entry !== null && !byServer.has(entry.serverId)) byServer.set(entry.serverId, entry);
+      if (entry === null) continue;
+      const existing = byServer.get(entry.serverId);
+      if (existing === undefined || scopePriority(entry.origin) < scopePriority(existing.origin))
+        byServer.set(entry.serverId, entry);
     }
-    return [...byServer.values()];
+    return [...byServer.values()].sort(
+      (a, b) =>
+        scopePriority(a.origin) - scopePriority(b.origin) || a.origin.localeCompare(b.origin),
+    );
   }
 
-  private async probeLanRoutes(
+  private async probeCandidateRoutes(
     account: StoredAccount,
-    lanRoutes: ReadonlyArray<ServerRoute>,
+    routes: ReadonlyArray<ServerRoute>,
     session: AccountSession | null,
   ): Promise<RouteProbeResult | null> {
     try {
       return await selectBestRoute({
-        routes: lanRoutes,
+        routes,
         activeOrigin: account.origin,
         probe: async (route, signal) => {
           const requireProof =

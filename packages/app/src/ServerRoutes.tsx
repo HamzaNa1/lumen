@@ -1,4 +1,9 @@
-import { type AccountList, type AccountSummary, makeServerRoute } from "@lumen/contracts";
+import {
+  type AccountList,
+  type AccountSummary,
+  makeServerRoute,
+  type ServerRouteScope,
+} from "@lumen/contracts";
 import { Button, Form, TextField } from "@lumen/ui";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { CircleAlert, Trash2 } from "lucide-react";
@@ -6,6 +11,9 @@ import { useState } from "react";
 import { errorMessage } from "./format";
 import { useRuntime } from "./Runtime";
 import { ACCOUNTS_KEY } from "./Workspace";
+
+const scopeLabel = (scope: ServerRouteScope): string =>
+  scope === "local" ? "Local" : scope === "lan" ? "LAN" : "Remote";
 
 export const ServerRoutesSection = ({
   account,
@@ -49,25 +57,13 @@ export const ServerRoutesSection = ({
     onError: (cause) => setError(errorMessage(cause, "Could not remove that route")),
   });
 
-  const refresh = useMutation({
-    mutationFn: () => {
-      if (routesRuntime === null) throw new Error("Routes are unavailable here");
-      return routesRuntime.refresh(account.connectionId);
-    },
-    onSuccess: (list) => {
-      setError(null);
-      sync(list);
-    },
-    onError: (cause) => setError(errorMessage(cause, "Could not check routes")),
-  });
-
   if (routesRuntime === null) return null;
 
   const routes =
     account.routes && account.routes.length > 0
       ? account.routes
       : [makeServerRoute(account.origin, "manual")];
-  const busy = add.isPending || remove.isPending || refresh.isPending;
+  const busy = add.isPending || remove.isPending;
 
   return (
     <div className="settings-card">
@@ -75,14 +71,9 @@ export const ServerRoutesSection = ({
         <div className="settings-row-text">
           <span>Routes</span>
           <p>
-            Local network routes are tried first. Lumen switches automatically if a route stops
-            responding.
+            Local and LAN routes are detected automatically and tried first. Lumen switches routes
+            automatically if one stops responding.
           </p>
-        </div>
-        <div className="settings-row-value">
-          <Button size="sm" disabled={busy} onClick={() => refresh.mutate()}>
-            {refresh.isPending ? "Checking…" : "Check routes"}
-          </Button>
         </div>
       </div>
       {routes.map((route) => {
@@ -95,7 +86,7 @@ export const ServerRoutesSection = ({
             </div>
             <div className="settings-row-value">
               {active ? <span className="status-pill is-positive">Active</span> : null}
-              <span className="status-pill">{route.scope === "lan" ? "LAN" : "Remote"}</span>
+              <span className="status-pill">{scopeLabel(route.scope)}</span>
               {routes.length > 1 ? (
                 <Button
                   variant="icon"

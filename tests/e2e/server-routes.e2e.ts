@@ -12,14 +12,16 @@ import { selectBestRoute } from "../../packages/client/src/RouteSelector";
 import { bearerCredentials, ServerApi } from "../../packages/client/src/ServerApi";
 import { expect, Server, test } from "./support/server";
 
-test("classifies, sorts, merges routes and detects server LAN interfaces", () => {
+test("classifies, sorts, merges routes and detects server local and LAN interfaces", () => {
+  expect(classifyRouteScope("http://127.0.0.1:3210")).toBe("local");
+  expect(classifyRouteScope("http://localhost:3210")).toBe("local");
+  expect(classifyRouteScope("http://[::1]:3210")).toBe("local");
+  expect(classifyRouteScope("http://[::ffff:127.0.0.1]:3210")).toBe("local");
+
   expect(classifyRouteScope("http://192.168.1.50:3210")).toBe("lan");
   expect(classifyRouteScope("http://10.0.0.12:3210")).toBe("lan");
   expect(classifyRouteScope("http://172.16.0.4:3210")).toBe("lan");
   expect(classifyRouteScope("http://172.31.255.1:3210")).toBe("lan");
-  expect(classifyRouteScope("http://127.0.0.1:3210")).toBe("lan");
-  expect(classifyRouteScope("http://localhost:3210")).toBe("lan");
-  expect(classifyRouteScope("http://[::1]:3210")).toBe("lan");
   expect(classifyRouteScope("http://[fd12:3456::1]:3210")).toBe("lan");
   expect(classifyRouteScope("http://[::ffff:192.168.1.50]:3210")).toBe("lan");
   expect(classifyRouteScope("http://nas.local:3210")).toBe("lan");
@@ -37,10 +39,12 @@ test("classifies, sorts, merges routes and detects server LAN interfaces", () =>
       makeServerRoute("http://192.168.1.50:3210", "detected"),
       makeServerRoute("http://nas.local:3210", "manual"),
       makeServerRoute("http://10.0.0.5:3210", "detected"),
+      makeServerRoute("http://127.0.0.1:3210", "detected"),
     ],
     "http://10.0.0.5:3210",
   );
   expect(sorted.map((route) => route.origin)).toEqual([
+    "http://127.0.0.1:3210",
     "http://nas.local:3210",
     "http://10.0.0.5:3210",
     "http://192.168.1.50:3210",
@@ -53,18 +57,23 @@ test("classifies, sorts, merges routes and detects server LAN interfaces", () =>
       makeServerRoute("http://192.168.1.20:3210", "detected"),
     ],
     manualOrigins: ["http://192.168.1.20:3210"],
-    detectedOrigins: ["http://192.168.1.50:3210", "http://172.17.0.2:3210"],
+    detectedOrigins: [
+      "http://127.0.0.1:3210",
+      "http://192.168.1.50:3210",
+      "http://172.17.0.2:3210",
+    ],
     dismissedOrigins: ["http://172.17.0.2:3210"],
     replaceDetected: true,
   });
   expect(merged).toEqual([
+    { origin: "http://127.0.0.1:3210", source: "detected", scope: "local" },
     { origin: "http://192.168.1.20:3210", source: "manual", scope: "lan" },
     { origin: "http://192.168.1.50:3210", source: "detected", scope: "lan" },
     { origin: "https://media.example.com", source: "manual", scope: "remote" },
   ]);
 
   const detected = detectLanRoutes({
-    host: "0.0.0.0",
+    host: "::",
     port: 3210,
     extraOrigins: ["https://lumen.home.arpa"],
     interfaces: {
@@ -128,41 +137,47 @@ test("classifies, sorts, merges routes and detects server LAN interfaces", () =>
       ],
     },
   });
-  expect(detected.map((route) => route.origin)).toEqual([
-    "https://lumen.home.arpa",
-    "http://192.168.1.50:3210",
-    "http://172.17.0.1:3210",
-    "http://[fd00::50]:3210",
+  expect(detected).toEqual([
+    { origin: "https://lumen.home.arpa", scope: "lan" },
+    { origin: "http://127.0.0.1:3210", scope: "local" },
+    { origin: "http://[::1]:3210", scope: "local" },
+    { origin: "http://192.168.1.50:3210", scope: "lan" },
+    { origin: "http://172.17.0.1:3210", scope: "lan" },
+    { origin: "http://[fd00::50]:3210", scope: "lan" },
   ]);
-  expect(detectLanRoutes({ host: "127.0.0.1", port: 3210 })).toEqual([]);
+  expect(detectLanRoutes({ host: "127.0.0.1", port: 3210 })).toEqual([
+    { origin: "http://127.0.0.1:3210", scope: "local" },
+  ]);
 });
 
-test("selectBestRoute prioritizes LAN even when remote answers first and falls back when LAN is unreachable", async () => {
+test("selectBestRoute prioritizes local and LAN over remote and falls back when unreachable", async () => {
   const identity = { serverId: "srv-1", displayName: "Home", apiVersion: "1.0.0" };
+  const local = makeServerRoute("http://127.0.0.1:3210", "detected");
   const lan = makeServerRoute("http://192.168.1.50:3210", "detected");
   const remote = makeServerRoute("https://media.example.com", "manual");
 
-  // Remote answers immediately while LAN finishes shortly after inside the grace window -> LAN wins.
-  let releaseLan!: () => void;
-  const lanGate = new Promise<void>((resolve) => {
-    releaseLan = resolve;
+  // Local beats LAN and Remote even when Remote answers first inside the grace window.
+  let releaseLocal!: () => void;
+  const localGate = new Promise<void>((resolve) => {
+    releaseLocal = resolve;
   });
-  const lanWins = selectBestRoute({
-    routes: [remote, lan],
+  const localWins = selectBestRoute({
+    routes: [remote, lan, local],
     lanGraceMs: 500,
+    sameScopeGraceMs: 500,
     probe: async (route) => {
-      if (route.origin === lan.origin) await lanGate;
+      if (route.origin === local.origin) await localGate;
       return { route, origin: route.origin, identity };
     },
   });
-  releaseLan();
-  expect((await lanWins).origin).toBe(lan.origin);
+  releaseLocal();
+  expect((await localWins).origin).toBe(local.origin);
 
-  // LAN fails immediately -> falls back to remote without waiting.
+  // Local and LAN fail immediately -> falls back to remote without waiting.
   const fallback = await selectBestRoute({
-    routes: [lan, remote],
+    routes: [local, lan, remote],
     probe: async (route) => {
-      if (route.origin === lan.origin) throw new ServerUnreachableError();
+      if (route.scope !== "remote") throw new ServerUnreachableError();
       return { route, origin: route.origin, identity };
     },
   });
@@ -194,7 +209,7 @@ test("selectBestRoute prioritizes LAN even when remote answers first and falls b
   expect(lanAborted).toBe(true);
 });
 
-test("server advertises LAN routes, verifies session challenges without secrets, and answers UDP LAN discovery", async () => {
+test("server advertises local and LAN routes, verifies session challenges without secrets, and answers UDP LAN discovery", async () => {
   const root = test.info().outputPath("routes-server");
   const server = new Server(root);
   await server.start({
@@ -207,7 +222,7 @@ test("server advertises LAN routes, verifies session challenges without secrets,
     const info = await (await server.request("/api/v1/server")).json();
     expect(info.capabilities?.serverRoutes).toBe(true);
 
-    // Unauthenticated requests cannot read internal LAN routes.
+    // Unauthenticated requests cannot read internal local/LAN routes.
     expect((await server.request("/api/v1/server/routes")).status).toBe(401);
 
     const admin = await server.register("admin");
@@ -219,6 +234,7 @@ test("server advertises LAN routes, verifies session challenges without secrets,
       routes: [
         { origin: "http://192.168.1.50:3210", scope: "lan" },
         { origin: "https://lumen.home.arpa", scope: "lan" },
+        { origin: new URL(server.origin).origin, scope: "local" },
       ],
     });
 
