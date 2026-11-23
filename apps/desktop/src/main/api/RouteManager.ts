@@ -33,7 +33,7 @@ const DETECTED_ROUTE_TIMEOUT_MS = 1_000;
 const DETECTED_ROUTE_RETRY_DELAYS_MS = [1_000, 1_000, 2_000, 4_000];
 
 /** Failures that may pass on their own; any other answer will not change on a retry. */
-const isTransientRouteFailure = (cause: unknown): boolean =>
+export const isTransientRouteFailure = (cause: unknown): boolean =>
   cause instanceof ServerUnreachableError ||
   (cause instanceof ServerHttpError &&
     (cause.status >= 500 || cause.status === 408 || cause.status === 429)) ||
@@ -385,7 +385,7 @@ export class RouteManager {
       if (await this.promoteClient(connectionId, sync)) changed = true;
       else if (merged) this.options.onRouteListChanged?.(connectionId);
     };
-    // Each route joins as soon as it answers, while the others keep their remaining tries.
+    // Routes join after the try they answer in, while the others keep their remaining tries.
     const verified = await this.verifyDetectedOrigins(
       [...candidates],
       account.serverId,

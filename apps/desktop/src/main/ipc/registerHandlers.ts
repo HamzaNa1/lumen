@@ -30,7 +30,7 @@ import { Schema } from "effect";
 import { app, type BrowserWindow, type IpcMainInvokeEvent, ipcMain, powerMonitor } from "electron";
 import type { AccountRegistry, StoredAccount } from "../accounts/AccountRegistry";
 import { deviceIdForAccount } from "../accounts/InstallationId";
-import { hasSessionToken, RouteManager } from "../api/RouteManager";
+import { hasSessionToken, isTransientRouteFailure, RouteManager } from "../api/RouteManager";
 import { ServerClient, ServerHttpError } from "../api/ServerClient";
 import type { ArtworkCache } from "../artwork/ArtworkCache";
 import type { Account, DownloadManager } from "../downloads/DownloadManager";
@@ -211,7 +211,17 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   ): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) {
-      await validateClient(cached, signal);
+      try {
+        await validateClient(cached, signal);
+      } catch (cause) {
+        if (signal.aborted) throw new RequestCancelledError();
+        // A route answering with a server error does not fail over on its own; try another one.
+        if (!isTransientRouteFailure(cause)) throw cause;
+        const failedOrigin = cached.serverOrigin;
+        if ((await routeManager.failover(account.connectionId, cached, failedOrigin)) === null)
+          throw cause;
+        await validateClient(cached, signal);
+      }
       if (signal.aborted) throw new RequestCancelledError();
       return cached;
     }

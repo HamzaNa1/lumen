@@ -96,7 +96,7 @@ const fakeRegistry = (
           : { replaceDetected: options.replaceDetected }),
       });
       accounts.set(connectionId, { ...current, routes });
-      return true;
+      return JSON.stringify(routes) !== JSON.stringify(current.routes);
     },
     updateTls: async (connectionId: string, tls: NonNullable<StoredAccount["tls"]> | null) => {
       const current = accounts.get(connectionId);
