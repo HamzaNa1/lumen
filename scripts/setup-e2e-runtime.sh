@@ -23,7 +23,7 @@ install_linux_packages() {
     missing=$(bun run playwright install-deps --dry-run "${browsers[@]}") || status=$?
     printf '%s\n' "$missing"
     if (( status != 0 )); then
-      # Playwright 1.63 reports missing packages without installing them. Reject
+      # Playwright reports missing packages without installing them. Reject
       # unexpected output instead of silently proceeding with incomplete libraries.
       if (( status != 1 )) || ! grep -Eq '^Missing system dependencies \([0-9]+\):$' <<< "$missing"; then
         return 1
