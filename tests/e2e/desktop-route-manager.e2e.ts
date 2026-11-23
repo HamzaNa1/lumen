@@ -542,15 +542,16 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   // A route that misses its first tries joins once it answers, even after another answered at once.
   // Another server answering is final, so that route is tried once and left out.
   udp = [udpOrigin, routedUdpOrigin];
-  reply = (origin, attempt) =>
-    origin === homeLanOrigin
-      ? "stranger"
-      : origin === plainLanOrigin && attempt === 1
-        ? "busy"
-        : origin === plainLanOrigin && attempt === 2
-          ? "refuse"
-          : "answer";
+  let whileRetrying: ReturnType<typeof routesOf>;
+  reply = (origin, attempt) => {
+    if (origin === homeLanOrigin) return "stranger";
+    if (origin !== plainLanOrigin || attempt > 2) return "answer";
+    if (attempt === 2) whileRetrying = routesOf(accounts, account.connectionId);
+    return attempt === 1 ? "busy" : "refuse";
+  };
   await sync();
+  // Routes that answered on the first try were already listed while the slower one retried.
+  expect(whileRetrying).toEqual([lanOrigin, udpOrigin, routedUdpOrigin]);
   expect(routesOf(accounts, account.connectionId)).toEqual([
     lanOrigin,
     udpOrigin,

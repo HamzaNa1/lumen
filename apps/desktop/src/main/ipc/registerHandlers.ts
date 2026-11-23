@@ -1,6 +1,7 @@
 import {
   type FetchLike,
   RequestCancelledError,
+  ServerUnreachableError,
   viewerPlayback,
   WatchPlaybackController,
 } from "@lumen/client";
@@ -216,8 +217,9 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         await validateClient(cached, signal);
       } catch (cause) {
         if (signal.aborted) throw new RequestCancelledError();
-        // A route answering with an error does not fail over on its own; try another one.
-        if (!(cause instanceof ServerHttpError)) throw cause;
+        // Only an unreachable route fails over on its own. Anything else that answered there (an
+        // error, a proxy's login page or 401) may not be this server, so try another route.
+        if (cause instanceof ServerUnreachableError) throw cause;
         if ((await routeManager.failover(account.connectionId, cached, attemptedOrigin)) === null)
           throw cause;
         await validateClient(cached, signal);
