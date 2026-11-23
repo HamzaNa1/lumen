@@ -16,7 +16,8 @@ import {
 import { app } from "electron";
 import { certificateFingerprint, type PinnedTls } from "../api/PinnedCertificates";
 import type { AccountSession } from "../api/ServerClient";
-import { createTokenVault, type VaultValue, writePrivateJson } from "./TokenVault";
+import { writePrivateJson } from "../storage/writePrivateJson";
+import { createTokenVault, type VaultValue } from "./TokenVault";
 
 export interface StoredAccount {
   readonly connectionId: string;
@@ -218,6 +219,17 @@ export class AccountRegistry {
     readonly accessExpiresAtMs: number;
   }): Promise<void> {
     const origin = normalizeOrigin(input.origin);
+    const vault = await this.vaultFor(input.connectionId);
+    await vault.write(
+      JSON.stringify({
+        userId: input.userId,
+        role: input.role,
+        sessionId: input.sessionId,
+        accessToken: input.accessToken,
+        accessExpiresAtMs: input.accessExpiresAtMs,
+      }),
+    );
+    // Built after the vault write so a route a background sync learned meanwhile is kept.
     const existing = this.find(input.connectionId);
     const dismissedRoutes = (existing?.dismissedRoutes ?? []).filter(
       (dismissed) => dismissed !== origin,
@@ -256,18 +268,27 @@ export class AccountRegistry {
         record,
       ],
     };
-    const vault = await this.vaultFor(input.connectionId);
-    await vault.write(
-      JSON.stringify({
-        userId: input.userId,
-        role: input.role,
-        sessionId: input.sessionId,
-        accessToken: input.accessToken,
-        accessExpiresAtMs: input.accessExpiresAtMs,
-      }),
-    );
-    await writePrivateJson(this.path, next);
+    const previousActive = this.data.activeConnectionId;
     this.data = next;
+    try {
+      await writePrivateJson(this.path, next);
+    } catch (cause) {
+      // Undo only this sign-in, keeping whatever else changed while the write was pending.
+      this.data = {
+        activeConnectionId:
+          this.data.activeConnectionId === input.connectionId
+            ? previousActive
+            : this.data.activeConnectionId,
+        accounts: this.data.accounts.flatMap((account) =>
+          account.connectionId !== input.connectionId
+            ? [account]
+            : existing === null
+              ? []
+              : [existing],
+        ),
+      };
+      throw cause;
+    }
   }
 
   async activate(connectionId: string): Promise<void> {

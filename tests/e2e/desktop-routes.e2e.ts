@@ -1,9 +1,9 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServerAdvertisedRoutes } from "@lumen/contracts";
 import { openSettings } from "./support/browser";
 import { closeDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
-import { NetworkProxy } from "./support/proxy";
+import { latch, NetworkProxy } from "./support/proxy";
 import { password, Server } from "./support/server";
 
 test("desktop auto-detects local and LAN routes, prioritizes them over remote, supports manual routes, and fails over automatically", async () => {
@@ -50,29 +50,39 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     });
 
     // Sign in through the remote route. Servers that advertise routes auto-detect and promote the
-    // local route immediately; older released servers stay on the signed-in route without trusting
-    // unverified auto-detected origins.
+    // local route in the background once it answers; older released servers stay on the signed-in
+    // route without trusting unverified auto-detected origins.
+    // Sign-in finishes while the route list is still on its way: route sync never holds it up.
+    const routeList = latch();
+    remoteProxy.intercept = async (request) => {
+      if (request.url?.startsWith("/api/v1/server/routes")) await routeList.promise;
+      return false;
+    };
     await page.getByLabel("Server address").fill(remoteOrigin);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByLabel("Username").fill("admin");
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+    routeList.release();
 
-    const afterSignIn = await page.evaluate(() => window.lumen.accounts.list());
-    const active = afterSignIn.accounts.find(
-      (account) => account.connectionId === afterSignIn.activeConnectionId,
-    );
-    expect(active).toBeDefined();
-    expect(active?.origin).toBe(supportsServerRoutes ? serverLocalOrigin : remoteOrigin);
-    expect(active?.routes?.map((route) => [route.origin, route.scope, route.source])).toEqual(
-      supportsServerRoutes
+    const activeAccount = async () => {
+      const list = await page.evaluate(() => window.lumen.accounts.list());
+      const active = list.accounts.find((entry) => entry.connectionId === list.activeConnectionId);
+      return {
+        origin: active?.origin,
+        routes: active?.routes?.map((route) => [route.origin, route.scope, route.source]),
+      };
+    };
+    await expect.poll(activeAccount).toEqual({
+      origin: supportsServerRoutes ? serverLocalOrigin : remoteOrigin,
+      routes: supportsServerRoutes
         ? [
             [serverLocalOrigin, "local", "detected"],
             [remoteOrigin, "remote", "manual"],
           ]
         : [[remoteOrigin, "remote", "manual"]],
-    );
+    });
 
     // Open Settings -> Routes: routes are checked automatically (no manual "Check routes" button).
     const settings = await openSettings(page, "Routes");
@@ -363,6 +373,113 @@ test("desktop moves to the server's pinned LAN certificate and keeps an HTTPS si
   } finally {
     await closeDesktop(app).catch(() => undefined);
     await remoteProxy.close().catch(() => undefined);
+    await server.stop().catch(() => undefined);
+  }
+});
+
+test("a sign-in the desktop cannot save leaves no account behind", async () => {
+  const root = test.info().outputPath("unsaved-sign-in");
+  const profile = join(root, "desktop-profile");
+  const server = new Server(root);
+  let app: Awaited<ReturnType<typeof launchDesktop>> | undefined;
+  try {
+    await server.start();
+    await server.register("admin");
+    // The token is saved, but the connection list cannot be replaced.
+    await mkdir(join(profile, "connections.json"), { recursive: true });
+    app = await launchDesktop(profile, false, { LUMEN_E2E_LOCAL_ORIGINS: "off" });
+    const page = await mainDesktopPage(app);
+    await page.getByLabel("Server address").fill(server.origin);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByText(/could not save the connection/)).toBeVisible();
+    expect(await page.evaluate(() => window.lumen.accounts.list())).toMatchObject({
+      activeConnectionId: null,
+      accounts: [],
+    });
+  } finally {
+    if (app !== undefined) await closeDesktop(app).catch(() => undefined);
+    await server.stop().catch(() => undefined);
+  }
+});
+
+test("switching back to an account moves past a route that answers with something else", async () => {
+  const root = test.info().outputPath("failing-cached-route");
+  const profile = join(root, "desktop-profile");
+  const server = new Server(root);
+  let remoteProxy: NetworkProxy | undefined;
+  let lanProxy: NetworkProxy | undefined;
+  let app: Awaited<ReturnType<typeof launchDesktop>> | undefined;
+  try {
+    await server.start();
+    const admin = await server.register("admin");
+    await server.api("/users", {
+      token: admin.accessToken,
+      body: {
+        username: "viewer",
+        displayName: "Viewer",
+        password,
+        libraryAccess: { scope: "all" },
+      },
+    });
+    remoteProxy = await new NetworkProxy(server.origin).start();
+    lanProxy = await new NetworkProxy(server.origin).start();
+    const remoteOrigin = `http://remote.lumen.test:${new URL(remoteProxy.origin).port}`;
+    const lanOrigin = `http://nas.local:${new URL(lanProxy.origin).port}`;
+    // Keep the account on the remote route: no advertised routes, and the LAN route starts down.
+    let remote: "routes-hidden" | "failing" = "routes-hidden";
+    remoteProxy.intercept = async (request, response) => {
+      if (remote === "failing") {
+        // An access gateway in front of the tunnel answers with its own login page.
+        response.writeHead(200, { "content-type": "text/html" }).end("<form>Sign in</form>");
+        return true;
+      }
+      if (!request.url?.startsWith("/api/v1/server/routes")) return false;
+      response.writeHead(200, { "content-type": "application/json" }).end('{"routes":[]}');
+      return true;
+    };
+    let lanUp = false;
+    lanProxy.intercept = async (_request, response) => {
+      if (lanUp) return false;
+      response.destroy();
+      return true;
+    };
+    app = await launchDesktop(profile, false, {
+      LUMEN_E2E_HOST_RESOLVER_RULES: "MAP remote.lumen.test 127.0.0.1, MAP nas.local 127.0.0.1",
+      LUMEN_E2E_LOCAL_ORIGINS: "off",
+    });
+    const page = await mainDesktopPage(app);
+    await page.getByLabel("Server address").fill(remoteOrigin);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+    const first =
+      (await page.evaluate(() => window.lumen.accounts.list())).activeConnectionId ?? "";
+    await page.evaluate(({ id, origin }) => window.lumen.routes.add(id, origin), {
+      id: first,
+      origin: lanOrigin,
+    });
+    await page.evaluate((origin) => window.lumen.accounts.discoverServer(origin), remoteOrigin);
+    await page.evaluate(
+      ({ origin, password }) =>
+        window.lumen.accounts.connect({ origin, username: "viewer", password }),
+      { origin: remoteOrigin, password },
+    );
+
+    // Back home with the tunnel broken: the remote route errors while the saved LAN route answers.
+    remote = "failing";
+    lanUp = true;
+    const list = await page.evaluate((id) => window.lumen.accounts.activate(id), first);
+    expect(list.activeConnectionId).toBe(first);
+    expect(list.accounts.find((entry) => entry.connectionId === first)?.origin).toBe(lanOrigin);
+  } finally {
+    if (app !== undefined) await closeDesktop(app).catch(() => undefined);
+    await remoteProxy?.close().catch(() => undefined);
+    await lanProxy?.close().catch(() => undefined);
     await server.stop().catch(() => undefined);
   }
 });
