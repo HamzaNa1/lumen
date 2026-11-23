@@ -308,6 +308,7 @@ export class RouteManager {
     connectionId: string,
     client: ServerClient,
     session: AccountSession | null,
+    options: { readonly withRouteList?: boolean } = {},
   ): Promise<boolean> {
     // A caller holding a replaced client must not cancel the sync of the client that replaced it.
     if (this.options.clients.get(connectionId) !== client) return false;
@@ -315,7 +316,13 @@ export class RouteManager {
     const controller = new AbortController();
     this.routeSyncs.set(connectionId, controller);
     try {
-      return await this.runRouteSync(connectionId, client, session, controller.signal);
+      return await this.runRouteSync(
+        connectionId,
+        client,
+        session,
+        controller.signal,
+        options.withRouteList ?? true,
+      );
     } finally {
       if (this.routeSyncs.get(connectionId) === controller) this.routeSyncs.delete(connectionId);
     }
@@ -326,12 +333,13 @@ export class RouteManager {
     client: ServerClient,
     session: AccountSession | null,
     signal: AbortSignal,
+    withRouteList: boolean,
   ): Promise<boolean> {
     const account = this.options.registry.find(connectionId);
     if (account === null) return false;
     const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     const [advertised, udp] = await Promise.all([
-      client.supportsServerRoutes
+      withRouteList && client.supportsServerRoutes
         ? client.advertisedRoutes(signal).catch(() => null)
         : Promise.resolve(null),
       allowPlainHttp ? this.discoverLanImpl(signal).catch(() => []) : Promise.resolve([]),
@@ -599,14 +607,19 @@ export class RouteManager {
       const currentPriority = originPriority(client.serverOrigin);
 
       if (options.checkCurrent) {
+        let verified = true;
         try {
           const winner = await this.resolveAccountRoute(account, session);
           if (winner.origin !== client.serverOrigin)
             await this.switchClientOrigin(connectionId, client, winner.origin);
         } catch {
-          // Nothing answered yet; the sync's own tries may still reach a route.
+          verified = false;
         }
-        void this.syncServerRoutes(connectionId, client, session).catch(() => false);
+        // With no route verified, the client's address may now be another server, so the sync
+        // skips the route list (it carries the session) and only tries what it can verify itself.
+        void this.syncServerRoutes(connectionId, client, session, {
+          withRouteList: verified,
+        }).catch(() => false);
         return;
       }
 
