@@ -4,7 +4,7 @@ import { Uuid } from "./schemas/common.ts";
 export const LAN_DISCOVERY_PORT = 32_101;
 export const LAN_DISCOVERY_MULTICAST = "239.255.77.77";
 
-export const ServerRouteScope = Schema.Literals(["local", "lan", "remote"]);
+export const ServerRouteScope = Schema.Literals(["local", "lan", "vpn", "remote"]);
 export type ServerRouteScope = Schema.Schema.Type<typeof ServerRouteScope>;
 
 export const ServerRouteSource = Schema.Literals(["manual", "detected"]);
@@ -19,7 +19,8 @@ export type ServerRoute = Schema.Schema.Type<typeof ServerRoute>;
 
 export const ServerAdvertisedRoute = Schema.Struct({
   origin: Schema.String.check(Schema.isMinLength(1)),
-  scope: ServerRouteScope,
+  // Desktops released before VPN routes reject the whole list over a scope they do not know.
+  scope: Schema.Literals(["local", "lan", "remote"]),
 });
 export type ServerAdvertisedRoute = Schema.Schema.Type<typeof ServerAdvertisedRoute>;
 
@@ -34,6 +35,13 @@ export const ServerAdvertisedRoutes = Schema.Struct({
   routes: Schema.Array(ServerAdvertisedRoute),
   /** Absent when the server runs no LAN TLS listener, as on every release before it existed. */
   tls: Schema.optional(ServerTlsRoutes),
+  /**
+   * Plain HTTP and HTTPS routes over a VPN on the server, apart from `routes` so older desktops
+   * ignore them. HTTPS ones present the `tls` certificate. Absent before VPN detection existed.
+   */
+  vpnRoutes: Schema.optional(
+    Schema.Array(Schema.Struct({ origin: Schema.String.check(Schema.isMinLength(1)) })),
+  ),
 });
 export type ServerAdvertisedRoutes = Schema.Schema.Type<typeof ServerAdvertisedRoutes>;
 
@@ -82,8 +90,13 @@ export const normalizeOrigin = (value: string): string => {
   return url.origin;
 };
 
+// Tailscale, Headscale and NetBird address their tunnels from the shared space 100.64.0.0/10.
+const isSharedAddressSpaceOctets = (a: number, b: number): boolean =>
+  a === 100 && b >= 64 && b <= 127;
+
 const classifyIpv4Octets = (a: number, b: number): ServerRouteScope => {
   if (a === 127) return "local";
+  if (isSharedAddressSpaceOctets(a, b)) return "vpn";
   if (
     a === 10 ||
     (a === 172 && b >= 16 && b <= 31) ||
@@ -110,6 +123,21 @@ const parseIpv4 = (host: string): readonly [number, number, number, number] | nu
     : [a, b, c, d];
 };
 
+const parseIpv6Words = (host: string): readonly number[] | null => {
+  const normalized = host.toLowerCase();
+  if (!normalized.includes(":")) return null;
+  const halves = normalized.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const tail = halves[1] ? halves[1].split(":") : [];
+  if ([...head, ...tail].some((part) => !/^[\da-f]{1,4}$/u.test(part))) return null;
+  const missing = 8 - head.length - tail.length;
+  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null;
+  return [...head, ...Array.from({ length: missing }, () => "0"), ...tail].map((part) =>
+    Number.parseInt(part, 16),
+  );
+};
+
 const classifyIpv6 = (host: string): ServerRouteScope => {
   const normalized = host.toLowerCase();
   if (normalized === "::1") return "local";
@@ -123,6 +151,9 @@ const classifyIpv6 = (host: string): ServerRouteScope => {
     const high = Number.parseInt(mappedHex[1], 16);
     return classifyIpv4Octets((high >> 8) & 0xff, high & 0xff);
   }
+  const words = parseIpv6Words(normalized);
+  // Tailscale's IPv6 prefix, fd7a:115c:a1e0::/48.
+  if (words?.[0] === 0xfd7a && words[1] === 0x115c && words[2] === 0xa1e0) return "vpn";
   const firstGroup = /^([0-9a-f]{1,4}):/u.exec(normalized)?.[1];
   if (firstGroup === undefined) return "remote";
   const value = Number.parseInt(firstGroup, 16);
@@ -145,6 +176,8 @@ export const classifyRouteScope = (origin: string): ServerRouteScope => {
   if (ipv4 !== null) return classifyIpv4Octets(ipv4[0], ipv4[1]);
   const trimmed = host.endsWith(".") ? host.slice(0, -1) : host;
   if (trimmed === "localhost" || trimmed.endsWith(".localhost")) return "local";
+  // Tailscale's MagicDNS names.
+  if (trimmed.endsWith(".ts.net")) return "vpn";
   if (!trimmed.includes(".")) return "lan";
   return LAN_SUFFIXES.some((suffix) => trimmed.endsWith(suffix)) ? "lan" : "remote";
 };
@@ -157,64 +190,15 @@ const isPlainHttpOrigin = (origin: string): boolean => {
   }
 };
 
-const isSharedAddressSpaceOctets = (a: number, b: number): boolean =>
-  a === 100 && b >= 64 && b <= 127;
-
-const parseIpv6Words = (host: string): readonly number[] | null => {
-  const normalized = host.toLowerCase();
-  if (!normalized.includes(":")) return null;
-  const halves = normalized.split("::");
-  if (halves.length > 2) return null;
-  const head = halves[0] ? halves[0].split(":") : [];
-  const tail = halves[1] ? halves[1].split(":") : [];
-  if ([...head, ...tail].some((part) => !/^[\da-f]{1,4}$/u.test(part))) return null;
-  const missing = 8 - head.length - tail.length;
-  if ((halves.length === 1 && missing !== 0) || (halves.length === 2 && missing < 1)) return null;
-  return [...head, ...Array.from({ length: missing }, () => "0"), ...tail].map((part) =>
-    Number.parseInt(part, 16),
-  );
-};
-
-const isTailscaleOrVpnOrigin = (origin: string): boolean => {
-  let host: string;
-  try {
-    host = new URL(origin).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  const stripped = host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-  const trimmed = stripped.endsWith(".") ? stripped.slice(0, -1) : stripped;
-  if (trimmed.endsWith(".ts.net")) return true;
-  const ipv4 = parseIpv4(trimmed);
-  if (ipv4 !== null) return isSharedAddressSpaceOctets(ipv4[0], ipv4[1]);
-  if (trimmed.includes(":")) {
-    const mappedDotted = /^::ffff:(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/u.exec(trimmed);
-    if (mappedDotted?.[1] !== undefined) {
-      const octets = parseIpv4(mappedDotted[1]);
-      return octets !== null && isSharedAddressSpaceOctets(octets[0], octets[1]);
-    }
-    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/u.exec(trimmed);
-    if (mappedHex?.[1] !== undefined && mappedHex[2] !== undefined) {
-      const high = Number.parseInt(mappedHex[1], 16);
-      return isSharedAddressSpaceOctets((high >> 8) & 0xff, high & 0xff);
-    }
-    const words = parseIpv6Words(trimmed);
-    // Tailscale IPv6 ULA prefix fd7a:115c:a1e0::/48.
-    return words !== null && words[0] === 0xfd7a && words[1] === 0x115c && words[2] === 0xa1e0;
-  }
-  return false;
-};
-
 /**
  * A bearer token may be reused on auto-detected plain HTTP routes only when it was itself issued
- * over plain HTTP outside loopback and Tailscale/VPN tunnels.
+ * over plain HTTP outside loopback and VPN tunnels.
  */
 export const tokenAllowsPlainHttp = (credentialOrigin: string | null | undefined): boolean => {
   if (credentialOrigin == null) return false;
   if (!isPlainHttpOrigin(credentialOrigin)) return false;
-  if (classifyRouteScope(credentialOrigin) === "local") return false;
-  if (isTailscaleOrVpnOrigin(credentialOrigin)) return false;
-  return true;
+  const scope = classifyRouteScope(credentialOrigin);
+  return scope !== "local" && scope !== "vpn";
 };
 
 const sameOrigin = (left: string, right: string): boolean => {
@@ -245,15 +229,23 @@ export const usableServerRoutes = (
   credentialOrigin: string | null | undefined,
 ): ServerRoute[] => routes.filter((route) => !sendsTokenInClear(route, credentialOrigin));
 
-export const makeServerRoute = (origin: string, source: ServerRouteSource): ServerRoute => {
+/** `vpn` marks a route the server found on a VPN interface, whatever its address looks like. */
+export const makeServerRoute = (
+  origin: string,
+  source: ServerRouteSource,
+  vpn = false,
+): ServerRoute => {
   const normalized = normalizeOrigin(origin);
-  return { origin: normalized, source, scope: classifyRouteScope(normalized) };
+  return { origin: normalized, source, scope: vpn ? "vpn" : classifyRouteScope(normalized) };
 };
 
 const scopeRank = (scope: ServerRouteScope): number =>
-  scope === "local" ? 0 : scope === "lan" ? 1 : 2;
+  scope === "local" ? 0 : scope === "lan" ? 1 : scope === "vpn" ? 2 : 3;
 
-/** Lower is better: local before LAN before remote, and encrypted before plain HTTP within a scope. */
+/**
+ * Lower is better: local before LAN before VPN before remote, and encrypted before plain HTTP
+ * within a scope.
+ */
 export const routePriority = (route: Pick<ServerRoute, "origin" | "scope">): number =>
   scopeRank(route.scope) * 2 + (isPlainHttpOrigin(route.origin) ? 1 : 0);
 
@@ -261,8 +253,8 @@ const routeTier = (route: ServerRoute): number =>
   routePriority(route) * 2 + (route.source === "manual" ? 0 : 1);
 
 /**
- * Orders routes by priority: local before LAN before remote, encrypted before plain HTTP, manual
- * before auto-detected, active first within a tier.
+ * Orders routes by priority: local before LAN before VPN before remote, encrypted before plain
+ * HTTP, manual before auto-detected, active first within a tier.
  */
 export const sortServerRoutes = (
   routes: ReadonlyArray<ServerRoute>,
@@ -286,6 +278,8 @@ export const mergeServerRoutes = (options: {
   readonly existing?: ReadonlyArray<ServerRoute>;
   readonly manualOrigins?: ReadonlyArray<string>;
   readonly detectedOrigins?: ReadonlyArray<string>;
+  /** Origins the server advertised as VPN routes; existing VPN routes keep their scope. */
+  readonly vpnOrigins?: ReadonlyArray<string>;
   readonly dismissedOrigins?: ReadonlyArray<string>;
   /**
    * When set, auto-detected routes that would send this token over plain HTTP are dropped. Manual
@@ -295,19 +289,25 @@ export const mergeServerRoutes = (options: {
   /** When true, existing auto-detected routes not in `detectedOrigins` are pruned. */
   readonly replaceDetected?: boolean;
 }): ServerRoute[] => {
-  const dismissed = new Set<string>();
-  for (const origin of options.dismissedOrigins ?? []) {
-    try {
-      dismissed.add(normalizeOrigin(origin));
-    } catch {}
-  }
+  const normalizedSet = (origins: ReadonlyArray<string> = []): Set<string> => {
+    const set = new Set<string>();
+    for (const origin of origins) {
+      try {
+        set.add(normalizeOrigin(origin));
+      } catch {}
+    }
+    return set;
+  };
+  const dismissed = normalizedSet(options.dismissedOrigins);
+  const vpn = normalizedSet(options.vpnOrigins);
   const byOrigin = new Map<string, ServerRoute>();
   for (const route of options.existing ?? []) {
     try {
       const normalized = normalizeOrigin(route.origin);
       if (route.source === "detected" && (options.replaceDetected || dismissed.has(normalized)))
         continue;
-      const nextRoute = makeServerRoute(normalized, route.source);
+      if (route.scope === "vpn") vpn.add(normalized);
+      const nextRoute = makeServerRoute(normalized, route.source, vpn.has(normalized));
       if (
         route.source === "detected" &&
         options.credentialOrigin !== undefined &&
@@ -322,14 +322,14 @@ export const mergeServerRoutes = (options: {
   for (const origin of options.manualOrigins ?? []) {
     try {
       const normalized = normalizeOrigin(origin);
-      byOrigin.set(normalized, makeServerRoute(normalized, "manual"));
+      byOrigin.set(normalized, makeServerRoute(normalized, "manual", vpn.has(normalized)));
     } catch {}
   }
   for (const origin of options.detectedOrigins ?? []) {
     try {
       const normalized = normalizeOrigin(origin);
       if (dismissed.has(normalized) || byOrigin.has(normalized)) continue;
-      const nextRoute = makeServerRoute(normalized, "detected");
+      const nextRoute = makeServerRoute(normalized, "detected", vpn.has(normalized));
       if (
         options.credentialOrigin !== undefined &&
         sendsTokenInClear(nextRoute, options.credentialOrigin)

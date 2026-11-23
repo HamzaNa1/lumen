@@ -70,7 +70,7 @@ const probeUdpDiscovery = async (
   });
 };
 
-test("classifies, sorts, merges routes and detects server local and LAN interfaces", async () => {
+test("classifies, sorts, merges routes and detects server local, LAN and VPN interfaces", async () => {
   expect(classifyRouteScope("http://127.0.0.1:3210")).toBe("local");
   expect(classifyRouteScope("http://localhost:3210")).toBe("local");
   expect(classifyRouteScope("http://[::1]:3210")).toBe("local");
@@ -86,8 +86,15 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
   expect(classifyRouteScope("https://lumen.home.arpa")).toBe("lan");
   expect(classifyRouteScope("http://homeserver:3210")).toBe("lan");
 
+  expect(classifyRouteScope("http://100.64.0.5:3210")).toBe("vpn");
+  expect(classifyRouteScope("http://100.127.255.254:3210")).toBe("vpn");
+  expect(classifyRouteScope("http://[::ffff:100.101.102.103]:3210")).toBe("vpn");
+  expect(classifyRouteScope("http://[fd7a:115c:a1e0::1]:3210")).toBe("vpn");
+  expect(classifyRouteScope("https://box.tail1234.ts.net.")).toBe("vpn");
+  expect(classifyRouteScope("http://[fd7a:115c:a1e1::1]:3210")).toBe("lan");
+
   expect(classifyRouteScope("https://media.example.com")).toBe("remote");
-  expect(classifyRouteScope("http://100.64.0.5:3210")).toBe("remote");
+  expect(classifyRouteScope("http://100.128.0.1:3210")).toBe("remote");
   expect(classifyRouteScope("http://172.32.0.1:3210")).toBe("remote");
   expect(classifyRouteScope("http://1.1.1.1:3210")).toBe("remote");
 
@@ -99,6 +106,9 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
       makeServerRoute("http://10.0.0.5:3210", "detected"),
       makeServerRoute("http://127.0.0.1:3210", "detected"),
       makeServerRoute("https://192.168.1.50:3211", "detected"),
+      makeServerRoute("http://100.64.0.5:3210", "detected"),
+      // The server found this one on a VPN interface, so it is VPN whatever its address says.
+      makeServerRoute("http://10.8.0.1:3210", "detected", true),
     ],
     "http://10.0.0.5:3210",
   );
@@ -109,6 +119,8 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
     "http://nas.local:3210",
     "http://10.0.0.5:3210",
     "http://192.168.1.50:3210",
+    "http://100.64.0.5:3210",
+    "http://10.8.0.1:3210",
     "https://media.example.com",
   ]);
 
@@ -132,6 +144,31 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
     { origin: "http://192.168.1.50:3210", source: "detected", scope: "lan" },
     { origin: "https://media.example.com", source: "manual", scope: "remote" },
   ]);
+
+  // The server's VPN label sticks to a route through later merges and a manual re-add.
+  const withVpn = mergeServerRoutes({
+    existing: merged,
+    detectedOrigins: ["http://10.8.0.1:3210"],
+    vpnOrigins: ["http://10.8.0.1:3210"],
+  });
+  expect(withVpn.find((route) => route.origin === "http://10.8.0.1:3210")).toEqual({
+    origin: "http://10.8.0.1:3210",
+    source: "detected",
+    scope: "vpn",
+  });
+  expect(
+    mergeServerRoutes({ existing: withVpn, manualOrigins: ["http://10.8.0.1:3210"] }).find(
+      (route) => route.origin === "http://10.8.0.1:3210",
+    ),
+  ).toEqual({ origin: "http://10.8.0.1:3210", source: "manual", scope: "vpn" });
+  // A server that stops calling it a VPN route, once it answers with a fresh list, relabels it.
+  expect(
+    mergeServerRoutes({
+      existing: withVpn,
+      detectedOrigins: ["http://10.8.0.1:3210"],
+      replaceDetected: true,
+    }).find((route) => route.origin === "http://10.8.0.1:3210")?.scope,
+  ).toBe("lan");
 
   // Bearer-token transport rule: only tokens issued over plain HTTP outside loopback and
   // Tailscale/VPN tunnels may be reused on auto-detected plain HTTP routes.
@@ -167,6 +204,16 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
   expect(sendsTokenInClear(detectedLan, "http://100.101.102.103:3210")).toBe(true);
   expect(sendsTokenInClear(detectedLan, "http://192.168.1.10:3210")).toBe(false);
   expect(sendsTokenInClear(detectedLocal, "http://192.168.1.10:3210")).toBe(false);
+  // A VPN route follows the same transport rule as a LAN one.
+  const detectedVpn = makeServerRoute("http://10.8.0.1:3210", "detected", true);
+  expect(sendsTokenInClear(detectedVpn, "https://media.example.com")).toBe(true);
+  expect(sendsTokenInClear(detectedVpn, "http://192.168.1.10:3210")).toBe(false);
+  expect(
+    sendsTokenInClear(
+      makeServerRoute("https://10.8.0.1:3211", "detected", true),
+      "https://media.example.com",
+    ),
+  ).toBe(false);
 
   expect(
     usableServerRoutes(
@@ -188,7 +235,9 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
     }),
   ).toEqual([detectedHttpsLan, manualLan, manualHttps]);
 
-  const { detectLanRoutes } = await import("../../apps/server/src/http/LanRoutes");
+  const { advertisedRoutes, detectLanRoutes } = await import(
+    "../../apps/server/src/http/LanRoutes"
+  );
   const detectedInterfaces: NonNullable<Parameters<typeof detectLanRoutes>[0]["interfaces"]> = {
     lo: [
       {
@@ -238,7 +287,7 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
         cidr: "fd00::50/64",
       },
     ],
-    utun: [
+    utun4: [
       {
         address: "100.64.0.5",
         netmask: "255.192.0.0",
@@ -246,6 +295,57 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
         mac: "00:00:00:00:00:00",
         internal: false,
         cidr: "100.64.0.5/10",
+      },
+      {
+        address: "fd7a:115c:a1e0::5",
+        netmask: "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff",
+        family: "IPv6",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        scopeid: 0,
+        cidr: "fd7a:115c:a1e0::5/128",
+      },
+      // A tunnel's link-local address needs a zone a URL cannot carry.
+      {
+        address: "fe80::5",
+        netmask: "ffff:ffff:ffff:ffff::",
+        family: "IPv6",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        scopeid: 9,
+        cidr: "fe80::5/64",
+      },
+    ],
+    // WireGuard addresses look like any LAN; the interface says otherwise.
+    wg0: [
+      {
+        address: "10.8.0.1",
+        netmask: "255.255.255.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "10.8.0.1/24",
+      },
+    ],
+    // A public address on a tunnel is a VPN provider's exit, which no client can reach.
+    tun0: [
+      {
+        address: "203.0.113.9",
+        netmask: "255.255.255.255",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "203.0.113.9/32",
+      },
+    ],
+    "ZeroTier One [8056c2e21c000001]": [
+      {
+        address: "172.24.0.3",
+        netmask: "255.255.0.0",
+        family: "IPv4",
+        mac: "aa:bb:cc:00:00:03",
+        internal: false,
+        cidr: "172.24.0.3/16",
       },
     ],
   };
@@ -262,7 +362,41 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
     { origin: "http://192.168.1.50:3210", scope: "lan" },
     { origin: "http://172.17.0.1:3210", scope: "lan" },
     { origin: "http://[fd00::50]:3210", scope: "lan" },
+    { origin: "http://10.8.0.1:3210", scope: "vpn" },
+    { origin: "http://100.64.0.5:3210", scope: "vpn" },
+    { origin: "http://172.24.0.3:3210", scope: "vpn" },
+    { origin: "http://[fd7a:115c:a1e0::5]:3210", scope: "vpn" },
   ]);
+  // A server bound to one VPN address advertises it as VPN, by its interface or its range.
+  expect(detectLanRoutes({ host: "10.8.0.1", port: 3210, interfaces: detectedInterfaces })).toEqual(
+    [{ origin: "http://10.8.0.1:3210", scope: "vpn" }],
+  );
+  expect(detectLanRoutes({ host: "100.64.0.5", port: 3210, interfaces: {} })).toEqual([
+    { origin: "http://100.64.0.5:3210", scope: "vpn" },
+  ]);
+  // VPN routes travel in their own list, since released desktops reject the scope in the others.
+  expect(
+    advertisedRoutes(detected, {
+      certificate: "pem",
+      routes: [
+        { origin: "https://127.0.0.1:3211", scope: "local" },
+        { origin: "https://10.8.0.1:3211", scope: "vpn" },
+      ],
+    }),
+  ).toEqual({
+    routes: detected.filter((route) => route.scope !== "vpn"),
+    tls: { certificate: "pem", routes: [{ origin: "https://127.0.0.1:3211", scope: "local" }] },
+    vpnRoutes: [
+      { origin: "http://10.8.0.1:3210" },
+      { origin: "http://100.64.0.5:3210" },
+      { origin: "http://172.24.0.3:3210" },
+      { origin: "http://[fd7a:115c:a1e0::5]:3210" },
+      { origin: "https://10.8.0.1:3211" },
+    ],
+  });
+  expect(advertisedRoutes([{ origin: "http://127.0.0.1:3210", scope: "local" }], null)).toEqual({
+    routes: [{ origin: "http://127.0.0.1:3210", scope: "local" }],
+  });
   expect(detectLanRoutes({ host: "127.0.0.1", port: 3210 })).toEqual([
     { origin: "http://127.0.0.1:3210", scope: "local" },
   ]);
@@ -279,7 +413,7 @@ test("classifies, sorts, merges routes and detects server local and LAN interfac
   ]);
 });
 
-test("selectBestRoute prioritizes local and LAN over remote and falls back when unreachable", async () => {
+test("selectBestRoute prioritizes local and LAN over VPN and remote and falls back when unreachable", async () => {
   const identity = { serverId: "srv-1", displayName: "Home", apiVersion: "1.0.0" };
   const local = makeServerRoute("http://127.0.0.1:3210", "detected");
   const lan = makeServerRoute("http://192.168.1.50:3210", "detected");
@@ -336,13 +470,28 @@ test("selectBestRoute prioritizes local and LAN over remote and falls back when 
   });
   expect(blackholeFallback.origin).toBe(remote.origin);
   expect(lanAborted).toBe(true);
+
+  // A VPN answering first is off the server's network, so a LAN route still gets the LAN grace.
+  const vpn = makeServerRoute("http://10.8.0.1:3210", "detected", true);
+  const lanOverVpn = await selectBestRoute({
+    routes: [vpn, lan],
+    lanGraceMs: 60_000,
+    sameScopeGraceMs: 0,
+    probe: async (route) => {
+      // The LAN answers only once the VPN's answer has been weighed.
+      if (route.origin === lan.origin) await new Promise((resolve) => setImmediate(resolve));
+      return { route, origin: route.origin, identity };
+    },
+  });
+  expect(lanOverVpn.origin).toBe(lan.origin);
 });
 
-test("server advertises local, LAN and pinned TLS routes, verifies session challenges without secrets, and answers UDP LAN discovery", async () => {
+test("server advertises local, LAN, VPN and pinned TLS routes, verifies session challenges without secrets, and answers UDP LAN discovery", async () => {
   const root = test.info().outputPath("routes-server");
   const server = new Server(root);
   const environment = {
-    LUMEN_LAN_ORIGINS: "http://192.168.1.50:3210,https://lumen.home.arpa",
+    LUMEN_LAN_ORIGINS:
+      "http://192.168.1.50:3210,https://lumen.home.arpa,https://box.tail1234.ts.net:3211",
     LUMEN_E2E_DISCOVERY_PORT: "0",
     LUMEN_TLS_PORT: "0",
   };
@@ -374,6 +523,7 @@ test("server advertises local, LAN and pinned TLS routes, verifies session chall
           { origin: expect.stringMatching(/^https:\/\/127\.0\.0\.1:\d+$/u), scope: "local" },
         ],
       },
+      vpnRoutes: [{ origin: "https://box.tail1234.ts.net:3211" }],
     });
     const certificate = advertised.tls?.certificate ?? "";
 

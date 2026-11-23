@@ -16,6 +16,7 @@ import {
   normalizeOrigin,
   routePriority,
   type ServerRoute,
+  type ServerRouteScope,
   sendsTokenInClear,
   tokenAllowsPlainHttp,
   usableServerRoutes,
@@ -126,8 +127,12 @@ const localDiscoveryOrigins = (): ReadonlyArray<string> => {
   return DEFAULT_LOCAL_ORIGINS;
 };
 
-const originPriority = (origin: string): number =>
-  routePriority({ origin, scope: classifyRouteScope(origin) });
+/** A saved route's scope, which may be the server's VPN label, or what the address looks like. */
+const originScope = (account: StoredAccount | null, origin: string): ServerRouteScope =>
+  account?.routes.find((route) => route.origin === origin)?.scope ?? classifyRouteScope(origin);
+
+const originPriority = (origin: string, account: StoredAccount | null = null): number =>
+  routePriority({ origin, scope: originScope(account, origin) });
 
 /**
  * When a viewer explicitly configured a local loopback route (for example a local reverse proxy
@@ -347,7 +352,19 @@ export class RouteManager {
     const stale = () => signal.aborted || this.options.clients.get(connectionId) !== client;
     if (stale()) return false;
 
-    const advertisedRoutes = [...(advertised?.routes ?? []), ...(advertised?.tls?.routes ?? [])];
+    // An older server sends no VPN list, so the routes saved from an earlier answer keep theirs.
+    const vpnOrigins = new Set(
+      advertised === null
+        ? account.routes.filter((route) => route.scope === "vpn").map((route) => route.origin)
+        : (advertised.vpnRoutes ?? []).map((route) => route.origin),
+    );
+    const scopeOf = (origin: string): ServerRouteScope =>
+      vpnOrigins.has(origin) ? "vpn" : classifyRouteScope(origin);
+    const advertisedRoutes: ReadonlyArray<Pick<ServerRoute, "origin" | "scope">> = [
+      ...(advertised?.routes ?? []),
+      ...(advertised?.tls?.routes ?? []),
+      ...(advertised?.vpnRoutes ?? []).map(({ origin }) => ({ origin, scope: "vpn" as const })),
+    ];
     if (advertised !== null) {
       // Routes from LUMEN_LAN_ORIGINS are listed apart from the TLS routes but use the same
       // certificate, and the pin must cover them before they can verify.
@@ -371,8 +388,8 @@ export class RouteManager {
     const candidates = new Set<string>();
     const eligible = (origin: string, anyScope = false): boolean => {
       if (dismissed.has(origin) || !allowsDetectedOrigin(account, origin)) return false;
-      const scope = classifyRouteScope(origin);
-      return scope === "local" ? !manualLocal : scope === "lan" || anyScope;
+      const scope = scopeOf(origin);
+      return scope === "local" ? !manualLocal : scope !== "remote" || anyScope;
     };
     for (const route of advertisedRoutes)
       if (route.scope !== "remote" && eligible(route.origin)) candidates.add(route.origin);
@@ -388,6 +405,7 @@ export class RouteManager {
       if (stale()) return;
       const merged = await this.options.registry.mergeDetectedRoutes(connectionId, detected, {
         replaceDetected: replace,
+        vpnOrigins: [...vpnOrigins],
       });
       changed ||= merged;
       if (stale()) return;
@@ -403,20 +421,21 @@ export class RouteManager {
     );
     if (stale()) return false;
     // No LAN route answering usually means this device is away from the server's network, so the
-    // routes it learned stay for its return. Once one answers, the rest are unreachable from here.
+    // routes it learned stay for its return. Once one answers, the other LAN routes are unreachable
+    // from here. Whether a VPN route answers depends on this device's VPN, so it stays either way.
     const latest = this.options.registry.find(connectionId);
     if (latest === null) return false;
-    const kept = verified.some((origin) => classifyRouteScope(origin) === "lan")
-      ? []
-      : latest.routes
-          .filter(
-            (route) =>
-              route.source === "detected" &&
-              (candidates.has(route.origin) ||
-                (eligible(route.origin, true) &&
-                  advertisedRoutes.some((advertised) => advertised.origin === route.origin))),
-          )
-          .map((route) => route.origin);
+    const onServerNetwork = verified.some((origin) => scopeOf(origin) === "lan");
+    const kept = latest.routes
+      .filter(
+        (route) =>
+          route.source === "detected" &&
+          (!onServerNetwork || scopeOf(route.origin) === "vpn") &&
+          (candidates.has(route.origin) ||
+            (eligible(route.origin, true) &&
+              advertisedRoutes.some((advertised) => advertised.origin === route.origin))),
+      )
+      .map((route) => route.origin);
     await commit([...new Set([...verified, ...kept])], advertised !== null);
     return changed && !stale();
   }
@@ -425,9 +444,9 @@ export class RouteManager {
   private async promoteClient(connectionId: string, sync: RouteSync): Promise<boolean> {
     const account = this.options.registry.find(connectionId);
     if (account === null) return false;
-    const currentPriority = originPriority(sync.client.serverOrigin);
+    const currentPriority = originPriority(sync.client.serverOrigin, account);
     const betterRoutes = usableServerRoutes(account.routes, account.credentialOrigin).filter(
-      (route) => originPriority(route.origin) < currentPriority,
+      (route) => routePriority(route) < currentPriority,
     );
     if (betterRoutes.length === 0) return false;
     const promoted = await this.probeCandidateRoutes(account, betterRoutes, sync.session);
@@ -604,7 +623,7 @@ export class RouteManager {
       const account = this.options.registry.find(connectionId);
       if (client === undefined || account === null) return;
       const session = client.currentSession ?? (await this.options.registry.session(connectionId));
-      const currentPriority = originPriority(client.serverOrigin);
+      const currentPriority = originPriority(client.serverOrigin, account);
 
       if (options.checkCurrent) {
         let verified = true;
@@ -658,7 +677,7 @@ export class RouteManager {
           credentialOrigin: latest.credentialOrigin,
         }),
         latest.credentialOrigin,
-      ).filter((route) => originPriority(route.origin) < currentPriority);
+      ).filter((route) => routePriority(route) < currentPriority);
       if (higherCandidates.length === 0) return;
 
       const winner = await this.probeCandidateRoutes(latest, higherCandidates, session);
@@ -701,7 +720,11 @@ export class RouteManager {
       const connectionId = activeConnectionId();
       if (connectionId === null) return;
       const client = this.options.clients.get(connectionId);
-      if (client === undefined || originPriority(client.serverOrigin) === 0) return;
+      if (
+        client === undefined ||
+        originPriority(client.serverOrigin, this.options.registry.find(connectionId)) === 0
+      )
+        return;
       void this.recheckActiveRoute(connectionId);
     }, REMOTE_RECHECK_INTERVAL_MS);
     promotionTimer.unref?.();
