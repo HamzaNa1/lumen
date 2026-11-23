@@ -1260,7 +1260,6 @@ button.nav-item {
 }
 .media-card-skeleton {
   display: grid;
-  gap: 7px;
 }
 .media-card-skeleton > span {
   display: block;
@@ -1272,11 +1271,15 @@ button.nav-item {
 .media-card-skeleton > span:first-child {
   height: auto;
   aspect-ratio: 2 / 3;
-  margin-bottom: 3px;
+  margin-bottom: 13px;
   border-radius: var(--radius);
+}
+.media-card-skeleton > span:nth-child(2) {
+  margin-bottom: 7px;
 }
 .media-card-skeleton > span:last-child {
   width: 45%;
+  margin-bottom: 4px;
 }
 .load-more {
   display: flex;

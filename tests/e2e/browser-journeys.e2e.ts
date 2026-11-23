@@ -14,6 +14,7 @@ import {
   playing,
   settingsValue,
   signIn,
+  startPlayback,
 } from "./support/browser";
 import { openDatabase } from "./support/database";
 import { encode } from "./support/encode";
@@ -262,19 +263,7 @@ test("each title remembers volume and episode navigation crosses seasons and ski
   ]);
   await signIn(page, server);
   const episode = async (season: string, title: string) => {
-    await page.goto(`${server.origin}web/library/${shows.id}`);
-    await page
-      .getByRole("button", { name: "Play Serial", exact: true })
-      .first()
-      .click({ force: true });
-    await page
-      .getByRole("button", { name: `Play ${season}`, exact: true })
-      .first()
-      .click({ force: true });
-    await page
-      .getByRole("button", { name: `Play ${title}`, exact: true })
-      .first()
-      .click({ force: true });
+    await startPlayback(page, server, shows.id, ["Serial", season, title]);
     await playing(page);
     await pause(page);
   };
