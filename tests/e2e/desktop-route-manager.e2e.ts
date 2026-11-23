@@ -448,6 +448,8 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   const plainLanOrigin = "http://192.168.1.50:3210";
   const homeLanOrigin = "https://lumen.home.arpa";
   const udpOrigin = "http://192.168.1.70:3210";
+  // A LAN can use publicly routed addresses; a UDP reply still came from this network.
+  const routedUdpOrigin = "http://203.0.113.7:3210";
   let udp: string[] = [];
   let discovering: Promise<void> | undefined;
   const accounts = new Map<string, StoredAccount>();
@@ -539,7 +541,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
 
   // A route that misses its first tries joins once it answers, even after another answered at once.
   // Another server answering is final, so that route is tried once and left out.
-  udp = [udpOrigin];
+  udp = [udpOrigin, routedUdpOrigin];
   reply = (origin, attempt) =>
     origin === homeLanOrigin
       ? "stranger"
@@ -549,7 +551,12 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
           ? "refuse"
           : "answer";
   await sync();
-  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, udpOrigin, plainLanOrigin]);
+  expect(routesOf(accounts, account.connectionId)).toEqual([
+    lanOrigin,
+    udpOrigin,
+    plainLanOrigin,
+    routedUdpOrigin,
+  ]);
   expect(attempts.get(plainLanOrigin)).toBe(3);
   expect(attempts.get(udpOrigin)).toBe(1);
   expect(attempts.get(homeLanOrigin)).toBe(1);
@@ -562,7 +569,12 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   attempts.clear();
   reply = () => "refuse";
   await sync();
-  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, udpOrigin, plainLanOrigin]);
+  expect(routesOf(accounts, account.connectionId)).toEqual([
+    lanOrigin,
+    udpOrigin,
+    plainLanOrigin,
+    routedUdpOrigin,
+  ]);
   expect(attempts.get(plainLanOrigin)).toBe(5);
   expect(attempts.get(homeLanOrigin)).toBe(5);
 
@@ -634,6 +646,24 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   discovering = undefined;
   await Promise.all([periodic, woken]);
   await expect.poll(() => routeLists).toBeGreaterThan(listsBefore);
+
+  // A check still holding a replaced client cannot cancel the sync of the client that replaced it.
+  hangAborted = false;
+  holdRouteList = true;
+  const listingAgain = new Promise<void>((resolve) => {
+    hanging = resolve;
+  });
+  const current = sync();
+  await listingAgain;
+  const replaced = new ServerClient({ origin: lanOrigin, fetchImpl: transport });
+  expect(
+    await manager.syncServerRoutes(account.connectionId, replaced, client.currentSession),
+  ).toBe(false);
+  expect(hangAborted).toBe(false);
+  holdRouteList = false;
+  const after = sync();
+  expect(await current).toBe(false);
+  await after;
 
   // Signing out stops the tries still to come.
   attempts.clear();

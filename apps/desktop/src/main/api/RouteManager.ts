@@ -309,6 +309,8 @@ export class RouteManager {
     client: ServerClient,
     session: AccountSession | null,
   ): Promise<boolean> {
+    // A caller holding a replaced client must not cancel the sync of the client that replaced it.
+    if (this.options.clients.get(connectionId) !== client) return false;
     this.routeSyncs.get(connectionId)?.abort();
     const controller = new AbortController();
     this.routeSyncs.set(connectionId, controller);
@@ -359,14 +361,16 @@ export class RouteManager {
     const manualLocal = hasManualLocalRoute(account);
     const dismissed = new Set(account.dismissedRoutes);
     const candidates = new Set<string>();
-    const consider = (origin: string): void => {
+    const consider = (origin: string, fromThisNetwork = false): void => {
       if (dismissed.has(origin) || !allowsDetectedOrigin(account, origin)) return;
       const scope = classifyRouteScope(origin);
-      if (scope === "lan" || (scope === "local" && !manualLocal)) candidates.add(origin);
+      if (scope === "local" ? !manualLocal : scope === "lan" || fromThisNetwork)
+        candidates.add(origin);
     };
     for (const route of advertisedRoutes) if (route.scope !== "remote") consider(route.origin);
+    // A UDP reply came from this network, even from an address that looks public.
     for (const candidate of udp)
-      if (candidate.serverId === account.serverId) consider(candidate.origin);
+      if (candidate.serverId === account.serverId) consider(candidate.origin, true);
     for (const origin of localDiscoveryOrigins()) consider(origin);
 
     const sync = { client, session, signal, stale };
