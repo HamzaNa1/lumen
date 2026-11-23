@@ -17,7 +17,7 @@ import type { RequestContext } from "./http/ClientIdentity";
 import { type HttpServices, makeHttpHandler } from "./http/HttpApp";
 import { type HttpServer, type HttpUpgrade, serveHttp } from "./http/HttpServer";
 import { startLanDiscovery } from "./http/LanDiscovery";
-import { detectLanRoutes } from "./http/LanRoutes";
+import { advertisedRoutes, detectLanRoutes } from "./http/LanRoutes";
 import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
 import { loadTlsCertificate } from "./http/TlsCertificate";
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
@@ -260,16 +260,16 @@ const startConfiguredServer = async (
       jobs: services.jobs,
       identity: services.identity,
       serverName: services.serverName,
-      lanRoutes: () => ({
-        routes: detectLanRoutes({
-          host: config.host,
-          port: listeningPort,
-          extraOrigins: config.lanOrigins,
-        }),
-        ...(tlsListener === null
-          ? {}
-          : {
-              tls: {
+      lanRoutes: () =>
+        advertisedRoutes(
+          detectLanRoutes({
+            host: config.host,
+            port: listeningPort,
+            extraOrigins: config.lanOrigins,
+          }),
+          tlsListener === null
+            ? null
+            : {
                 certificate: tlsListener.certificate,
                 routes: detectLanRoutes({
                   host: config.host,
@@ -277,8 +277,7 @@ const startConfiguredServer = async (
                   protocol: "https",
                 }),
               },
-            }),
-      }),
+        ),
       metadataSettings: services.metadataSettings,
       transcodingSettings: services.transcodingSettings,
       tmdb: services.tmdb,

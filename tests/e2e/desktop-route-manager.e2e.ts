@@ -82,7 +82,10 @@ const fakeRegistry = (
     mergeDetectedRoutes: async (
       connectionId: string,
       detectedOrigins: ReadonlyArray<string>,
-      options?: { readonly replaceDetected?: boolean },
+      options: {
+        readonly replaceDetected?: boolean;
+        readonly vpnOrigins?: ReadonlyArray<string>;
+      } = {},
     ) => {
       const current = accounts.get(connectionId);
       if (current === undefined) return false;
@@ -91,9 +94,7 @@ const fakeRegistry = (
         detectedOrigins,
         dismissedOrigins: current.dismissedRoutes,
         credentialOrigin: current.credentialOrigin,
-        ...(options?.replaceDetected === undefined
-          ? {}
-          : { replaceDetected: options.replaceDetected }),
+        ...options,
       });
       accounts.set(connectionId, { ...current, routes });
       return JSON.stringify(routes) !== JSON.stringify(current.routes);
@@ -723,6 +724,93 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   };
   expect(await sync()).toBe(false);
   expect(attempts.get(strayOrigin)).toBe(1);
+});
+
+test("desktop keeps the server's VPN routes as VPN and moves from one to the LAN at home", async ({
+  server,
+  admin,
+}) => {
+  const { RouteManager } = await import("../../apps/desktop/src/main/api/RouteManager");
+  const info = await (await server.request("/api/v1/server")).json();
+  const localOrigin = new URL(server.origin).origin;
+  const lanOrigin = "http://192.168.1.20:3210";
+  const homeOrigin = "http://192.168.1.50:3210";
+  // WireGuard's address looks like a LAN one, and the server lists it as LAN for released desktops;
+  // only its VPN list says it is a VPN route.
+  const wireguardOrigin = "http://10.8.0.1:3210";
+  const tailscaleOrigin = "http://100.100.1.2:3210";
+  const routeList: ServerAdvertisedRoutes = {
+    routes: [
+      { origin: homeOrigin, scope: "lan" },
+      { origin: wireguardOrigin, scope: "lan" },
+    ],
+    vpnRoutes: [{ origin: wireguardOrigin }, { origin: tailscaleOrigin }],
+  };
+  let reachable = [lanOrigin, homeOrigin, wireguardOrigin, tailscaleOrigin];
+  const transport: FetchLike = (url, init) => {
+    if (!reachable.includes(url.origin)) return refused();
+    if (url.pathname === "/api/v1/server/routes") return Promise.resolve(json(routeList));
+    return fetch(new URL(url.pathname + url.search, localOrigin), init);
+  };
+  const accounts = new Map<string, StoredAccount>();
+  const account: StoredAccount = {
+    connectionId: "conn",
+    serverId: info.serverId,
+    serverName: info.displayName,
+    origin: lanOrigin,
+    credentialOrigin: lanOrigin,
+    routes: [makeServerRoute(lanOrigin, "manual")],
+    dismissedRoutes: [localOrigin, "http://127.0.0.1:3210"],
+    username: "admin",
+    userId: admin.userId,
+    role: "admin",
+    lastConnectedAtMs: Date.now(),
+  };
+  accounts.set(account.connectionId, account);
+  const client = new ServerClient({ origin: lanOrigin, fetchImpl: transport });
+  client.setSession(sessionOf(admin));
+  await client.identity();
+  const switches: string[] = [];
+  const manager = new RouteManager({
+    registry: fakeRegistry(accounts, admin),
+    clients: new Map([[account.connectionId, client]]),
+    serverTransport: transport,
+    onRouteChanged: (_connectionId, origin) => switches.push(origin),
+    discoverLan: async () => [],
+    detectedRouteRetryDelaysMs: zeroDelays,
+  });
+  const sync = () => manager.syncServerRoutes(account.connectionId, client, client.currentSession);
+  const scopes = () =>
+    accounts.get(account.connectionId)?.routes.map((route) => [route.origin, route.scope]);
+  const everyRoute = [
+    [lanOrigin, "lan"],
+    [homeOrigin, "lan"],
+    [wireguardOrigin, "vpn"],
+    [tailscaleOrigin, "vpn"],
+  ];
+
+  // At home with the VPN up, every route answers and the VPN ones rank after the LAN.
+  await sync();
+  expect(scopes()).toEqual(everyRoute);
+  expect(switches).toEqual([]);
+
+  // At home with the VPN down, the LAN answering says nothing about the VPN routes, so they stay.
+  reachable = [lanOrigin, homeOrigin];
+  await sync();
+  expect(scopes()).toEqual(everyRoute);
+
+  // Away over the VPN, the client moves to it, and a VPN route answering is no sign of the LAN,
+  // so the LAN route it learned stays for its return.
+  reachable = [wireguardOrigin, tailscaleOrigin];
+  await manager.recheckActiveRoute(account.connectionId, { checkCurrent: true });
+  expect(client.serverOrigin).toBe(wireguardOrigin);
+  await sync();
+  expect(scopes()).toEqual(everyRoute);
+
+  // Back home, the periodic check moves it from the VPN to the LAN.
+  reachable = [lanOrigin, homeOrigin, wireguardOrigin, tailscaleOrigin];
+  await manager.recheckActiveRoute(account.connectionId);
+  expect(switches).toEqual([wireguardOrigin, lanOrigin]);
 });
 
 test("desktop account file ends with the latest of overlapping writes", async () => {
