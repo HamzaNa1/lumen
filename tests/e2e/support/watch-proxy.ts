@@ -13,6 +13,7 @@ export class WatchProxy {
   origin = "";
   hold = false;
   interruptHello = false;
+  pongs = 0;
   /** Messages held for a client, by type, in the order the server sent them. */
   readonly pending: { type: string; send: () => void }[] = [];
   private readonly connections = new Set<Socket>();
@@ -42,6 +43,7 @@ export class WatchProxy {
       remote.on("message", (data) => {
         const message = data.toString();
         const { type } = JSON.parse(message) as { type: string };
+        if (type === "pong") this.pongs += 1;
         if (this.interruptHello && type === "ready") {
           this.interruptHello = false;
           client.close();

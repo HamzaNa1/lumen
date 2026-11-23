@@ -50,10 +50,11 @@ export class WatchGroupClient {
     string,
     { resolve: () => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }
   >();
-  private offsetMs = 0;
+  private serverAnchor: { readonly serverTimeMs: number; readonly atMs: number } | null = null;
   private bestRtt = Infinity;
   private lastRtt: number | null = null;
-  private lastPong = 0;
+  private lastPongAt = 0;
+  private lastPongWallMs = 0;
   private holdsForBuffering = false;
   private takesBuffers = false;
   private displayName: string | null = null;
@@ -86,7 +87,9 @@ export class WatchGroupClient {
   }
 
   get serverNow(): number {
-    return Date.now() + this.offsetMs;
+    return this.serverAnchor === null
+      ? Date.now()
+      : this.serverAnchor.serverTimeMs + (performance.now() - this.serverAnchor.atMs);
   }
 
   /** The latest and fastest round trip to the server, and the clock offset the fastest gave. */
@@ -100,7 +103,7 @@ export class WatchGroupClient {
       roundTripMs: this.lastRtt,
       bestRoundTripMs: measured ? this.bestRtt : null,
       // Until a fresh measurement, positions still follow the offset measured before.
-      clockOffsetMs: measured || this.lastRtt !== null ? this.offsetMs : null,
+      clockOffsetMs: this.serverAnchor === null ? null : this.serverNow - Date.now(),
     };
   }
 
@@ -134,7 +137,8 @@ export class WatchGroupClient {
           clearTimeout(timeout);
           this.attempts = 0;
           this.bestRtt = Infinity;
-          this.lastPong = Date.now();
+          this.lastPongAt = performance.now();
+          this.lastPongWallMs = Date.now();
           this.holdsForBuffering = message.holdsForBuffering === true;
           this.takesBuffers = message.sharesBuffers === true;
           this.displayName = message.displayName ?? null;
@@ -144,13 +148,17 @@ export class WatchGroupClient {
             group: null,
             error: null,
           });
-          void this.request({ type: "ping", sentAtMs: Date.now() }).catch(() => socket.close());
+          void this.request({ type: "ping", sentAtMs: performance.now() }).catch(() =>
+            socket.close(),
+          );
           this.heartbeat = setInterval(() => {
-            if (Date.now() - this.lastPong > HEARTBEAT_TIMEOUT_MS) {
+            if (performance.now() - this.lastPongAt > HEARTBEAT_TIMEOUT_MS) {
               socket.close();
               return;
             }
-            void this.request({ type: "ping", sentAtMs: Date.now() }).catch(() => socket.close());
+            void this.request({ type: "ping", sentAtMs: performance.now() }).catch(() =>
+              socket.close(),
+            );
           }, WATCH_HEARTBEAT_INTERVAL_MS);
           // A leave can arrive while authentication is in flight, after resume intent was
           // sent. Withdraw any transferred membership before recovering the current intent.
@@ -170,12 +178,14 @@ export class WatchGroupClient {
               pending.reject(new WatchRequestRejected(message.error, message.retryAfterMs ?? null));
           }
         } else if (message.type === "pong") {
-          this.lastPong = Date.now();
-          const rtt = Date.now() - message.sentAtMs;
+          const now = performance.now();
+          this.lastPongAt = now;
+          this.lastPongWallMs = Date.now();
+          const rtt = now - message.sentAtMs;
           if (rtt >= 0) this.lastRtt = rtt;
           if (rtt >= 0 && rtt < this.bestRtt) {
             this.bestRtt = rtt;
-            this.offsetMs = message.serverTimeMs - (message.sentAtMs + rtt / 2);
+            this.serverAnchor = { serverTimeMs: message.serverTimeMs + rtt / 2, atMs: now };
           }
         } else if (message.type === "groups") this.update({ groups: message.groups });
         else if (message.type === "buffers") this.update({ buffers: message.buffers });
@@ -230,7 +240,8 @@ export class WatchGroupClient {
       this.connect();
     } else if (
       this.status.connection === "connected" &&
-      Date.now() - this.lastPong > HEARTBEAT_TIMEOUT_MS / 2
+      Math.max(performance.now() - this.lastPongAt, Date.now() - this.lastPongWallMs) >
+        HEARTBEAT_TIMEOUT_MS / 2
     ) {
       this.attempts = 0;
       socket.close();
