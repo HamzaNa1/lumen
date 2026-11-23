@@ -35,7 +35,8 @@ const DETECTED_ROUTE_RETRY_DELAYS_MS = [1_000, 1_000, 2_000, 4_000];
 /** Failures that may pass on their own; any other answer will not change on a retry. */
 const isTransientRouteFailure = (cause: unknown): boolean =>
   cause instanceof ServerUnreachableError ||
-  (cause instanceof ServerHttpError && (cause.status >= 500 || cause.status === 429)) ||
+  (cause instanceof ServerHttpError &&
+    (cause.status >= 500 || cause.status === 408 || cause.status === 429)) ||
   (cause instanceof Error && cause.name === "TimeoutError");
 
 const waitUnlessAborted = (ms: number, signal: AbortSignal): Promise<void> =>
@@ -568,7 +569,14 @@ export class RouteManager {
     options: { readonly checkCurrent?: boolean } = {},
   ): Promise<void> {
     const existing = this.promotionChecks.get(connectionId);
-    if (existing !== undefined) return existing;
+    // A wake or network change still needs its own full check after an ordinary one in progress.
+    if (existing !== undefined)
+      return options.checkCurrent
+        ? existing.then(
+            () => this.recheckActiveRoute(connectionId, options),
+            () => this.recheckActiveRoute(connectionId, options),
+          )
+        : existing;
     const task = (async () => {
       const client = this.options.clients.get(connectionId);
       const account = this.options.registry.find(connectionId);

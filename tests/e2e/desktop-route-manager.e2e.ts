@@ -449,6 +449,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   const homeLanOrigin = "https://lumen.home.arpa";
   const udpOrigin = "http://192.168.1.70:3210";
   let udp: string[] = [];
+  let discovering: Promise<void> | undefined;
   const accounts = new Map<string, StoredAccount>();
   const account: StoredAccount = {
     connectionId: "conn",
@@ -466,12 +467,13 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   };
   accounts.set(account.connectionId, account);
 
-  type Reply = "answer" | "refuse" | "stranger" | "hang";
+  type Reply = "answer" | "refuse" | "busy" | "stranger" | "hang";
   let reply: (origin: string, attempt: number) => Reply = () => "answer";
   const attempts = new Map<string, number>();
   let hanging: (() => void) | null = null;
   let hangAborted = false;
   let holdRouteList = false;
+  let routeLists = 0;
   const hang = (init: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {
       init.signal?.addEventListener("abort", () => {
@@ -481,6 +483,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
       hanging?.();
     });
   const transport: FetchLike = (url, init) => {
+    if (url.pathname === "/api/v1/server/routes") routeLists += 1;
     if (holdRouteList && url.pathname === "/api/v1/server/routes") return hang(init);
     if (url.origin === lanOrigin)
       return fetch(new URL(url.pathname + url.search, localOrigin), init);
@@ -489,6 +492,8 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
     switch (reply(url.origin, attempt)) {
       case "refuse":
         return refused();
+      case "busy":
+        return Promise.resolve(new Response("", { status: 408 }));
       case "stranger":
         return Promise.resolve(json({ ...info, serverId: "another-server" }));
       case "hang":
@@ -506,8 +511,14 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
     clients,
     serverTransport: transport,
     onRouteChanged: () => undefined,
-    discoverLan: async () =>
-      udp.map((origin) => ({ serverId: info.serverId, displayName: info.displayName, origin })),
+    discoverLan: async () => {
+      await discovering;
+      return udp.map((origin) => ({
+        serverId: info.serverId,
+        displayName: info.displayName,
+        origin,
+      }));
+    },
     detectedRouteRetryDelaysMs: zeroDelays,
   });
   const sync = () => manager.syncServerRoutes(account.connectionId, client, client.currentSession);
@@ -527,9 +538,11 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   reply = (origin, attempt) =>
     origin === homeLanOrigin
       ? "stranger"
-      : origin === plainLanOrigin && attempt < 3
-        ? "refuse"
-        : "answer";
+      : origin === plainLanOrigin && attempt === 1
+        ? "busy"
+        : origin === plainLanOrigin && attempt === 2
+          ? "refuse"
+          : "answer";
   await sync();
   expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, udpOrigin, plainLanOrigin]);
   expect(attempts.get(plainLanOrigin)).toBe(3);
@@ -600,6 +613,19 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   );
   await manager.recheckActiveRoute(account.connectionId);
   expect(routesOf(accounts, account.connectionId)).toEqual(learned);
+
+  // A wake or network change during a periodic check still gets its full sync once that check ends.
+  let discovered: () => void = () => undefined;
+  discovering = new Promise<void>((resolve) => {
+    discovered = resolve;
+  });
+  const periodic = manager.recheckActiveRoute(account.connectionId);
+  const woken = manager.recheckActiveRoute(account.connectionId, { checkCurrent: true });
+  const listsBefore = routeLists;
+  discovered();
+  discovering = undefined;
+  await Promise.all([periodic, woken]);
+  await expect.poll(() => routeLists).toBeGreaterThan(listsBefore);
 
   // Signing out stops the tries still to come.
   attempts.clear();

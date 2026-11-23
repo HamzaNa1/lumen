@@ -219,6 +219,17 @@ export class AccountRegistry {
     readonly accessExpiresAtMs: number;
   }): Promise<void> {
     const origin = normalizeOrigin(input.origin);
+    const vault = await this.vaultFor(input.connectionId);
+    await vault.write(
+      JSON.stringify({
+        userId: input.userId,
+        role: input.role,
+        sessionId: input.sessionId,
+        accessToken: input.accessToken,
+        accessExpiresAtMs: input.accessExpiresAtMs,
+      }),
+    );
+    // Built after the vault write so a route a background sync learned meanwhile is kept.
     const existing = this.find(input.connectionId);
     const dismissedRoutes = (existing?.dismissedRoutes ?? []).filter(
       (dismissed) => dismissed !== origin,
@@ -257,18 +268,8 @@ export class AccountRegistry {
         record,
       ],
     };
-    const vault = await this.vaultFor(input.connectionId);
-    await vault.write(
-      JSON.stringify({
-        userId: input.userId,
-        role: input.role,
-        sessionId: input.sessionId,
-        accessToken: input.accessToken,
-        accessExpiresAtMs: input.accessExpiresAtMs,
-      }),
-    );
-    await writePrivateJson(this.path, next);
     this.data = next;
+    await writePrivateJson(this.path, next);
   }
 
   async activate(connectionId: string): Promise<void> {
