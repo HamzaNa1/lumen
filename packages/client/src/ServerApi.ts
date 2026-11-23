@@ -468,9 +468,13 @@ export class ServerApi {
   }
 
   /** Local-network routes the server reports for itself; empty on older servers. */
-  async advertisedRoutes(): Promise<ServerAdvertisedRoutes> {
+  async advertisedRoutes(signal?: AbortSignal): Promise<ServerAdvertisedRoutes> {
     if (!this.supportsServerRoutes) return { routes: [] };
-    return this.request("/api/v1/server/routes", { cache: "no-store" }, ServerAdvertisedRoutes);
+    return this.request(
+      "/api/v1/server/routes",
+      signal === undefined ? { cache: "no-store" } : { cache: "no-store", signal },
+      ServerAdvertisedRoutes,
+    );
   }
 
   /** Asks the server to prove it holds `sessionId` without presenting the bearer secret. */

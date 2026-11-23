@@ -66,10 +66,3 @@ export const createTokenVault = async (fileName: string): Promise<VaultValue> =>
     },
   };
 };
-
-export const writePrivateJson = async (filePath: string, value: unknown): Promise<void> => {
-  const temporary = `${filePath}.${randomBytes(6).toString("hex")}.tmp`;
-  await mkdir(dirname(filePath), { recursive: true });
-  await writeFile(temporary, JSON.stringify(value), { mode: 0o600 });
-  await rename(temporary, filePath);
-};

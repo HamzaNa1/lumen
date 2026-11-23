@@ -1,3 +1,4 @@
+import { readFile } from "node:fs/promises";
 import { get, request } from "node:https";
 import {
   makeServerRoute,
@@ -446,6 +447,8 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   const lanOrigin = "http://192.168.1.20:3210";
   const plainLanOrigin = "http://192.168.1.50:3210";
   const homeLanOrigin = "https://lumen.home.arpa";
+  const udpOrigin = "http://192.168.1.70:3210";
+  let udp: string[] = [];
   const accounts = new Map<string, StoredAccount>();
   const account: StoredAccount = {
     connectionId: "conn",
@@ -454,7 +457,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
     origin: lanOrigin,
     credentialOrigin: lanOrigin,
     routes: [makeServerRoute(lanOrigin, "manual")],
-    // Loopback routes would answer at once and end the retries this test is about.
+    // Loopback routes would answer at once; the test lets them in only where it means to.
     dismissedRoutes: [localOrigin, "http://127.0.0.1:3210"],
     username: "admin",
     userId: admin.userId,
@@ -468,7 +471,17 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   const attempts = new Map<string, number>();
   let hanging: (() => void) | null = null;
   let hangAborted = false;
+  let holdRouteList = false;
+  const hang = (init: RequestInit) =>
+    new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener("abort", () => {
+        hangAborted = true;
+        reject(init.signal?.reason);
+      });
+      hanging?.();
+    });
   const transport: FetchLike = (url, init) => {
+    if (holdRouteList && url.pathname === "/api/v1/server/routes") return hang(init);
     if (url.origin === lanOrigin)
       return fetch(new URL(url.pathname + url.search, localOrigin), init);
     const attempt = (attempts.get(url.origin) ?? 0) + (url.pathname === "/api/v1/server" ? 1 : 0);
@@ -479,13 +492,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
       case "stranger":
         return Promise.resolve(json({ ...info, serverId: "another-server" }));
       case "hang":
-        return new Promise((_resolve, reject) => {
-          init.signal?.addEventListener("abort", () => {
-            hangAborted = true;
-            reject(init.signal?.reason);
-          });
-          hanging?.();
-        });
+        return hang(init);
       case "answer":
         return fetch(new URL(url.pathname + url.search, localOrigin), init);
     }
@@ -499,38 +506,62 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
     clients,
     serverTransport: transport,
     onRouteChanged: () => undefined,
-    discoverLan: async () => [],
+    discoverLan: async () =>
+      udp.map((origin) => ({ serverId: info.serverId, displayName: info.displayName, origin })),
     detectedRouteRetryDelaysMs: zeroDelays,
   });
   const sync = () => manager.syncServerRoutes(account.connectionId, client, client.currentSession);
+  const update = (change: Partial<StoredAccount>) =>
+    accounts.set(account.connectionId, {
+      ...(accounts.get(account.connectionId) ?? account),
+      ...change,
+    });
+  const backOnLan = () => {
+    client.setServerOrigin(lanOrigin);
+    update({ origin: lanOrigin });
+  };
 
-  // A route that misses its first tries joins once it answers. Another server answering is final,
-  // so that route is tried once and left out.
+  // A route that misses its first tries joins once it answers, even after another answered at once.
+  // Another server answering is final, so that route is tried once and left out.
+  udp = [udpOrigin];
   reply = (origin, attempt) =>
-    origin === homeLanOrigin ? "stranger" : attempt < 3 ? "refuse" : "answer";
+    origin === homeLanOrigin
+      ? "stranger"
+      : origin === plainLanOrigin && attempt < 3
+        ? "refuse"
+        : "answer";
   await sync();
-  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, plainLanOrigin]);
+  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, udpOrigin, plainLanOrigin]);
   expect(attempts.get(plainLanOrigin)).toBe(3);
+  expect(attempts.get(udpOrigin)).toBe(1);
   expect(attempts.get(homeLanOrigin)).toBe(1);
 
-  // Away from the server's network nothing answers: every try is spent, the learned route stays
+  // Away from the server's network nothing answers: every try is spent, the learned routes stay
   // for when the device returns, and no new one joins.
   attempts.clear();
   reply = () => "refuse";
   await sync();
-  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, plainLanOrigin]);
+  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, udpOrigin, plainLanOrigin]);
   expect(attempts.get(plainLanOrigin)).toBe(5);
   expect(attempts.get(homeLanOrigin)).toBe(5);
 
-  // Once one route answers, the ones that did not are unreachable from here and leave.
+  // Once a LAN route answers, the ones that used every try without answering leave.
   attempts.clear();
   reply = (origin) => (origin === homeLanOrigin ? "answer" : "refuse");
   await sync();
   expect(routesOf(accounts, account.connectionId)).toEqual([homeLanOrigin, lanOrigin]);
-  expect(attempts.get(plainLanOrigin)).toBe(1);
+  expect(attempts.get(plainLanOrigin)).toBe(5);
+
+  // Only loopback answering says nothing about the LAN, so the learned LAN route stays.
+  backOnLan();
+  update({ dismissedRoutes: ["http://127.0.0.1:3210"] });
+  reply = (origin) => (origin === localOrigin ? "answer" : "refuse");
+  await sync();
+  expect(routesOf(accounts, account.connectionId)).toEqual([localOrigin, homeLanOrigin, lanOrigin]);
+  update({ dismissedRoutes: [localOrigin, "http://127.0.0.1:3210"] });
 
   // A newer sync cancels the one still waiting on a route, which then changes nothing.
-  client.setServerOrigin(lanOrigin);
+  backOnLan();
   reply = (origin) => (origin === plainLanOrigin ? "hang" : "refuse");
   const waiting = new Promise<void>((resolve) => {
     hanging = resolve;
@@ -543,6 +574,52 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   expect(hangAborted).toBe(true);
   await second;
   expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, plainLanOrigin]);
+
+  // It also stops waiting for a route list that has not arrived.
+  hangAborted = false;
+  holdRouteList = true;
+  const listing = new Promise<void>((resolve) => {
+    hanging = resolve;
+  });
+  const stalled = sync();
+  await listing;
+  holdRouteList = false;
+  const fresh = sync();
+  expect(await stalled).toBe(false);
+  expect(hangAborted).toBe(true);
+  await fresh;
+
+  // Restoring an account and the periodic check keep a discovered route only once it answers.
+  const strayOrigin = "http://192.168.1.90:3210";
+  udp = [strayOrigin];
+  reply = () => "refuse";
+  const learned = routesOf(accounts, account.connectionId);
+  await manager.resolveAccountRoute(
+    accounts.get(account.connectionId) ?? account,
+    client.currentSession,
+  );
+  await manager.recheckActiveRoute(account.connectionId);
+  expect(routesOf(accounts, account.connectionId)).toEqual(learned);
+
+  // Signing out stops the tries still to come.
+  attempts.clear();
+  reply = (_origin, attempt) => {
+    if (attempt === 1) clients.delete(account.connectionId);
+    return "refuse";
+  };
+  expect(await sync()).toBe(false);
+  expect(attempts.get(strayOrigin)).toBe(1);
+});
+
+test("desktop account file ends with the latest of overlapping writes", async () => {
+  const { writePrivateJson } = await import("../../apps/desktop/src/main/storage/writePrivateJson");
+  const path = test.info().outputPath("connections.json");
+  // Background route sync writes while sign-in and activation do. The larger, older snapshot takes
+  // longer to write, so it lands last unless writes to one file keep their order.
+  const older = { accounts: "x".repeat(8_000_000) };
+  const newer = { accounts: "latest" };
+  await Promise.all([writePrivateJson(path, older), writePrivateJson(path, newer)]);
+  expect(JSON.parse(await readFile(path, "utf8"))).toEqual(newer);
 });
 
 /** GETs a JSON path over HTTPS, trusting what `pins` trusts for the origin's host. */

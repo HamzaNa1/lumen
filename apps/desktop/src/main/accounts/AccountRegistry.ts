@@ -16,7 +16,8 @@ import {
 import { app } from "electron";
 import { certificateFingerprint, type PinnedTls } from "../api/PinnedCertificates";
 import type { AccountSession } from "../api/ServerClient";
-import { createTokenVault, type VaultValue, writePrivateJson } from "./TokenVault";
+import { writePrivateJson } from "../storage/writePrivateJson";
+import { createTokenVault, type VaultValue } from "./TokenVault";
 
 export interface StoredAccount {
   readonly connectionId: string;

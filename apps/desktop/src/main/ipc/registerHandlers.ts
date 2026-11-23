@@ -210,8 +210,6 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   ): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) {
-      await routeManager.recheckActiveRoute(account.connectionId);
-      if (signal.aborted) throw new RequestCancelledError();
       await validateClient(cached, signal);
       if (signal.aborted) throw new RequestCancelledError();
       return cached;
@@ -397,12 +395,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         dependencies.registry.find(connectionId) === null
       )
         throw new RequestCancelledError();
-      if (dependencies.clients.get(connectionId) !== client) {
-        dependencies.clients.set(connectionId, client);
-        void routeManager
-          .syncServerRoutes(connectionId, client, client.currentSession)
-          .catch(() => false);
-      }
+      dependencies.clients.set(connectionId, client);
+      void routeManager
+        .syncServerRoutes(connectionId, client, client.currentSession)
+        .catch(() => false);
       if (controller.signal.aborted || activeActivation !== attempt)
         throw new RequestCancelledError();
       await dependencies.registry.activate(connectionId);

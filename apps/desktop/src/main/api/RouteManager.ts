@@ -143,6 +143,14 @@ const allowsDetectedOrigin = (account: StoredAccount, origin: string): boolean =
   }
 };
 
+/** One background route sync: whom it serves, and whether a newer one or a sign-out replaced it. */
+interface RouteSync {
+  readonly client: ServerClient;
+  readonly session: AccountSession | null;
+  readonly signal: AbortSignal;
+  readonly stale: () => boolean;
+}
+
 export interface RouteManagerOptions {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
@@ -279,24 +287,18 @@ export class RouteManager {
       },
     });
 
-    const toStore = [...discoveredOrigins];
-    if (winner.route.source === "detected" && !toStore.includes(winner.origin))
-      toStore.push(winner.origin);
-    if (toStore.length > 0) {
+    if (winner.route.source === "detected") {
       await this.options.registry
-        .mergeDetectedRoutes(account.connectionId, toStore)
+        .mergeDetectedRoutes(account.connectionId, [winner.origin])
         .catch(() => false);
     }
     return winner;
   }
 
   /**
-   * Fetches local and LAN routes advertised by the server (plus UDP discovery) and adds the ones
-   * that verify from this device, then promotes the live client when a higher-priority route
-   * (local > LAN > remote, encrypted > plain) is reachable. Runs in the background: it takes as
-   * long as its retries do, so nothing waits on it. A newer sync for the same connection cancels
-   * it. The server's LAN certificate is pinned from the same answer, which arrived over the route
-   * this account's token already travels, so the pin is exactly as trustworthy as that route.
+   * Adds the local and LAN routes that answer from this device and promotes the client to a better
+   * one. Its retries take seconds, so callers must not wait on it; a newer sync cancels it. The LAN
+   * certificate is pinned from an answer that came over the route this token already travels.
    */
   async syncServerRoutes(
     connectionId: string,
@@ -324,7 +326,7 @@ export class RouteManager {
     const allowPlainHttp = tokenAllowsPlainHttp(account.credentialOrigin);
     const [advertised, udp] = await Promise.all([
       client.supportsServerRoutes
-        ? client.advertisedRoutes().catch(() => null)
+        ? client.advertisedRoutes(signal).catch(() => null)
         : Promise.resolve(null),
       allowPlainHttp ? this.discoverLanImpl(signal).catch(() => []) : Promise.resolve([]),
     ]);
@@ -337,7 +339,7 @@ export class RouteManager {
       // certificate, and the pin must cover them before they can verify.
       const pinnedOrigins = new Set(advertised.tls?.routes.map((route) => route.origin));
       for (const route of advertisedRoutes)
-        if (route.scope !== "remote" && new URL(route.origin).protocol === "https:")
+        if (route.scope !== "remote" && /^https:/iu.test(route.origin))
           pinnedOrigins.add(route.origin);
       const pinned = await this.options.registry
         .updateTls(
@@ -363,72 +365,78 @@ export class RouteManager {
       if (candidate.serverId === account.serverId) consider(candidate.origin);
     for (const origin of localDiscoveryOrigins()) consider(origin);
 
+    const sync = { client, session, signal, stale };
+    let changed = false;
+    const commit = async (detected: ReadonlyArray<string>, replace: boolean): Promise<void> => {
+      if (stale()) return;
+      const merged = await this.options.registry.mergeDetectedRoutes(connectionId, detected, {
+        replaceDetected: replace,
+      });
+      changed ||= merged;
+      if (stale()) return;
+      if (await this.promoteClient(connectionId, sync)) changed = true;
+      else if (merged) this.options.onRouteChanged(connectionId, client.serverOrigin);
+    };
+    // Each route joins as soon as it answers, while the others keep their remaining tries.
     const verified = await this.verifyDetectedOrigins(
       [...candidates],
       account.serverId,
-      client,
-      session,
-      signal,
+      sync,
+      (answered) => commit(answered, false),
     );
     if (stale()) return false;
-    // Nothing answering usually means this device is away from the server's network, so the routes
-    // it already learned stay for when it returns. Once one answers, the rest are not reachable here.
+    // No LAN route answering usually means this device is away from the server's network, so the
+    // routes it learned stay for its return. Once one answers, the rest are unreachable from here.
     const latest = this.options.registry.find(connectionId);
     if (latest === null) return false;
-    const detectedOrigins =
-      verified.length > 0
-        ? verified
-        : latest.routes
-            .filter((route) => route.source === "detected" && candidates.has(route.origin))
-            .map((route) => route.origin);
-    const changed = await this.options.registry.mergeDetectedRoutes(
-      account.connectionId,
-      detectedOrigins,
-      { replaceDetected: advertised !== null },
-    );
+    const kept = verified.some((origin) => classifyRouteScope(origin) === "lan")
+      ? []
+      : latest.routes
+          .filter((route) => route.source === "detected" && candidates.has(route.origin))
+          .map((route) => route.origin);
+    await commit([...new Set([...verified, ...kept])], advertised !== null);
+    return changed && !stale();
+  }
 
-    const updated = this.options.registry.find(connectionId);
-    if (updated !== null && !stale()) {
-      const currentPriority = originPriority(client.serverOrigin);
-      const betterRoutes = usableServerRoutes(updated.routes, updated.credentialOrigin).filter(
-        (route) => originPriority(route.origin) < currentPriority,
-      );
-      if (betterRoutes.length > 0) {
-        const promoted = await this.probeCandidateRoutes(updated, betterRoutes, session);
-        if (promoted !== null && promoted.origin !== client.serverOrigin && !stale()) {
-          await this.switchClientOrigin(connectionId, client, promoted.origin);
-          return true;
-        }
-      }
-    }
-    if (changed) this.options.onRouteChanged(connectionId, client.serverOrigin);
-    return changed;
+  /** Moves the client to a stored route that ranks above its current one and answers. */
+  private async promoteClient(connectionId: string, sync: RouteSync): Promise<boolean> {
+    const account = this.options.registry.find(connectionId);
+    if (account === null) return false;
+    const currentPriority = originPriority(sync.client.serverOrigin);
+    const betterRoutes = usableServerRoutes(account.routes, account.credentialOrigin).filter(
+      (route) => originPriority(route.origin) < currentPriority,
+    );
+    if (betterRoutes.length === 0) return false;
+    const promoted = await this.probeCandidateRoutes(account, betterRoutes, sync.session);
+    if (promoted === null || promoted.origin === sync.client.serverOrigin || sync.stale())
+      return false;
+    await this.switchClientOrigin(connectionId, sync.client, promoted.origin);
+    return true;
   }
 
   /**
-   * Verifies auto-detected origins together, retrying those that failed in a way that may pass.
-   * Stops at the first try in which any origin verifies and returns the ones that did; returns
-   * none when every try fails or the sync is cancelled.
+   * Tries each origin up to five times, retrying only failures that may pass, and hands the ones
+   * each try verifies to `onVerified`. Returns every origin that verified.
    */
   private async verifyDetectedOrigins(
     origins: ReadonlyArray<string>,
     serverId: string,
-    client: ServerClient,
-    session: AccountSession | null,
-    signal: AbortSignal,
+    sync: RouteSync,
+    onVerified: (origins: ReadonlyArray<string>) => Promise<void>,
   ): Promise<ReadonlyArray<string>> {
     const delays = this.options.detectedRouteRetryDelaysMs ?? DETECTED_ROUTE_RETRY_DELAYS_MS;
+    const verified: string[] = [];
     let pending = origins;
-    for (let attempt = 0; pending.length > 0 && !signal.aborted; attempt += 1) {
+    for (let attempt = 0; pending.length > 0 && !sync.stale(); attempt += 1) {
       const results = await Promise.all(
         pending.map(async (origin) => {
-          if (origin === client.serverOrigin) return { origin, verified: true, retry: false };
+          if (origin === sync.client.serverOrigin) return { origin, verified: true, retry: false };
           try {
             await this.verifyOrigin(
               origin,
               serverId,
-              session,
-              AbortSignal.any([signal, AbortSignal.timeout(DETECTED_ROUTE_TIMEOUT_MS)]),
+              sync.session,
+              AbortSignal.any([sync.signal, AbortSignal.timeout(DETECTED_ROUTE_TIMEOUT_MS)]),
               true,
             );
             return { origin, verified: true, retry: false };
@@ -437,14 +445,15 @@ export class RouteManager {
           }
         }),
       );
-      const verified = results.filter((result) => result.verified).map((result) => result.origin);
-      if (verified.length > 0 || signal.aborted) return verified;
-      const delay = delays[attempt];
-      if (delay === undefined) return [];
+      const answered = results.filter((result) => result.verified).map((result) => result.origin);
+      verified.push(...answered);
+      if (answered.length > 0 && !sync.stale()) await onVerified(answered);
       pending = results.filter((result) => result.retry).map((result) => result.origin);
-      if (pending.length > 0) await waitUnlessAborted(delay, signal);
+      const delay = delays[attempt];
+      if (delay === undefined || pending.length === 0 || sync.stale()) break;
+      await waitUnlessAborted(delay, sync.signal);
     }
-    return [];
+    return verified;
   }
 
   /**
@@ -604,12 +613,6 @@ export class RouteManager {
               (origin) => !dismissed.has(origin) && allowsDetectedOrigin(account, origin),
             )),
       ];
-      const lanUdpOrigins = udpOrigins.filter(
-        (origin) => !dismissed.has(origin) && classifyRouteScope(origin) === "lan",
-      );
-      if (lanUdpOrigins.length > 0)
-        await this.options.registry.mergeDetectedRoutes(account.connectionId, lanUdpOrigins);
-
       const latest = this.options.registry.find(connectionId);
       if (latest === null) return;
       const higherCandidates = usableServerRoutes(
