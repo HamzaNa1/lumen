@@ -423,6 +423,27 @@ test("classifies, sorts, merges routes and detects server local, LAN and VPN int
   expect(advertisedRoutes([{ origin: "http://127.0.0.1:3210", scope: "local" }], null)).toEqual({
     routes: [{ origin: "http://127.0.0.1:3210", scope: "local" }],
   });
+  // A server bound to a link-local address on a tunnel listed it as LAN before, and still does.
+  const linkLocalTunnel = detectLanRoutes({
+    host: "169.254.1.2",
+    port: 3210,
+    interfaces: {
+      office: [
+        {
+          address: "169.254.1.2",
+          netmask: "255.255.0.0",
+          family: "IPv4",
+          mac: "00:00:00:00:00:00",
+          internal: false,
+          cidr: "169.254.1.2/16",
+        },
+      ],
+    },
+  });
+  expect(advertisedRoutes(linkLocalTunnel, null)).toEqual({
+    routes: [{ origin: "http://169.254.1.2:3210", scope: "lan" }],
+    vpnRoutes: [{ origin: "http://169.254.1.2:3210" }],
+  });
   expect(detectLanRoutes({ host: "127.0.0.1", port: 3210 })).toEqual([
     { origin: "http://127.0.0.1:3210", scope: "local" },
   ]);

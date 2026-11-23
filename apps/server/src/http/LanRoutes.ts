@@ -131,18 +131,18 @@ export const detectLanRoutes = (options: DetectLanRoutesOptions): ReadonlyArray<
   return routes;
 };
 
-const hasPrivateAddress = (origin: string): boolean => {
-  const host = new URL(origin).hostname.replace(/^\[|\]$/gu, "");
-  return host.includes(":") ? isUlaIpv6(host) : privateIpv4Rank(host) !== null;
-};
+// Servers before VPN detection listed these as LAN: any address that looks like one (WireGuard's
+// 10.x, a link-local address) and every unique local IPv6 address, Tailscale's fd7a: included.
+const listedAsLanBefore = (origin: string): boolean =>
+  classifyRouteScope(origin) === "lan" || isUlaIpv6(new URL(origin).hostname.replace(/^\[/u, ""));
 
-// Released desktops learned private VPN addresses (WireGuard's 10.x, Tailscale's fd7a:) as LAN
-// routes, so they stay listed that way; newer desktops take the label from `vpnRoutes`.
+// Released desktops learned those as LAN routes, so they stay listed that way; newer desktops take
+// the label from `vpnRoutes`.
 const legacyRoutes = (routes: ReadonlyArray<DetectedRoute>): ServerAdvertisedRoute[] =>
   routes.flatMap(({ origin, scope }) =>
     scope !== "vpn"
       ? [{ origin, scope }]
-      : hasPrivateAddress(origin)
+      : listedAsLanBefore(origin)
         ? [{ origin, scope: "lan" as const }]
         : [],
   );
