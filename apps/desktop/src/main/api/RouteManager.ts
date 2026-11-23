@@ -603,11 +603,11 @@ export class RouteManager {
           const winner = await this.resolveAccountRoute(account, session);
           if (winner.origin !== client.serverOrigin)
             await this.switchClientOrigin(connectionId, client, winner.origin);
-          void this.syncServerRoutes(connectionId, client, session).catch(() => false);
-          return;
         } catch {
-          return;
+          // Nothing answered yet; the sync's own tries may still reach a route.
         }
+        void this.syncServerRoutes(connectionId, client, session).catch(() => false);
+        return;
       }
 
       if (currentPriority === 0) return;

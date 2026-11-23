@@ -475,6 +475,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   let hanging: (() => void) | null = null;
   let hangAborted = false;
   let holdRouteList = false;
+  let lanDown = false;
   let routeLists = 0;
   const hang = (init: RequestInit) =>
     new Promise<Response>((_resolve, reject) => {
@@ -488,7 +489,7 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
     if (url.pathname === "/api/v1/server/routes") routeLists += 1;
     if (holdRouteList && url.pathname === "/api/v1/server/routes") return hang(init);
     if (url.origin === lanOrigin)
-      return fetch(new URL(url.pathname + url.search, localOrigin), init);
+      return lanDown ? refused() : fetch(new URL(url.pathname + url.search, localOrigin), init);
     const attempt = (attempts.get(url.origin) ?? 0) + (url.pathname === "/api/v1/server" ? 1 : 0);
     attempts.set(url.origin, attempt);
     switch (reply(url.origin, attempt)) {
@@ -666,6 +667,19 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   discovering = undefined;
   await Promise.all([periodic, woken]);
   await expect.poll(() => routeLists).toBeGreaterThan(listsBefore);
+
+  // After a wake the server answers at a new address that refuses its first probe, so the wake's own
+  // route check fails; the background sync still runs and keeps trying the new address.
+  const movedOrigin = "http://192.168.1.80:3210";
+  lanDown = true;
+  udp = [movedOrigin];
+  attempts.clear();
+  reply = (origin, attempt) => (origin === movedOrigin && attempt > 1 ? "answer" : "refuse");
+  await manager.recheckActiveRoute(account.connectionId, { checkCurrent: true });
+  await expect.poll(() => routesOf(accounts, account.connectionId)).toContain(movedOrigin);
+  lanDown = false;
+  udp = [strayOrigin];
+  backOnLan();
 
   // A check still holding a replaced client cannot cancel the sync of the client that replaced it.
   hangAborted = false;
