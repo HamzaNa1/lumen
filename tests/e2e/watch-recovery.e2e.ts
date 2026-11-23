@@ -149,3 +149,34 @@ test("unanswered watch commands expire, reconnect without replaying mutations, a
     await proxy.close();
   }
 });
+
+test("wall-clock jumps do not disconnect a healthy watch client or shift serverNow", async ({
+  server,
+  admin,
+}) => {
+  const proxy = await new WatchProxy(server.origin).start();
+  const viewer = new WatchGroupClient(
+    { serverOrigin: proxy.origin, watchAuthentication: () => ({ token: admin.accessToken }) },
+    () => {},
+  );
+  const realNow = Date.now;
+  try {
+    viewer.connect();
+    await expect.poll(() => viewer.status.connection).toBe("connected");
+    await expect.poll(() => proxy.pongs).toBeGreaterThanOrEqual(1);
+    const memberId = viewer.status.memberId;
+    const pongsBefore = proxy.pongs;
+    const beforeServerNow = viewer.serverNow;
+    Date.now = () => realNow() + 60_000;
+    expect(Math.abs(viewer.serverNow - beforeServerNow)).toBeLessThan(5_000);
+    await expect.poll(() => proxy.pongs, { timeout: 10_000 }).toBeGreaterThan(pongsBefore);
+    expect(viewer.status.connection).toBe("connected");
+    expect(viewer.status.memberId).toBe(memberId);
+    expect(Math.abs(viewer.serverNow - beforeServerNow)).toBeLessThan(15_000);
+    await viewer.action({ type: "list" });
+  } finally {
+    Date.now = realNow;
+    viewer.close();
+    await proxy.close();
+  }
+});
