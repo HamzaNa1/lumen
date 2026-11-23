@@ -361,7 +361,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
     boundConnectionId = connectionId;
     dependencies.clients.set(connectionId, client);
-    await routeManager.syncServerRoutes(connectionId, client, current).catch(() => false);
+    void routeManager.syncServerRoutes(connectionId, client, current).catch(() => false);
     watch.connect(client, connectionId);
     discoveredServers.delete(normalizeOrigin(input.origin));
     void dependencies.downloads.connectionReady(connectionId);
@@ -399,7 +399,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         throw new RequestCancelledError();
       if (dependencies.clients.get(connectionId) !== client) {
         dependencies.clients.set(connectionId, client);
-        await routeManager
+        void routeManager
           .syncServerRoutes(connectionId, client, client.currentSession)
           .catch(() => false);
       }

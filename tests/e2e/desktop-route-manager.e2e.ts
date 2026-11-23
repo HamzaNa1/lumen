@@ -1,4 +1,4 @@
-import { get } from "node:https";
+import { get, request } from "node:https";
 import {
   makeServerRoute,
   mergeServerRoutes,
@@ -17,7 +17,97 @@ import {
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
 import { pinnedSocketOpener } from "../../apps/desktop/src/main/api/watchSocket";
 import type { FetchLike } from "../../packages/client/src/ServerApi";
-import { expect, test } from "./support/server";
+import { type Account, expect, test } from "./support/server";
+
+const zeroDelays = [0, 0, 0, 0];
+const refused = (): Promise<Response> => Promise.reject(new TypeError("fetch failed"));
+const json = (body: unknown): Response =>
+  new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+
+const sessionOf = (admin: Account) => ({
+  userId: admin.userId,
+  role: "admin" as const,
+  sessionId: admin.sessionId,
+  accessToken: admin.accessToken,
+  accessExpiresAtMs: Date.now() + 60_000,
+});
+
+/** Sends requests for `aliases` to `target`, refuses `unreachable`, and passes the rest through. */
+const routedTransport =
+  (target: string, aliases: ReadonlyArray<string>, unreachable: ReadonlyArray<string>): FetchLike =>
+  (url, init) => {
+    if (unreachable.includes(url.origin)) return refused();
+    return fetch(
+      aliases.includes(url.origin) ? new URL(url.pathname + url.search, target) : url,
+      init,
+    );
+  };
+
+/** The registry calls RouteManager makes, kept in `accounts`. */
+const fakeRegistry = (
+  accounts: Map<string, StoredAccount>,
+  admin: Account,
+  active: () => string | null = () => null,
+): AccountRegistry =>
+  ({
+    active: () => {
+      const connectionId = active();
+      return connectionId === null ? null : (accounts.get(connectionId) ?? null);
+    },
+    find: (connectionId: string) => accounts.get(connectionId) ?? null,
+    session: async () => sessionOf(admin),
+    updateOrigin: async (connectionId: string, origin: string) => {
+      const current = accounts.get(connectionId);
+      if (current === undefined) return false;
+      accounts.set(connectionId, { ...current, origin: normalizeOrigin(origin) });
+      return true;
+    },
+    removeRoute: async (connectionId: string, origin: string) => {
+      const current = accounts.get(connectionId);
+      if (current === undefined) throw new Error("Connection not found");
+      const normalized = normalizeOrigin(origin);
+      const remaining = current.routes.filter((route) => route.origin !== normalized);
+      const fallback = sortServerRoutes(remaining)[0];
+      if (fallback === undefined) throw new Error("A server must keep at least one route");
+      accounts.set(connectionId, {
+        ...current,
+        origin: current.origin === normalized ? fallback.origin : current.origin,
+        routes: remaining,
+      });
+    },
+    mergeDetectedRoutes: async (
+      connectionId: string,
+      detectedOrigins: ReadonlyArray<string>,
+      options?: { readonly replaceDetected?: boolean },
+    ) => {
+      const current = accounts.get(connectionId);
+      if (current === undefined) return false;
+      const routes = mergeServerRoutes({
+        existing: current.routes,
+        detectedOrigins,
+        dismissedOrigins: current.dismissedRoutes,
+        credentialOrigin: current.credentialOrigin,
+        ...(options?.replaceDetected === undefined
+          ? {}
+          : { replaceDetected: options.replaceDetected }),
+      });
+      accounts.set(connectionId, { ...current, routes });
+      return true;
+    },
+    updateTls: async (connectionId: string, tls: NonNullable<StoredAccount["tls"]> | null) => {
+      const current = accounts.get(connectionId);
+      if (current === undefined) return false;
+      const { tls: _previous, ...rest } = current;
+      accounts.set(connectionId, tls === null ? rest : { ...rest, tls });
+      return true;
+    },
+  }) as unknown as AccountRegistry;
+
+const routesOf = (accounts: Map<string, StoredAccount>, connectionId: string) =>
+  accounts.get(connectionId)?.routes.map((route) => route.origin);
 
 test.use({
   serverEnvironment: {
@@ -42,63 +132,7 @@ test("desktop verifies route changes and protects credentials across server vers
   const accounts = new Map<string, StoredAccount>();
   let activeConnectionId: string | null = null;
   const makeRegistry = (): AccountRegistry =>
-    ({
-      active: () =>
-        activeConnectionId === null ? null : (accounts.get(activeConnectionId) ?? null),
-      find: (connectionId: string) => accounts.get(connectionId) ?? null,
-      session: async () => ({
-        userId: admin.userId,
-        role: "admin" as const,
-        sessionId: admin.sessionId,
-        accessToken: admin.accessToken,
-        accessExpiresAtMs: Date.now() + 60_000,
-      }),
-      updateOrigin: async (connectionId: string, origin: string) => {
-        const current = accounts.get(connectionId);
-        if (current === undefined) return false;
-        accounts.set(connectionId, { ...current, origin: normalizeOrigin(origin) });
-        return true;
-      },
-      removeRoute: async (connectionId: string, origin: string) => {
-        const current = accounts.get(connectionId);
-        if (current === undefined) throw new Error("Connection not found");
-        const normalized = normalizeOrigin(origin);
-        const remaining = current.routes.filter((route) => route.origin !== normalized);
-        const fallback = sortServerRoutes(remaining)[0];
-        if (fallback === undefined) throw new Error("A server must keep at least one route");
-        accounts.set(connectionId, {
-          ...current,
-          origin: current.origin === normalized ? fallback.origin : current.origin,
-          routes: remaining,
-        });
-      },
-      mergeDetectedRoutes: async (
-        connectionId: string,
-        detectedOrigins: ReadonlyArray<string>,
-        options?: { readonly replaceDetected?: boolean },
-      ) => {
-        const current = accounts.get(connectionId);
-        if (current === undefined) return false;
-        const routes = mergeServerRoutes({
-          existing: current.routes,
-          detectedOrigins,
-          dismissedOrigins: current.dismissedRoutes,
-          credentialOrigin: current.credentialOrigin,
-          ...(options?.replaceDetected === undefined
-            ? {}
-            : { replaceDetected: options.replaceDetected }),
-        });
-        accounts.set(connectionId, { ...current, routes });
-        return true;
-      },
-      updateTls: async (connectionId: string, tls: NonNullable<StoredAccount["tls"]> | null) => {
-        const current = accounts.get(connectionId);
-        if (current === undefined) return false;
-        const { tls: _previous, ...rest } = current;
-        accounts.set(connectionId, tls === null ? rest : { ...rest, tls });
-        return true;
-      },
-    }) as unknown as AccountRegistry;
+    fakeRegistry(accounts, admin, () => activeConnectionId);
   const httpsAccount: StoredAccount = {
     connectionId: "conn-https",
     serverId: info.serverId,
@@ -113,18 +147,11 @@ test("desktop verifies route changes and protects credentials across server vers
     lastConnectedAtMs: Date.now(),
   };
   accounts.set(httpsAccount.connectionId, httpsAccount);
-  const transport: FetchLike = (input, init) => {
-    const raw = typeof input === "string" ? input : input.toString();
-    const rewritten = raw.startsWith(httpsOrigin) ? raw.replace(httpsOrigin, localOrigin) : raw;
-    return fetch(rewritten, init);
-  };
-  const adminSession = {
-    userId: admin.userId,
-    role: "admin" as const,
-    sessionId: admin.sessionId,
-    accessToken: admin.accessToken,
-    accessExpiresAtMs: Date.now() + 60_000,
-  };
+  const homeLanOrigin = "https://lumen.home.arpa";
+  const plainLanOrigin = "http://192.168.1.50:3210";
+  // Away from home: neither advertised LAN route answers.
+  const transport = routedTransport(localOrigin, [httpsOrigin], [homeLanOrigin, plainLanOrigin]);
+  const adminSession = sessionOf(admin);
   const clients = new Map<string, ServerClient>();
   const httpsClient = new ServerClient({ origin: httpsOrigin, fetchImpl: transport });
   httpsClient.setSession(adminSession);
@@ -140,6 +167,7 @@ test("desktop verifies route changes and protects credentials across server vers
       udpDiscoveries += 1;
       return [{ serverId: info.serverId, displayName: info.displayName, origin: localOrigin }];
     },
+    detectedRouteRetryDelaysMs: zeroDelays,
   });
   const resolved = await manager.resolveAccountRoute(httpsAccount, httpsClient.currentSession);
   expect(resolved.origin).toBe(httpsOrigin);
@@ -149,15 +177,22 @@ test("desktop verifies route changes and protects credentials across server vers
     httpsClient.currentSession,
   );
   expect(httpsClient.serverOrigin).toBe(httpsOrigin);
-  expect(accounts.get(httpsAccount.connectionId)?.routes.map((route) => route.origin)).toEqual(
-    supportsRoutes ? ["https://lumen.home.arpa", httpsOrigin] : [httpsOrigin],
-  );
+  // The plain HTTP route goes, and an advertised route that does not answer is never added.
+  expect(routesOf(accounts, httpsAccount.connectionId)).toEqual([httpsOrigin]);
   await manager.recheckActiveRoute(httpsAccount.connectionId);
   expect(httpsClient.serverOrigin).toBe(httpsOrigin);
   expect(udpDiscoveries).toBe(0);
 
-  // Loopback-issued tokens stay off auto-detected plain HTTP LAN routes too, while still
-  // accepting HTTPS LAN routes.
+  // Loopback-issued tokens stay off auto-detected plain HTTP LAN routes too, even reachable ones,
+  // while still accepting HTTPS LAN routes.
+  const homeManager = new RouteManager({
+    registry: makeRegistry(),
+    clients,
+    serverTransport: routedTransport(localOrigin, [homeLanOrigin, plainLanOrigin], []),
+    onRouteChanged: () => undefined,
+    discoverLan: async () => [],
+    detectedRouteRetryDelaysMs: zeroDelays,
+  });
   const localAccount: StoredAccount = {
     ...httpsAccount,
     connectionId: "conn-local",
@@ -166,17 +201,20 @@ test("desktop verifies route changes and protects credentials across server vers
     routes: [makeServerRoute(localOrigin, "manual")],
   };
   accounts.set(localAccount.connectionId, localAccount);
-  const localClient = new ServerClient({ origin: localOrigin, fetchImpl: transport });
+  const localClient = new ServerClient({
+    origin: localOrigin,
+    fetchImpl: routedTransport(localOrigin, [homeLanOrigin, plainLanOrigin], []),
+  });
   localClient.setSession(adminSession);
   await localClient.identity();
   clients.set(localAccount.connectionId, localClient);
-  await manager.syncServerRoutes(
+  await homeManager.syncServerRoutes(
     localAccount.connectionId,
     localClient,
     localClient.currentSession,
   );
-  expect(accounts.get(localAccount.connectionId)?.routes.map((route) => route.origin)).toEqual(
-    supportsRoutes ? [localOrigin, "https://lumen.home.arpa"] : [localOrigin],
+  expect(routesOf(accounts, localAccount.connectionId)).toEqual(
+    supportsRoutes ? [localOrigin, homeLanOrigin] : [localOrigin],
   );
 
   // Tokens explicitly signed in over plain HTTP LAN may learn plain HTTP LAN and local routes.
@@ -189,10 +227,7 @@ test("desktop verifies route changes and protects credentials across server vers
     routes: [makeServerRoute(lanOrigin, "manual")],
   };
   accounts.set(lanAccount.connectionId, lanAccount);
-  const lanTransport: FetchLike = (input, init) => {
-    const raw = typeof input === "string" ? input : input.toString();
-    return fetch(raw.startsWith(lanOrigin) ? raw.replace(lanOrigin, localOrigin) : raw, init);
-  };
+  const lanTransport = routedTransport(localOrigin, [lanOrigin, homeLanOrigin], [plainLanOrigin]);
   const lanClient = new ServerClient({ origin: lanOrigin, fetchImpl: lanTransport });
   lanClient.setSession(adminSession);
   await lanClient.identity();
@@ -203,21 +238,21 @@ test("desktop verifies route changes and protects credentials across server vers
     serverTransport: lanTransport,
     onRouteChanged: () => undefined,
     discoverLan: async () => [],
+    detectedRouteRetryDelaysMs: zeroDelays,
   });
   await lanManager.syncServerRoutes(lanAccount.connectionId, lanClient, lanClient.currentSession);
   expect(lanClient.serverOrigin).toBe(supportsRoutes ? localOrigin : lanOrigin);
-  expect(accounts.get(lanAccount.connectionId)?.routes.map((route) => route.origin)).toEqual(
+  expect(routesOf(accounts, lanAccount.connectionId)).toEqual(
     supportsRoutes
-      ? // Within LAN, the encrypted route ranks ahead of the plain ones.
-        [localOrigin, "https://lumen.home.arpa", lanOrigin, "http://192.168.1.50:3210"]
+      ? // Within LAN, the encrypted route ranks ahead of the plain one; the unreachable one is left out.
+        [localOrigin, homeLanOrigin, lanOrigin]
       : [lanOrigin],
   );
 
   // A failed /api/v1/server/routes refresh must preserve cached detected fallback routes,
   // while a successful empty response still prunes stale detected entries.
   let routesRefreshMode: "fail" | "empty" | "pass" = "fail";
-  const flakyTransport: FetchLike = (input, init) => {
-    const url = typeof input === "string" ? new URL(input) : input;
+  const flakyTransport: FetchLike = (url, init) => {
     if (url.pathname === "/api/v1/server/routes") {
       if (routesRefreshMode === "fail")
         return Promise.resolve(new Response("unavailable", { status: 503 }));
@@ -229,36 +264,40 @@ test("desktop verifies route changes and protects credentials across server vers
           }),
         );
     }
-    const raw = url.toString();
-    return fetch(raw.startsWith(httpsOrigin) ? raw.replace(httpsOrigin, localOrigin) : raw, init);
+    return routedTransport(localOrigin, [httpsOrigin], [homeLanOrigin, plainLanOrigin])(url, init);
   };
+  const cachedRoutes = [
+    makeServerRoute(homeLanOrigin, "detected"),
+    makeServerRoute(httpsOrigin, "manual"),
+  ];
+  accounts.set(httpsAccount.connectionId, { ...httpsAccount, routes: cachedRoutes });
   const flakyClient = new ServerClient({ origin: httpsOrigin, fetchImpl: flakyTransport });
   flakyClient.setSession(adminSession);
   await flakyClient.identity();
+  clients.set(httpsAccount.connectionId, flakyClient);
   const flakyManager = new RouteManager({
     registry: makeRegistry(),
     clients,
     serverTransport: flakyTransport,
     onRouteChanged: () => undefined,
     discoverLan: async () => [],
+    detectedRouteRetryDelaysMs: zeroDelays,
   });
   await flakyManager.syncServerRoutes(
     httpsAccount.connectionId,
     flakyClient,
     flakyClient.currentSession,
   );
-  expect(accounts.get(httpsAccount.connectionId)?.routes.map((route) => route.origin)).toEqual(
-    supportsRoutes ? ["https://lumen.home.arpa", httpsOrigin] : [httpsOrigin],
-  );
+  expect(routesOf(accounts, httpsAccount.connectionId)).toEqual([homeLanOrigin, httpsOrigin]);
   routesRefreshMode = "empty";
   await flakyManager.syncServerRoutes(
     httpsAccount.connectionId,
     flakyClient,
     flakyClient.currentSession,
   );
-  expect(accounts.get(httpsAccount.connectionId)?.routes.map((route) => route.origin)).toEqual([
-    httpsOrigin,
-  ]);
+  expect(routesOf(accounts, httpsAccount.connectionId)).toEqual(
+    supportsRoutes ? [httpsOrigin] : [homeLanOrigin, httpsOrigin],
+  );
 
   // Legacy refresh-token sessions cannot prove route identity cryptographically, so route
   // resolution ignores detected and UDP-discovered routes even when they claim the same serverId.
@@ -399,6 +438,113 @@ test("desktop verifies route changes and protects credentials across server vers
   expect(guardedClient.serverOrigin).toBe(localOrigin);
 });
 
+test("desktop adds an auto-detected route only once it answers", async ({ server, admin }) => {
+  const { RouteManager } = await import("../../apps/desktop/src/main/api/RouteManager");
+  const info = await (await server.request("/api/v1/server")).json();
+  const localOrigin = new URL(server.origin).origin;
+  // Signed in over plain HTTP on the LAN, so both advertised LAN routes may carry the token.
+  const lanOrigin = "http://192.168.1.20:3210";
+  const plainLanOrigin = "http://192.168.1.50:3210";
+  const homeLanOrigin = "https://lumen.home.arpa";
+  const accounts = new Map<string, StoredAccount>();
+  const account: StoredAccount = {
+    connectionId: "conn",
+    serverId: info.serverId,
+    serverName: info.displayName,
+    origin: lanOrigin,
+    credentialOrigin: lanOrigin,
+    routes: [makeServerRoute(lanOrigin, "manual")],
+    // Loopback routes would answer at once and end the retries this test is about.
+    dismissedRoutes: [localOrigin, "http://127.0.0.1:3210"],
+    username: "admin",
+    userId: admin.userId,
+    role: "admin",
+    lastConnectedAtMs: Date.now(),
+  };
+  accounts.set(account.connectionId, account);
+
+  type Reply = "answer" | "refuse" | "stranger" | "hang";
+  let reply: (origin: string, attempt: number) => Reply = () => "answer";
+  const attempts = new Map<string, number>();
+  let hanging: (() => void) | null = null;
+  let hangAborted = false;
+  const transport: FetchLike = (url, init) => {
+    if (url.origin === lanOrigin)
+      return fetch(new URL(url.pathname + url.search, localOrigin), init);
+    const attempt = (attempts.get(url.origin) ?? 0) + (url.pathname === "/api/v1/server" ? 1 : 0);
+    attempts.set(url.origin, attempt);
+    switch (reply(url.origin, attempt)) {
+      case "refuse":
+        return refused();
+      case "stranger":
+        return Promise.resolve(json({ ...info, serverId: "another-server" }));
+      case "hang":
+        return new Promise((_resolve, reject) => {
+          init.signal?.addEventListener("abort", () => {
+            hangAborted = true;
+            reject(init.signal?.reason);
+          });
+          hanging?.();
+        });
+      case "answer":
+        return fetch(new URL(url.pathname + url.search, localOrigin), init);
+    }
+  };
+  const client = new ServerClient({ origin: lanOrigin, fetchImpl: transport });
+  client.setSession(sessionOf(admin));
+  await client.identity();
+  const clients = new Map([[account.connectionId, client]]);
+  const manager = new RouteManager({
+    registry: fakeRegistry(accounts, admin),
+    clients,
+    serverTransport: transport,
+    onRouteChanged: () => undefined,
+    discoverLan: async () => [],
+    detectedRouteRetryDelaysMs: zeroDelays,
+  });
+  const sync = () => manager.syncServerRoutes(account.connectionId, client, client.currentSession);
+
+  // A route that misses its first tries joins once it answers. Another server answering is final,
+  // so that route is tried once and left out.
+  reply = (origin, attempt) =>
+    origin === homeLanOrigin ? "stranger" : attempt < 3 ? "refuse" : "answer";
+  await sync();
+  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, plainLanOrigin]);
+  expect(attempts.get(plainLanOrigin)).toBe(3);
+  expect(attempts.get(homeLanOrigin)).toBe(1);
+
+  // Away from the server's network nothing answers: every try is spent, the learned route stays
+  // for when the device returns, and no new one joins.
+  attempts.clear();
+  reply = () => "refuse";
+  await sync();
+  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, plainLanOrigin]);
+  expect(attempts.get(plainLanOrigin)).toBe(5);
+  expect(attempts.get(homeLanOrigin)).toBe(5);
+
+  // Once one route answers, the ones that did not are unreachable from here and leave.
+  attempts.clear();
+  reply = (origin) => (origin === homeLanOrigin ? "answer" : "refuse");
+  await sync();
+  expect(routesOf(accounts, account.connectionId)).toEqual([homeLanOrigin, lanOrigin]);
+  expect(attempts.get(plainLanOrigin)).toBe(1);
+
+  // A newer sync cancels the one still waiting on a route, which then changes nothing.
+  client.setServerOrigin(lanOrigin);
+  reply = (origin) => (origin === plainLanOrigin ? "hang" : "refuse");
+  const waiting = new Promise<void>((resolve) => {
+    hanging = resolve;
+  });
+  const first = sync();
+  await waiting;
+  reply = (origin) => (origin === plainLanOrigin ? "answer" : "refuse");
+  const second = sync();
+  expect(await first).toBe(false);
+  expect(hangAborted).toBe(true);
+  await second;
+  expect(routesOf(accounts, account.connectionId)).toEqual([lanOrigin, plainLanOrigin]);
+});
+
 /** GETs a JSON path over HTTPS, trusting what `pins` trusts for the origin's host. */
 const getOverTls = (pins: PinnedCertificates, origin: string, path: string): Promise<unknown> => {
   const url = new URL(path, origin);
@@ -413,8 +559,97 @@ const getOverTls = (pins: PinnedCertificates, origin: string, path: string): Pro
   });
 };
 
+/** HTTPS over Node that trusts what `pins` trusts for each host, sending `aliases` to a target. */
+const pinnedTransport =
+  (pins: PinnedCertificates, aliases: ReadonlyMap<string, URL>): FetchLike =>
+  (url, init) => {
+    if (url.protocol !== "https:") return fetch(url, init);
+    const target = aliases.get(url.host) ?? url;
+    const trust = pins.tlsOptions(url.hostname);
+    return new Promise((resolve, reject) => {
+      const outgoing = request(
+        {
+          host: target.hostname,
+          port: target.port,
+          path: url.pathname + url.search,
+          method: init.method ?? "GET",
+          headers: Object.fromEntries(new Headers(init.headers).entries()),
+          ca: [...trust.ca],
+          checkServerIdentity: trust.checkServerIdentity,
+          ...(init.signal ? { signal: init.signal } : {}),
+        },
+        (response) => {
+          const chunks: Buffer[] = [];
+          response.on("data", (chunk: Buffer) => chunks.push(chunk));
+          response.on("end", () =>
+            resolve(
+              new Response(new Uint8Array(Buffer.concat(chunks)), {
+                status: response.statusCode ?? 500,
+                headers: { "content-type": String(response.headers["content-type"] ?? "") },
+              }),
+            ),
+          );
+          response.on("error", reject);
+        },
+      );
+      outgoing.on("error", reject);
+      outgoing.end(typeof init.body === "string" ? init.body : undefined);
+    });
+  };
+
 test.describe("desktop route transports", () => {
-  test.use({ serverEnvironment: { LUMEN_TLS_PORT: "0" } });
+  test.use({
+    serverEnvironment: { LUMEN_TLS_PORT: "0", LUMEN_LAN_ORIGINS: "https://lumen.home.arpa" },
+  });
+
+  test("verifies an HTTPS route from LUMEN_LAN_ORIGINS with the server's certificate", async ({
+    server,
+    admin,
+  }) => {
+    const { RouteManager } = await import("../../apps/desktop/src/main/api/RouteManager");
+    const info = await server.api<{ serverId: string; displayName: string }>("/server");
+    const advertised = await server.api<ServerAdvertisedRoutes>("/server/routes", {
+      token: admin.accessToken,
+    });
+    const tlsOrigin = advertised.tls?.routes[0]?.origin;
+    expect(tlsOrigin).toBeDefined();
+    const localOrigin = new URL(server.origin).origin;
+    const homeLanOrigin = "https://lumen.home.arpa";
+    const accounts = new Map<string, StoredAccount>();
+    const account: StoredAccount = {
+      connectionId: "conn",
+      serverId: info.serverId,
+      serverName: info.displayName,
+      origin: localOrigin,
+      credentialOrigin: localOrigin,
+      routes: [makeServerRoute(localOrigin, "manual")],
+      dismissedRoutes: ["http://127.0.0.1:3210"],
+      username: "admin",
+      userId: admin.userId,
+      role: "admin",
+      lastConnectedAtMs: Date.now(),
+    };
+    accounts.set(account.connectionId, account);
+    // The desktop trusts certificates from its accounts the same way.
+    const pins = new PinnedCertificates(() => [...accounts.values()]);
+    const transport = pinnedTransport(
+      pins,
+      new Map([["lumen.home.arpa", new URL(tlsOrigin ?? localOrigin)]]),
+    );
+    const client = new ServerClient({ origin: localOrigin, fetchImpl: transport });
+    client.setSession(sessionOf(admin));
+    await client.identity();
+    const manager = new RouteManager({
+      registry: fakeRegistry(accounts, admin),
+      clients: new Map([[account.connectionId, client]]),
+      serverTransport: transport,
+      onRouteChanged: () => undefined,
+      discoverLan: async () => [],
+      detectedRouteRetryDelaysMs: zeroDelays,
+    });
+    await manager.syncServerRoutes(account.connectionId, client, client.currentSession);
+    expect(routesOf(accounts, account.connectionId)).toContain(homeLanOrigin);
+  });
 
   test("opens watch groups on the advertised route and scopes TLS pins to their hosts", async ({
     server,

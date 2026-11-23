@@ -50,8 +50,8 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     });
 
     // Sign in through the remote route. Servers that advertise routes auto-detect and promote the
-    // local route immediately; older released servers stay on the signed-in route without trusting
-    // unverified auto-detected origins.
+    // local route in the background once it answers; older released servers stay on the signed-in
+    // route without trusting unverified auto-detected origins.
     await page.getByLabel("Server address").fill(remoteOrigin);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByLabel("Username").fill("admin");
@@ -59,20 +59,23 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
 
-    const afterSignIn = await page.evaluate(() => window.lumen.accounts.list());
-    const active = afterSignIn.accounts.find(
-      (account) => account.connectionId === afterSignIn.activeConnectionId,
-    );
-    expect(active).toBeDefined();
-    expect(active?.origin).toBe(supportsServerRoutes ? serverLocalOrigin : remoteOrigin);
-    expect(active?.routes?.map((route) => [route.origin, route.scope, route.source])).toEqual(
-      supportsServerRoutes
+    const activeAccount = async () => {
+      const list = await page.evaluate(() => window.lumen.accounts.list());
+      const active = list.accounts.find((entry) => entry.connectionId === list.activeConnectionId);
+      return {
+        origin: active?.origin,
+        routes: active?.routes?.map((route) => [route.origin, route.scope, route.source]),
+      };
+    };
+    await expect.poll(activeAccount).toEqual({
+      origin: supportsServerRoutes ? serverLocalOrigin : remoteOrigin,
+      routes: supportsServerRoutes
         ? [
             [serverLocalOrigin, "local", "detected"],
             [remoteOrigin, "remote", "manual"],
           ]
         : [[remoteOrigin, "remote", "manual"]],
-    );
+    });
 
     // Open Settings -> Routes: routes are checked automatically (no manual "Check routes" button).
     const settings = await openSettings(page, "Routes");
