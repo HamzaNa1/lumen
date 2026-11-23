@@ -112,7 +112,7 @@ const routesOf = (accounts: Map<string, StoredAccount>, connectionId: string) =>
 
 test.use({
   serverEnvironment: {
-    LUMEN_LAN_ORIGINS: "http://192.168.1.50:3210,https://lumen.home.arpa",
+    LUMEN_LAN_ORIGINS: "http://192.168.1.50:3210,https://lumen.home.arpa,http://203.0.113.7:3210",
     LUMEN_E2E_DISCOVERY_PORT: "0",
   },
 });
@@ -564,14 +564,14 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   expect(listChanges).toBeGreaterThan(0);
   expect(switches).toEqual([]);
 
-  // Away from the server's network nothing answers: every try is spent, the learned routes stay
-  // for when the device returns, and no new one joins.
+  // Away from the server's network nothing answers and no UDP reply comes: every try is spent,
+  // the routes the server still advertises stay for when the device returns, and none joins.
   attempts.clear();
+  udp = [];
   reply = () => "refuse";
   await sync();
   expect(routesOf(accounts, account.connectionId)).toEqual([
     lanOrigin,
-    udpOrigin,
     plainLanOrigin,
     routedUdpOrigin,
   ]);

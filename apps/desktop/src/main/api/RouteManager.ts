@@ -400,7 +400,14 @@ export class RouteManager {
     const kept = verified.some((origin) => classifyRouteScope(origin) === "lan")
       ? []
       : latest.routes
-          .filter((route) => route.source === "detected" && candidates.has(route.origin))
+          .filter(
+            (route) =>
+              route.source === "detected" &&
+              (candidates.has(route.origin) ||
+                advertisedRoutes.some(
+                  (advertisedRoute) => advertisedRoute.origin === route.origin,
+                )),
+          )
           .map((route) => route.origin);
     await commit([...new Set([...verified, ...kept])], advertised !== null);
     return changed && !stale();

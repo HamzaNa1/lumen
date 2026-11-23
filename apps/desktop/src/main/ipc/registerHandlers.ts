@@ -211,14 +211,14 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   ): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) {
+      const attemptedOrigin = cached.serverOrigin;
       try {
         await validateClient(cached, signal);
       } catch (cause) {
         if (signal.aborted) throw new RequestCancelledError();
         // A route answering with a server error does not fail over on its own; try another one.
-        if (!isTransientRouteFailure(cause)) throw cause;
-        const failedOrigin = cached.serverOrigin;
-        if ((await routeManager.failover(account.connectionId, cached, failedOrigin)) === null)
+        if (!(cause instanceof ServerHttpError && isTransientRouteFailure(cause))) throw cause;
+        if ((await routeManager.failover(account.connectionId, cached, attemptedOrigin)) === null)
           throw cause;
         await validateClient(cached, signal);
       }
