@@ -33,7 +33,7 @@ const DETECTED_ROUTE_TIMEOUT_MS = 1_000;
 const DETECTED_ROUTE_RETRY_DELAYS_MS = [1_000, 1_000, 2_000, 4_000];
 
 /** Failures that may pass on their own; any other answer will not change on a retry. */
-export const isTransientRouteFailure = (cause: unknown): boolean =>
+const isTransientRouteFailure = (cause: unknown): boolean =>
   cause instanceof ServerUnreachableError ||
   (cause instanceof ServerHttpError &&
     (cause.status >= 500 || cause.status === 408 || cause.status === 429)) ||

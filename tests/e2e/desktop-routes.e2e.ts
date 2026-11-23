@@ -398,7 +398,7 @@ test("a sign-in the desktop cannot save leaves no account behind", async () => {
   }
 });
 
-test("switching back to an account moves past a route that answers with a server error", async () => {
+test("switching back to an account moves past a route that answers with an error", async () => {
   const root = test.info().outputPath("failing-cached-route");
   const profile = join(root, "desktop-profile");
   const server = new Server(root);
@@ -425,7 +425,8 @@ test("switching back to an account moves past a route that answers with a server
     let remote: "routes-hidden" | "failing" = "routes-hidden";
     remoteProxy.intercept = async (request, response) => {
       if (remote === "failing") {
-        response.writeHead(502).end();
+        // A tunnel whose route to the server was removed answers for it with an error page.
+        response.writeHead(404).end();
         return true;
       }
       if (!request.url?.startsWith("/api/v1/server/routes")) return false;
@@ -462,7 +463,7 @@ test("switching back to an account moves past a route that answers with a server
       { origin: remoteOrigin, password },
     );
 
-    // Back home with the tunnel down: the remote route errors while the saved LAN route answers.
+    // Back home with the tunnel broken: the remote route errors while the saved LAN route answers.
     remote = "failing";
     lanUp = true;
     const list = await page.evaluate((id) => window.lumen.accounts.activate(id), first);
