@@ -1,4 +1,9 @@
-import { type ServerInfo, type ServerRoute, sortServerRoutes } from "@lumen/contracts";
+import {
+  type ServerInfo,
+  type ServerRoute,
+  type ServerRouteScope,
+  sortServerRoutes,
+} from "@lumen/contracts";
 import { ServerUnreachableError } from "./errors.ts";
 
 export interface RouteProbeResult {
@@ -13,7 +18,7 @@ export interface SelectRouteOptions {
   readonly probe: (route: ServerRoute, signal: AbortSignal) => Promise<RouteProbeResult>;
   readonly lanTimeoutMs?: number;
   readonly remoteTimeoutMs?: number;
-  /** How long from probe start to wait for an in-flight LAN route after a remote route already answered. */
+  /** How long from probe start to wait for an in-flight LAN route after a VPN or remote route answered. */
   readonly lanGraceMs?: number;
   /** How long from probe start to wait for a higher-priority route in the same scope. */
   readonly sameScopeGraceMs?: number;
@@ -24,6 +29,10 @@ const DEFAULT_LAN_TIMEOUT_MS = 1_500;
 const DEFAULT_REMOTE_TIMEOUT_MS = 5_000;
 const DEFAULT_LAN_GRACE_MS = 400;
 const DEFAULT_SAME_SCOPE_GRACE_MS = 150;
+
+// A VPN may relay its traffic, so it gets the time and patience of a remote route.
+const isOffNetwork = (scope: ServerRouteScope | undefined): boolean =>
+  scope === "remote" || scope === "vpn";
 
 type ProbeState =
   | { readonly kind: "pending" }
@@ -50,7 +59,7 @@ const pickFailure = (
 
 /**
  * Probes candidate routes in parallel and returns the highest-priority reachable one (LAN before
- * remote, manual before auto-detected). Resolves as soon as the winning tier is known without
+ * VPN before remote, manual before auto-detected). Resolves as soon as the winning tier is known without
  * waiting on slower lower-priority routes or blackholed LAN addresses.
  */
 export const selectBestRoute = async (options: SelectRouteOptions): Promise<RouteProbeResult> => {
@@ -129,10 +138,10 @@ export const selectBestRoute = async (options: SelectRouteOptions): Promise<Rout
         return;
       }
 
-      const waitingOnLocalOrLanFromRemote =
-        ordered[best.index]?.scope === "remote" &&
-        higherPending.some((route) => route.scope === "local" || route.scope === "lan");
-      const deadlineMs = waitingOnLocalOrLanFromRemote ? lanGraceMs : sameScopeGraceMs;
+      const waitingOnLocalOrLan =
+        isOffNetwork(ordered[best.index]?.scope) &&
+        higherPending.some((route) => !isOffNetwork(route.scope));
+      const deadlineMs = waitingOnLocalOrLan ? lanGraceMs : sameScopeGraceMs;
       const remaining = Math.max(0, deadlineMs - (Date.now() - startedAt));
       if (remaining === 0) {
         finish({ ok: true, value: best.result });
@@ -146,7 +155,7 @@ export const selectBestRoute = async (options: SelectRouteOptions): Promise<Rout
     };
 
     ordered.forEach((route, index) => {
-      const timeoutMs = route.scope === "remote" ? remoteTimeoutMs : lanTimeoutMs;
+      const timeoutMs = isOffNetwork(route.scope) ? remoteTimeoutMs : lanTimeoutMs;
       const signal = AbortSignal.any([master.signal, AbortSignal.timeout(timeoutMs)]);
       void options
         .probe(route, signal)

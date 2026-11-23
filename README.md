@@ -71,7 +71,7 @@ docker run -d --name lumen-server --restart unless-stopped \
   ghcr.io/<owner>/<repository>-server
 ```
 
-A server that listens beyond loopback also serves HTTPS on the next port (`LUMEN_TLS_PORT`, `off` to disable) with a self-signed certificate kept in the data directory. Desktops learn that certificate from the server's route list, over a route they already use, and trust exactly it, so they can switch to the LAN without sending their sign-in over plain HTTP. A container cannot see the host's addresses, so list them in `LUMEN_LAN_ORIGINS` as above.
+A server that listens beyond loopback also serves HTTPS on the next port (`LUMEN_TLS_PORT`, `off` to disable) with a self-signed certificate kept in the data directory. Desktops learn that certificate from the server's route list, over a route they already use, and trust exactly it, so they can switch to the LAN without sending their sign-in over plain HTTP. Addresses on a VPN interface (Tailscale, WireGuard, ZeroTier, OpenVPN and similar) are advertised as VPN routes, which desktops use after the LAN and before a remote address. A container cannot see the host's addresses, so list them in `LUMEN_LAN_ORIGINS` as above; Tailscale addresses and `.ts.net` names listed there count as VPN routes.
 
 ### Linux service
 

@@ -12,8 +12,8 @@ import { errorMessage } from "./format";
 import { useRuntime } from "./Runtime";
 import { ACCOUNTS_KEY } from "./Workspace";
 
-const scopeLabel = (scope: ServerRouteScope): string =>
-  scope === "local" ? "Local" : scope === "lan" ? "LAN" : "Remote";
+export const scopeLabel = (scope: ServerRouteScope): string =>
+  scope === "local" ? "Local" : scope === "lan" ? "LAN" : scope === "vpn" ? "VPN" : "Remote";
 
 export const ServerRoutesSection = ({
   account,

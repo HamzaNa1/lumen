@@ -23,7 +23,13 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { errorMessage, hostOf, passwordRule } from "./format";
 import { LumenLogo } from "./LumenLogo";
 import { useRuntime } from "./Runtime";
-import { ServerRoutesSection } from "./ServerRoutes";
+import { ServerRoutesSection, scopeLabel } from "./ServerRoutes";
+
+// A discovery reply came from this network, even from an address that looks public.
+const discoveredScopeLabel = (origin: string): string => {
+  const scope = classifyRouteScope(origin);
+  return scopeLabel(scope === "remote" ? "lan" : scope);
+};
 
 export const ReconnectingView = ({
   account,
@@ -437,7 +443,7 @@ export const ConnectPage = ({
                           <span>{hostOf(candidate.origin)}</span>
                         </span>
                         <span className="status-pill">
-                          {classifyRouteScope(candidate.origin) === "local" ? "Local" : "LAN"}
+                          {discoveredScopeLabel(candidate.origin)}
                         </span>
                         <ChevronRight aria-hidden="true" size={16} />
                       </button>

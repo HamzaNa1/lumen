@@ -405,7 +405,10 @@ export class AccountRegistry {
   async mergeDetectedRoutes(
     connectionId: string,
     detectedOrigins: ReadonlyArray<string>,
-    options: { readonly replaceDetected?: boolean } = {},
+    options: {
+      readonly replaceDetected?: boolean;
+      readonly vpnOrigins?: ReadonlyArray<string>;
+    } = {},
   ): Promise<boolean> {
     const current = this.find(connectionId);
     if (current === null) return false;
@@ -414,11 +417,13 @@ export class AccountRegistry {
       detectedOrigins,
       dismissedOrigins: current.dismissedRoutes,
       credentialOrigin: current.credentialOrigin,
-      ...(options.replaceDetected === undefined
-        ? {}
-        : { replaceDetected: options.replaceDetected }),
+      ...options,
     });
-    const activeDetected = makeServerRoute(current.origin, "detected");
+    const activeDetected = makeServerRoute(
+      current.origin,
+      "detected",
+      current.routes.some((route) => route.origin === current.origin && route.scope === "vpn"),
+    );
     // Keep the currently active origin in the list if it was auto-detected and temporarily absent,
     // unless it would send this connection's token over plain HTTP.
     const routes =
