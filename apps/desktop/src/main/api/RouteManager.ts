@@ -361,17 +361,18 @@ export class RouteManager {
     const manualLocal = hasManualLocalRoute(account);
     const dismissed = new Set(account.dismissedRoutes);
     const candidates = new Set<string>();
-    const consider = (origin: string, fromThisNetwork = false): void => {
-      if (dismissed.has(origin) || !allowsDetectedOrigin(account, origin)) return;
+    const eligible = (origin: string, anyScope = false): boolean => {
+      if (dismissed.has(origin) || !allowsDetectedOrigin(account, origin)) return false;
       const scope = classifyRouteScope(origin);
-      if (scope === "local" ? !manualLocal : scope === "lan" || fromThisNetwork)
-        candidates.add(origin);
+      return scope === "local" ? !manualLocal : scope === "lan" || anyScope;
     };
-    for (const route of advertisedRoutes) if (route.scope !== "remote") consider(route.origin);
+    for (const route of advertisedRoutes)
+      if (route.scope !== "remote" && eligible(route.origin)) candidates.add(route.origin);
     // A UDP reply came from this network, even from an address that looks public.
     for (const candidate of udp)
-      if (candidate.serverId === account.serverId) consider(candidate.origin, true);
-    for (const origin of localDiscoveryOrigins()) consider(origin);
+      if (candidate.serverId === account.serverId && eligible(candidate.origin, true))
+        candidates.add(candidate.origin);
+    for (const origin of localDiscoveryOrigins()) if (eligible(origin)) candidates.add(origin);
 
     const sync = { client, session, signal, stale };
     let changed = false;
@@ -404,9 +405,8 @@ export class RouteManager {
             (route) =>
               route.source === "detected" &&
               (candidates.has(route.origin) ||
-                advertisedRoutes.some(
-                  (advertisedRoute) => advertisedRoute.origin === route.origin,
-                )),
+                (eligible(route.origin, true) &&
+                  advertisedRoutes.some((advertised) => advertised.origin === route.origin))),
           )
           .map((route) => route.origin);
     await commit([...new Set([...verified, ...kept])], advertised !== null);

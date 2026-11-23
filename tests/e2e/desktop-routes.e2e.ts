@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { ServerAdvertisedRoutes } from "@lumen/contracts";
 import { openSettings } from "./support/browser";
 import { closeDesktop, expect, launchDesktop, mainDesktopPage, test } from "./support/desktop";
-import { NetworkProxy } from "./support/proxy";
+import { latch, NetworkProxy } from "./support/proxy";
 import { password, Server } from "./support/server";
 
 test("desktop auto-detects local and LAN routes, prioritizes them over remote, supports manual routes, and fails over automatically", async () => {
@@ -52,12 +52,19 @@ test("desktop auto-detects local and LAN routes, prioritizes them over remote, s
     // Sign in through the remote route. Servers that advertise routes auto-detect and promote the
     // local route in the background once it answers; older released servers stay on the signed-in
     // route without trusting unverified auto-detected origins.
+    // Sign-in finishes while the route list is still on its way: route sync never holds it up.
+    const routeList = latch();
+    remoteProxy.intercept = async (request) => {
+      if (request.url?.startsWith("/api/v1/server/routes")) await routeList.promise;
+      return false;
+    };
     await page.getByLabel("Server address").fill(remoteOrigin);
     await page.getByRole("button", { name: "Continue", exact: true }).click();
     await page.getByLabel("Username").fill("admin");
     await page.getByLabel("Password").fill(password);
     await page.getByRole("button", { name: "Sign in", exact: true }).click();
     await expect(page.getByRole("navigation", { name: "Primary" })).toBeVisible();
+    routeList.release();
 
     const activeAccount = async () => {
       const list = await page.evaluate(() => window.lumen.accounts.list());

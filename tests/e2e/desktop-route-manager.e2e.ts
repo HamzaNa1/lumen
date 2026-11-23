@@ -592,7 +592,26 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   reply = (origin) => (origin === localOrigin ? "answer" : "refuse");
   await sync();
   expect(routesOf(accounts, account.connectionId)).toEqual([localOrigin, homeLanOrigin, lanOrigin]);
-  update({ dismissedRoutes: [localOrigin, "http://127.0.0.1:3210"] });
+
+  // A loopback route the viewer set up (a local proxy, say) retires the detected one, so nothing
+  // bypasses it, even while no route answers.
+  backOnLan();
+  const proxyOrigin = "http://localhost:8080";
+  update({
+    routes: [
+      ...(accounts.get(account.connectionId)?.routes ?? []),
+      makeServerRoute(proxyOrigin, "manual"),
+    ],
+  });
+  reply = () => "refuse";
+  await sync();
+  expect(routesOf(accounts, account.connectionId)).toEqual([proxyOrigin, homeLanOrigin, lanOrigin]);
+  update({
+    routes: (accounts.get(account.connectionId)?.routes ?? []).filter(
+      (route) => route.origin !== proxyOrigin,
+    ),
+    dismissedRoutes: [localOrigin, "http://127.0.0.1:3210"],
+  });
 
   // A newer sync cancels the one still waiting on a route, which then changes nothing.
   backOnLan();
