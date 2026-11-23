@@ -735,11 +735,15 @@ test("desktop keeps the server's VPN routes as VPN and moves from one to the LAN
   const localOrigin = new URL(server.origin).origin;
   const lanOrigin = "http://192.168.1.20:3210";
   const homeOrigin = "http://192.168.1.50:3210";
-  // WireGuard's address looks like a LAN one; only the server's list says it is a VPN route.
+  // WireGuard's address looks like a LAN one, and the server lists it as LAN for released desktops;
+  // only its VPN list says it is a VPN route.
   const wireguardOrigin = "http://10.8.0.1:3210";
   const tailscaleOrigin = "http://100.100.1.2:3210";
   const routeList: ServerAdvertisedRoutes = {
-    routes: [{ origin: homeOrigin, scope: "lan" }],
+    routes: [
+      { origin: homeOrigin, scope: "lan" },
+      { origin: wireguardOrigin, scope: "lan" },
+    ],
     vpnRoutes: [{ origin: wireguardOrigin }, { origin: tailscaleOrigin }],
   };
   let reachable = [lanOrigin, homeOrigin, wireguardOrigin, tailscaleOrigin];

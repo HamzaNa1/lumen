@@ -338,6 +338,17 @@ test("classifies, sorts, merges routes and detects server local, LAN and VPN int
         cidr: "203.0.113.9/32",
       },
     ],
+    // wg-quick names an interface after its file; a tunnel still has no hardware address.
+    office: [
+      {
+        address: "10.9.0.1",
+        netmask: "255.255.255.0",
+        family: "IPv4",
+        mac: "00:00:00:00:00:00",
+        internal: false,
+        cidr: "10.9.0.1/24",
+      },
+    ],
     "ZeroTier One [8056c2e21c000001]": [
       {
         address: "172.24.0.3",
@@ -363,6 +374,7 @@ test("classifies, sorts, merges routes and detects server local, LAN and VPN int
     { origin: "http://172.17.0.1:3210", scope: "lan" },
     { origin: "http://[fd00::50]:3210", scope: "lan" },
     { origin: "http://10.8.0.1:3210", scope: "vpn" },
+    { origin: "http://10.9.0.1:3210", scope: "vpn" },
     { origin: "http://100.64.0.5:3210", scope: "vpn" },
     { origin: "http://172.24.0.3:3210", scope: "vpn" },
     { origin: "http://[fd7a:115c:a1e0::5]:3210", scope: "vpn" },
@@ -375,6 +387,7 @@ test("classifies, sorts, merges routes and detects server local, LAN and VPN int
     { origin: "http://100.64.0.5:3210", scope: "vpn" },
   ]);
   // VPN routes travel in their own list, since released desktops reject the scope in the others.
+  // Those older servers listed as LAN stay listed that way, so a server upgrade takes no route away.
   expect(
     advertisedRoutes(detected, {
       certificate: "pem",
@@ -384,10 +397,23 @@ test("classifies, sorts, merges routes and detects server local, LAN and VPN int
       ],
     }),
   ).toEqual({
-    routes: detected.filter((route) => route.scope !== "vpn"),
-    tls: { certificate: "pem", routes: [{ origin: "https://127.0.0.1:3211", scope: "local" }] },
+    routes: [
+      ...detected.filter((route) => route.scope !== "vpn"),
+      { origin: "http://10.8.0.1:3210", scope: "lan" },
+      { origin: "http://10.9.0.1:3210", scope: "lan" },
+      { origin: "http://172.24.0.3:3210", scope: "lan" },
+      { origin: "http://[fd7a:115c:a1e0::5]:3210", scope: "lan" },
+    ],
+    tls: {
+      certificate: "pem",
+      routes: [
+        { origin: "https://127.0.0.1:3211", scope: "local" },
+        { origin: "https://10.8.0.1:3211", scope: "lan" },
+      ],
+    },
     vpnRoutes: [
       { origin: "http://10.8.0.1:3210" },
+      { origin: "http://10.9.0.1:3210" },
       { origin: "http://100.64.0.5:3210" },
       { origin: "http://172.24.0.3:3210" },
       { origin: "http://[fd7a:115c:a1e0::5]:3210" },

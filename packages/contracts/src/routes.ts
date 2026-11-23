@@ -36,8 +36,9 @@ export const ServerAdvertisedRoutes = Schema.Struct({
   /** Absent when the server runs no LAN TLS listener, as on every release before it existed. */
   tls: Schema.optional(ServerTlsRoutes),
   /**
-   * Plain HTTP and HTTPS routes over a VPN on the server, apart from `routes` so older desktops
-   * ignore them. HTTPS ones present the `tls` certificate. Absent before VPN detection existed.
+   * Plain HTTP and HTTPS routes over a VPN on the server; HTTPS ones present the `tls` certificate.
+   * Those with private addresses also appear in `routes` or `tls.routes` as LAN, as they did for
+   * desktops that predate this list. Absent before VPN detection existed.
    */
   vpnRoutes: Schema.optional(
     Schema.Array(Schema.Struct({ origin: Schema.String.check(Schema.isMinLength(1)) })),

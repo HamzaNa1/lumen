@@ -41,6 +41,11 @@ const privateIpv4Rank = (address: string): number | null => {
 // macOS's utun, which Tailscale and WireGuard both use. Windows names adapters after the product.
 const VPN_INTERFACE =
   /^(?:tailscale|wg|wt\d|zt|feth|utun|tun|tap|ipsec|nebula)|wireguard|zerotier|openvpn|netbird|vpn/iu;
+// A point-to-point tunnel has no hardware address, whatever its name (wg-quick names it after its file).
+const NO_HARDWARE_ADDRESS = "00:00:00:00:00:00";
+
+const isVpnInterface = (name: string, info: NetworkInterfaceInfo): boolean =>
+  !info.internal && (VPN_INTERFACE.test(name) || info.mac === NO_HARDWARE_ADDRESS);
 
 const isUlaIpv6 = (address: string): boolean => {
   const first = /^([0-9a-f]{1,4}):/iu.exec(address)?.[1];
@@ -95,7 +100,6 @@ export const detectLanRoutes = (options: DetectLanRoutesOptions): ReadonlyArray<
       readonly vpn: boolean;
     }> = [];
     for (const [name, entries] of Object.entries(table())) {
-      const vpnInterface = VPN_INTERFACE.test(name);
       for (const info of entries ?? []) {
         if (info.internal) continue;
         const ipv4 = info.family === "IPv4";
@@ -104,7 +108,7 @@ export const detectLanRoutes = (options: DetectLanRoutesOptions): ReadonlyArray<
         const tunnelAddress = classifyRouteScope(origin) === "vpn";
         const lanRank = ipv4 ? privateIpv4Rank(info.address) : isUlaIpv6(info.address) ? 3 : null;
         if (lanRank === null && !tunnelAddress) continue;
-        const vpn = vpnInterface || tunnelAddress;
+        const vpn = tunnelAddress || isVpnInterface(name, info);
         candidates.push({ origin, vpn, rank: vpn ? (ipv4 ? 4 : 5) : (lanRank ?? 4) });
       }
     }
@@ -118,9 +122,8 @@ export const detectLanRoutes = (options: DetectLanRoutesOptions): ReadonlyArray<
   } else {
     const origin = formatOrigin(host, options.port, protocol);
     const address = new URL(origin).hostname.replace(/^\[|\]$/gu, "");
-    const vpn = Object.entries(table()).some(
-      ([name, entries]) =>
-        VPN_INTERFACE.test(name) && (entries ?? []).some((info) => info.address === address),
+    const vpn = Object.entries(table()).some(([name, entries]) =>
+      (entries ?? []).some((info) => info.address === address && isVpnInterface(name, info)),
     );
     if (classifyRouteScope(origin) !== "remote") push(origin, vpn);
   }
@@ -128,10 +131,23 @@ export const detectLanRoutes = (options: DetectLanRoutesOptions): ReadonlyArray<
   return routes;
 };
 
-const nonVpnRoutes = (routes: ReadonlyArray<DetectedRoute>): ServerAdvertisedRoute[] =>
-  routes.flatMap(({ origin, scope }) => (scope === "vpn" ? [] : [{ origin, scope }]));
+const hasPrivateAddress = (origin: string): boolean => {
+  const host = new URL(origin).hostname.replace(/^\[|\]$/gu, "");
+  return host.includes(":") ? isUlaIpv6(host) : privateIpv4Rank(host) !== null;
+};
 
-/** The route list as the wire carries it, with VPN routes in a list older desktops ignore. */
+// Released desktops learned private VPN addresses (WireGuard's 10.x, Tailscale's fd7a:) as LAN
+// routes, so they stay listed that way; newer desktops take the label from `vpnRoutes`.
+const legacyRoutes = (routes: ReadonlyArray<DetectedRoute>): ServerAdvertisedRoute[] =>
+  routes.flatMap(({ origin, scope }) =>
+    scope !== "vpn"
+      ? [{ origin, scope }]
+      : hasPrivateAddress(origin)
+        ? [{ origin, scope: "lan" as const }]
+        : [],
+  );
+
+/** The route list as the wire carries it, with VPN routes also in a list older desktops ignore. */
 export const advertisedRoutes = (
   routes: ReadonlyArray<DetectedRoute>,
   tls: { readonly certificate: string; readonly routes: ReadonlyArray<DetectedRoute> } | null,
@@ -140,10 +156,10 @@ export const advertisedRoutes = (
     .filter((route) => route.scope === "vpn")
     .map(({ origin }) => ({ origin }));
   return {
-    routes: nonVpnRoutes(routes),
+    routes: legacyRoutes(routes),
     ...(tls === null
       ? {}
-      : { tls: { certificate: tls.certificate, routes: nonVpnRoutes(tls.routes) } }),
+      : { tls: { certificate: tls.certificate, routes: legacyRoutes(tls.routes) } }),
     ...(vpnRoutes.length === 0 ? {} : { vpnRoutes }),
   };
 };
