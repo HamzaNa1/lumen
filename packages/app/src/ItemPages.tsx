@@ -378,7 +378,11 @@ const ShowDetails = ({ itemId }: { readonly itemId: string }): React.ReactElemen
         }
       />
       <DetailsInfo details={details.data} />
-      {next === null ? null : (
+      {nextUp.isLoading && (children.data === undefined || childList.length > 0) ? (
+        <DetailsSection title="Next up">
+          <PosterGridSkeleton count={1} landscape />
+        </DetailsSection>
+      ) : next === null ? null : (
         <DetailsSection title="Next up">
           <div className="episode-grid">
             <CatalogCard

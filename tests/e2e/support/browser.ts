@@ -86,7 +86,7 @@ export async function startPlayback(
     await page
       .getByRole("button", { name: `Play ${title}`, exact: true })
       .first()
-      .click({ force: true });
+      .click();
 }
 export async function openMovie(
   page: Page,

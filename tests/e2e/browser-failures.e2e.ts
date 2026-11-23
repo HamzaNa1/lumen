@@ -1,4 +1,4 @@
-import { openMovie, pause, playing, signIn } from "./support/browser";
+import { often, openMovie, pause, playing, signIn } from "./support/browser";
 import { collectBrowserErrors } from "./support/browser-errors";
 import { openDatabase } from "./support/database";
 import { expect, test } from "./support/server";
@@ -211,9 +211,22 @@ test("expired playback is reopened after the tab resumes and retains its last po
 }) => {
   const library = await server.library(admin.accessToken, "movies", ["Film.mp4"]);
   await signIn(page, server);
-  await page.clock.install();
   await openMovie(page, server, library.id);
   await pause(page);
+  await page.getByRole("button", { name: "Forward 10 seconds", exact: true }).click();
+  await expect
+    .poll(
+      () =>
+        page
+          .locator("video")
+          .evaluate((video: HTMLVideoElement) => !video.seeking && video.currentTime >= 5),
+      often,
+    )
+    .toBe(true);
+  const before = await page.locator("video").evaluate((video: HTMLVideoElement) => ({
+    src: video.currentSrc,
+    position: video.currentTime,
+  }));
   const db = openDatabase(server.databasePath);
   try {
     const old = db.prepare("SELECT id FROM playback_sessions WHERE closed_at_ms IS NULL").get()?.id;
@@ -223,7 +236,6 @@ test("expired playback is reopened after the tab resumes and retains its last po
     await page.evaluate(() =>
       window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })),
     );
-    await page.clock.fastForward(21_000);
     await expect
       .poll(
         () =>
@@ -241,6 +253,24 @@ test("expired playback is reopened after the tab resumes and retains its last po
         )
         .get(Date.now())?.id,
     ).not.toBe(old);
+    await expect
+      .poll(
+        () =>
+          page
+            .locator("video")
+            .evaluate(
+              (video: HTMLVideoElement, previous: { src: string; position: number }) =>
+                video.currentSrc !== "" &&
+                video.currentSrc !== previous.src &&
+                video.readyState >= 1 &&
+                !video.seeking &&
+                video.paused &&
+                Math.abs(video.currentTime - previous.position) < 1,
+              before,
+            ),
+        often,
+      )
+      .toBe(true);
     await expect(page.getByRole("region", { name: "Media player" })).toHaveAttribute(
       "data-status",
       "ready",

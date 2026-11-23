@@ -434,6 +434,7 @@ export const makePlaybackService = Effect.gen(function* () {
             eq(playbackSessions.id, sessionId),
             eq(playbackSessions.userId, principal.user.id),
             isNull(playbackSessions.closedAtMs),
+            gt(playbackSessions.expiresAtMs, nowMs),
           ),
         );
     },
