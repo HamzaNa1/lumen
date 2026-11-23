@@ -143,6 +143,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       if (dependencies.registry.active()?.connectionId === connectionId) watch.reconnect();
       notifyAccountsChanged();
     },
+    onRouteListChanged: notifyAccountsChanged,
   });
   const onResume = (): void => {
     const active = dependencies.registry.active();

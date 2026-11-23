@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { ServerAdvertisedRoutes } from "@lumen/contracts";
 import { openSettings } from "./support/browser";
@@ -366,6 +366,33 @@ test("desktop moves to the server's pinned LAN certificate and keeps an HTTPS si
   } finally {
     await closeDesktop(app).catch(() => undefined);
     await remoteProxy.close().catch(() => undefined);
+    await server.stop().catch(() => undefined);
+  }
+});
+
+test("a sign-in the desktop cannot save leaves no account behind", async () => {
+  const root = test.info().outputPath("unsaved-sign-in");
+  const profile = join(root, "desktop-profile");
+  const server = new Server(root);
+  await server.start();
+  await server.register("admin");
+  // The token is saved, but the connection list cannot be replaced.
+  await mkdir(join(profile, "connections.json"), { recursive: true });
+  const app = await launchDesktop(profile, false, { LUMEN_E2E_LOCAL_ORIGINS: "off" });
+  try {
+    const page = await mainDesktopPage(app);
+    await page.getByLabel("Server address").fill(server.origin);
+    await page.getByRole("button", { name: "Continue", exact: true }).click();
+    await page.getByLabel("Username").fill("admin");
+    await page.getByLabel("Password").fill(password);
+    await page.getByRole("button", { name: "Sign in", exact: true }).click();
+    await expect(page.getByText(/could not save the connection/)).toBeVisible();
+    expect(await page.evaluate(() => window.lumen.accounts.list())).toMatchObject({
+      activeConnectionId: null,
+      accounts: [],
+    });
+  } finally {
+    await closeDesktop(app).catch(() => undefined);
     await server.stop().catch(() => undefined);
   }
 });

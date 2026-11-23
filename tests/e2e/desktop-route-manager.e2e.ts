@@ -506,11 +506,16 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   client.setSession(sessionOf(admin));
   await client.identity();
   const clients = new Map([[account.connectionId, client]]);
+  const switches: string[] = [];
+  let listChanges = 0;
   const manager = new RouteManager({
     registry: fakeRegistry(accounts, admin),
     clients,
     serverTransport: transport,
-    onRouteChanged: () => undefined,
+    onRouteChanged: (_connectionId, origin) => switches.push(origin),
+    onRouteListChanged: () => {
+      listChanges += 1;
+    },
     discoverLan: async () => {
       await discovering;
       return udp.map((origin) => ({
@@ -548,6 +553,9 @@ test("desktop adds an auto-detected route only once it answers", async ({ server
   expect(attempts.get(plainLanOrigin)).toBe(3);
   expect(attempts.get(udpOrigin)).toBe(1);
   expect(attempts.get(homeLanOrigin)).toBe(1);
+  // Learning backup routes shows them without moving the client, which would reconnect its watch group.
+  expect(listChanges).toBeGreaterThan(0);
+  expect(switches).toEqual([]);
 
   // Away from the server's network nothing answers: every try is spent, the learned routes stay
   // for when the device returns, and no new one joins.

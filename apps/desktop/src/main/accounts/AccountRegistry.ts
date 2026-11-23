@@ -268,8 +268,27 @@ export class AccountRegistry {
         record,
       ],
     };
+    const previousActive = this.data.activeConnectionId;
     this.data = next;
-    await writePrivateJson(this.path, next);
+    try {
+      await writePrivateJson(this.path, next);
+    } catch (cause) {
+      // Undo only this sign-in, keeping whatever else changed while the write was pending.
+      this.data = {
+        activeConnectionId:
+          this.data.activeConnectionId === input.connectionId
+            ? previousActive
+            : this.data.activeConnectionId,
+        accounts: this.data.accounts.flatMap((account) =>
+          account.connectionId !== input.connectionId
+            ? [account]
+            : existing === null
+              ? []
+              : [existing],
+        ),
+      };
+      throw cause;
+    }
   }
 
   async activate(connectionId: string): Promise<void> {

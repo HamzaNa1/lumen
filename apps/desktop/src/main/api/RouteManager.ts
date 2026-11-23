@@ -156,7 +156,10 @@ export interface RouteManagerOptions {
   readonly registry: AccountRegistry;
   readonly clients: Map<string, ServerClient>;
   readonly serverTransport: FetchLike;
+  /** Called when a connection's live client moves to another origin. */
   readonly onRouteChanged: (connectionId: string, origin: string) => void;
+  /** Called when a connection's saved routes change while its client stays where it is. */
+  readonly onRouteListChanged?: (connectionId: string) => void;
   /** Called when a server's pinned LAN certificate is learned, replaced, or dropped. */
   readonly onPinsChanged?: () => void;
   readonly discoverLan?: (signal?: AbortSignal) => Promise<ReadonlyArray<LanServerCandidate>>;
@@ -376,7 +379,7 @@ export class RouteManager {
       changed ||= merged;
       if (stale()) return;
       if (await this.promoteClient(connectionId, sync)) changed = true;
-      else if (merged) this.options.onRouteChanged(connectionId, client.serverOrigin);
+      else if (merged) this.options.onRouteListChanged?.(connectionId);
     };
     // Each route joins as soon as it answers, while the others keep their remaining tries.
     const verified = await this.verifyDetectedOrigins(
