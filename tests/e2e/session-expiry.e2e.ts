@@ -119,4 +119,5 @@ for (const ending of ["expired", "stopped", "revoked-access"] as const)
         })
       ).status,
     ).toBe(404);
+    await server.api(path, { token: viewer.accessToken, method: "DELETE" });
   });
