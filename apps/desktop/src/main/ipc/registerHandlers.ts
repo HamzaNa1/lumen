@@ -1,6 +1,7 @@
 import {
   type FetchLike,
   RequestCancelledError,
+  ServerUnreachableError,
   viewerPlayback,
   WatchPlaybackController,
 } from "@lumen/client";
@@ -143,6 +144,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
       if (dependencies.registry.active()?.connectionId === connectionId) watch.reconnect();
       notifyAccountsChanged();
     },
+    onRouteListChanged: notifyAccountsChanged,
   });
   const onResume = (): void => {
     const active = dependencies.registry.active();
@@ -210,9 +212,18 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
   ): Promise<ServerClient> => {
     const cached = dependencies.clients.get(account.connectionId);
     if (cached !== undefined) {
-      await routeManager.recheckActiveRoute(account.connectionId);
-      if (signal.aborted) throw new RequestCancelledError();
-      await validateClient(cached, signal);
+      const attemptedOrigin = cached.serverOrigin;
+      try {
+        await validateClient(cached, signal);
+      } catch (cause) {
+        if (signal.aborted) throw new RequestCancelledError();
+        // Only an unreachable route fails over on its own. Anything else that answered there (an
+        // error, a proxy's login page or 401) may not be this server, so try another route.
+        if (cause instanceof ServerUnreachableError) throw cause;
+        if ((await routeManager.failover(account.connectionId, cached, attemptedOrigin)) === null)
+          throw cause;
+        await validateClient(cached, signal);
+      }
       if (signal.aborted) throw new RequestCancelledError();
       return cached;
     }
@@ -361,7 +372,7 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
     }
     boundConnectionId = connectionId;
     dependencies.clients.set(connectionId, client);
-    await routeManager.syncServerRoutes(connectionId, client, current).catch(() => false);
+    void routeManager.syncServerRoutes(connectionId, client, current).catch(() => false);
     watch.connect(client, connectionId);
     discoveredServers.delete(normalizeOrigin(input.origin));
     void dependencies.downloads.connectionReady(connectionId);
@@ -397,12 +408,10 @@ export const registerIpcHandlers = (dependencies: IpcDependencies): void => {
         dependencies.registry.find(connectionId) === null
       )
         throw new RequestCancelledError();
-      if (dependencies.clients.get(connectionId) !== client) {
-        dependencies.clients.set(connectionId, client);
-        await routeManager
-          .syncServerRoutes(connectionId, client, client.currentSession)
-          .catch(() => false);
-      }
+      dependencies.clients.set(connectionId, client);
+      void routeManager
+        .syncServerRoutes(connectionId, client, client.currentSession)
+        .catch(() => false);
       if (controller.signal.aborted || activeActivation !== attempt)
         throw new RequestCancelledError();
       await dependencies.registry.activate(connectionId);
