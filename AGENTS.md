@@ -109,7 +109,7 @@ The most common defect in a repo like this is a change that works on the path yo
 - Always include proof. Use the proof the request names. When it names none, include what a reviewer needs to believe the change: before/after images for UI, a short video for motion or timing, test output or measurements for the rest.
 - Upload evidence with `gh pr create --attach <file>`. Never commit PR-only screenshots, charts, or raw measurements. A benchmark harness is code and belongs in the repo; its output belongs in the PR.
 - One request is one PR. Split it only when the developer asks.
-- Do not bump a version or start a release unless asked. The release flow is in the README.
+- Do not bump a version or start a release unless asked.
 
 ## Documentation
 
@@ -119,7 +119,7 @@ Most code changes do not need a documentation change. Code must be self-explanat
 - Do not document every feature, enumerate fields or methods, narrate control flow, or append PR summaries. Types, tests, and code already record the implementation.
 - A local reason the code can't show goes in a short nearby code comment. Use an ADR when the reasoning crosses boundaries or needs context the code cannot carry well. Link to the relevant source instead of copying it.
 - When a documented decision changes, rewrite or remove the affected text. Do not append another account of the new behavior. A new ADR needs a distinct, durable decision to record.
-- `README.md` is for people running and releasing Lumen. Update it when setup, configuration, or the release flow changes. A UI tweak does not need an entry.
+- `README.md` is for people running Lumen. Update it when setup or configuration changes. A UI tweak does not need an entry. `CONTRIBUTING.md` is for people working on Lumen; update it when the development setup changes.
 
 ## Plans and work artifacts
 
@@ -130,7 +130,7 @@ Most code changes do not need a documentation change. Code must be self-explanat
 
 The server scans each library's roots into a SQLite catalog and serves an HTTP API, the built web app, and the watch-group WebSocket. A client signs in to one server, with a token on the desktop and an `HttpOnly` session cookie in the browser, then browses the catalog and starts a _playback session_. The session returns a stream URL scoped by a _grant_. The web app gives that URL to the browser's media element. The desktop gives MPV a URL on its loopback _bridge_, which answers byte ranges from the _media store_ and fetches what it does not hold from the server. When a client cannot decode a file, the server starts a _conversion_ and streams the result. In the background, the _watcher_ observes each root, diffs it against the catalog in memory, and commits the changes in one transaction fenced by the _library revision_; probing and metadata then run as _jobs_.
 
-Decisions and their alternatives: `docs/adr/`. Setup and releases: `README.md`.
+Decisions and their alternatives: `docs/adr/`. Setup: `README.md`. Development: `CONTRIBUTING.md`.
 
 ## Where code lives
 
