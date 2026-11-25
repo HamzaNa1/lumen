@@ -15,9 +15,9 @@ A self-hosted media server with a fast desktop app, a web app for everywhere els
 
 [Install](#install) · [Features](#features) · [Apps](#get-the-apps) · [Home and away](#at-home-and-away) · [Configuration](#configuration) · [FAQ](#faq)
 
-<img alt="The Lumen home screen, with Continue watching and Latest Movies rows" src="docs/images/home.webp" width="900">
+<img alt="The Lumen home screen, with Movies and Shows libraries, Continue watching, and Next up" src="docs/images/home.webp" width="900">
 
-<sub>Posters from <a href="https://studio.blender.org/films/">Blender Studio's open movies</a>, CC BY 3.0 / 4.0.</sub>
+<sub>Artwork from <a href="https://studio.blender.org/films/">Blender Studio's open movies</a> and the <a href="https://morevnaproject.org">Morevna Project</a>'s Pepper&amp;Carrot, CC BY 3.0 / 4.0.</sub>
 
 </div>
 
