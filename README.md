@@ -251,4 +251,4 @@ Bug reports and ideas are welcome in [Issues](https://github.com/HamzaNa1/lumen/
 
 ## License
 
-<!-- TODO: the repository has no LICENSE file yet. -->
+Lumen is released under the [MIT License](LICENSE). The desktop app bundles [mpv](https://mpv.io) and [FFmpeg](https://ffmpeg.org), which keep their own GPL and LGPL licenses.
