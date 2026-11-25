@@ -15,8 +15,9 @@ A self-hosted media server with a fast desktop app, a web app for everywhere els
 
 [Install](#install) · [Features](#features) · [Apps](#get-the-apps) · [Home and away](#at-home-and-away) · [Configuration](#configuration) · [FAQ](#faq)
 
-<!-- TODO: hero screenshot of the home screen (desktop app, dark theme), ~1600px wide -->
-<img alt="Lumen home screen" src="docs/images/home.png" width="900">
+<img alt="The Lumen home screen, with Continue watching and Latest Movies rows" src="docs/images/home.webp" width="900">
+
+<sub>Posters from <a href="https://studio.blender.org/films/">Blender Studio's open movies</a>, CC BY 3.0 / 4.0.</sub>
 
 </div>
 
@@ -201,11 +202,11 @@ Over HTTPS the sign-in cookie is marked `Secure` automatically. Set `LUMEN_COOKI
 <details>
 <summary><b>How is this different from Jellyfin or Plex?</b></summary>
 
-Lumen is built specifically for movies and shows, and it does less on purpose: no plugins, live TV, or mobile and TV apps (yet). What it focuses on instead:
+Lumen is built specifically for movies and shows, and it does less on purpose: no plugins, live TV, or mobile and TV apps (yet). What it does instead:
 
-- **Bad networks.** Playback adapts its quality to the connection instead of stalling, and the desktop app moves between your home network, a VPN, and the internet on its own, picking up again after sleep or a dropped connection.
-- **Watch groups that stay in sync.** Everyone in a group stays on the same frame through play, pause, and seek, from the desktop or the browser.
-- **Offline downloads.** Download movies and episodes to the desktop app, keep the next episodes of a show ready automatically, and watch with no connection at all. Your progress syncs when you're back.
+- **It's resilient to bad networks.** Playback adapts its quality to the connection instead of stalling, and the desktop app moves between your home network, a VPN, and the internet on its own, picking up again after sleep or a dropped connection.
+- **Its watch groups are stable.** Everyone in a group stays on the same frame through play, pause, and seek, from the desktop or the browser.
+- **It has offline downloads.** Download movies and episodes to the desktop app, keep the next episodes of a show ready automatically, and watch with no connection at all. Your progress syncs when you're back.
 
 </details>
 
