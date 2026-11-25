@@ -44,7 +44,7 @@ Lumen is an alternative to Plex and Jellyfin for people who want their media ser
 
 **Playback**
 
-- **Auto** quality picks between the original file and 1080p, 720p, 480p, or 360p as your connection changes, without stalling; or pick one yourself
+- Quality adapts to your connection without stalling, from the original file down to 360p, or pick one yourself
 - Lumen remembers your quality, audio, and subtitle choices for each show
 - Conversion with FFmpeg on the CPU, NVIDIA (NVENC), or Intel/AMD (VAAPI), with limits so a busy server turns work away instead of falling over
 - Seeking and track switching keep working during conversion
