@@ -496,7 +496,18 @@ test("conversion follows the bitrate cap, delivers text subtitles and stops with
   const srt = await server.request(
     `/jellyfin${subtitle.DeliveryUrl.replace("Stream.vtt", "Stream.srt")}`,
   );
-  expect(await srt.text()).toContain("00:00:00,500 --> 00:00:03,000");
+  // FFmpeg builds differ in how they offset for the AAC encoder's start delay, by up to a frame.
+  const cue =
+    /(\d\d):(\d\d):(\d\d),(\d{3}) --> (\d\d):(\d\d):(\d\d),(\d{3})\s+Hello from Lumen/u.exec(
+      await srt.text(),
+    );
+  const seconds = (parts: ReadonlyArray<string | undefined>) => {
+    const [hours, minutes, whole, millis] = parts.map(Number);
+    return (hours ?? 0) * 3600 + (minutes ?? 0) * 60 + (whole ?? 0) + (millis ?? 0) / 1000;
+  };
+  expect(cue).not.toBeNull();
+  expect(seconds(cue?.slice(1, 5) ?? [])).toBeCloseTo(0.5, 1);
+  expect(seconds(cue?.slice(5, 9) ?? [])).toBeCloseTo(3, 1);
   expect(
     (await server.request(`/jellyfin${subtitle.DeliveryUrl.replace("Stream.vtt", "Stream.ass")}`))
       .status,
