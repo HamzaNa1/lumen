@@ -127,6 +127,9 @@ test("real multitrack media exposes languages and roles and remembers independen
       (stream) => stream.kind === "audio" && stream.language === "eng" && !stream.commentary,
     );
     const overlay = await desktopPlayerPage(desktop.app);
+    // Playback controls auto-hide after idle; move the pointer in the overlay before opening settings.
+    await overlay.mouse.move(300, 300);
+    await overlay.mouse.move(310, 310);
     await overlay.getByRole("button", { name: "Playback settings", exact: true }).click();
     await overlay.getByRole("combobox", { name: "Audio track" }).click();
     const marked = overlay.getByRole("option", { name: / · Default$/ });

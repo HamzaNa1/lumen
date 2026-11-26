@@ -18,6 +18,9 @@ test("real browser and Electron players join, buffer, pause, seek and leave a pr
   await expect(page.locator(".watch-group-trigger.is-active")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect
+    .poll(() => desktop.page.evaluate(async () => (await window.lumen.watch.state()).connection))
+    .toBe("connected");
+  await expect
     .poll(() =>
       desktop.page.evaluate(async () =>
         (await window.lumen.watch.action({ type: "list" })).groups.map((group) => group.name),
