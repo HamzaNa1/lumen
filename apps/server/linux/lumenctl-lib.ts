@@ -159,7 +159,12 @@ export const parseLogsArgs = (argv: readonly string[]): LogsArgsResult => {
 };
 
 export const buildJournalctlArgs = (options: LogsOptions): string[] => {
-  const args = ["-u", options.update ? "lumen-update.service" : "lumen.service", "--no-pager"];
+  const args = [
+    "-u",
+    options.update ? "lumen-update.service" : "lumen.service",
+    "--no-pager",
+    "--output=cat",
+  ];
   const hasRange = options.since !== undefined || options.until !== undefined;
   if (options.lines !== undefined) {
     args.push(`--lines=${options.lines}`);

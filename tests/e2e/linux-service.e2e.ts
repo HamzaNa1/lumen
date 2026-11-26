@@ -65,27 +65,27 @@ test("builds journalctl arguments for lumenctl logs", () => {
   const cases: ReadonlyArray<{ argv: readonly string[]; expected: readonly string[] }> = [
     {
       argv: [],
-      expected: ["-u", "lumen.service", "--no-pager", "--lines=100"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=100"],
     },
     {
       argv: ["-f"],
-      expected: ["-u", "lumen.service", "--no-pager", "--lines=100", "--follow"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=100", "--follow"],
     },
     {
       argv: ["-n", "25", "--follow"],
-      expected: ["-u", "lumen.service", "--no-pager", "--lines=25", "--follow"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=25", "--follow"],
     },
     {
       argv: ["--tail=50"],
-      expected: ["-u", "lumen.service", "--no-pager", "--lines=50"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=50"],
     },
     {
       argv: ["--lines", "all"],
-      expected: ["-u", "lumen.service", "--no-pager", "--lines=all"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=all"],
     },
     {
       argv: ["-n20"],
-      expected: ["-u", "lumen.service", "--no-pager", "--lines=20"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=20"],
     },
     {
       argv: ["--since", "10m", "--until", "30s"],
@@ -93,6 +93,7 @@ test("builds journalctl arguments for lumenctl logs", () => {
         "-u",
         "lumen.service",
         "--no-pager",
+        "--output=cat",
         "--since=10 minutes ago",
         "--until=30 seconds ago",
       ],
@@ -103,20 +104,22 @@ test("builds journalctl arguments for lumenctl logs", () => {
         "-u",
         "lumen.service",
         "--no-pager",
+        "--output=cat",
         "--lines=all",
         "--since=2 hours ago",
         "--follow",
       ],
     },
     {
-      argv: ["--since", "2026-11-26 12:00:00", "--update", "--", "-o", "cat"],
+      argv: ["--since", "2026-11-26 12:00:00", "--update", "--", "-o", "short-iso"],
       expected: [
         "-u",
         "lumen-update.service",
         "--no-pager",
+        "--output=cat",
         "--since=2026-11-26 12:00:00",
         "-o",
-        "cat",
+        "short-iso",
       ],
     },
   ];
