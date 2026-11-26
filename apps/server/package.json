@@ -2,6 +2,7 @@
   "name": "lumen-server",
   "version": "0.0.46",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "scripts": {
     "dev": "bun --watch src/main.ts",
