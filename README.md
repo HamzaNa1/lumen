@@ -160,6 +160,17 @@ Updates only move forward. A download that fails its checksum leaves the install
 
 The desktop app and server update independently. Any recent desktop works with any recent server. **Settings** shows the app, server, and MPV versions you're running.
 
+### Jellyfin apps
+
+Phones, tablets, and TVs can use Jellyfin's apps with a Lumen server. Add a server in the app with the address `http://<your-server>:3210/jellyfin` (or your HTTPS address followed by `/jellyfin`) and sign in with your Lumen account.
+
+- **Supported:** [Findroid](https://github.com/jarnedemeulemeester/findroid) (Android), [Swiftfin](https://github.com/jellyfin/Swiftfin) (iPhone, iPad, Apple TV), and [Jellyfin for Android TV](https://github.com/jellyfin/jellyfin-androidtv). Infuse may work. Jellyfin Media Player and Jellyfin's web app don't, because they need a Jellyfin server to host them.
+- **What works:** browsing movies and shows, Continue watching and Next up, playing the original file or a converted stream at a lower quality, resuming, marking watched, and switching audio and subtitles. Progress and track choices are shared with Lumen's own apps.
+- **What doesn't:** music libraries, downloads, administration, collections and playlists, SyncPlay, remote control, and live TV. When an app can't play a file's audio, the whole file is converted, at up to 1080p. Picture-based subtitles (PGS, VobSub) aren't shown in converted streams, and subtitle files next to the video aren't used.
+- **Artwork:** Jellyfin apps load images without signing in, so Lumen serves an item's artwork to anyone who has its image link. The link names the item by a random ID that only people signed in with access to the library are shown.
+
+Each app signs in as a device named after it, such as `Living Room TV (Jellyfin)`. Signing out in the app ends its session. To cut an app off, deactivate the account under **Administration → Users**, or revoke that one device with the API (`GET /api/v1/users/<user>/devices`, then `DELETE /api/v1/devices/<device>`). A revoked device can't sign in to that account again, just like a revoked desktop app.
+
 ## At home and away
 
 A desktop app remembers every address it can reach a server at, and moves to the best one that answers, in this order: the same machine, your home network, a VPN, then the internet. You can see, add, reorder, and remove addresses under **Settings → Routes**.
@@ -204,7 +215,7 @@ Over HTTPS the sign-in cookie is marked `Secure` automatically. Set `LUMEN_COOKI
 <details>
 <summary><b>How is this different from Jellyfin or Plex?</b></summary>
 
-Lumen is built specifically for movies and shows, and it does less on purpose: no plugins, live TV, or mobile and TV apps (yet). What it does instead:
+Lumen is built specifically for movies and shows, and it does less on purpose: no plugins, live TV, or mobile and TV apps of its own (yet; [Jellyfin's apps](#jellyfin-apps) work in the meantime). What it does instead:
 
 - **It's resilient to bad networks.** Playback adapts its quality to the connection instead of stalling, and the desktop app moves between your home network, a VPN, and the internet on its own, picking up again after sleep or a dropped connection.
 - **Its watch groups are stable.** Everyone in a group stays on the same frame through play, pause, and seek, from the desktop or the browser.

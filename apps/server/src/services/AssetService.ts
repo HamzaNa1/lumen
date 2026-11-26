@@ -33,6 +33,11 @@ export interface AssetServiceShape {
     artworkId: string,
     nowMs: number,
   ) => Effect.Effect<ArtworkFile, unknown>;
+  /**
+   * Jellyfin compatibility: an image for a caller with no account, because Jellyfin apps load
+   * artwork without credentials. Only the Jellyfin module calls it; remove it with that module.
+   */
+  readonly publicArtwork: (artworkId: string) => Effect.Effect<ArtworkFile, unknown>;
   readonly sidecar: (
     principal: AuthPrincipal,
     sidecarId: string,
@@ -44,43 +49,59 @@ export const makeAssetService = (config?: ServerConfig) =>
   Effect.gen(function* () {
     const database = yield* Database;
     const access = yield* AccessControl;
+    const artworkRow = (artworkId: string) =>
+      database
+        .select({
+          libraryId: artworkTable.libraryId,
+          rootPath: libraryRoots.path,
+          path: artworkTable.relativePath,
+          mimeType: artworkTable.mimeType,
+          width: artworkTable.width,
+          contentHash: artworkTable.contentHash,
+        })
+        .from(artworkTable)
+        .leftJoin(mediaSources, eq(mediaSources.id, artworkTable.sourceId))
+        .leftJoin(libraryRoots, eq(libraryRoots.id, mediaSources.rootId))
+        .where(eq(artworkTable.id, artworkId))
+        .get();
+    const artworkFile = Effect.fn("Assets.artworkFile")(function* (
+      row: NonNullable<Effect.Success<ReturnType<typeof artworkRow>>>,
+    ) {
+      const allowedRoot = row.rootPath ?? config?.dataDir;
+      if (allowedRoot === undefined) return yield* notFound("Artwork not found");
+      const paths = yield* Effect.all([
+        Effect.promise(() => canonicalPath(allowedRoot)),
+        Effect.promise(() => canonicalPath(row.path)),
+      ]).pipe(Effect.catch(() => notFound("Artwork not found")));
+      const [root, file] = paths;
+      if (!isPathWithin(root, file)) return yield* notFound("Artwork not found");
+      const details = yield* Effect.promise(() => lstat(file)).pipe(
+        Effect.catch(() => notFound("Artwork not found")),
+      );
+      if (!details.isFile() || details.isSymbolicLink())
+        return yield* notFound("Artwork not found");
+      return {
+        path: file,
+        size: details.size,
+        modifiedAtMs: Math.trunc(details.mtimeMs),
+        mimeType: row.mimeType,
+        width: row.width,
+      } satisfies ArtworkFile;
+    });
     const artwork: AssetServiceShape["artwork"] = Effect.fn("Assets.artwork")(
       function* (principal, artworkId, nowMs) {
-        const row = yield* database
-          .select({
-            libraryId: artworkTable.libraryId,
-            rootPath: libraryRoots.path,
-            path: artworkTable.relativePath,
-            mimeType: artworkTable.mimeType,
-            width: artworkTable.width,
-          })
-          .from(artworkTable)
-          .leftJoin(mediaSources, eq(mediaSources.id, artworkTable.sourceId))
-          .leftJoin(libraryRoots, eq(libraryRoots.id, mediaSources.rootId))
-          .where(eq(artworkTable.id, artworkId))
-          .get();
+        const row = yield* artworkRow(artworkId);
         if (row == null) return yield* notFound("Artwork not found");
         yield* access.requireLibrary(principal, row.libraryId, "library:read", nowMs);
-        const allowedRoot = row.rootPath ?? config?.dataDir;
-        if (allowedRoot === undefined) return yield* notFound("Artwork not found");
-        const paths = yield* Effect.all([
-          Effect.promise(() => canonicalPath(allowedRoot)),
-          Effect.promise(() => canonicalPath(row.path)),
-        ]).pipe(Effect.catch(() => notFound("Artwork not found")));
-        const [root, file] = paths;
-        if (!isPathWithin(root, file)) return yield* notFound("Artwork not found");
-        const details = yield* Effect.promise(() => lstat(file)).pipe(
-          Effect.catch(() => notFound("Artwork not found")),
-        );
-        if (!details.isFile() || details.isSymbolicLink())
-          return yield* notFound("Artwork not found");
-        return {
-          path: file,
-          size: details.size,
-          modifiedAtMs: Math.trunc(details.mtimeMs),
-          mimeType: row.mimeType,
-          width: row.width,
-        };
+        return yield* artworkFile(row);
+      },
+    );
+    // Jellyfin compatibility; see `publicArtwork` in AssetServiceShape.
+    const publicArtwork: AssetServiceShape["publicArtwork"] = Effect.fn("Assets.publicArtwork")(
+      function* (artworkId) {
+        const row = yield* artworkRow(artworkId);
+        if (row == null) return yield* notFound("Artwork not found");
+        return yield* artworkFile(row);
       },
     );
     const sidecar: AssetServiceShape["sidecar"] = Effect.fn("Assets.sidecar")(
@@ -117,7 +138,7 @@ export const makeAssetService = (config?: ServerConfig) =>
         };
       },
     );
-    return { artwork, sidecar };
+    return { artwork, publicArtwork, sidecar };
   });
 
 export class AssetService extends Context.Service<AssetService, AssetServiceShape>()(

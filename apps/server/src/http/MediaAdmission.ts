@@ -17,8 +17,6 @@ export const mediaTrackIdFor = (request: Request): string | null => {
   );
 };
 
-export const isMediaRequest = (request: Request): boolean => mediaTrackIdFor(request) !== null;
-
 /** Covers grant authorization and response creation. Live Bun.file transfers are not counted. */
 export class MediaAdmission {
   private readonly peers = new Map<string, Budget>();

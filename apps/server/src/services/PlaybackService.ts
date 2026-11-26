@@ -36,7 +36,7 @@ import {
 import { and, asc, desc, eq, gt, inArray, isNull, notInArray, or, sql } from "drizzle-orm";
 import type { Schema } from "effect";
 import { Context, Effect, Layer } from "effect";
-import { badRequest, conflict, forbidden, notFound } from "../core/Errors";
+import { badRequest, conflict, forbidden, notFound, ServerError } from "../core/Errors";
 import { canonicalPath, isPathWithin } from "../core/Paths";
 import { hashToken, newOpaqueToken, newUuid } from "../core/Security";
 import type { HeartbeatBody, ProgressBody, StartPlaybackBody } from "../http/Schemas";
@@ -54,6 +54,18 @@ import { makeTrackMemoryStore } from "./TrackMemoryStore";
 const playbackLifetimeMs = 3_600_000;
 
 export type PlaybackStream = PlayableStream;
+
+export interface MediaFile {
+  readonly absolutePath: string;
+  readonly size: number;
+  readonly modifiedAtMs: number;
+  readonly mimeType: string;
+}
+
+export interface AuthorizedTrack extends MediaFile {
+  readonly trackId: string;
+  readonly userId: string;
+}
 
 export interface PlaybackStartResponse {
   readonly session: PlaybackSession;
@@ -113,6 +125,16 @@ export interface PlaybackServiceShape {
     itemId: string,
     nowMs: number,
   ) => Effect.Effect<PreloadTicket, unknown>;
+  /**
+   * Authorizes a media request by the viewer's own access to the item rather than by a grant.
+   * Unknown and inaccessible media are both not found. Jellyfin compatibility: Jellyfin apps hold
+   * no grant, and only the Jellyfin module calls this; remove it with that module.
+   */
+  readonly authorizeTrack: (
+    principal: AuthPrincipal,
+    itemOrTrackId: string,
+    nowMs: number,
+  ) => Effect.Effect<AuthorizedTrack, unknown>;
   /** Authorizes a media request made with a playback grant or a download grant. */
   readonly authorizeGrant: (
     grantToken: string,
@@ -603,6 +625,64 @@ export const makePlaybackService = Effect.gen(function* () {
     },
   );
 
+  /** The file a catalog row names, while it is still a regular path inside its root. */
+  const resolveFile = Effect.fn("Playback.resolveFile")(function* (
+    row: {
+      readonly absolutePath: string;
+      readonly rootPath: string;
+      readonly size: number;
+      readonly modifiedAtMs: number;
+    },
+    missing: string,
+  ) {
+    const [root, file] = yield* Effect.all([
+      Effect.promise(() => canonicalPath(row.rootPath)),
+      Effect.promise(() => canonicalPath(row.absolutePath)),
+    ]);
+    if (!isPathWithin(root, file)) return yield* notFound(missing);
+    return {
+      absolutePath: file,
+      size: row.size,
+      modifiedAtMs: row.modifiedAtMs,
+      mimeType: mediaType(file) ?? "application/octet-stream",
+    } satisfies MediaFile;
+  });
+
+  // Jellyfin compatibility; see `authorizeTrack` in PlaybackServiceShape.
+  const authorizeTrack: PlaybackServiceShape["authorizeTrack"] = Effect.fn(
+    "Playback.authorizeTrack",
+  )(function* (principal, itemOrTrackId, nowMs) {
+    const missing = "Media source not found";
+    const trackId = yield* resolveTrack(itemOrTrackId);
+    yield* access
+      .requireTrack(principal, trackId, "playback:control", nowMs)
+      .pipe(
+        Effect.catch((cause) =>
+          cause instanceof ServerError && cause.code === "forbidden"
+            ? notFound(missing)
+            : Effect.fail(cause),
+        ),
+      );
+    const row = yield* database
+      .select({
+        absolutePath: mediaSources.absolutePath,
+        rootPath: libraryRoots.path,
+        size: mediaSources.fileSizeBytes,
+        modifiedAtMs: sql<number>`coalesce(${mediaSources.modifiedAtMs}, 0)`,
+      })
+      .from(tracks)
+      .innerJoin(mediaSources, eq(mediaSources.id, tracks.sourceId))
+      .innerJoin(libraryRoots, eq(libraryRoots.id, mediaSources.rootId))
+      .leftJoin(mediaSourceAvailability, eq(mediaSourceAvailability.sourceId, mediaSources.id))
+      .where(
+        and(eq(tracks.id, trackId), sql`coalesce(${mediaSourceAvailability.isAvailable}, 1) = 1`),
+      )
+      .get();
+    if (row == null || row.size == null) return yield* notFound(missing);
+    const file = yield* resolveFile({ ...row, size: row.size }, missing);
+    return { ...file, trackId, userId: principal.user.id };
+  });
+
   const authorizeGrant: PlaybackServiceShape["authorizeGrant"] = Effect.fn(
     "Playback.authorizeGrant",
   )(function* (grantToken, trackId, nowMs) {
@@ -635,18 +715,15 @@ export const makePlaybackService = Effect.gen(function* () {
       .get();
     if (row == null || row.size == null)
       return yield* downloads.authorize(grantToken, trackId, nowMs);
-    const [root, file] = yield* Effect.all([
-      Effect.promise(() => canonicalPath(row.rootPath)),
-      Effect.promise(() => canonicalPath(row.absolutePath)),
-    ]);
-    if (!isPathWithin(root, file)) return yield* notFound("Playback grant is invalid or expired");
-    const { activeTrackId, ...media } = row;
+    const file = yield* resolveFile(
+      { ...row, size: row.size },
+      "Playback grant is invalid or expired",
+    );
     return {
-      ...media,
-      size: row.size,
-      absolutePath: file,
-      mimeType: mediaType(file) ?? "application/octet-stream",
-      preloaded: activeTrackId !== null && activeTrackId !== trackId,
+      ...file,
+      sessionId: row.sessionId,
+      userId: row.userId,
+      preloaded: row.activeTrackId !== null && row.activeTrackId !== trackId,
     };
   });
 
@@ -656,6 +733,7 @@ export const makePlaybackService = Effect.gen(function* () {
     stop,
     progress,
     preload,
+    authorizeTrack,
     authorizeGrant,
     issueDownload: downloads.issue,
     syncDownloads: downloads.sync,
