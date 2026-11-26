@@ -1,5 +1,5 @@
 // Manages a Lumen server installed as a systemd service by install.sh.
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   copyFileSync,
@@ -12,11 +12,25 @@ import {
   symlinkSync,
   writeFileSync,
 } from "node:fs";
-import { networkInterfaces } from "node:os";
+import { networkInterfaces, totalmem } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { semver } from "bun";
 import { H264_ENCODERS } from "../src/media/VideoEncoders";
+import {
+  buildJournalctlArgs,
+  computeStatsRow,
+  formatStatsJson,
+  formatStatsTable,
+  LOGS_USAGE,
+  parseInactiveFileBytes,
+  parseLogsArgs,
+  parseStatsArgs,
+  parseUnitStatsSample,
+  STATS_PROPERTIES,
+  STATS_USAGE,
+  UsageError,
+} from "./lumenctl-lib";
 
 const release = resolve(fileURLToPath(new URL("../../../", import.meta.url)));
 const installRoot = "/opt/lumen";
@@ -189,13 +203,13 @@ const startAndWait = async (version: string) => {
       state.SubState !== "running" ||
       state.InvocationID !== started
     )
-      fail(`Lumen ${version} stopped while starting. See: journalctl -u lumen -n 100`);
+      fail(`Lumen ${version} stopped while starting. See: sudo lumenctl logs`);
     const response = await fetch(ready, { signal: AbortSignal.timeout(5_000) }).catch(
       () => undefined,
     );
     if (response?.ok === true) return;
     if (Date.now() > deadline)
-      fail(`Lumen ${version} is still not ready after an hour. See: journalctl -u lumen -n 100`);
+      fail(`Lumen ${version} is still not ready after an hour. See: sudo lumenctl logs`);
     await Bun.sleep(500);
   }
 };
@@ -283,11 +297,147 @@ const status = async () => {
   console.log(`Auto-update:  ${autoUpdateEnabled() ? "on" : "off"}`);
   if (lastUpdate.ExecMainExitTimestamp)
     console.log(
-      `Last check:   ${lastUpdate.Result === "success" ? "succeeded" : "failed, see: journalctl -u lumen-update"} (${lastUpdate.ExecMainExitTimestamp})`,
+      `Last check:   ${lastUpdate.Result === "success" ? "succeeded" : "failed, see: sudo lumenctl logs --update"} (${lastUpdate.ExecMainExitTimestamp})`,
     );
   console.log(
     `FFmpeg:       ${has("ffmpeg") ? (missing.length > 0 ? `lacks ${missing.join(", ")}` : "ok") : "missing"}`,
   );
+};
+
+const logs = async (argv: string[]) => {
+  let parsed: ReturnType<typeof parseLogsArgs>;
+  try {
+    parsed = parseLogsArgs(argv);
+  } catch (cause) {
+    if (cause instanceof UsageError) {
+      console.error(`lumen: ${cause.message}`);
+      console.error(LOGS_USAGE);
+      process.exit(2);
+    }
+    throw cause;
+  }
+  if (parsed.kind === "help") {
+    console.log(LOGS_USAGE);
+    return;
+  }
+  if (installedVersion() === undefined) fail("Lumen is not installed");
+  const child = spawn("journalctl", buildJournalctlArgs(parsed.options), { stdio: "inherit" });
+  const forward = (signal: NodeJS.Signals) => {
+    child.kill(signal);
+  };
+  process.on("SIGINT", forward);
+  process.on("SIGTERM", forward);
+  const outcome = await new Promise<{
+    status: number | null;
+    signal: NodeJS.Signals | null;
+    error?: Error;
+  }>((resolve) => {
+    child.once("error", (error) => resolve({ status: null, signal: null, error }));
+    child.once("close", (status, signal) => resolve({ status, signal }));
+  });
+  process.off("SIGINT", forward);
+  process.off("SIGTERM", forward);
+  if (outcome.error !== undefined) fail(`journalctl failed: ${outcome.error.message}`);
+  if (outcome.signal === "SIGINT" || outcome.signal === "SIGTERM") return;
+  if (outcome.status !== 0) process.exit(outcome.status ?? 1);
+};
+
+const readInactiveFileBytes = (controlGroup: string | undefined): bigint | undefined => {
+  if (!controlGroup) return undefined;
+  try {
+    return parseInactiveFileBytes(
+      readFileSync(join("/sys/fs/cgroup", controlGroup, "memory.stat"), "utf8"),
+    );
+  } catch {
+    return undefined;
+  }
+};
+
+const sampleUnitStats = () => {
+  const properties = unitProperties("lumen.service", STATS_PROPERTIES);
+  const timestampNs = process.hrtime.bigint();
+  const inactiveFileBytes = readInactiveFileBytes(properties.ControlGroup);
+  return parseUnitStatsSample(properties, timestampNs, BigInt(totalmem()), inactiveFileBytes);
+};
+
+const sleepUntil = (ms: number, signal: AbortSignal): Promise<boolean> =>
+  new Promise((resolve) => {
+    if (signal.aborted) {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve(true);
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      resolve(false);
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+
+const stats = async (argv: string[]) => {
+  let parsed: ReturnType<typeof parseStatsArgs>;
+  try {
+    parsed = parseStatsArgs(argv);
+  } catch (cause) {
+    if (cause instanceof UsageError) {
+      console.error(`lumen: ${cause.message}`);
+      console.error(STATS_USAGE);
+      process.exit(2);
+    }
+    throw cause;
+  }
+  if (parsed.kind === "help") {
+    console.log(STATS_USAGE);
+    return;
+  }
+  if (installedVersion() === undefined) fail("Lumen is not installed");
+
+  const controller = new AbortController();
+  const stop = () => controller.abort();
+  const onStdoutError = (error: NodeJS.ErrnoException) => {
+    if (error.code === "EPIPE") controller.abort();
+  };
+  process.on("SIGINT", stop);
+  process.on("SIGTERM", stop);
+  process.stdout.on("error", onStdoutError);
+
+  const render = (row: ReturnType<typeof computeStatsRow>, clear: boolean) => {
+    if (controller.signal.aborted) return;
+    const output = parsed.options.json ? formatStatsJson(row) : formatStatsTable(row);
+    process.stdout.write(clear ? `\x1b[H\x1b[2J${output}\n` : `${output}\n`);
+  };
+
+  try {
+    let previous = sampleUnitStats();
+    if (parsed.options.noStream) {
+      if (previous.activeState === "active" && previous.cpuUsageNs !== undefined) {
+        if (!(await sleepUntil(500, controller.signal))) return;
+        const current = sampleUnitStats();
+        render(computeStatsRow(current, previous), false);
+      } else {
+        render(computeStatsRow(previous), false);
+      }
+      return;
+    }
+
+    const isTty = Boolean(process.stdout.isTTY);
+    if (isTty && !parsed.options.json) {
+      render(computeStatsRow(previous), true);
+    }
+    while (!controller.signal.aborted) {
+      if (!(await sleepUntil(1_000, controller.signal))) break;
+      const current = sampleUnitStats();
+      render(computeStatsRow(current, previous), isTty && !parsed.options.json);
+      previous = current;
+    }
+  } finally {
+    process.off("SIGINT", stop);
+    process.off("SIGTERM", stop);
+    process.stdout.off("error", onStdoutError);
+  }
 };
 
 const setAutoUpdate = (state: string | undefined) => {
@@ -329,9 +479,13 @@ const [command, ...args] = process.argv.slice(2);
 if (command === "install") await install(args.includes("--auto-update"));
 else if (command === "update") await update();
 else if (command === "status") await status();
+else if (command === "logs") await logs(args);
+else if (command === "stats") await stats(args);
 else if (command === "auto-update") setAutoUpdate(args[0]);
 else if (command === "uninstall") uninstall(args.includes("--purge"));
 else {
-  console.error("usage: lumenctl status | update | auto-update on|off | uninstall [--purge]");
+  console.error(
+    "usage: lumenctl status | logs [options] | stats [--no-stream] [--json] | update | auto-update on|off | uninstall [--purge]",
+  );
   process.exit(2);
 }

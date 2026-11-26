@@ -132,6 +132,8 @@ The installer sets up FFmpeg if it's missing and starts Lumen as the `lumen` ser
 
 ```sh
 sudo lumenctl status               # version, available update, service and FFmpeg state
+sudo lumenctl logs [-f]            # view or follow server logs (--update for updater logs)
+sudo lumenctl stats [--no-stream]  # live CPU, memory, network, disk I/O and PIDs
 sudo lumenctl update               # install the latest release now
 sudo lumenctl auto-update on       # or off: a daily check between 04:00 and 05:00
 sudo lumenctl uninstall [--purge]  # --purge also removes settings, data, and the user
