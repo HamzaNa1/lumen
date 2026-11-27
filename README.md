@@ -1,4 +1,9 @@
-# Lumen
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="apps/desktop/resources/brand/lumen-lockup-dark.svg">
+    <img src="apps/desktop/resources/brand/lumen-lockup-light.svg" alt="Lumen" width="240">
+  </picture>
+</h1>
 
 Lumen is a Bun-based direct-play media server with an Electron desktop client and a web app the server hosts at `/web`. It stores original media on the server filesystem, scans multiple library roots, authorizes accounts independently per server, and streams original bytes to an in-app MPV player over a session-scoped loopback bridge.
 
