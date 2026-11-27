@@ -19,6 +19,11 @@ StateDirectoryMode=0750
 UMask=0077
 Restart=on-failure
 RestartSec=5
+CPUAccounting=yes
+MemoryAccounting=yes
+IOAccounting=yes
+TasksAccounting=yes
+IPAccounting=yes
 # Library roots are read-only to Lumen; the system enforces it.
 NoNewPrivileges=yes
 ProtectSystem=strict

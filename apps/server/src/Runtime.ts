@@ -20,6 +20,7 @@ import { startLanDiscovery } from "./http/LanDiscovery";
 import { advertisedRoutes, detectLanRoutes } from "./http/LanRoutes";
 import { assertWebBuild, isWebPath, makeStaticWebHandler } from "./http/StaticWeb";
 import { loadTlsCertificate } from "./http/TlsCertificate";
+import { makeJellyfinRouter } from "./jellyfin/Router";
 import { JobService, JobServiceLiveWithConfig, type JobServiceShape } from "./jobs/JobService";
 import { LibraryWatcherLive } from "./jobs/LibraryWatcher";
 import {
@@ -293,7 +294,9 @@ const startConfiguredServer = async (
         }
       },
     };
-    const handler = makeHttpHandler(httpServices, config, logger);
+    const handler = makeHttpHandler(httpServices, config, logger, [
+      makeJellyfinRouter(services, config),
+    ]);
     const web = makeStaticWebHandler(config, logger);
     const watchGroups = new WatchGroups(
       httpServices,

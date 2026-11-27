@@ -6,6 +6,20 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { expect, test } from "@playwright/test";
+import {
+  buildJournalctlArgs,
+  computeStatsRow,
+  formatBinaryBytes,
+  formatDecimalBytes,
+  formatStatsJson,
+  formatStatsTable,
+  parseInactiveFileBytes,
+  parseLogsArgs,
+  parseStatsArgs,
+  parseUint64,
+  parseUnitStatsSample,
+  UsageError,
+} from "../../apps/server/linux/lumenctl-lib";
 import { password, repository } from "./support/server";
 
 // The package CI built for this runner. The scenario installs a real system service as root, so it
@@ -46,6 +60,207 @@ const signIn = (path: "register" | "login") =>
       platformDeviceId: null,
     }),
   });
+
+test("builds journalctl arguments for lumenctl logs", () => {
+  const cases: ReadonlyArray<{ argv: readonly string[]; expected: readonly string[] }> = [
+    {
+      argv: [],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=100"],
+    },
+    {
+      argv: ["-f"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=100", "--follow"],
+    },
+    {
+      argv: ["-n", "25", "--follow"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=25", "--follow"],
+    },
+    {
+      argv: ["--tail=50"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=50"],
+    },
+    {
+      argv: ["--lines", "all"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=all"],
+    },
+    {
+      argv: ["-n20"],
+      expected: ["-u", "lumen.service", "--no-pager", "--output=cat", "--lines=20"],
+    },
+    {
+      argv: ["--since", "10m", "--until", "30s"],
+      expected: [
+        "-u",
+        "lumen.service",
+        "--no-pager",
+        "--output=cat",
+        "--since=10 minutes ago",
+        "--until=30 seconds ago",
+      ],
+    },
+    {
+      argv: ["--since=2h", "-f"],
+      expected: [
+        "-u",
+        "lumen.service",
+        "--no-pager",
+        "--output=cat",
+        "--lines=all",
+        "--since=2 hours ago",
+        "--follow",
+      ],
+    },
+    {
+      argv: ["--since", "2026-11-26 12:00:00", "--update", "--", "-o", "short-iso"],
+      expected: [
+        "-u",
+        "lumen-update.service",
+        "--no-pager",
+        "--output=cat",
+        "--since=2026-11-26 12:00:00",
+        "-o",
+        "short-iso",
+      ],
+    },
+  ];
+
+  for (const { argv, expected } of cases) {
+    const parsed = parseLogsArgs(argv);
+    expect(parsed.kind).toBe("run");
+    if (parsed.kind !== "run") throw new Error("expected run");
+    expect(buildJournalctlArgs(parsed.options)).toEqual([...expected]);
+  }
+
+  expect(parseLogsArgs(["--help"])).toEqual({ kind: "help" });
+  expect(() => parseLogsArgs(["--unknown"])).toThrow(UsageError);
+  expect(() => parseLogsArgs(["-n", "abc"])).toThrow(UsageError);
+  expect(() => parseLogsArgs(["--since"])).toThrow(UsageError);
+});
+
+test("computes and formats docker-style stats from systemd properties", () => {
+  expect(parseStatsArgs([])).toEqual({ kind: "run", options: { noStream: false, json: false } });
+  expect(parseStatsArgs(["--no-stream", "--json"])).toEqual({
+    kind: "run",
+    options: { noStream: true, json: true },
+  });
+  expect(parseStatsArgs(["-h"])).toEqual({ kind: "help" });
+  expect(() => parseStatsArgs(["--bogus"])).toThrow(UsageError);
+
+  expect(parseUint64("18446744073709551615")).toBeUndefined();
+  expect(parseUint64("[not set]")).toBeUndefined();
+  expect(parseUint64("infinity")).toBeUndefined();
+  expect(parseUint64("0")).toBe(0n);
+  expect(parseInactiveFileBytes("anon 4096\ninactive_file 104857600\n")).toBe(104_857_600n);
+
+  expect(formatBinaryBytes(0n)).toBe("0B");
+  expect(formatBinaryBytes(1024n)).toBe("1.00KiB");
+  expect(formatBinaryBytes(1024n * 1024n - 1n)).toBe("1.00MiB");
+  expect(formatDecimalBytes(999n)).toBe("999B");
+  expect(formatDecimalBytes(1_000n)).toBe("1.00kB");
+  expect(formatDecimalBytes(999_999n)).toBe("1.00MB");
+
+  const hostRam = 8n * 1024n * 1024n * 1024n;
+  const baseProps = {
+    ActiveState: "active",
+    SubState: "running",
+    InvocationID: "inv-1",
+    // Exceeds Number.MAX_SAFE_INTEGER to exercise bigint CPU delta math.
+    CPUUsageNSec: "20000000000000000",
+    MemoryCurrent: String(256n * 1024n * 1024n),
+    MemoryMax: "infinity",
+    TasksCurrent: "14",
+    IPIngressBytes: "14200000",
+    IPEgressBytes: "1840000000",
+    IOReadBytes: "512000000",
+    IOWriteBytes: "12400000",
+  };
+  const first = parseUnitStatsSample(baseProps, 1_000_000_000n, hostRam, 128n * 1024n * 1024n);
+  const second = parseUnitStatsSample(
+    {
+      ...baseProps,
+      CPUUsageNSec: "20000001500000000",
+    },
+    2_000_000_000n,
+    hostRam,
+    128n * 1024n * 1024n,
+  );
+  const row = computeStatsRow(second, first);
+  expect(row.state).toBe("running");
+  expect(row.cpuPercent).toBe(150);
+  expect(row.memoryUsageBytes).toBe(128n * 1024n * 1024n);
+  expect(row.memoryLimitBytes).toBe(hostRam);
+  expect(row.memoryPercent).toBe(1.56);
+
+  const table = formatStatsTable(row);
+  const [header = "", values = ""] = table.split("\n");
+  expect(header).toContain("NAME");
+  expect(header).toContain("CPU %");
+  expect(header).toContain("MEM USAGE / LIMIT");
+  expect(header).toContain("NET I/O");
+  expect(header).toContain("BLOCK I/O");
+  expect(header).toContain("PIDS");
+  expect(values).toContain("lumen");
+  expect(values).toContain("running");
+  expect(values).toContain("150.00%");
+  expect(values).toContain("128MiB / 8.00GiB");
+  expect(values).toContain("1.56%");
+  expect(values).toContain("14.2MB / 1.84GB");
+  expect(values).toContain("512MB / 12.4MB");
+  expect(values).toContain("14");
+
+  expect(JSON.parse(formatStatsJson(row))).toEqual({
+    name: "lumen",
+    state: "running",
+    cpuPercent: 150,
+    memoryUsageBytes: 134_217_728,
+    memoryLimitBytes: Number(hostRam),
+    memoryPercent: 1.56,
+    netIngressBytes: 14_200_000,
+    netEgressBytes: 1_840_000_000,
+    blockReadBytes: 512_000_000,
+    blockWriteBytes: 12_400_000,
+    pids: 14,
+  });
+
+  // Service restart between samples resets InvocationID and must not compute a bogus CPU delta.
+  const restarted = parseUnitStatsSample(
+    {
+      ...baseProps,
+      InvocationID: "inv-2",
+      CPUUsageNSec: "50000000",
+      MemoryMax: String(512n * 1024n * 1024n),
+    },
+    3_000_000_000n,
+    hostRam,
+  );
+  const restartedRow = computeStatsRow(restarted, second);
+  expect(restartedRow.cpuPercent).toBeUndefined();
+  expect(restartedRow.memoryLimitBytes).toBe(512n * 1024n * 1024n);
+  expect(restartedRow.memoryPercent).toBe(50);
+
+  // Stopped service with unset accounting properties degrades cleanly to placeholders.
+  const stopped = parseUnitStatsSample(
+    {
+      ActiveState: "inactive",
+      SubState: "dead",
+      InvocationID: "",
+      CPUUsageNSec: "[not set]",
+      MemoryCurrent: "18446744073709551615",
+      MemoryMax: "infinity",
+      TasksCurrent: "[not set]",
+      IPIngressBytes: "[not set]",
+      IPEgressBytes: "[not set]",
+      IOReadBytes: "18446744073709551615",
+      IOWriteBytes: "18446744073709551615",
+    },
+    4_000_000_000n,
+    hostRam,
+  );
+  const stoppedRow = computeStatsRow(stopped, second);
+  expect(stoppedRow.state).toBe("stopped");
+  expect(formatStatsTable(stoppedRow)).toContain("-- / --");
+  expect(JSON.parse(formatStatsJson(stoppedRow)).cpuPercent).toBeNull();
+});
 
 test("installs, updates and removes the server as a systemd service", async () => {
   test.skip(
@@ -120,6 +335,57 @@ test("installs, updates and removes the server as a systemd service", async () =
       const status = await lumenctl("status");
       expect(status.output).toContain(`Version:      ${version} (up to date)`);
       expect(status.output).toContain("Auto-update:  off");
+
+      const logs = await lumenctl("logs -n 50");
+      expect(logs.status, logs.output).toBe(0);
+      expect(logs.output).toContain("Listening on");
+
+      const recentLogs = await lumenctl("logs --since 10m");
+      expect(recentLogs.status, recentLogs.output).toBe(0);
+      expect(recentLogs.output).toContain("Listening on");
+
+      const stats = await lumenctl("stats --no-stream");
+      expect(stats.status, stats.output).toBe(0);
+      expect(stats.output).toContain("MEM USAGE / LIMIT");
+      expect(stats.output).toContain("NET I/O");
+      expect(stats.output).toContain("BLOCK I/O");
+      expect(stats.output).toMatch(/^lumen\s+running\s+\d+\.\d{2}%/mu);
+
+      const statsJson = await lumenctl("stats --no-stream --json");
+      expect(statsJson.status, statsJson.output).toBe(0);
+      const parsedStats = JSON.parse(statsJson.output.trim()) as {
+        name: string;
+        state: string;
+        cpuPercent: number | null;
+        memoryUsageBytes: number | null;
+        memoryLimitBytes: number | null;
+        pids: number | null;
+      };
+      expect(parsedStats.name).toBe("lumen");
+      expect(parsedStats.state).toBe("running");
+      expect(parsedStats.cpuPercent).toBeGreaterThanOrEqual(0);
+      expect(parsedStats.memoryUsageBytes).toBeGreaterThan(0);
+      expect(parsedStats.memoryLimitBytes).toBeGreaterThan(0);
+      expect(parsedStats.pids).toBeGreaterThan(0);
+
+      // Streaming mode works without sudo, emits live samples, and exits cleanly on SIGINT.
+      const streamOutcome = await new Promise<{ status: number | null; line: string }>(
+        (resolve) => {
+          const child = spawn("lumenctl", ["stats", "--json"]);
+          let buffer = "";
+          let signaled = false;
+          child.stdout.on("data", (chunk: Buffer) => {
+            buffer += chunk.toString("utf8");
+            if (!signaled && buffer.includes("\n")) {
+              signaled = true;
+              child.kill("SIGINT");
+            }
+          });
+          child.on("close", (status) => resolve({ status, line: buffer.split("\n")[0] ?? "" }));
+        },
+      );
+      expect(JSON.parse(streamOutcome.line).name).toBe("lumen");
+      expect(streamOutcome.status).toBe(0);
     });
 
     await test.step("updates automatically once turned on, keeping the database", async () => {
@@ -134,6 +400,9 @@ test("installs, updates and removes the server as a systemd service", async () =
       expect((await signIn("login")).status).toBe(200);
       expect((await shell("ls /opt/lumen/versions")).output.trim()).toBe(next);
       expect((await lumenctl("status")).output).toContain("Last check:   succeeded");
+      const updateLogs = await lumenctl("logs --update -n 50");
+      expect(updateLogs.status, updateLogs.output).toBe(0);
+      expect(updateLogs.output).toContain(`Updating Lumen ${version} to ${next}`);
       expect((await lumenctl("update")).output).toContain(`Lumen ${next} is up to date`);
     });
 

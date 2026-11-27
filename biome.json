@@ -38,6 +38,32 @@
     {
       "includes": ["tests/**"],
       "plugins": ["./tooling/biome/no-test-delays.grit"]
+    },
+    {
+      "includes": [
+        "apps/**",
+        "packages/**",
+        "scripts/**",
+        "!apps/server/src/jellyfin/**",
+        "!apps/server/src/Runtime.ts"
+      ],
+      "linter": {
+        "rules": {
+          "style": {
+            "noRestrictedImports": {
+              "level": "error",
+              "options": {
+                "patterns": [
+                  {
+                    "group": ["**/jellyfin", "**/jellyfin/**"],
+                    "message": "The Jellyfin API is a removable module: only Runtime.ts registers it, and nothing else in the server imports it."
+                  }
+                ]
+              }
+            }
+          }
+        }
+      }
     }
   ]
 }

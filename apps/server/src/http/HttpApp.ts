@@ -55,7 +55,8 @@ import {
   sessionCookieToken,
 } from "./BrowserSession";
 import { clientKey, type RequestContext } from "./ClientIdentity";
-import { isMediaRequest, MediaAdmission, mediaTrackIdFor } from "./MediaAdmission";
+import { MediaAdmission, mediaTrackIdFor } from "./MediaAdmission";
+import type { MediaToolkit, MountedRouter, MountRouter } from "./MountedRouter";
 import {
   isRoutineProbe,
   requestIdFor,
@@ -179,10 +180,19 @@ const queryNumber = (url: URL, name: string, fallback: number): number => {
 
 const routeParts = (url: URL): string[] => url.pathname.split("/").filter(Boolean);
 
+const loginPaths = [
+  "/auth/login",
+  "/auth/register",
+  "/auth/migrate-session",
+  "/auth/browser/login",
+  "/auth/browser/register",
+];
+
 export const makeHttpHandler = (
   services: HttpServices,
   config: ServerConfig,
   logger: Logger = createLogger({ level: config.logLevel, format: config.logFormat }),
+  mounts: ReadonlyArray<MountRouter> = [],
 ) => {
   const limiter = new RequestLimiter({
     maxRequests: config.maxRequestsPerMinute,
@@ -235,6 +245,17 @@ export const makeHttpHandler = (
     dataDir: config.dataDir,
     ffmpeg: async () => (await call(services.transcodingSettings.read())).ffmpeg,
   });
+  const toolkit: MediaToolkit = {
+    admit: (request, userId, sessionId) => {
+      const release = mediaAdmission.enterAuthenticated(userId, sessionId, Date.now());
+      mediaSessions.set(request, sessionId);
+      return release;
+    },
+    serveFile,
+    serveArtwork: (options) => serveArtwork({ ...options, variants: artworkVariants }),
+    adaptiveStreams,
+    transcoder,
+  };
   const dispatch = async (request: Request): Promise<Response> => {
     const url = new URL(request.url);
     const parts = routeParts(url);
@@ -369,8 +390,7 @@ export const makeHttpHandler = (
       const grant = bearer(request) ?? url.searchParams.get("grant");
       if (grant === null) throw unauthorized("Playback grant is required");
       const media = await call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now()));
-      mediaSessions.set(request, media.sessionId);
-      const release = mediaAdmission.enterAuthenticated(media.userId, media.sessionId, Date.now());
+      const release = toolkit.admit(request, media.userId, media.sessionId);
       try {
         const adaptive = adaptiveRequestFor(url.pathname);
         const transcode = url.searchParams.get("transcode") === "1";
@@ -379,12 +399,12 @@ export const makeHttpHandler = (
         if ((adaptive !== null || transcode) && media.preloaded === true)
           throw badRequest("Only the item a session plays can be converted");
         if (adaptive !== null)
-          return await adaptiveStreams.serve(
-            request,
-            media,
-            adaptive,
-            url.searchParams.get("grant"),
-          );
+          return await adaptiveStreams.serve(request, media, adaptive, {
+            childQuery: url.searchParams.has("grant")
+              ? `grant=${encodeURIComponent(url.searchParams.get("grant") ?? "")}`
+              : "",
+            ceilingKbps: null,
+          });
         if (transcode)
           return await transcoder.serve(request, media, () =>
             call(services.playback.authorizeGrant(grant, mediaTrackId, Date.now())),
@@ -1221,38 +1241,46 @@ export const makeHttpHandler = (
     }
     throw notFound("Endpoint not found");
   };
+  const native: MountedRouter = {
+    owns: () => true,
+    label: (request) => {
+      if (mediaTrackIdFor(request) !== null) return "media";
+      const { pathname } = new URL(request.url);
+      return loginPaths.some((path) => pathname.endsWith(path)) ? "login" : "api";
+    },
+    route: (request) => requestRoute(new URL(request.url).pathname),
+    handle: dispatch,
+  };
+  const routers = [...mounts.map((mount) => mount(toolkit)), native];
   const handle = async (request: Request, context?: RequestContext): Promise<Response> => {
     const startedAt = performance.now();
     const requestId = requestIdFor(request);
-    const pathname = new URL(request.url).pathname;
+    const url = new URL(request.url);
+    const pathname = url.pathname;
+    const router = routers.find((candidate) => candidate.owns(url)) ?? native;
     const log = logger.child({
       component: "http",
       requestId,
       method: requestMethod(request.method),
-      route: requestRoute(pathname),
+      route: router.route(request),
     });
     let response: Response;
     let failure: unknown;
     const key = clientKey(request, context, config.trustedProxies);
-    const media = isMediaRequest(request);
-    const login = [
-      "/auth/login",
-      "/auth/register",
-      "/auth/migrate-session",
-      "/auth/browser/login",
-      "/auth/browser/register",
-    ].some((path) => pathname.endsWith(path));
+    const label = router.label(request);
+    const media = label === "media";
+    const login = label === "login";
     try {
       if (media) {
         const release = mediaAdmission.enterPeer(key, Date.now());
         try {
-          response = await dispatch(request);
+          response = await router.handle(request);
         } finally {
           release();
         }
       } else {
         const execute = Effect.tryPromise({
-          try: () => dispatch(request),
+          try: () => router.handle(request),
           catch: (cause) => cause,
         });
         const checked = limiter.check(key, Date.now(), login ? "login" : "request");
@@ -1272,7 +1300,10 @@ export const makeHttpHandler = (
     const cookie = cookies.get(request);
     if (cookie !== undefined) response.headers.append("set-cookie", cookie);
     // What the API returns belongs to one signed-in person; shared caches must not keep it.
-    if (pathname.startsWith("/api/") && !response.headers.has("cache-control"))
+    if (
+      (pathname.startsWith("/api/") || router !== native) &&
+      !response.headers.has("cache-control")
+    )
       response.headers.set("cache-control", "private, no-store");
     const level =
       response.status >= 500

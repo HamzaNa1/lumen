@@ -61,6 +61,16 @@ interface Session {
   poll: ReturnType<typeof setInterval> | null;
 }
 
+export interface AdaptiveOptions {
+  /** Appended to every playlist entry, so players that cannot send headers stay authorized. */
+  readonly childQuery: string;
+  /**
+   * Qualities whose bandwidth exceeds this are left out; the lowest is always offered.
+   * Jellyfin compatibility: only the Jellyfin module sets it, from an app's bitrate cap.
+   */
+  readonly ceilingKbps: number | null;
+}
+
 export interface AdaptiveRequest {
   readonly audioIndex: number;
   /** The path after the audio index, such as "master.m3u8" or "720p/12.ts". */
@@ -140,7 +150,7 @@ export class AdaptiveStreams {
     request: Request,
     media: { absolutePath: string; sessionId: string; userId: string },
     target: AdaptiveRequest,
-    grant: string | null,
+    options: AdaptiveOptions,
   ): Promise<Response> {
     if (request.method !== "GET") throw badRequest("Adaptive streams are read with GET");
     if (target.audioIndex > 1024) throw badRequest("Invalid audio track");
@@ -155,10 +165,16 @@ export class AdaptiveStreams {
       throw unavailable("The file could not be read for conversion");
     });
     if (probe.height === null) throw badRequest("Only video can be streamed adaptively");
-    const renditions = adaptiveRenditionsFor(probe.height);
-    const query = grant === null ? "" : `?grant=${encodeURIComponent(grant)}`;
     const pieces = adaptivePieceCount(probe.durationSeconds);
     const hasAudio = target.audioIndex < probe.audioStreams;
+    const bandwidth = (rendition: AdaptiveRendition) =>
+      rendition.maxKbps + (hasAudio ? ADAPTIVE_AUDIO_KBPS : 0);
+    const offered = adaptiveRenditionsFor(probe.height);
+    const { ceilingKbps } = options;
+    const fitting =
+      ceilingKbps === null ? offered : offered.filter((each) => bandwidth(each) <= ceilingKbps);
+    const renditions = fitting.length > 0 ? fitting : offered.slice(-1);
+    const query = options.childQuery === "" ? "" : `?${options.childQuery}`;
 
     if (target.file === "master.m3u8") {
       const width = (height: number) =>
@@ -173,7 +189,7 @@ export class AdaptiveStreams {
       for (const rendition of renditions) {
         const resolution = width(rendition.height);
         const attributes = [
-          `BANDWIDTH=${(rendition.maxKbps + (hasAudio ? ADAPTIVE_AUDIO_KBPS : 0)) * 1000}`,
+          `BANDWIDTH=${bandwidth(rendition) * 1000}`,
           ...(resolution === null ? [] : [`RESOLUTION=${resolution}x${rendition.height}`]),
           `CODECS="avc1.4d4028${hasAudio ? ",mp4a.40.2" : ""}"`,
           ...(hasAudio ? ['AUDIO="audio"'] : []),
