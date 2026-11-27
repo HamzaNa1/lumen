@@ -77,7 +77,7 @@ export const usePlayingDescription = ({
   scope,
   playingId,
   playingItem,
-  watchTitle,
+  watchPlayback,
 }: {
   readonly runtime: LumenRuntime;
   /** Null without an account, when nothing can be looked up. */
@@ -85,13 +85,22 @@ export const usePlayingDescription = ({
   readonly playingId: string | null;
   /** The item playback was started from here; null for playback a watch group started. */
   readonly playingItem: CatalogItem | null;
-  readonly watchTitle: string | undefined;
+  /** What a watch group says it plays, while the viewer is in one. */
+  readonly watchPlayback: { readonly itemId: string; readonly title: string } | null;
 }): Playing => {
   // Starting playback in a watch group hands it to the group, which forgets the item it was
   // started from. The item still describes what plays, so it is kept for as long as that plays.
   const [startedItem, setStartedItem] = useState(playingItem);
   if (playingItem !== null && playingItem !== startedItem) setStartedItem(playingItem);
   const startedFrom = playingItem ?? (startedItem?.id === playingId ? startedItem : null);
+  // Leaving a watch group keeps its playback playing here, so its title is kept the same way.
+  const [watched, setWatched] = useState(watchPlayback);
+  if (
+    watchPlayback !== null &&
+    (watchPlayback.itemId !== watched?.itemId || watchPlayback.title !== watched.title)
+  )
+    setWatched(watchPlayback);
+  const watchTitle = watched?.itemId === playingId ? watched.title : undefined;
   const knownAtOnce =
     startedFrom !== null && (startedFrom.kind !== "episode" || startedFrom.placement !== undefined);
   const mayBeEpisode = startedFrom === null || startedFrom.kind === "episode";
@@ -130,7 +139,7 @@ export const usePlayingDescription = ({
     ? (startedFrom ?? undefined)
     : (detailsItem ?? startedFrom ?? undefined);
   const placement = describedItem?.placement;
-  const title = startedFrom?.title ?? watchTitle ?? "Now playing";
+  const title = startedFrom?.title ?? watchTitle ?? detailsItem?.title ?? "Now playing";
   const description = useMemo<PlayingDescription | null>(
     () =>
       described

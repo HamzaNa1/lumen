@@ -88,9 +88,19 @@ test("two browser players hold for a slow member, recover drift, replace media a
         await playing(member);
       }),
     );
+    // A member who leaves keeps watching what the group played, still named by it.
+    await second.getByRole("button", { name: "Together, 3 people" }).click();
+    await second.getByRole("button", { name: "Leave" }).click();
+    await expect.poll(() => owner.status.group?.members.length, often).toBe(2);
+    await second.keyboard.press("Escape");
+    await expect(
+      second.locator(".media-player-header").getByRole("heading", { name: "Other", exact: true }),
+    ).toBeVisible();
+    await playing(second);
     await owner.action({ type: "stop", itemId: other });
-    for (const member of [page, second]) await expect(member.locator("video")).toHaveCount(0);
+    await expect(page.locator("video")).toHaveCount(0);
     expect(owner.status.group?.playback).toBeNull();
+    await playing(second);
   } finally {
     release.resolve();
     await second.close();

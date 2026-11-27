@@ -360,15 +360,15 @@ export const App = (): React.ReactElement => {
           ]);
       });
   }, [active, onPlayerRoute, queryClient, updatePlayer, runtime]);
-  const watchPlayback = watchStatus?.group?.playback;
-  const watchTitle = watchPlayback?.title;
-  const playingId = playingItem?.id ?? watchPlayback?.itemId;
+  const watchPlayback = watchStatus?.group?.playback ?? null;
+  // Leaving a watch group keeps what it played playing here, so the player still names it.
+  const playingId = playingItem?.id ?? watchPlayback?.itemId ?? player?.itemId;
   const { description, show, adjacentEpisodes } = usePlayingDescription({
     runtime,
     scope,
     playingId: playingId ?? null,
     playingItem,
-    watchTitle,
+    watchPlayback,
   });
   const playerDisplay = useMemo<PlayerDisplay>(
     () => ({
