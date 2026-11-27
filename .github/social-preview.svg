@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title">
+  <title id="title">Lumen: your movies, shows, and music, streamed from your own server.</title>
+  <rect width="1280" height="640" fill="#0c0c0e"/>
+  <g transform="translate(370 176) scale(4.5)">
+    <g fill="none" stroke-width="6" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 4V40" stroke="#c9f560"/>
+      <g stroke="#f5f7f2">
+        <path d="M14.5 21V33a7 7 0 0 0 14 0M28.5 21V40"/>
+        <path d="M39 40V21M39 28a6.5 6.5 0 0 1 13 0V40M52 28a6.5 6.5 0 0 1 13 0V40"/>
+        <path d="M101.8 40V21M101.8 28.5a7 7 0 0 1 14 0V40"/>
+      </g>
+    </g>
+    <path fill="#f5f7f2" fill-rule="evenodd" d="M94.8 30.2C94.8 22.8 90.3 17.8 83.4 17.8C76.5 17.8 72 22.9 72 30.6C72 38.2 76.6 43.3 83.8 43.3C87.7 43.3 90.7 42.1 92.6 40.3C93.7 39.2 93.7 37.5 92.6 36.5C91.6 35.6 90.1 35.6 89 36.5C87.7 37.6 86 38.2 83.9 38.2C80.1 38.2 77.9 36.1 77.8 32.8H92.3C93.7 32.8 94.8 31.7 94.8 30.2ZM77.8 28.3C78.1 24.9 80.2 22.8 83.4 22.8C86.6 22.8 88.7 24.9 89 28.3H77.8Z"/>
+  </g>
+  <text x="640" y="460" fill="#a1a1aa" font-family="Helvetica Neue, Helvetica, Arial, sans-serif" font-size="34" text-anchor="middle">Your movies, shows, and music, streamed from your own server.</text>
+</svg>
