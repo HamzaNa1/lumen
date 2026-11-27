@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { observeFullscreenState } from "./FullscreenState";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { createFullscreenController, type FullscreenController } from "./FullscreenState";
 import { useRuntime } from "./Runtime";
 
 /**
@@ -9,13 +9,20 @@ import { useRuntime } from "./Runtime";
 export const useFullscreen = (): readonly [boolean, (() => void) | undefined] => {
   const runtime = useRuntime();
   const [fullscreen, setFullscreen] = useState(false);
+  const controller = useRef<FullscreenController | null>(null);
 
-  useEffect(() => observeFullscreenState(runtime.playback, setFullscreen), [runtime]);
+  useEffect(() => {
+    const next = createFullscreenController(runtime.playback, setFullscreen);
+    controller.current = next;
+    return () => {
+      if (controller.current === next) controller.current = null;
+      next.dispose();
+    };
+  }, [runtime]);
 
   const toggle = useCallback((): void => {
-    // Completion of the request need not mean the native fullscreen transition has finished.
-    void runtime.playback.fullscreen(!fullscreen).catch(() => undefined);
-  }, [fullscreen, runtime]);
+    controller.current?.toggle();
+  }, []);
 
   return [fullscreen, runtime.capabilities.fullscreen ? toggle : undefined];
 };

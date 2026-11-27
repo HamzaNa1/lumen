@@ -41,6 +41,9 @@ test("video gestures preserve focus, double-click fullscreen never pauses, timel
     await expect
       .poll(() => page.evaluate(() => Boolean(document.fullscreenElement)), often)
       .toBe(fullscreen);
+    await expect(
+      page.locator(`button[aria-label="${fullscreen ? "Exit fullscreen" : "Enter fullscreen"}"]`),
+    ).toHaveCount(1);
     await expect
       .poll(() => page.locator("video").evaluate((v: HTMLVideoElement) => v.currentTime), often)
       .toBeGreaterThan(position + 0.5);

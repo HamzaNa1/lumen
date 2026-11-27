@@ -19,12 +19,16 @@ const CHUNK = defaultGeometry.chunkBytes;
  */
 const serveFile = async (media: Buffer, revision: string, pauses: ReadonlyArray<number>) => {
   const starts: number[] = [];
+  /** How many responses from each start are still open, unread or not yet answered in full. */
+  const open = new Map<number, number>();
   const held = new Map<number, Array<() => void>>();
   const released = new Set<number>();
   const server: HttpServer = createServer((request, response) => {
     const match = /bytes=(\d+)-(\d*)/u.exec(request.headers.range ?? "");
     const start = Number(match?.[1] ?? 0);
     starts.push(start);
+    open.set(start, (open.get(start) ?? 0) + 1);
+    response.on("close", () => open.set(start, (open.get(start) ?? 1) - 1));
     const end = match?.[2] ? Number(match[2]) : media.length - 1;
     response.writeHead(206, {
       "content-length": String(end - start + 1),
@@ -48,6 +52,7 @@ const serveFile = async (media: Buffer, revision: string, pauses: ReadonlyArray<
   return {
     origin: `http://127.0.0.1:${address.port}`,
     starts,
+    openFrom: (start: number) => open.get(start) ?? 0,
     release: (pause: number) => {
       released.add(pause);
       for (const send of held.get(pause)?.splice(0) ?? []) send();
@@ -81,6 +86,7 @@ const streamedFile = async (
     mimeType: "video/x-matroska",
   };
   // Counts the bytes the file takes from each response, which is what it pulls over the network.
+  // As with Electron's fetch, cancelling a body leaves its request open; only the signal ends it.
   const requests: { start: number; bytes: number; ended: Promise<void> }[] = [];
   const taken = new EventEmitter();
   // Where each request the file makes starts, in the order it makes them.
@@ -118,9 +124,8 @@ const streamedFile = async (
             controller.error(cause);
           }
         },
-        async cancel(reason) {
+        cancel() {
           finish();
-          await upstreamBody.cancel(reason);
         },
       },
       { highWaterMark: 0 },
@@ -209,22 +214,29 @@ test("seeking back to the start after playing on reads the start again", async (
   }
 });
 
-test("a request the player left behind by seeking ahead stops fetching", async () => {
-  // Resuming a film: MPV reads the header, then opens a request halfway in. The request from the
-  // start must stop instead of racing to the new reader with bytes nobody reads.
-  // A fetch no reader is near stops this soon, rather than after the player's ten seconds.
-  const stream = await streamedFile(64 * CHUNK, [], 300);
-  const resume = stream.file.read(48 * CHUNK, 64 * CHUNK, new AbortController().signal);
-  try {
-    await stream.readThenLeave(0, 2 * CHUNK);
-    await resume.next();
-    // At most the header and the window paced ahead of it, 16 MiB without a known bitrate.
-    expect(await stream.settled(0, 20 * CHUNK)).toBeLessThanOrEqual(20 * CHUNK);
-  } finally {
-    await resume.return(undefined);
-    await stream.dispose();
-  }
-});
+for (const [direction, left, stays] of [
+  ["ahead", 0, 48],
+  ["back", 40, 0],
+] as const)
+  test(`a request the player left behind by seeking ${direction} stops fetching and lets go of its connection`, async () => {
+    // Resuming a film: MPV reads the header, then opens a request halfway in. Seeking back is the
+    // mirror: the request from where it was is now ahead of the only reader. Either way the
+    // request left behind must stop instead of holding bytes and a connection nobody uses; a
+    // player holds only a few connections to a server, and starves once they are all taken.
+    // A fetch no reader is near stops this soon, rather than after the player's ten seconds.
+    const stream = await streamedFile(64 * CHUNK, [], 300);
+    const staying = stream.file.read(stays * CHUNK, 64 * CHUNK, new AbortController().signal);
+    try {
+      await stream.readThenLeave(left * CHUNK, 2 * CHUNK);
+      await staying.next();
+      await expect.poll(() => stream.upstream.openFrom(left * CHUNK)).toBe(0);
+      // At most what was read and the window paced ahead of it, 16 MiB without a known bitrate.
+      expect(await stream.settled(left * CHUNK, 20 * CHUNK)).toBeLessThanOrEqual(20 * CHUNK);
+    } finally {
+      await staying.return(undefined);
+      await stream.dispose();
+    }
+  });
 
 test("the start and end of the next file, preloaded into memory, serve the player without the server", async () => {
   const stream = await streamedFile(20 * CHUNK);

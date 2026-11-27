@@ -68,3 +68,7 @@ export const mpvBufferedAhead = (value: unknown): number => {
   const duration = "cache-duration" in value ? value["cache-duration"] : null;
   return typeof duration === "number" && Number.isFinite(duration) && duration > 0 ? duration : 0;
 };
+
+/** MPV's demuxer has read all it means to ahead of playback, and fetches no more until it plays. */
+export const mpvReadAheadFull = (value: unknown): boolean =>
+  value !== null && typeof value === "object" && "idle" in value && value.idle === true;

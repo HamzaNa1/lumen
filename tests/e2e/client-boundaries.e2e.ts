@@ -1,4 +1,5 @@
 import { ServerClient } from "../../apps/desktop/src/main/api/ServerClient";
+import { createFullscreenController } from "../../packages/app/src/FullscreenState";
 import { bearerCredentials, ServerApi } from "../../packages/client/src/ServerApi";
 import { latch, NetworkProxy } from "./support/proxy";
 import { expect, password, test } from "./support/server";
@@ -248,5 +249,80 @@ test("first-run client registration and older discovery fail safely across real 
   } finally {
     client.setSession(null);
     await proxy.close();
+  }
+});
+
+test("fullscreen toggle reverses an in-flight or pre-event transition and recovers from failure or external exit", async () => {
+  const requests: boolean[] = [];
+  const pending: Array<ReturnType<typeof Promise.withResolvers<boolean>>> = [];
+  const listeners = new Set<(fullscreen: boolean) => void>();
+  const emit = (fullscreen: boolean) => {
+    for (const notify of listeners) notify(fullscreen);
+  };
+  let observed = false;
+
+  const controller = createFullscreenController(
+    {
+      fullscreen: (enabled) => {
+        requests.push(enabled);
+        const deferred = Promise.withResolvers<boolean>();
+        pending.push(deferred);
+        return deferred.promise;
+      },
+      fullscreenState: async () => false,
+      onFullscreenChange: (callback) => {
+        listeners.add(callback);
+        return () => {
+          listeners.delete(callback);
+        };
+      },
+    },
+    (value) => {
+      observed = value;
+    },
+  );
+  try {
+    // Second toggle while the first transition is still in flight reverses it.
+    controller.toggle();
+    controller.toggle();
+    expect(requests).toEqual([true, false]);
+    pending[0]?.resolve(true);
+    pending[1]?.resolve(false);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // Toggling again after a request resolved before fullscreenchange still exits fullscreen.
+    controller.toggle();
+    pending[2]?.resolve(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observed).toBe(false);
+    controller.toggle();
+    expect(requests).toEqual([true, false, true, false]);
+    pending[3]?.resolve(false);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    // A rejected request restores target to actual state so the next toggle retries entering.
+    controller.toggle();
+    pending[4]?.reject(new Error("Denied"));
+    await Promise.resolve();
+    await Promise.resolve();
+    controller.toggle();
+    expect(requests).toEqual([true, false, true, false, true, true]);
+    pending[5]?.resolve(true);
+    emit(true);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(observed).toBe(true);
+
+    // An external exit (such as Escape) updates target so the next toggle enters again.
+    emit(false);
+    expect(observed).toBe(false);
+    controller.toggle();
+    expect(requests).toEqual([true, false, true, false, true, true, true]);
+    pending[6]?.resolve(true);
+  } finally {
+    controller.dispose();
   }
 });
