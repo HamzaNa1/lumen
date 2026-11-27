@@ -247,6 +247,7 @@ export const createBrowserRuntime = (origin: string = window.location.origin): B
         if (enabled && document.fullscreenElement === null)
           await fullscreenTarget?.requestFullscreen();
         else if (!enabled && document.fullscreenElement !== null) await document.exitFullscreen();
+        onFullscreenChange();
         return document.fullscreenElement !== null;
       },
       fullscreenState: async () => document.fullscreenElement !== null,
