@@ -478,7 +478,7 @@ for (const recovery of ["resume", "exhaustion", "leave", "replace", "end", "runt
         const clock = await mainClock(app);
         try {
           // Unloaded media is the first failure; each refused attempt to reload it is the next.
-          await expect.poll(watchError).not.toBeNull();
+          await expect.poll(watchError, { intervals: [25, 50, 100] }).toContain("Reloading media");
           await clock.advance(backoffMs(1));
           for (const attempt of [1, 2]) {
             await expect.poll(watchError).toContain(`Injected media outage ${attempt}`);
