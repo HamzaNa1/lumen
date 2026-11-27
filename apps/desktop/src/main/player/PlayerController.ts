@@ -453,14 +453,20 @@ export class PlayerController extends EventEmitter {
   async buffer(sessionId: string): Promise<PlayerBuffer> {
     const active = this.requireActive(sessionId);
     if (!active.media.ready) return { aheadSeconds: 0, starved: false, settled: false };
-    // Until a seek has finished, the cache still describes the position MPV is leaving.
-    if ((await this.command(active, ["get_property", "seeking"])) !== false)
-      return { aheadSeconds: 0, starved: false, settled: false };
-    const cache = await this.command(active, ["get_property", "demuxer-cache-state"]);
-    const starved = (await this.command(active, ["get_property", "paused-for-cache"])) === true;
-    // MPV reads ahead of playback, paused or not, but only as far as its read-ahead allows, which
-    // for converted pieces is shorter than a watch group waits for.
-    return { aheadSeconds: mpvBufferedAhead(cache), starved, settled: mpvReadAheadFull(cache) };
+    try {
+      // Until a seek has finished, the cache still describes the position MPV is leaving.
+      if ((await this.command(active, ["get_property", "seeking"])) !== false)
+        return { aheadSeconds: 0, starved: false, settled: false };
+      const cache = await this.command(active, ["get_property", "demuxer-cache-state"]);
+      const starved = (await this.command(active, ["get_property", "paused-for-cache"])) === true;
+      // MPV reads ahead of playback, paused or not, but only as far as its read-ahead allows, which
+      // for converted pieces is shorter than a watch group waits for.
+      return { aheadSeconds: mpvBufferedAhead(cache), starved, settled: mpvReadAheadFull(cache) };
+    } catch (cause) {
+      // MPV drops playback properties briefly before reporting idle; command() already probed idle-active.
+      if (isPropertyUnavailable(cause)) return { aheadSeconds: 0, starved: false, settled: false };
+      throw cause;
+    }
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {
