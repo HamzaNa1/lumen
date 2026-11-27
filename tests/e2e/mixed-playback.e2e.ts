@@ -69,21 +69,24 @@ test("real browser and Electron players join, buffer, pause, seek, resume and le
     )
     .toBeCloseTo(7, 0);
   // Converted pieces are read only a few seconds ahead, short of what a resuming group waits
-  // for; MPV holding all it will read until it plays must be enough.
-  await desktop.page.evaluate(async () => {
-    const state = await window.lumen.player.state();
-    if (state === null) throw new Error("Missing player");
-    await window.lumen.player.selectQuality(state.sessionId, "360p");
-  });
-  await expect
-    .poll(async () => (await desktop.page.evaluate(() => window.lumen.player.state()))?.quality)
-    .toMatchObject({ playing: "360p" });
-  await page.mouse.move(320, 320);
-  await page.getByRole("button", { name: "Resume playback" }).last().click();
-  await playing(page);
-  await expect
-    .poll(() => desktop.page.evaluate(() => window.lumen.player.state()))
-    .toMatchObject({ paused: false });
+  // for; MPV holding all it will read until it plays must be enough. A server release is
+  // checked against the released desktop, which predates this fix.
+  if (process.env.LUMEN_BROWSER_PRODUCT !== "server") {
+    await desktop.page.evaluate(async () => {
+      const state = await window.lumen.player.state();
+      if (state === null) throw new Error("Missing player");
+      await window.lumen.player.selectQuality(state.sessionId, "360p");
+    });
+    await expect
+      .poll(async () => (await desktop.page.evaluate(() => window.lumen.player.state()))?.quality)
+      .toMatchObject({ playing: "360p" });
+    await page.mouse.move(320, 320);
+    await page.getByRole("button", { name: "Resume playback" }).last().click();
+    await playing(page);
+    await expect
+      .poll(() => desktop.page.evaluate(() => window.lumen.player.state()))
+      .toMatchObject({ paused: false });
+  }
   await desktop.page.evaluate(() => window.lumen.watch.action({ type: "leave" }));
   expect(
     await desktop.page.evaluate(async () => (await window.lumen.watch.state()).group),
