@@ -32,7 +32,7 @@ import { collectAudioDiagnostics } from "./AudioDiagnostics";
 import { AudioSettingsStore } from "./AudioSettingsStore";
 import type { CompositorSurface } from "./CompositorSurface";
 import { MediaPreload } from "./MediaPreload";
-import { mpvBufferedAhead, mpvBufferedRanges } from "./MpvCache";
+import { mpvBufferedAhead, mpvBufferedRanges, mpvReadAheadFull } from "./MpvCache";
 import { MpvIpc, MpvIpcFailure } from "./MpvIpc";
 import {
   type HeldMedia,
@@ -458,8 +458,9 @@ export class PlayerController extends EventEmitter {
       return { aheadSeconds: 0, starved: false, settled: false };
     const cache = await this.command(active, ["get_property", "demuxer-cache-state"]);
     const starved = (await this.command(active, ["get_property", "paused-for-cache"])) === true;
-    // MPV is set to read ahead of playback, paused or not, so it never rests short of that.
-    return { aheadSeconds: mpvBufferedAhead(cache), starved, settled: false };
+    // MPV reads ahead of playback, paused or not, but only as far as its read-ahead allows, which
+    // for converted pieces is shorter than a watch group waits for.
+    return { aheadSeconds: mpvBufferedAhead(cache), starved, settled: mpvReadAheadFull(cache) };
   }
 
   async speed(sessionId: string, speed: number): Promise<void> {

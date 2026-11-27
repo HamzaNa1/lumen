@@ -556,6 +556,9 @@ export class MediaFile extends EventEmitter {
         if (background) throw cause;
       })
       .finally(() => {
+        // Electron's fetch keeps a request, and its connection, open after its body is cancelled;
+        // only the signal ends it. Aborting here, after any failure was judged, keeps it a failure.
+        fetch.controller.abort();
         this.fetches.delete(fetch);
         this.scheduleSave();
         this.emit("progress");
@@ -623,12 +626,20 @@ export class MediaFile extends EventEmitter {
       while (fetch.cursor < fetch.end) {
         if (fetch.paced) {
           // Fetch only a window ahead of the readers it reaches; stop once none has come for a
-          // while. A reader past the cursor, as after a seek ahead, is served by its own fetch.
+          // while. A reader past the cursor, as after a seek ahead, is served by its own fetch,
+          // and one further behind than the window, as after a seek back, by a fetch of its own
+          // once it gets near.
           for (;;) {
             if (fetch.controller.signal.aborted) return;
             const reach = fetch.cursor + this.geometry.chunkBytes * 2;
+            const near = this.lookahead(fetch.target) + this.geometry.chunkBytes * 2;
             const positions = [...this.readers].map((reader) => reader.position);
-            const furthest = Math.max(-1, ...positions.filter((position) => position <= reach));
+            const furthest = Math.max(
+              -1,
+              ...positions.filter(
+                (position) => position <= reach && fetch.cursor - position <= near,
+              ),
+            );
             if (furthest >= 0) idleSince = Date.now();
             else if (Date.now() - idleSince > this.idleFetchMs) return;
             if (furthest >= 0 && fetch.cursor - furthest <= this.lookahead(fetch.target)) break;
